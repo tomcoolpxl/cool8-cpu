@@ -367,18 +367,29 @@ instruction boundary where interrupts are already sampled, and no
 instruction is restartable-in-the-middle, so there is no partial state
 to worry about.
 
-It costs two of the TinyTapeout pins, and — because the external agent
-also needs to strobe the address latches, which are CPU outputs — four
-more for the strobe pass-through described in
-[03-microarchitecture.md §5.3](03-microarchitecture.md#53-strobe-pass-through-during-bus-grant).
-That spends the entire 24-pin budget, and in exchange the ASIC test
-board needs no bus buffers, no tri-state-able latches and no arbitration
-logic.
+It costs two TinyTapeout pins and roughly 20 gates. The remaining
+problem — that the external agent also needs to strobe the address
+latches, which are CPU outputs — is solved **on the board** with two
+74HC packages, not in the chip. See
+[03-microarchitecture.md §5.3](03-microarchitecture.md#53-merging-a-granted-bus).
 
-**The alternative was a parallel boot EPROM** on the bus at the reset
-vector. Period-authentic, but it means burning a chip to change
-software, and it does not give you a debugger. Bus request gives you
-both. Nothing stops the finished machine from having a boot ROM as well.
+**A rejected first attempt is worth recording.** The original design
+multiplexed the strobes inside the chip, driving them from four spare
+input pins whenever `BUSAK` was high. It worked and it made the board
+marginally simpler, but it spent four irreplaceable die pins and four
+muxes to save two logic packages on a board that already had three chips
+on it. That is the wrong direction: board parts are free and can be
+changed with a soldering iron; pins after tapeout cannot be changed at
+all. The TinyTapeout budget now stands at 20 of 24 used, and the four
+spare inputs are deliberate headroom.
+
+**The alternative to bus request entirely was a parallel boot EEPROM**
+on the bus at the reset vector, holding a serial loader. Period-
+authentic and it costs nothing, but it gives no debugger and changing
+software means re-burning a chip. Bus request gives both. The EEPROM is
+kept anyway as a **fallback path** on the test board — a socket and a
+chip select are free at design time, and if `BUSRQ` has a bug in
+silicon there is no patching it.
 
 ---
 

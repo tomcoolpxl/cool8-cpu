@@ -141,9 +141,10 @@ corrupted frame costs a retry rather than the whole image.
 
 There is no UART and no loader block on the TinyTapeout part — the SoC
 does not exist there, only the core. The equivalent is a microcontroller
-on the test board driving `nBUSRQ` and the strobe pass-through pins
-directly, as described in
-[03-microarchitecture.md §5.3](03-microarchitecture.md#53-strobe-pass-through-during-bus-grant).
+on the test board that asserts `nBUSRQ`, waits for `BUSAK`, then drives
+`AD[7:0]` and its own copies of the bus strobes, which are OR/AND-merged
+with the CPU's on the board. See
+[03-microarchitecture.md §5.3](03-microarchitecture.md#53-merging-a-granted-bus).
 
 The commands above map one-for-one onto what that microcontroller does,
 so the same host tool can drive either target with a different transport

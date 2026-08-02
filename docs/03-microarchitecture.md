@@ -268,42 +268,53 @@ ui_in[0]     nIRQ        in
 ui_in[1]     nNMI        in
 ui_in[2]     READY       in      hold low to insert wait states
 ui_in[3]     nBUSRQ      in      external agent requests the bus
-ui_in[4]     ext_ALE_L   in  ┐
-ui_in[5]     ext_ALE_H   in  ├   strobe pass-through, see below
-ui_in[6]     ext_nRD     in  │
-ui_in[7]     ext_nWR     in  ┘
+ui_in[4:7]   —           in      spare
 ```
 
-Every one of the 24 pins is now spent.
+20 of the 24 pins are spent. The four spare inputs are deliberate
+headroom: a pin decision on a taped-out chip cannot be revised.
 
-### 5.3 Strobe pass-through during bus grant
+### 5.3 Merging a granted bus
 
-There is a subtlety that only shows up once you try to build the test
-board. During a bus grant the CPU tri-states `AD[7:0]`, so the external
-agent can drive the address and data lines — but `ALE_L`, `ALE_H`,
-`nRD` and `nWR` are CPU *outputs*. The agent has no way to strobe the
-address latches or the SRAM, so it cannot actually do anything with the
-bus it was just granted.
+A subtlety that only shows up when you try to build the test board.
+During a bus grant the CPU tri-states `AD[7:0]`, so the external agent
+can drive address and data — but `ALE_L`, `ALE_H`, `nRD` and `nWR` are
+CPU *outputs*. The agent has no way to strobe the address latches or
+the SRAM.
 
-The fix costs four multiplexers and the four remaining input pins:
+This is resolved on the board, not in the chip. Because the CPU
+deasserts its strobes whenever `BUSAK` is high, the two sources never
+contend and can simply be merged:
 
 ```
-while BUSAK is low   uo_out[3:0] ← the core's own strobes
-while BUSAK is high  uo_out[3:0] ← ui_in[7:4]
+latch LE   =  CPU_ALE_L  OR  MCU_ALE_L        active high  → 74HC32
+              CPU_ALE_H  OR  MCU_ALE_H
+SRAM nOE   =  CPU_nRD   AND  MCU_nRD          active low   → 74HC00 as AND
+SRAM nWE   =  CPU_nWR   AND  MCU_nWR
 ```
 
-The external agent drives `AD[7:0]` and its own strobes into
-`ui_in[7:4]`, and the chip passes them straight through to the latches
-and the SRAM. The whole bus is now controllable from outside with **no
-extra buffers, no tri-state-able latches and no arbitration logic** on
-the board.
+Two 14-pin packages, six gates of the eight available, roughly €0.60,
+and about 10 ns of added propagation delay — irrelevant at a few MHz.
 
-The test board becomes: TT chip, two 74HC573s, one SRAM, one RP2040
-wired to the chip's pins. That's it.
+An earlier draft did this inside the chip instead, multiplexing the
+strobes from four spare input pins while `BUSAK` was high. It worked,
+but it spent four irreplaceable die pins and four muxes to save two
+logic packages on a board that already has three chips on it. Board
+parts are free; pins after tapeout are not. Merging a granted bus with
+external glue is also simply how bus arbitration was normally done.
 
-**If pins are ever needed for something else**, `SYNC`, `HALTED` and
-`IACK` are the droppable ones — they are debug conveniences, not
-functional requirements. The pass-through is functional.
+**Two alternatives considered and rejected:**
+
+- *Tri-state the latches.* The 74HC573 has an `/OE` pin; tie it to
+  `BUSAK` and the MCU drives the SRAM address bus directly. No extra
+  packages, one inverter — but the MCU then needs 16 address + 8 data +
+  2 control = 26 GPIO, which is exactly a Pico's entire budget with
+  nothing left over.
+- *No bus grant at all.* Boot from a parallel EEPROM containing a serial
+  loader; garbage SRAM stops mattering because the CPU does not fetch
+  from it at reset. This costs nothing and is kept as the **fallback**
+  (§5.5) — but it gives no debugger, and re-burning a ROM to change
+  software is a worse loop than a bus grant.
 
 ### 5.4 Bus cycle
 
@@ -334,11 +345,23 @@ and not the limiting factor when you are talking to a 55 ns SRAM.
 |---|---|
 | 2 × 74HC573 | Transparent latches for `A[7:0]` and `A[15:8]` |
 | 1 × 62256 (32 KB) or 628128 (128 KB) SRAM | Main memory |
-| 1 × 74HC00 or GAL | Address decode, if you want I/O |
+| 1 × 74HC32 | OR-merge the two `ALE` strobes (§5.3) |
+| 1 × 74HC00 | AND-merge `nRD`/`nWR`; spare gates do address decode |
+| 1 × RP2040 / Pico | Loader and debugger: drives `nBUSRQ`, `AD[7:0]` and its own strobes |
+| 1 × 28C64 EEPROM *(optional)* | Boot ROM fallback — see below |
 
-That is a complete, working single-board computer around a
-TinyTapeout die. It is also exactly how you would have built one in
-1982, which is the aesthetic.
+That is a complete, working single-board computer around a TinyTapeout
+die. It is also close to how you would have built one in 1982, which is
+the aesthetic.
+
+**The EEPROM is cheap insurance.** A socket and a chip-select from the
+spare `74HC00` gates cost nothing at design time, and they give the
+board a second, completely independent way to run code: the CPU boots
+from ROM, and a serial loader in that ROM pulls programs into SRAM. If
+`BUSRQ` turns out to have a bug in silicon — and you cannot patch
+silicon — that is the difference between a dead chip and a working one.
+
+Design it in. Populate it only if you need it.
 
 ### 5.6 Optional: two-phase page mode
 

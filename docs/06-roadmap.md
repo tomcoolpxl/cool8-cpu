@@ -111,11 +111,12 @@ At this point the machine is finished as originally scoped.
 
 The deadline milestone. Shuttle windows do not move.
 
-- [ ] `rtl/pads`: the three-phase bus multiplexer and the strobe
-      pass-through
-- [ ] Verilog model of a 74HC573 pair and an async SRAM
-- [ ] Bus-grant load path simulated end-to-end: external agent writes
-      SRAM through the chip's pins, releases, CPU runs it
+- [ ] `rtl/pads`: the three-phase bus multiplexer
+- [ ] Verilog model of a 74HC573 pair, the strobe-merge gates and an
+      async SRAM
+- [ ] Bus-grant load path simulated end-to-end: external agent asserts
+      `nBUSRQ`, writes SRAM through the merged strobes, releases, CPU
+      runs it
 - [ ] Full instruction test suite re-run through the multiplexed bus
 - [ ] OpenLane synthesis, real cell count, tile count decided
 - [ ] Timing closure at the target frequency
@@ -128,9 +129,12 @@ wait for M8. If the core is too large, the cuts come out of the
 addressing modes and page 2, not the orthogonal ALU.
 
 **Also required:** a physical test board — TT chip, two 74HC573 latches,
-one SRAM, one RP2040 wired to the chip's pins. The strobe pass-through
-means no bus buffers and no arbitration logic are needed. Design it
-while waiting for silicon.
+one SRAM, a 74HC32 and a 74HC00 to merge the bus strobes, and an RP2040
+as loader and debugger. Design it while waiting for silicon.
+
+Put an EEPROM socket and a chip select on it too, even if you never
+populate it. It is the only independent way to run code if `BUSRQ`
+misbehaves in silicon, and there is no patching silicon.
 
 `cool8load.py` should drive it with the same commands as the FPGA
 loader, over a different transport. Keep that layer separable.
