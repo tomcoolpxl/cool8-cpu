@@ -27,8 +27,12 @@ The executable specification, written before any RTL.
       after each instruction
 - [ ] Loads a flat binary at a given address and runs it
 
-Language: whatever is fastest to write and easiest to diff against RTL
-traces. C or Python.
+**Language: Python.** It imports `tools/opcodes.py` directly, so there
+is exactly one copy of the opcode table in the project, and its traces
+are trivially diffable against RTL. Instruction-level co-simulation does
+not need to be fast. If M3's randomised runs turn out to be
+throughput-limited, a C model can be added then — but two
+implementations that must agree is a cost worth deferring.
 
 ## M2 — Assembler
 
@@ -52,10 +56,17 @@ model after RTL exists is expensive; changing it here is free.
 - [ ] Randomised co-simulation against the M1 emulator, comparing full
       architectural state after every instruction
 - [ ] Interrupt, reset and bus-grant behaviour
+- [ ] `MUL` sequencer, checked against 65536 exhaustive operand pairs
 - [ ] Synthesis check: no FPGA primitives, no inferred RAM, no latches
 
 **Gate:** `yosys` reports the core's LUT and FF count. If it is wildly
 outside the ~1000 LUT estimate, find out why before continuing.
+
+**Also at M3, not M8: run OpenLane.** Area is the one risk that could
+invalidate the architecture, it is knowable from here onward, and
+[D19](01-decisions.md#d19--area-overruns-are-paid-for-in-tiles-not-isa-cuts)
+says the answer is to buy tiles — a decision much easier to make years
+early than weeks before a shuttle deadline.
 
 ## M4 — First light on the FPGA
 

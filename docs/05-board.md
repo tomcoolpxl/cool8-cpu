@@ -112,7 +112,7 @@ set_io flash_mosi 17
 set_io flash_miso 14
 
 # buttons and LED
-set_io sw[0]      18
+set_io sw[0]      18     # NMI break button — debounced, edge-triggered
 set_io sw[1]      19
 set_io sw[2]      20
 set_io sw[3]      21

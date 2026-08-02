@@ -187,6 +187,29 @@ the saving is real.
 
 The 8-bit ALU is separate and is never used for address arithmetic.
 
+### 3.3 Multiply
+
+`MUL Rd,Rs` ([02-isa.md §5.7](02-isa.md#57-multiply)) is a shift-add
+sequencer that borrows hardware rather than adding any:
+
+| Role | Reused element |
+|---|---|
+| 16-bit product accumulator | `X` — which is also the destination |
+| Shifted multiplier | `TMP` |
+| Multiplicand | read from the register file each step |
+| The adder | the existing 8-bit ALU |
+
+Eight iterations of *conditionally add the multiplicand to the high half
+of `X`, then shift `X` and `TMP` right by one*. The only genuinely new
+state is a 3-bit step counter, so the cost is control logic and muxes —
+roughly 150 gates, and **no new flip-flops of architectural state**.
+
+The FSM gains one state, `MULT`, which loops until the counter expires.
+It is the only state in the machine that repeats, and it touches no
+memory, so it does not complicate the interrupt or bus-grant model:
+`MUL` is still a single instruction that completes before either is
+sampled.
+
 ---
 
 ## 4. Control FSM
@@ -378,17 +401,22 @@ Rough, pending synthesis:
 
 | Block | Estimate |
 |---|---|
-| Architectural + microarchitectural state (~137 FF) | ~1100 gates |
+| Architectural + microarchitectural state (~140 FF) | ~1100 gates |
 | 8-bit ALU with flag logic | ~300 gates |
 | 16-bit AGU adder + input muxes | ~450 gates |
 | Instruction decoder + FSM | ~600 gates |
+| Multiply sequencer (§3.3) | ~150 gates |
 | Bus multiplexer / pad wrapper | ~150 gates |
-| **Total** | **~2600 gates ≈ 700 cells** |
+| **Total** | **~2750 gates ≈ 750 cells** |
 
 A TinyTapeout 1×1 tile is on the order of 1000 standard cells, and
 multi-tile projects are supported. The core should land in the 2–4 tile
 range. **This must be confirmed with real synthesis before committing to
 a shuttle**, and it is the single biggest unknown in the schedule.
+
+If it comes in larger, the answer is to buy tiles, not to cut the ISA —
+see [D19](01-decisions.md#d19--area-overruns-are-paid-for-in-tiles-not-isa-cuts).
+Run OpenLane at M3, not at M8.
 
 ---
 

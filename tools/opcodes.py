@@ -138,6 +138,9 @@ for base, form in ((0xC0, "+"), (0xD0, "-")):
                     f"LD {r},{ea}" if t == 0 else f"ST {ea},{r}")
 for op, m in {0xE0: "PUSH F", 0xE1: "POP F", 0xE2: "CLV"}.items():
     put(page2, op, m)
+for dd, d in enumerate(REGS):          # X <- Rd * Rs, unsigned
+    for ss, s in enumerate(REGS):
+        put(page2, 0xF0 | (dd << 2) | ss, f"MUL {d},{s}")
 
 
 def length(op, op2=None):

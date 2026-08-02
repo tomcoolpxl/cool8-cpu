@@ -393,21 +393,79 @@ silicon there is no patching it.
 
 ---
 
+## D18 — 8x8 multiply, landing in X
+
+**Decision:** `MUL Rd,Rs` on page 2 at `$F0–$FF`, computing the unsigned
+16-bit product into **X**. Multi-cycle shift-add, ~12 cycles.
+
+**Why have it at all:** software multiply is roughly 40 cycles and
+graphics code does it constantly — row addressing, scaling, sprite
+positioning. A shift-add sequencer that reuses the existing 8-bit ALU is
+about 150 gates, which is a good trade even on a die-area-constrained
+design.
+
+**Why the result goes to X rather than a register pair:** there are no
+general-purpose 16-bit pairs in this architecture, and multiply is
+overwhelmingly used to compute an address. Landing the product somewhere
+you can immediately dereference is what the code actually wants.
+`MOVW Y,X` moves it if you needed the other pointer.
+
+**Why no divide:** restoring division is meaningfully more logic than
+multiply and far rarer in practice. Not worth the area.
+
+**Implementation note:** `X` doubles as the 16-bit accumulator and
+`TMP` as the shifted multiplier, so `MUL` adds **no architectural
+state** — only a counter and some control.
+
+---
+
+## D19 — Area overruns are paid for in tiles, not ISA cuts
+
+**Decision:** if OpenLane says the core is larger than the ~2750-gate
+estimate, buy more TinyTapeout tiles rather than cutting the
+architecture.
+
+**Why:** the ISA is the thing this project is actually about, and it has
+had months of design attention. Tiles are money. Cutting page 2 or the
+addressing modes to save a tile would trade the deliverable for a small
+cost saving, and it would make the ASIC and FPGA cores diverge, which
+breaks [C2](00-goals.md#c2--the-core-and-the-machine-are-separate).
+
+**If the tile count does become absurd**, the cut order is: page 2
+extras first (register-indexed addressing, bit operations,
+auto-increment), then `MUL`, then `[abs16]`. The orthogonal ALU, the
+sixteen condition codes and `[SP+u8]` are not on the table — they are
+what makes it a decent compiler target.
+
+**This is a policy, not a prediction.** The estimate is a hand-count and
+the roadmap says to run OpenLane at M3, years before it matters, exactly
+so this decision never has to be made in a hurry.
+
+---
+
+## Resolved former open questions
+
+Recorded so they are not re-opened without new information.
+
+| Question | Resolution |
+|---|---|
+| Should `LD Rd,[X+Rs]` be promoted to the primary page? | **No.** Stays on page 2 at two bytes. Promoting it would cost `[abs16]` load/store, and there is no evidence yet that array code leans on it hard enough to justify that. Revisit only if M2 assembly says otherwise. |
+| Does `CMP Rd,Rd` deserve its four encodings? | **Yes.** Kept for regularity. Every register combination stays legal, the decoder needs no special case and the assembler needs no exception. Four encodings of 256 is cheap. |
+| 16-bit counted loops | **Accepted as-is.** `DECW X`/`DECW Y` set `Z` from the full 16-bit result, so `DECW`+`BNE` is a two-instruction 16-bit loop whenever a pointer register is spare. When both pointers are busy, nest the loop or spill the counter. No new instruction. |
+| What gets cut if the ASIC overruns? | **Nothing.** See D19. |
+
 ## Open questions
 
-Things deliberately left unresolved, to be settled by writing real code:
+One left. Deliberately unresolved, to be settled by writing real code:
 
 1. **Is four registers enough?** The answer is in the first thousand
-   lines of assembly, not in a spec document.
-2. **Should the pointer registers be indexable by a general register?**
-   `LD Rd,[X+Rs]` is on page 2 at two bytes. If array code turns out to
-   be dominated by it, it may deserve promotion — but there is no room
-   in the primary page without cutting something.
-3. **Does `CMP Rd,Rd` deserve its four encodings?** It always sets Z=1,
-   C=1. Four slots, mildly wasted, kept for regularity.
-4. **16-bit counted loops.** With one 8-bit `SUB`/`SBC` pair and no
-   16-bit compare-to-zero, decrementing a 16-bit counter and branching
-   takes three instructions. A `DECW X` + `BNZ` on the pointer registers
-   partially covers it. Worth watching.
-5. **What exactly ships to TinyTapeout?** The core plus multiplexer is
-   the plan, but the tile count is unknown until synthesis exists.
+   lines of assembly, not in a spec document. The question closes at the
+   **M2 gate**, after the assembler exists and a few hundred lines of
+   real routines have been written against it — string handling, 16-bit
+   arithmetic, a sort. Changing the register model there is free;
+   changing it after RTL exists is not.
+
+   If the answer turns out to be "no", the cheapest fix is a third
+   16-bit pointer register `Z` (~16 flip-flops) rather than expanding
+   the general register file, which would force reg-reg ALU to two bytes
+   and rebuild the entire opcode map.

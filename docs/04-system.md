@@ -406,7 +406,13 @@ not because we reproduce someone else's chip bugs. See
 | Timer expiry | IRQ | |
 | Keyboard data available | IRQ | |
 | UART RX | IRQ | |
-| *(none yet)* | NMI | Reserved — a reset button, probably |
+| Break button, `SW[0]` | NMI | Debounced, edge-triggered |
+
+`SW[0]` is wired to `NMI` as a **break button**: press it and a hung
+program lands in the monitor with all of its state intact, since an NMI
+pushes `PC` and `F` and changes nothing else. It is the escape hatch
+that makes a machine with no other input device debuggable, and it costs
+a debounce counter and an edge detector.
 
 All IRQ sources OR together into the core's single `irq` input. The
 handler reads the per-peripheral status registers to find the cause.

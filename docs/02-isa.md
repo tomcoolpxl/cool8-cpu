@@ -13,7 +13,7 @@ document is normative and the table is the bug.
 ```
 $ python tools/opcodes.py --check
 primary page : 256/256 encodings assigned
-page 2       : 222/256 assigned, 34 reserved
+page 2       : 238/256 assigned, 18 reserved
 doc examples : 20/20 match
 ```
 
@@ -373,11 +373,35 @@ smaller than `LD Rd,[X]` + `INCW X`, which is also two bytes. See
 | `$E1` | `POP F` | 2 |
 | `$E2` | `CLV` | 2 |
 | `$E3–$EF` | *reserved* | |
-| `$F0–$FF` | *reserved* | |
 
-`$F0–$FF` is deliberately left empty as room for a future `MUL`, a
-memory-to-memory block operation, or whatever the first thousand lines
-of real assembly turn out to demand.
+### 5.7 Multiply
+
+| Second byte | Mnemonic | Bytes | Operation |
+|---|---|---|---|
+| `$F0–$FF` | `MUL Rd,Rs` (`1111 dd ss`) | 2 | `X ← Rd × Rs`, unsigned |
+
+The 16-bit product lands in **X**, not in a register pair — there are no
+general-purpose pairs, and multiply is most often used to compute an
+address, so landing the result somewhere you can immediately dereference
+is what you actually want:
+
+```asm
+        ; X = screen_base + row × 40
+        MOV  R0,#40
+        MUL  R1,R0             ; $2F $F4   X = R1 × 40
+        ADDW X,R2              ; $2F $70   (if the base fits in 8 bits)
+        LD   R3,[X]
+```
+
+`Rd` and `Rs` are unchanged. Flags: `Z` from the full 16-bit product,
+`N` from bit 15, `C` and `V` cleared. Unsigned only — for signed
+multiply, negate the operands and fix the sign afterwards.
+
+Implemented as a multi-cycle shift-add that reuses the existing 8-bit
+ALU, with `X` itself acting as the accumulator and `TMP` as the shifted
+multiplier. It therefore adds no architectural state and roughly 150
+gates. See
+[D18](01-decisions.md#d18--8x8-multiply-landing-in-x).
 
 ---
 
@@ -496,6 +520,7 @@ replaced once the RTL exists.
 | `RETI` | 6 |
 | Interrupt entry | 7 |
 | Any page-2 instruction | primary equivalent + 1 |
+| `MUL Rd,Rs` | 12 (8 shift-add steps + setup) |
 
 On the TinyTapeout ASIC every memory access takes three bus cycles
 instead of one; see
