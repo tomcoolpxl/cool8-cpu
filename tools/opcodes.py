@@ -186,6 +186,53 @@ for dd, d in enumerate(REGS):
 
 # ---------------------------------------------------------------- API
 
+def cycles(op, op2=None):
+    """Cycle cost per docs/02-isa.md section 8, FPGA timing (1-cycle
+    memory). Returns an int, or (not_taken, taken) for conditional
+    branches. The emulator cross-checks its own accounting against this.
+    """
+    if op == 0x2F:                                    # page 2: escape + op
+        if op2 is None or op2 not in page2:
+            return 7                                  # reserved -> BRK trap
+        if op2 < 0x10:
+            return 3                                  # XOR Rd,Rs
+        if op2 < 0x40:
+            g = (op2 - 0x10) >> 2
+            return 4 if g in (0, 8, 9, 10) else 3     # imm/bit forms cost 1
+        if op2 < 0x60:
+            return 3                                  # half-register moves
+        if op2 < 0x70:
+            return {0x60: 6, 0x61: 6, 0x62: 8, 0x63: 8, 0x64: 8, 0x65: 8,
+                    0x66: 3, 0x67: 3, 0x68: 3, 0x69: 3, 0x6A: 3, 0x6B: 3,
+                    0x6C: 5, 0x6D: 5, 0x6E: 5}[op2]
+        if op2 < 0x80:
+            return 4                                  # ADDW/SUBW X|Y,Rd
+        if op2 < 0xC0:
+            return 5                                  # [X|Y + Rs]
+        if op2 < 0xE0:
+            return 5                                  # auto inc / dec
+        if op2 < 0xE3:
+            return 4 if op2 < 0xE2 else 3             # PUSH F/POP F, CLV
+        return 13                                     # MUL: escape + 12
+    if op < 0x20:
+        return 3                                      # ALU Rd,#imm8
+    if op < 0x30:
+        return {0x20: 2, 0x21: 2, 0x22: 5, 0x23: 6, 0x24: 2, 0x25: 2,
+                0x26: 2, 0x27: 2, 0x28: 4, 0x29: 7, 0x2A: 2, 0x2B: 2,
+                0x2C: 5, 0x2D: 5, 0x2E: 7}[op]
+    if op < 0x38:
+        return 3                                      # PUSH/POP Rd
+    if op < 0x40:
+        return 2 if (op & 7) < 4 else 4               # INCW/DECW vs PUSHW
+    if op < 0x50:
+        return 3                                      # LD/ST [X|Y]
+    if op < 0x70:
+        return 5                                      # displaced / absolute
+    if op < 0x80:
+        return (3, 4)                                 # Bcc not taken, taken
+    return 2                                          # ALU Rd,Rs
+
+
 def length(op, op2=None):
     """Total instruction length in bytes, including any $2F prefix."""
     if op == 0x2F:

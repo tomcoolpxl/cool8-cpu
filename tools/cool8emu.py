@@ -963,7 +963,32 @@ def _selftest():
     c.step()
     check("POPW restored X", c.x == 0xBEEF and c.sp == 0x0200)
 
-    # --- 15. Disassembly round-trips for every primary opcode.
+    # --- 15. The emulator's own cycle accounting must agree with the
+    #         static table in opcodes.py, which drives the assembler
+    #         listing. Two independent statements of the timing model.
+    for op in range(256):
+        if op == 0x2F:
+            continue
+        want = opcodes.cycles(op)
+        if isinstance(want, tuple):
+            for taken, expect in ((False, want[0]), (True, want[1])):
+                c = run_prog([op, 0x02], setr(Z=taken) if op == 0x72 else None)
+                if op == 0x72:                        # BEQ, a clean probe
+                    check(f"cycles ${op:02X} taken={taken}",
+                          c.cycles == expect, f"{c.cycles} != {expect}")
+            continue
+        c = run_prog([op, 0x00, 0x00])
+        check(f"cycles ${op:02X}", c.cycles == want, f"{c.cycles} != {want}")
+    for op2 in sorted(opcodes.page2):
+        c = run_prog([0x2F, op2, 0x00, 0x00])
+        want = opcodes.cycles(0x2F, op2)
+        check(f"cycles $2F ${op2:02X}", c.cycles == want,
+              f"{c.cycles} != {want}")
+    c = run_prog([0x2F, 0x03])                        # a reserved page-2 op
+    check("cycles of a reserved page-2 trap",
+          c.cycles == opcodes.cycles(0x2F, 0x03), c.cycles)
+
+    # --- 16. Disassembly round-trips for every primary opcode.
     for op in range(256):
         b = Bus()
         b.load(0x0200, bytes([op, 0x34, 0x12]))
