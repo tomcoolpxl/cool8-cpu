@@ -1,0 +1,240 @@
+# 05 — Board, pinout and external hardware
+
+Target board: **iCESugar v1.5** (MuseLab), Lattice **iCE40UP5K-SG48**.
+
+Pin numbers below are taken from the board's own constraint files
+(`wuxx/icesugar`, `src/common/io.pcf` and `src/basic/verilog/vga_pong/pong.pcf`).
+
+---
+
+## 1. Board resources
+
+| | |
+|---|---|
+| FPGA | iCE40UP5K-SG48, 5280 LUT4 |
+| Block RAM (EBR) | ~120 Kbit (~15 KB), bitstream-initialisable |
+| SPRAM | 4 × 256 Kbit = 128 KB, **not** bitstream-initialisable |
+| PLL | 1 |
+| Clock | 12 MHz on pin 35, supplied by the on-board iCELink debugger |
+| Flash | 8 MB SPI |
+| Debugger | iCELink (ARM Mbed DAPLink) — drag-and-drop bitstream, USB CDC serial, JTAG |
+| Connectors | PMOD1, PMOD2, PMOD3 (8 signals each), PMOD4 (4 pins) |
+| I/O voltage | 3.3 V LVCMOS. **Not 5 V tolerant.** |
+
+---
+
+## 2. The pin budget, and its two traps
+
+### Trap 1 — PMOD1 overlaps the USB and serial pins
+
+| PMOD1 pin | FPGA pin | Also is |
+|---|---|---|
+| `P1_1` | 10 | `USB_DP` |
+| `P1_2` | 6 | `TX` (iCELink serial) |
+| `P1_11` | 4 | `RX` (iCELink serial) |
+| `P1_12` | 9 | `USB_DN` |
+| `P1_3` | 3 | — free |
+| `P1_4` | 48 | — free |
+| `P1_9` | 47 | — free |
+| `P1_10` | 2 | — free |
+
+Using PMOD1 as a whole PMOD costs you the USB serial console, which is
+how programs get loaded. **Only the four free pins get used.**
+
+### Trap 2 — PMOD4 is the four tactile switches
+
+`P4_1…P4_4` are pins 21, 20, 19, 18, which are `SW[3]…SW[0]`. Fine as
+buttons, unavailable as a PMOD.
+
+### The result
+
+The 12-bit VGA PMOD takes all of PMOD2 plus six of the eight PMOD3
+signals. What's left is exactly enough, and no more:
+
+| Signal | FPGA pin | Where |
+|---|---|---|
+| `PS2_CLK` | 27 | `P3_3` |
+| `PS2_DAT` | 25 | `P3_4` |
+| `AUDIO_L` | 3 | `P1_3` |
+| `AUDIO_R` | 48 | `P1_4` |
+| spare | 47, 2 | `P1_9`, `P1_10` |
+
+---
+
+## 3. Full pin assignment
+
+```
+# clock
+set_io clk        35
+
+# VGA — MuseLab PMOD-VGA on PMOD2 + PMOD3
+set_io vga_r[3]   36     # P2_9
+set_io vga_r[2]   38     # P2_10
+set_io vga_r[1]   43     # P2_11
+set_io vga_r[0]   45     # P2_12
+set_io vga_g[3]   23     # P3_9
+set_io vga_g[2]   26     # P3_10
+set_io vga_g[1]   28     # P3_11
+set_io vga_g[0]   32     # P3_12
+set_io vga_b[3]   37     # P2_4
+set_io vga_b[2]   42     # P2_3
+set_io vga_b[1]   44     # P2_2
+set_io vga_b[0]   46     # P2_1
+set_io vga_hs     34     # P3_1
+set_io vga_vs     31     # P3_2
+
+# PS/2 keyboard — via level shifter
+set_io ps2_clk    27     # P3_3
+set_io ps2_dat    25     # P3_4
+
+# audio — sigma-delta, via RC filter
+set_io audio_l     3     # P1_3
+set_io audio_r    48     # P1_4
+
+# iCELink USB serial console
+set_io uart_rx     4
+set_io uart_tx     6
+
+# buttons and LED
+set_io sw[0]      18
+set_io sw[1]      19
+set_io sw[2]      20
+set_io sw[3]      21
+set_io led_r      40
+set_io led_g      41
+set_io led_b      39
+```
+
+**To verify before trusting the colour ordering:** the official demo
+names the red signals `vga_R`, `vga_R1`, `vga_R2`, `vga_R3` on pins
+45, 43, 38, 36, without stating which is the most significant bit. The
+assignment above assumes 45 is bit 0. Check against the PMOD-VGA
+schematic, or just display a horizontal ramp and look at the monitor —
+if the ramp is scrambled, reverse the order.
+
+---
+
+## 4. External circuits to build
+
+Two small circuits, five components each. Neither needs a PCB; a scrap
+of stripboard is fine.
+
+### 4.1 PS/2 level shifter
+
+**This is not optional.** PS/2 clock and data are open-collector with
+the pull-ups **inside the keyboard, tied to its own +5 V**. When the
+keyboard is not driving, the line idles at 5 V. Connecting that to an
+iCE40 pin means conducting through the ESD clamp diode every idle
+period.
+
+The standard bidirectional MOSFET shifter, one per line:
+
+```
+        +3.3V                              +5V
+          │                                  │
+         10k                                10k
+          │            BSS138                │
+   FPGA ──┼──────────────┐ D                 │
+                         │                   │
+                    G ───┴───────────────────┤   (gate to +3.3V)
+                         │
+                       S ┴──────────────────────── keyboard line
+```
+
+Gate to +3.3 V, source to the 5 V (keyboard) side, drain to the 3.3 V
+(FPGA) side, 10 kΩ pull-up on each side to its own rail. Two of these,
+one for `PS2_CLK` and one for `PS2_DAT`.
+
+**The keyboard also needs 5 V at up to ~300 mA, and the PMOD `VCC` pins
+on this board are 3.3 V.** Take 5 V from the board's USB VBUS or from a
+separate supply, with grounds tied together.
+
+PS/2 mini-DIN female, looking into the socket:
+
+| Pin | Signal |
+|---|---|
+| 1 | DATA |
+| 2 | *(not connected)* |
+| 3 | GND |
+| 4 | +5 V |
+| 5 | CLK |
+| 6 | *(not connected)* |
+
+### 4.2 Audio output filter
+
+One-bit sigma-delta straight off an FPGA pin, per channel:
+
+```
+   FPGA ──┬── 1k ──┬── 1k ──┬── 10µF ──┬──── tip (line out)
+          │        │        │           │
+          │      10nF     10nF        10k
+          │        │        │           │
+         GND      GND      GND         GND
+```
+
+Two RC stages at 1 kΩ / 10 nF (`fc = 1/(2πRC) ≈ 15.9 kHz` each), then a
+coupling capacitor to strip the DC bias and a 10 kΩ drain resistor. The
+sigma-delta noise sits up at 25 MHz, so this is more filtering than
+strictly necessary and it keeps the treble.
+
+Duplicate for the second channel. **Do not** connect headphones or a
+speaker directly to an FPGA pin. For a speaker, feed this into a
+PAM8302 (mono) or PAM8403 (stereo) module with its own supply and
+decoupling.
+
+---
+
+## 5. Bill of materials
+
+| Ref | Part | Qty | Notes |
+|---|---|---|---|
+| — | iCESugar v1.5 | 1 | Have it |
+| — | MuseLab PMOD-VGA (12-bit) | 1 | Buy. Sold alongside the board. |
+| — | VGA cable + monitor | 1 | Have it |
+| — | PS/2 keyboard | 1 | Have it |
+| Q1, Q2 | BSS138 (or a 2-channel BSS138 level-shifter breakout) | 2 | |
+| R1–R4 | 10 kΩ | 4 | Level shifter pull-ups |
+| R5–R8 | 1 kΩ | 4 | Audio filter, 2 per channel |
+| R9, R10 | 10 kΩ | 2 | Audio bias drain |
+| C1–C4 | 10 nF ceramic | 4 | Audio filter |
+| C5, C6 | 10 µF electrolytic | 2 | Audio coupling — watch polarity |
+| J1 | PS/2 mini-DIN 6 socket | 1 | |
+| J2 | 3.5 mm stereo jack | 1 | |
+| — | PAM8302 or PAM8403 module | 1 | Optional, for a speaker |
+
+Everything except the VGA PMOD is a few euro of passives.
+
+---
+
+## 6. Toolchain
+
+Fully open source:
+
+```bash
+yosys -p "synth_ice40 -top cool8_top -json cool8.json" rtl/**/*.v
+nextpnr-ice40 --up5k --package sg48 --pcf board/icesugar.pcf \
+              --json cool8.json --asc cool8.asc
+icepack cool8.asc cool8.bin
+```
+
+Programming is drag-and-drop: the iCELink debugger enumerates as a mass
+storage device, so copying `cool8.bin` onto it flashes the board. The
+`icesprog` utility in the board's repository does the same from a
+script, and there is a prebuilt `icesprog.win.exe` for Windows.
+
+Simulation: `iverilog` + `gtkwave`, or `verilator` for the
+co-simulation against the reference emulator.
+
+---
+
+## 7. Sources
+
+- [wuxx/icesugar](https://github.com/wuxx/icesugar) — board repository,
+  `src/common/io.pcf` for the pin map
+- [iCESugar README](https://github.com/wuxx/icesugar/blob/master/README_en.md)
+- [MuseLab on Tindie](https://www.tindie.com/products/johnnywu/icesugar-fpga-development-board/)
+- Lattice `FPGA-TN-02022` — iCE40 SPRAM usage guide
+- Lattice `FPGA-TN-02052` — sysCLOCK PLL design usage guide
+
+Both Lattice technical notes are mirrored in `doc/LatticeSemi/` in the
+board repository.

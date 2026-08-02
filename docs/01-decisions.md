@@ -1,0 +1,318 @@
+# 01 — Decision log
+
+Every architectural call, with the reasoning. Where a decision was
+close, the runner-up is recorded so it can be revisited without
+re-deriving the argument.
+
+---
+
+## D1 — Not a clone of anything
+
+**Decision:** clean-sheet ISA.
+
+**Why:** the two candidate ancestors both carry baggage we would gain
+nothing from. The 6502's asymmetric X/Y registers, fixed 256-byte stack,
+page-boundary quirks and missing addressing-mode combinations are
+artefacts of a 1975 transistor budget we do not have. The Z80's prefix
+bytes, shadow registers, dual-purpose P/V flag and 8080 compatibility
+encodings only pay for themselves if you want to run 8080 software, and
+we don't.
+
+What we take from each:
+
+| From the 6502 | From the Z80 |
+|---|---|
+| Implementation discipline — small, compact control | Real pointer registers |
+| Memory-mapped I/O | Full 16-bit stack pointer |
+| Short relative branches | Register-indirect + displacement addressing |
+| Explicit carry-based multi-byte arithmetic | Rich condition-code set |
+| Code density as a first-class concern | Multiple simultaneous pointers |
+
+---
+
+## D2 — Four general registers, orthogonal
+
+**Decision:** R0–R3, 8-bit, fully interchangeable. Every ALU operation
+works on every register as both source and destination.
+
+**Why:** a 2-bit register field is what makes one-byte two-operand
+instructions possible. `1 ooo dd ss` gives eight ALU operations across
+all sixteen register combinations in a single byte. Eight registers
+would need 3-bit fields, which pushes reg-reg ALU to two bytes or forces
+the Z80's accumulator-centric asymmetry.
+
+Four orthogonal registers is also the smallest decoder of the options
+considered, which matters for C1 (TinyTapeout area).
+
+**Runner-up:** eight registers with Z80-style opcode quadrants
+(`01 ddd sss` for moves, `10 ooo sss` for accumulator ALU). Denser for
+some code, but accumulator-centric and therefore not actually
+orthogonal, and a bigger decoder.
+
+**Known cost:** four registers is tight. Register pressure is real, and
+the mitigation is cheap SP-relative and displacement addressing rather
+than more registers. Revisit only if real code proves it unworkable.
+
+---
+
+## D3 — X and Y are separate 16-bit registers, not aliases of R0–R3
+
+**Decision:** two dedicated 16-bit pointer registers, X and Y, outside
+the general register file. Their halves (XL, XH, YL, YH) are reachable
+through page-2 move instructions.
+
+**Why:** the original plan was pairs — P0 = R1:R0, P1 = R3:R2. That
+fails on the most basic loop in the machine. A byte copy needs a source
+pointer, a destination pointer *and* a data register. With aliased
+pairs, two pointers consume all four general registers and there is
+nothing left to hold the byte:
+
+```asm
+loop:   LD   R0,[P0]       ; R0 IS the low half of P0. Broken.
+```
+
+Separate X/Y costs 32 flip-flops and fixes the architecture. With four
+free general registers plus two pointers, the copy loop leaves R2 and R3
+untouched.
+
+**Side benefit:** the pointer-select field in load/store encodings is
+1 bit instead of 2, which is where the opcode space for control-flow
+instructions came from.
+
+---
+
+## D4 — Variable-length instructions, 1 to 4 bytes, one escape byte
+
+**Decision:** byte-granular instructions. One-byte for register
+operations and indirect load/store, two bytes for immediates,
+displacements and branches, three for absolute addresses. Opcode `$2F`
+is a single-level escape into a second 256-entry opcode page.
+
+**Why not fixed 16-bit:** halves your code density on an 8-bit machine
+with only 64 KB of address space, and doubles the width of the
+instruction fetch path.
+
+**Why an escape byte is not a Z80 prefix:** the Z80's problem was
+*chained* prefixes with interleaved displacement bytes and stateful
+decode (`DD CB d op`). `$2F` is one level, never chains, and the
+instruction length is fully determined by the second byte. It is a
+decode tree, not a prefix machine.
+
+**Why an escape at all:** the opcode budget genuinely does not close
+without one. Eight orthogonal reg-reg ALU operations cost 128 opcodes —
+half the space. The remaining 128 has to cover immediates, four
+addressing modes, sixteen branch conditions, calls, returns, stack and
+16-bit pointer operations. Everything rare (XOR, right shifts, negate,
+16-bit loads, register-indexed addressing, bit operations) goes behind
+`$2F` where the extra byte costs nothing because those instructions were
+never going to be one byte anyway.
+
+---
+
+## D5 — The eight ALU operations are MOV ADD ADC SUB SBC AND OR CMP
+
+**Decision:** the same eight, with the same `ooo` encoding, in both the
+register-register group and the immediate group.
+
+**Why these eight:** ADD and ADC both present (paying a byte for `CLC`
+before every single-byte add, 6502-style, is a bad trade). CMP in,
+because comparing against a constant is one of the most frequent things
+any program does and it must not write back.
+
+**Why XOR is not in the set:** it was the weakest of the nine
+candidates. XOR's common uses are covered — `SUB Rd,Rd` clears a
+register in one byte, and `NOT Rd` exists on page 2. True XOR
+(checksums, sprite masking) lives on page 2 at two bytes.
+
+**Consequence — free shift and clear idioms:**
+
+| Idiom | Meaning | Bytes |
+|---|---|---|
+| `ADD Rd,Rd` | shift left, C ← bit 7 | 1 |
+| `ADC Rd,Rd` | rotate left through carry | 1 |
+| `SUB Rd,Rd` | clear to 0, C=1, Z=1 | 1 |
+| `SBC Rd,Rd` | $00 if C=1, $FF if C=0 (sign-extend the carry) | 1 |
+| `OR Rd,Rd` | test, set N and Z | 1 |
+
+Left shifts and rotates are therefore one byte and cost no opcode space
+at all. Only the right shifts (`SHR`, `SAR`, `ROR`) need page 2.
+
+---
+
+## D6 — No zero page, no direct page register
+
+**Decision:** dropped. Globals are reached with 3-byte absolute
+addressing or through X/Y.
+
+**Why:** an 8-bit direct-page register was drafted and cut. It would
+have saved a byte on global and I/O accesses, but it cost eight primary
+opcodes at exactly the point where control flow had nowhere to live, and
+it adds architectural state that has to be saved on context switch. The
+6502's zero page exists because a 1975 register file was expensive;
+ours is not.
+
+**Revisit if:** profiling real code shows absolute addressing dominating.
+The escape page has room.
+
+---
+
+## D7 — Memory-mapped I/O, 256-byte page at $FF00
+
+**Decision:** memory-mapped. One 256-byte I/O page at `$FF00–$FFFF`,
+which also holds the reset and interrupt vectors.
+
+**Why:** the two source conversations disagreed on this. One argued for
+memory-mapped I/O with a 4 KB region at `$F000`; the other argued for a
+separate I/O address space with `IN`/`OUT` instructions specifically to
+preserve the full 64 KB of RAM.
+
+A 256-byte page settles it. You lose 0.4% of the address space instead
+of 6%, so the "preserve 64 KB" argument evaporates. And memory-mapped
+I/O means no extra bus signal, no extra instruction pair, no second
+address space for a compiler to model, and — importantly for C1 — no
+extra pin on a 24-pin TinyTapeout budget.
+
+**Consequence:** peripheral registers must tolerate being read. Any
+register with a read side effect must be documented, and read-modify-
+write instruction sequences on I/O need care.
+
+---
+
+## D8 — Sixteen branch conditions, ARM-style
+
+**Decision:** `0111 cccc` + signed 8-bit displacement, sixteen
+conditions including signed and unsigned comparisons.
+
+**Why:** sixteen conditions cost sixteen opcodes and a small
+combinational block, and they are the difference between a compiler
+emitting one instruction for `if (a < b)` and emitting three. The 6502
+gives you eight and everyone worked around it; we can afford not to.
+Signed `GE/LT/GT/LE` need `N` and `V` compared, which is two gates.
+
+---
+
+## D9 — Carry means "no borrow" on subtract
+
+**Decision:** 6502/ARM convention. After `SUB`/`CMP`, `C = 1` means no
+borrow occurred, i.e. the unsigned result did not go negative. `SBC`
+computes `Rd - Rs - (1 - C)`.
+
+**Why:** it has to be written down somewhere, unambiguously, before any
+RTL or assembler exists. Both conventions are in the wild and getting it
+wrong halfway through costs a rewrite of the assembler, the emulator and
+every test. `BCS` therefore reads as "branch if unsigned greater or
+equal", which is the intuitive direction.
+
+---
+
+## D10 — Multiplexed external bus, three-phase
+
+**Decision:** the core presents a simple synchronous memory interface
+internally. A thin wrapper multiplexes it onto 8 bidirectional pins in
+three phases: address low, address high, data.
+
+**Why:** forced by C1. TinyTapeout gives 8 in / 8 out / 8 bidir. A
+16-bit address plus 8-bit data plus control does not fit any two-phase
+scheme without giving up address bits. Three phases keeps the full 64 KB
+and leaves the entire 8-bit output port free for control strobes and the
+entire input port free for interrupts and wait states.
+
+The cost is three bus cycles per memory access on the ASIC. On a
+TinyTapeout part running at a few MHz against a 55 ns SRAM, that is not
+the limiting factor.
+
+On the FPGA the wrapper is bypassed and the core talks to the SPRAM
+controller directly, one access per cycle. **Same core RTL both ways.**
+
+---
+
+## D11 — 64 KB unified RAM, video shares it
+
+**Decision:** two SPRAM blocks form one flat 64 KB address space. The
+CPU and the video engine both read it through an arbiter with video
+priority.
+
+**Why:** the arithmetic says contention is a non-issue. At 320×200 and
+4 bits per pixel, doubled to 640×400, the logical pixel rate is
+12.56 MHz. SPRAM is 16 bits wide, so one access yields four pixels —
+3.14 M accesses/sec out of the ~25 M available. **Video steals one cycle
+in eight.**
+
+That kills the need for banking, separate video memory, a display-list
+processor, or any arbiter more complicated than round-robin. It is also
+how every real 8-bit home computer worked.
+
+The other two SPRAM blocks (64 KB) stay unmapped in v1, reserved for a
+banked window for tiles, sprite graphics and sample data later.
+
+---
+
+## D12 — Audio: SN76489-style, not SID-style
+
+**Decision:** three square-wave tone channels plus one noise channel,
+each with a frequency divider and 4-bit attenuation. Digital mix, 1-bit
+sigma-delta output.
+
+**Why:** it is the ASIC-portable choice. A SID-style analog-character
+voice means resonant filters, which means multipliers — cheap on the
+UP5K (8 DSP blocks sitting idle) and expensive on silicon. Dividers and
+an LFSR are a few hundred gates.
+
+A divider is used rather than a phase accumulator because it is smaller
+and it is what the real chip did; a 12-bit divider gives adequate range
+down into the bass. Phase accumulators can come later if frequency
+resolution proves annoying.
+
+---
+
+## D13 — Clock: fast, with a programmable brake
+
+**Decision:** run the whole SoC from the ~25.125 MHz pixel clock. Add a
+CPU clock-enable divider in an I/O register so the effective CPU speed
+can be dialled from full rate down to roughly 1 MHz.
+
+**Why:** "don't care" was the answer to how fast it should feel, so:
+take the speed the FPGA gives you for free, and make the retro feel a
+runtime setting rather than a design decision. Timing-sensitive demo
+code can pick a slow, stable rate; everything else runs fast.
+
+A single clock domain for the entire SoC also avoids every clock-domain-
+crossing bug in the book.
+
+---
+
+## D14 — Post-increment addressing dropped from v1
+
+**Decision:** no `LD Rd,[X+]`. It was drafted, costed and cut.
+
+**Why:** it looked essential and isn't. Because `INCW X` is a one-byte
+primary opcode, the two sequences cost the same:
+
+```
+LD R1,[X+]                   ; hypothetical: 1 byte
+LD R1,[X] / INCW X           ; actual:       2 bytes, 1 byte each
+```
+
+Sixteen opcodes and an extra register writeback path, for a wash. It
+lives on page 2 as a two-byte form for when the assembler wants it.
+
+---
+
+## Open questions
+
+Things deliberately left unresolved, to be settled by writing real code:
+
+1. **Is four registers enough?** The answer is in the first thousand
+   lines of assembly, not in a spec document.
+2. **Should the pointer registers be indexable by a general register?**
+   `LD Rd,[X+Rs]` is on page 2 at two bytes. If array code turns out to
+   be dominated by it, it may deserve promotion — but there is no room
+   in the primary page without cutting something.
+3. **Does `CMP Rd,Rd` deserve its four encodings?** It always sets Z=1,
+   C=1. Four slots, mildly wasted, kept for regularity.
+4. **16-bit counted loops.** With one 8-bit `SUB`/`SBC` pair and no
+   16-bit compare-to-zero, decrementing a 16-bit counter and branching
+   takes three instructions. A `DECW X` + `BNZ` on the pointer registers
+   partially covers it. Worth watching.
+5. **What exactly ships to TinyTapeout?** The core plus multiplexer is
+   the plan, but the tile count is unknown until synthesis exists.
