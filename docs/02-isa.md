@@ -453,6 +453,21 @@ pointing after the `BRK` byte.
 execution at the handler; `RETI` then returns to the instruction after
 the `HALT`.
 
+### 7.4 Bus grant
+
+An external agent can take the memory bus away from the CPU between
+instructions. This is not programmer-visible state and there is no
+instruction for it — the CPU simply stops for a while and then carries
+on, with every register, flag and the program counter exactly as they
+were. Nothing is pushed and no vector is taken.
+
+The only way a program can observe it at all is by timing. Code that
+must not be interrupted this way does not exist: bus grant is how
+software gets loaded and how the debugger works, and it takes priority
+over `NMI`.
+
+See [03-microarchitecture.md §2.2](03-microarchitecture.md#22-bus-request-and-grant).
+
 ---
 
 ## 8. Timing model (provisional)

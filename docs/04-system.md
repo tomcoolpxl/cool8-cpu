@@ -100,13 +100,27 @@ of main RAM is undefined at power-on. The boot ROM lives in EBR, which
       $F000-$FFFF is now RAM. Jump to the monitor.
 
 7.  Monitor
-      Prompt on screen and on the USB serial port. Accepts a program
-      over serial, loads it, runs it.
+      Prompt on screen and on the USB serial port.
 ```
 
-Programs are loaded over the iCELink USB CDC serial port in v1. The
-board's 8 MB SPI flash has plenty of unused space above the bitstream
-and is an obvious later addition.
+### 3.1 …or not, if the loader says otherwise
+
+The hardware loader (§4.7) can bypass all of that. It holds the CPU off
+the bus, writes a program and a reset vector directly into RAM, sets
+`BOOTRAM` so the ROM overlay stays out of the way, and pulses CPU reset.
+Execution starts at the loaded program with the full 64 KB of RAM
+visible and the boot ROM never runs at all.
+
+That path needs no working software on the machine, which is exactly
+what you want at M4 when there isn't any.
+
+### 3.2 Where software comes from
+
+| Source | When | Notes |
+|---|---|---|
+| Hardware loader over USB serial | Development, always | No bitstream rebuild, no working ROM required |
+| SPI flash (§4.8) | Finished programs | 7.9 MB free above the bitstream, ~40 ms to load 64 KB |
+| Baked into the boot ROM image | Bring-up only | EBR is ~15 KB and the font and ROM already claim 8 |
 
 ---
 
@@ -213,6 +227,100 @@ Connected to the iCELink USB CDC port. 115200 8N1.
 |---|---|---|
 | `$FE70` | `UART_STAT` | `0` RX data available, `1` TX ready, `2` RX overrun |
 | `$FE71` | `UART_DATA` | Read pops RX, write pushes TX |
+| `$FE72` | `UART_DIV_L` | Baud divider, low byte |
+| `$FE73` | `UART_DIV_H` | Baud divider, high byte |
+
+The divider is a register rather than a synthesis constant so the rate
+can be changed without rebuilding the bitstream. `div = round(f_clk /
+baud) − 1`; at 25.125 MHz, 115200 baud is `$00D9` (218).
+
+The iCELink debugger presents a USB CDC port whose baud rate is chosen
+by the host and bridged to FPGA pins 4 and 6. The FPGA end has no way to
+learn what the host picked, so both must be set to agree. 115200 is the
+safe default; higher rates are worth testing empirically once the link
+works.
+
+### 4.7 Loader — `$FE80`
+
+The hardware loader is a bus master that can write RAM while the CPU is
+held off the bus. It is what makes software iteration a one-second
+`cat` rather than a bitstream rebuild — see
+[D15](01-decisions.md#d15--the-loader-is-hardware-not-a-rom-monitor).
+
+It sits on the UART receive stream and watches for a two-byte magic
+prefix. Bytes that are not part of a loader frame pass straight through
+to the CPU's `UART_DATA` FIFO, so a running program can use the serial
+port normally and still be interrupted and reloaded.
+
+| Addr | Name | Access | Description |
+|---|---|---|---|
+| `$FE80` | `LDR_CTRL` | R/W | `0` sniffer enable (resets to 1). `4` CPU requests a bus grant for itself. `5` `BOOTRAM` — see below. |
+| `$FE81` | `LDR_STAT` | R | `0` loader currently owns the bus, `1` last frame had a checksum error, `2` a frame has been received since reset |
+
+`BOOTRAM` is the piece that makes the `GO` command work. When set, the
+boot ROM overlay is suppressed at CPU reset, so the CPU fetches its
+reset vector from `$FFF8` in RAM — which the loader has just written.
+The bit is owned by the loader and survives a CPU reset; only a full
+board reset clears it.
+
+Wire protocol: [07-loader.md](07-loader.md).
+
+### 4.8 SPI flash — `$FE88`
+
+The board's 8 MB configuration flash doubles as mass storage. The iCE40
+releases pins 14–17 to user logic once `CDONE` goes high, so a small SPI
+master can read the flash at runtime. This is the machine's cartridge
+slot and its disk.
+
+| Addr | Name | Access | Description |
+|---|---|---|---|
+| `$FE88` | `FLS_ADDR_L` | R/W | Flash address bits 7:0 |
+| `$FE89` | `FLS_ADDR_M` | R/W | bits 15:8 |
+| `$FE8A` | `FLS_ADDR_H` | R/W | bits 23:16 |
+| `$FE8B` | `FLS_DATA` | R | Read one byte and advance the address. **Read has a side effect.** |
+| `$FE8C` | `FLS_CTRL` | R/W | `0` stream open — write 1 to issue a read at `FLS_ADDR` and hold chip-select low; write 0 to close |
+| `$FE8D` | `FLS_STAT` | R | `0` busy, `1` stream open |
+
+Typical use — copy 8 KB from flash offset `$100000` to `$4000`:
+
+```asm
+        MOV  R0,#$00
+        ST   [$FE88],R0        ; addr = $100000
+        ST   [$FE89],R0
+        MOV  R0,#$10
+        ST   [$FE8A],R0
+        MOV  R0,#$01
+        ST   [$FE8C],R0        ; open the stream
+        ; X = $4000, R2:R3 = 8192
+.copy:  LD   R1,[$FE8B]        ; byte, address auto-advances
+        ST   [X],R1
+        INCW X
+        ...
+        SUB  R0,R0
+        ST   [$FE8C],R0        ; close
+```
+
+At a 12.5 MHz SPI clock that is roughly 1.5 MB/s — 64 KB in about 40 ms.
+
+**Reads only.** The SPI master issues opcode `$03` (READ) and nothing
+else. It has no write-enable, page-program or erase path *in hardware*,
+so no amount of software error can corrupt the bitstream living at
+offset 0. See
+[D16](01-decisions.md#d16--flash-access-is-read-only-in-hardware).
+
+Writing the flash is a host-side operation:
+
+```bash
+icesprog -o 0x100000 -w mygame.bin
+```
+
+`icesprog` writes in 4096-byte sectors at any offset. The UP5K bitstream
+is about 104 KB, so anything at or above `$100000` (1 MB) has enormous
+margin.
+
+> **Do not use `icesprog -e`.** It is a whole-chip erase, not a sector
+> erase, and it will take your bitstream with it. Sector writes at an
+> offset never need it.
 
 ---
 

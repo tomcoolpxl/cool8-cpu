@@ -298,6 +298,90 @@ lives on page 2 as a two-byte form for when the assembler wants it.
 
 ---
 
+## D15 — The loader is hardware, not a ROM monitor
+
+**Decision:** program loading is done by a state machine in `rtl/soc/`
+that owns the bus directly, not by an XMODEM receiver running on the
+CPU.
+
+**Why:** the obvious design is a monitor in the boot ROM that receives
+over serial. It has a chicken-and-egg problem. The boot ROM lives in
+EBR, so it is part of the bitstream — changing anything about how
+loading works means a full `yosys`/`nextpnr` rebuild and a re-flash.
+During M4–M6 there is no working software at all, so every software bug
+becomes a bitstream rebuild.
+
+A hardware loader costs roughly 60 LUTs and turns software iteration
+into `cat prog.bin > COM3` with no rebuild. It also works when the CPU
+is wedged, when the ROM is broken, and before any monitor exists — which
+is precisely when you need it most.
+
+The memory read-back it gives for free is the debugging tool that
+matters most at M4, and because a bus grant preserves all architectural
+state, it doubles as a non-intrusive debugger: halt, dump 64 KB, resume,
+and the running program cannot tell.
+
+**A ROM monitor is still worth having** at M6, for interactive use on
+the machine's own screen. It just is not the bootstrap path.
+
+---
+
+## D16 — Flash access is read-only in hardware
+
+**Decision:** the FPGA's SPI master issues flash opcode `$03` (READ) and
+has no write-enable, page-program or erase path in the gates at all.
+Writing the flash is a host-side operation via `icesprog`.
+
+**Why:** the 8 MB flash the machine uses as storage is the same chip the
+FPGA configures itself from, with the bitstream at offset 0. A software
+bug that reached a page-program or sector-erase opcode would brick the
+board until it was re-flashed by other means.
+
+Making it physically impossible costs nothing — we want reads anyway,
+and *not* building the write path is strictly less logic.
+
+**Upgrade path, when saving from the machine becomes worth having:**
+allow writes, but gate them on a hardware comparison of the address
+against a fixed floor (`$100000`), so the bottom 1 MB is unreachable by
+construction. That keeps the guarantee while allowing a real filesystem.
+
+**Related footgun, worth writing down:** `icesprog -e` is a whole-chip
+erase, not a sector erase. It destroys the bitstream. Sector writes at an
+offset do not need it, so there is never a reason to run it.
+
+---
+
+## D17 — Bus request belongs in the core
+
+**Decision:** `busrq` / `busak` are part of `cool8_core`, not SoC glue.
+
+**Why:** it is the only way software gets into a COOL8 machine on
+*either* target, and the ASIC has no other option at all. TinyTapeout
+gives you no UART, no FPGA fabric and no flash controller — just a chip,
+two latches and an SRAM that comes up as garbage. Something external has
+to write that SRAM before the CPU can run, and the only path is through
+the chip's own pins.
+
+Adding it to the core is nearly free: the grant point is the same
+instruction boundary where interrupts are already sampled, and no
+instruction is restartable-in-the-middle, so there is no partial state
+to worry about.
+
+It costs two of the TinyTapeout pins, and — because the external agent
+also needs to strobe the address latches, which are CPU outputs — four
+more for the strobe pass-through described in
+[03-microarchitecture.md §5.3](03-microarchitecture.md#53-strobe-pass-through-during-bus-grant).
+That spends the entire 24-pin budget, and in exchange the ASIC test
+board needs no bus buffers, no tri-state-able latches and no arbitration
+logic.
+
+**The alternative was a parallel boot EPROM** on the bus at the reset
+vector. Period-authentic, but it means burning a chip to change
+software, and it does not give you a debugger. Bus request gives you
+both. Nothing stops the finished machine from having a boot ROM as well.
+
+---
+
 ## Open questions
 
 Things deliberately left unresolved, to be settled by writing real code:

@@ -41,6 +41,16 @@ Pin numbers below are taken from the board's own constraint files
 Using PMOD1 as a whole PMOD costs you the USB serial console, which is
 how programs get loaded. **Only the four free pins get used.**
 
+### Not a trap — the SPI flash pins are free after configuration
+
+Pins 14–17 go to the 8 MB configuration flash and are not on any header,
+but the iCE40 releases them to user logic once `CDONE` goes high. That
+makes the flash usable as mass storage at runtime at no cost to the PMOD
+budget — see [04-system.md §4.8](04-system.md#48-spi-flash--fe88).
+
+The design must not drive them during configuration; `nextpnr` and
+`icepack` handle that, since user logic only comes alive after `CDONE`.
+
 ### Trap 2 — PMOD4 is the four tactile switches
 
 `P4_1…P4_4` are pins 21, 20, 19, 18, which are `SW[3]…SW[0]`. Fine as
@@ -91,9 +101,15 @@ set_io ps2_dat    25     # P3_4
 set_io audio_l     3     # P1_3
 set_io audio_r    48     # P1_4
 
-# iCELink USB serial console
+# iCELink USB serial console — also carries the hardware loader
 set_io uart_rx     4
 set_io uart_tx     6
+
+# SPI configuration flash, reused as storage after CDONE
+set_io flash_cs   16
+set_io flash_sck  15
+set_io flash_mosi 17
+set_io flash_miso 14
 
 # buttons and LED
 set_io sw[0]      18

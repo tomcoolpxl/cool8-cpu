@@ -51,7 +51,7 @@ model after RTL exists is expensive; changing it here is free.
 - [ ] Directed test per opcode, generated from the opcode table
 - [ ] Randomised co-simulation against the M1 emulator, comparing full
       architectural state after every instruction
-- [ ] Interrupt and reset behaviour
+- [ ] Interrupt, reset and bus-grant behaviour
 - [ ] Synthesis check: no FPGA primitives, no inferred RAM, no latches
 
 **Gate:** `yosys` reports the core's LUT and FF count. If it is wildly
@@ -63,9 +63,19 @@ outside the ~1000 LUT estimate, find out why before continuing.
 - [ ] SPRAM controller: byte addressing over 16-bit SPRAM, `mem_ready`
       handling
 - [ ] Boot ROM in EBR with the overlay logic
-- [ ] Core + RAM + LED, running a program that blinks the RGB LED
+- [ ] UART transmit and receive on the iCELink serial pins
+- [ ] **Hardware loader** — bus master, frame sniffer, `WRITE`/`READ`/
+      `GO`/`HALT`/`RUN`, per [07-loader.md](07-loader.md)
+- [ ] `tools/cool8load.py` host side
+- [ ] Core + RAM + LED, running a loaded program that blinks the RGB LED
 
 The least glamorous milestone and the one that catches the most bugs.
+
+**Do the loader before anything else on the FPGA.** Until it works,
+every software change costs a full bitstream rebuild; after it works,
+loading a program is one second and no rebuild, and you get 64 KB memory
+read-back as a debugging tool. Everything from here to M7 goes faster
+because of it. See [D15](01-decisions.md#d15--the-loader-is-hardware-not-a-rom-monitor).
 
 ## M5 — Video
 
@@ -81,9 +91,9 @@ computer.**
 ## M6 — Keyboard and monitor program
 
 - [ ] PS/2 receiver, FIFO, level shifter built
-- [ ] UART on the iCELink serial port
-- [ ] Monitor in ROM: memory examine/modify, disassemble, go, load over
-      serial
+- [ ] SPI flash reader, read-only in hardware (`$FE88`)
+- [ ] Monitor in ROM: memory examine/modify, disassemble, go, load a
+      program from flash
 - [ ] Scancode → ASCII translation in software
 
 **Gate:** type at the machine and it answers.
@@ -101,21 +111,29 @@ At this point the machine is finished as originally scoped.
 
 The deadline milestone. Shuttle windows do not move.
 
-- [ ] `rtl/pads`: the three-phase bus multiplexer
+- [ ] `rtl/pads`: the three-phase bus multiplexer and the strobe
+      pass-through
 - [ ] Verilog model of a 74HC573 pair and an async SRAM
+- [ ] Bus-grant load path simulated end-to-end: external agent writes
+      SRAM through the chip's pins, releases, CPU runs it
 - [ ] Full instruction test suite re-run through the multiplexed bus
 - [ ] OpenLane synthesis, real cell count, tile count decided
 - [ ] Timing closure at the target frequency
 - [ ] Submit
 
 **Risk:** the area estimate in
-[03-microarchitecture.md §5.6](03-microarchitecture.md#56-area-estimate)
+[03-microarchitecture.md §5.7](03-microarchitecture.md#57-area-estimate)
 is unverified. Run OpenLane on the core as soon as M3 passes — do not
 wait for M8. If the core is too large, the cuts come out of the
 addressing modes and page 2, not the orthogonal ALU.
 
-**Also required:** a physical test board. Two latches, an SRAM, a clock
-source and a way to load the SRAM. Design it while waiting for silicon.
+**Also required:** a physical test board — TT chip, two 74HC573 latches,
+one SRAM, one RP2040 wired to the chip's pins. The strobe pass-through
+means no bus buffers and no arbitration logic are needed. Design it
+while waiting for silicon.
+
+`cool8load.py` should drive it with the same commands as the FPGA
+loader, over a different transport. Keep that layer separable.
 
 ---
 
@@ -123,7 +141,9 @@ source and a way to load the SRAM. Design it while waiting for silicon.
 
 - Sprites and tile layers — the register map and the two spare SPRAM
   blocks leave room, but they are not in scope until M7 is done
-- SPI flash storage and a filesystem
+- A filesystem on the SPI flash, and writing to it from the machine
+  (see [D16](01-decisions.md#d16--flash-access-is-read-only-in-hardware)
+  for the address-floor guard that would make it safe)
 - A C compiler backend (LLVM or `vbcc`). The ISA was designed to make
   this possible; actually doing it is a separate project
 - A second silicon target with more area

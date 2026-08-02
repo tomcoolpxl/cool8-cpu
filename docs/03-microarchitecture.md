@@ -55,6 +55,10 @@ module cool8_core (
     input  wire        irq,
     input  wire        nmi,
 
+    // Bus arbitration — an external agent takes the memory bus
+    input  wire        busrq,
+    output wire        busak,
+
     // Status / debug
     output wire        o_fetch,      // this access is an opcode fetch
     output wire        o_halted,
@@ -81,6 +85,32 @@ One protocol covers all three cases that matter:
 | ASIC, 3-phase multiplexed bus | `mem_ready` low for two cycles, high on the third |
 
 The core does not know or care which. That is the point.
+### 2.2 Bus request and grant
+
+`busrq` lets something other than the CPU own memory. It is the only
+way a COOL8 system loads software, on either target, and so it is a
+**core** feature rather than SoC glue — see
+[D17](01-decisions.md#d17--bus-request-belongs-in-the-core).
+
+```
+1.  External agent asserts busrq.
+2.  The core finishes the instruction in flight. No instruction is
+    restartable-in-the-middle, so there is never partial state to save.
+3.  The core stops fetching, deasserts mem_read and mem_write
+    (tri-states AD[7:0] on the ASIC), and asserts busak.
+4.  The agent owns memory for as long as it holds busrq.
+5.  busrq deasserts; the core deasserts busak and resumes at the next
+    instruction, with every register exactly as it was.
+```
+
+A bus grant is **not** a reset and **not** an interrupt. Nothing is
+pushed, no vector is taken, `PC` does not move. Architectural state is
+untouched — which is what makes it usable as a debugger: halt, read all
+of memory, resume, and the program cannot tell.
+
+`busrq` is sampled at the same point as interrupts (in `FETCH`), and
+takes priority over both. Worst-case grant latency is the longest
+instruction, roughly 7 cycles on the FPGA and ~21 on the ASIC.
 
 ---
 
@@ -193,10 +223,12 @@ RET                 FETCH → MEM → MEM → ADDR
 page 2              FETCH → FETCH2(→IR2) → …as above…
 ```
 
-Interrupts are sampled in `FETCH` only. Because no instruction is
-restartable-in-the-middle — there are no block operations, by design —
-interrupt latency is bounded by the longest instruction and no
-mid-instruction state ever needs saving.
+Interrupts and `busrq` are sampled in `FETCH` only. Because no
+instruction is restartable-in-the-middle — there are no block
+operations, by design — latency is bounded by the longest instruction
+and no mid-instruction state ever needs saving.
+
+Priority at the `FETCH` sample point: `busrq` > `nmi` > `irq`.
 
 ---
 
@@ -223,6 +255,7 @@ phases, with two external transparent latches reconstructing the full
 
 ```
 uio[7:0]     AD[7:0]     bidir   A[7:0] │ A[15:8] │ D[7:0]
+                                 tri-stated while BUSAK is high
 uo_out[0]    ALE_L       out     address-low latch strobe
 uo_out[1]    ALE_H       out     address-high latch strobe
 uo_out[2]    nRD         out     read strobe, active low
@@ -230,14 +263,49 @@ uo_out[3]    nWR         out     write strobe, active low
 uo_out[4]    SYNC        out     high when this access is an opcode fetch
 uo_out[5]    HALTED      out
 uo_out[6]    IACK        out     interrupt acknowledge
-uo_out[7]    —           out     spare / debug
+uo_out[7]    BUSAK       out     bus granted, CPU is off the bus
 ui_in[0]     nIRQ        in
 ui_in[1]     nNMI        in
 ui_in[2]     READY       in      hold low to insert wait states
-ui_in[3:7]   —           in      spare
+ui_in[3]     nBUSRQ      in      external agent requests the bus
+ui_in[4]     ext_ALE_L   in  ┐
+ui_in[5]     ext_ALE_H   in  ├   strobe pass-through, see below
+ui_in[6]     ext_nRD     in  │
+ui_in[7]     ext_nWR     in  ┘
 ```
 
-### 5.3 Bus cycle
+Every one of the 24 pins is now spent.
+
+### 5.3 Strobe pass-through during bus grant
+
+There is a subtlety that only shows up once you try to build the test
+board. During a bus grant the CPU tri-states `AD[7:0]`, so the external
+agent can drive the address and data lines — but `ALE_L`, `ALE_H`,
+`nRD` and `nWR` are CPU *outputs*. The agent has no way to strobe the
+address latches or the SRAM, so it cannot actually do anything with the
+bus it was just granted.
+
+The fix costs four multiplexers and the four remaining input pins:
+
+```
+while BUSAK is low   uo_out[3:0] ← the core's own strobes
+while BUSAK is high  uo_out[3:0] ← ui_in[7:4]
+```
+
+The external agent drives `AD[7:0]` and its own strobes into
+`ui_in[7:4]`, and the chip passes them straight through to the latches
+and the SRAM. The whole bus is now controllable from outside with **no
+extra buffers, no tri-state-able latches and no arbitration logic** on
+the board.
+
+The test board becomes: TT chip, two 74HC573s, one SRAM, one RP2040
+wired to the chip's pins. That's it.
+
+**If pins are ever needed for something else**, `SYNC`, `HALTED` and
+`IACK` are the droppable ones — they are debug conveniences, not
+functional requirements. The pass-through is functional.
+
+### 5.4 Bus cycle
 
 ```
               T1          T2          T3
@@ -260,7 +328,7 @@ one on the FPGA. An `ADD R0,R1` is 4 clocks instead of 2; a
 in the same performance class as a 1 MHz 6502 — entirely appropriate,
 and not the limiting factor when you are talking to a 55 ns SRAM.
 
-### 5.4 External glue
+### 5.5 External glue
 
 | Part | Purpose |
 |---|---|
@@ -272,7 +340,7 @@ That is a complete, working single-board computer around a
 TinyTapeout die. It is also exactly how you would have built one in
 1982, which is the aesthetic.
 
-### 5.5 Optional: two-phase page mode
+### 5.6 Optional: two-phase page mode
 
 `A[15:8]` only needs re-emitting when it actually changes. A comparator
 plus a "same page" fast path would cut most sequential fetches from
@@ -281,7 +349,7 @@ three cycles to two. Costs 8 flip-flops and an 8-bit comparator.
 **Not in v1.** Get it correct first. Noted here so the pin assignment
 does not preclude it — `ALE_H` simply stops toggling on the fast path.
 
-### 5.6 Area estimate
+### 5.7 Area estimate
 
 Rough, pending synthesis:
 

@@ -33,6 +33,7 @@ being written before any Verilog is committed.
 | [docs/04-system.md](docs/04-system.md) | Memory map, video, audio, keyboard, boot |
 | [docs/05-board.md](docs/05-board.md) | iCESugar v1.5 pinout, PMODs, external circuits, BOM |
 | [docs/06-roadmap.md](docs/06-roadmap.md) | Milestones |
+| [docs/07-loader.md](docs/07-loader.md) | Loader wire protocol |
 | [tools/opcodes.py](tools/opcodes.py) | Machine-readable opcode table + coverage check |
 
 ## The shape of it in one screen
@@ -76,6 +77,8 @@ loop:   LD   R1,[X]        ; 1
 - **Keyboard:** PS/2, level-shifted to 3.3 V
 - **Audio:** 4-channel SN76489-style tone/noise generator, 1-bit
   sigma-delta out through an RC filter
+- **Loading:** hardware loader over the board's USB serial — `cat` a
+  binary at the machine, no bitstream rebuild. 8 MB SPI flash as storage.
 
 ## ASIC target
 
