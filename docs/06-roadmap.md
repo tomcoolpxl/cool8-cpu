@@ -11,21 +11,48 @@ a real deadline attached to it.
 - [x] Decide the register model, encoding style, I/O model, audio style
 - [x] Complete opcode map
 - [x] Verify the board pin budget actually closes
-- [ ] Review pass over [02-isa.md](02-isa.md) looking for encodings that
+- [x] Review pass over [02-isa.md](02-isa.md) looking for encodings that
       turn out to be unreachable or ambiguous
-- [ ] Repository skeleton: `rtl/core`, `rtl/soc`, `rtl/pads`, `sim`,
+- [x] Repository skeleton: `rtl/core`, `rtl/soc`, `rtl/pads`, `sim`,
       `tools`, `sw`, `board`
 
-## M1 — Reference emulator
+The review pass found four genuine ambiguities, all now closed in the
+spec: whether `MOV` sets flags, what reserved page-2 opcodes do, the
+reset value of `SP`, and the flag behaviour of the logical, 16-bit and
+`POP` instructions. Section 1.2 of the ISA is now a normative flag table
+and wins over the prose anywhere they disagree.
+
+## M1 — Reference emulator ✅
 
 The executable specification, written before any RTL.
+[`tools/cool8emu.py`](../tools/cool8emu.py).
 
-- [ ] Instruction decoder and execution for the full primary page
-- [ ] Page 2
-- [ ] Flags, interrupts, reset
-- [ ] Trace output: PC, opcode, disassembly, register and flag state
-      after each instruction
-- [ ] Loads a flat binary at a given address and runs it
+- [x] Instruction decoder and execution for the full primary page
+- [x] Page 2, including the reserved-opcode trap
+- [x] Flags, interrupts, reset, bus-grant-free semantics
+- [x] Disassembler driven by the shared opcode table
+- [x] Trace output: PC, raw bytes, disassembly, registers, flags, cycles
+- [x] Loads a flat binary at a given address and runs it
+- [x] Self-test suite, mutation-tested
+
+```bash
+python tools/cool8emu.py --selftest
+python tools/cool8emu.py sw/hello.bin --at 0x0200 --trace
+```
+
+**Semantics are decoded from bit fields independently of
+`tools/opcodes.py`**, which supplies only length and disassembly. The
+two derivations are cross-checked against each other, so a disagreement
+is a real signal rather than a shared mistake.
+
+**The suite is mutation-tested.** Seventeen deliberate bugs were
+injected — wrong `V` formula, carry taken from the wrong end of a byte,
+`SAR` dropping its sign bit, big-endian stack pushes, unsigned `[X+d8]`,
+reserved opcodes silently becoming `NOP` — and the suite must fail on
+every one. It initially caught 15 of 17; the two escapes (`SAR`
+sign-extension untested, and shift cases where bit 0 and bit 7 happened
+to agree) were real coverage gaps and are now closed. Re-run that
+exercise whenever tests are added.
 
 **Language: Python.** It imports `tools/opcodes.py` directly, so there
 is exactly one copy of the opcode table in the project, and its traces

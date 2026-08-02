@@ -15,12 +15,18 @@ being written before any Verilog is committed.
 
 | Area | State |
 |---|---|
-| ISA | v0.1 drafted, opcode map complete and machine-checked |
-| Microarchitecture | Bus and FSM sketched |
-| System (video/audio/keyboard) | Outlined |
-| Board bring-up | Pin budget verified against board pinout |
+| ISA | v0.1 complete. 256/256 primary opcodes, normative flag table |
+| Reference emulator | **Working.** Full ISA, self-tested, mutation-tested |
+| Microarchitecture | Bus, FSM and ASIC pin profile specified |
+| System (video/audio/keyboard) | Specified |
+| Board bring-up | Pin budget verified against the board's own pinout |
+| Assembler | Next (M2) |
 | RTL | Not started |
-| Toolchain (assembler, emulator) | Not started |
+
+```bash
+python tools/cool8emu.py --selftest          # 0 failures
+python tools/cool8emu.py sw/hello.bin --at 0x0200 --trace
+```
 
 ## Documents
 
@@ -34,7 +40,8 @@ being written before any Verilog is committed.
 | [docs/05-board.md](docs/05-board.md) | iCESugar v1.5 pinout, PMODs, external circuits, BOM |
 | [docs/06-roadmap.md](docs/06-roadmap.md) | Milestones |
 | [docs/07-loader.md](docs/07-loader.md) | Loader wire protocol |
-| [tools/opcodes.py](tools/opcodes.py) | Machine-readable opcode table + coverage check |
+| [tools/opcodes.py](tools/opcodes.py) | Machine-readable opcode table, disassembler, coverage check |
+| [tools/cool8emu.py](tools/cool8emu.py) | Reference emulator — the executable specification |
 
 ## The shape of it in one screen
 

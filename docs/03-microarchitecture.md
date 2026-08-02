@@ -263,8 +263,15 @@ TinyTapeout gives every project exactly:
 
 - `ui_in[7:0]` — 8 dedicated inputs
 - `uo_out[7:0]` — 8 dedicated outputs
-- `uio[7:0]` — 8 bidirectional
-- `clk`, `rst_n`, `ena`
+- `uio_in[7:0]` / `uio_out[7:0]` / `uio_oe[7:0]` — 8 bidirectional,
+  presented to the design as three separate buses with a **per-bit**
+  output enable
+- `clk`, `rst_n` (active low), `ena`
+
+Note the bidirectional convention: the wrapper does not hand you a
+single inout bus. `AD[7:0]` below is `uio_out` driven when
+`uio_oe = $FF` and sampled from `uio_in` when `uio_oe = $00`. Tri-stating
+during a bus grant means clearing `uio_oe`.
 
 That is 24 usable signals. A naive 8-bit CPU bus needs 16 address +
 8 data + read + write + at least one strobe = 27 minimum, with nothing
@@ -409,10 +416,12 @@ Rough, pending synthesis:
 | Bus multiplexer / pad wrapper | ~150 gates |
 | **Total** | **~2750 gates ≈ 750 cells** |
 
-A TinyTapeout 1×1 tile is on the order of 1000 standard cells, and
-multi-tile projects are supported. The core should land in the 2–4 tile
-range. **This must be confirmed with real synthesis before committing to
-a shuttle**, and it is the single biggest unknown in the schedule.
+A TinyTapeout 1×1 tile gives 161 × 111.52 µm of usable area — about
+17,955 µm², which is roughly **1000 digital logic gates** depending on
+cell sizes. Extra tiles can be bought. At ~2750 gates the core should
+land around **3 tiles**. **This must be confirmed with real synthesis
+before committing to a shuttle**, and it is the single biggest unknown
+in the schedule.
 
 If it comes in larger, the answer is to buy tiles, not to cut the ISA —
 see [D19](01-decisions.md#d19--area-overruns-are-paid-for-in-tiles-not-isa-cuts).

@@ -13,7 +13,7 @@ document is normative and the table is the bug.
 ```
 $ python tools/opcodes.py --check
 primary page : 256/256 encodings assigned
-page 2       : 238/256 assigned, 18 reserved
+page 2       : 234/256 assigned, 22 reserved
 doc examples : 20/20 match
 ```
 
@@ -57,14 +57,57 @@ occurred — the unsigned result did not go negative. `SBC` computes
 This is the 6502/ARM convention and it is normative; see
 [D9](01-decisions.md#d9--carry-means-no-borrow-on-subtract).
 
-### 1.2 Endianness
+### 1.2 Flag effects
+
+Normative. `✓` = set from the result, `–` = unchanged, `0`/`1` = forced.
+Where this table and the prose disagree, this table wins.
+
+| Instruction | C | Z | N | V |
+|---|---|---|---|---|
+| `MOV Rd,Rs`, `MOV Rd,#imm8` | – | – | – | – |
+| `ADD`, `ADC` | ✓ carry out of bit 7 | ✓ | ✓ | ✓ signed overflow |
+| `SUB`, `SBC`, `CMP` | ✓ **no borrow** | ✓ | ✓ | ✓ |
+| `AND`, `OR`, `XOR` | – | ✓ | ✓ | – |
+| `NOT`, `SWAP` | – | ✓ | ✓ | – |
+| `NEG` (a subtraction from 0) | ✓ | ✓ | ✓ | ✓ |
+| `SHR`, `SAR`, `ROR` | ✓ bit shifted out | ✓ | ✓ | – |
+| `BTST`, `BSET`, `BCLR` | – | ✓ | ✓ | – |
+| `MUL` | 0 | ✓ from the 16-bit product | ✓ from bit 15 | 0 |
+| `LD` (any addressing mode) | – | ✓ | ✓ | – |
+| `ST` (any addressing mode) | – | – | – | – |
+| `PUSH Rd`, `PUSHW`, `POPW` | – | – | – | – |
+| `POP Rd` | – | ✓ | ✓ | – |
+| `INCW`, `DECW` | – | ✓ from the 16-bit result | – | – |
+| `ADDW`, `SUBW`, `LEA`, `MOVW` | – | – | – | – |
+| `JMP`, `CALL`, `RET`, `Bcc`, `NOP`, `HALT` | – | – | – | – |
+| `CLC`, `SEC` | 0 / 1 | – | – | – |
+| `CLV` | – | – | – | 0 |
+| `EI`, `DI` | – | – | – | – | (`I` only) |
+| `POP F`, `RETI` | all four restored from the popped byte |
+
+Three rules generate most of that, and they are the ones to remember:
+
+1. **`MOV` never touches flags; loads do.** So `MOV Rd,Rd` is a genuine
+   one-byte `NOP`, and registers can be shuffled between a `CMP` and its
+   branch without destroying the comparison. Loads set `Z`/`N` because
+   `LD` then `BEQ` is the single most common two-instruction sequence in
+   8-bit code and it should not need a `TST` between them.
+2. **Logical operations leave `C` and `V` alone.** A carry survives a
+   masking step, which is what multi-precision arithmetic needs.
+3. **Pointer arithmetic sets no flags at all.** `INCW`/`DECW` are the
+   sole exception, and only for `Z`, because a 16-bit loop counter is
+   worth the two gates.
+
+`I` is changed only by `EI`, `DI`, `POP F`, `RETI` and interrupt entry.
+
+### 1.3 Endianness
 
 Little-endian. A 16-bit value at address `n` has its low byte at `n` and
 its high byte at `n+1`. This applies to absolute addresses in
 instruction streams, pushed return addresses, `LDW`/`STW`, and the
 reset/interrupt vectors.
 
-### 1.3 Stack
+### 1.4 Stack
 
 Full descending. `SP` points at the most recently pushed byte.
 
@@ -269,14 +312,14 @@ operations for nothing:
 
 | Encoding | Assembler alias | Effect |
 |---|---|---|
-| `ADD Rd,Rd` | `SHL Rd` | Shift left. `C ← old bit 7`. |
-| `ADC Rd,Rd` | `ROL Rd` | Rotate left through carry. |
+| `ADD Rd,Rd` | `SHL Rd` | Shift left. `C ← old bit 7`. Sets `V`, being an add. |
+| `ADC Rd,Rd` | `ROL Rd` | Rotate left through carry. Sets `V`. |
 | `SUB Rd,Rd` | `CLR Rd` | `Rd ← 0`, `Z=1`, `C=1`, `N=0`, `V=0`. |
 | `SBC Rd,Rd` | `SEXC Rd` | `Rd ← $00` if `C=1`, `$FF` if `C=0`. |
-| `OR Rd,Rd` | `TST Rd` | Set `N` and `Z` from `Rd`, no change. |
+| `OR Rd,Rd` | `TST Rd` | Set `N` and `Z` from `Rd`. `C` and `V` untouched. |
 | `AND Rd,Rd` | `TST Rd` | Same. |
-| `MOV Rd,Rd` | — | No effect. Legal, one byte. |
-| `CMP Rd,Rd` | — | Always `Z=1`, `C=1`. |
+| `MOV Rd,Rd` | — | Genuinely nothing, including no flag change. One byte. |
+| `CMP Rd,Rd` | — | Always `Z=1`, `C=1`, `N=0`, `V=0`. |
 
 Left shifts and rotates therefore cost one byte and zero opcode space.
 Only the right-shifting operations need page 2.
@@ -287,6 +330,17 @@ Only the right-shifting operations need page 2.
 
 Every page-2 instruction is prefixed with `$2F`. Byte counts below
 **include** the `$2F`.
+
+**Reserved second bytes trap.** The primary page is fully assigned, so
+there are no undefined opcodes there — but page 2 has 22 reserved
+encodings, and executing one takes the `BRK` vector exactly as a `BRK`
+instruction would, with `PC` pointing after the two-byte sequence.
+
+A runaway program counter therefore stops at the first reserved encoding
+it hits and lands in the monitor, instead of silently ploughing through
+memory executing garbage. On a machine with no memory protection and no
+operating system, that is worth the one comparator it costs — and it
+costs only one because only page 2 needs checking.
 
 ### 5.1 Extra ALU and unary operations
 
@@ -300,11 +354,19 @@ Every page-2 instruction is prefixed with `$2F`. Byte counts below
 | `$20–$23` | `SHR Rd` | 2 | Logical right, `0 → b7`, `b0 → C` |
 | `$24–$27` | `SAR Rd` | 2 | Arithmetic right, `b7` preserved |
 | `$28–$2B` | `ROR Rd` | 2 | Rotate right through carry |
-| `$2C–$2F` | `ROL Rd` | 2 | Alias of `ADC Rd,Rd`, for assembler symmetry |
+| `$2C–$2F` | *reserved* | | |
 | `$30–$33` | `BSET Rd,#mask8` | 3 | `Rd ← Rd \| mask` |
 | `$34–$37` | `BCLR Rd,#mask8` | 3 | `Rd ← Rd & ~mask` |
-| `$38–$3B` | `BTST Rd,#mask8` | 3 | `Z` from `Rd & mask`, no writeback |
+| `$38–$3B` | `BTST Rd,#mask8` | 3 | Flags from `Rd & mask`, no writeback |
 | `$3C–$3F` | *reserved* | | |
+
+There is deliberately **no page-2 `ROL` or `SHL`**. Both already exist as
+one-byte primary encodings (`ADC Rd,Rd` and `ADD Rd,Rd`, §4.9.1), so a
+two-byte duplicate would be strictly worse and the assembler emits the
+short form for the `ROL`/`SHL` mnemonics. The consequence is that left
+shifts set `V` (they are genuinely adds) while the page-2 right shifts
+leave it alone. That asymmetry is real; it is the price of the left
+shifts being free.
 
 ### 5.2 Pointer half-register access
 
@@ -446,12 +508,19 @@ Each is a 16-bit little-endian address.
 ### 7.2 Reset
 
 ```
-SP ← $0000        (first push writes to $FFFF)
+SP ← $FFF8        (first push writes to $FFF7)
 F  ← $00          (I = 0, interrupts disabled)
 PC ← mem16[$FFF8]
 ```
 
 X, Y and R0–R3 are undefined after reset.
+
+`SP` resets to `$FFF8` — immediately below the vector table — so that
+the first `PUSH` or `CALL` lands at `$FFF7` and does no harm even if
+software never sets `SP`. Resetting it to `$0000` would wrap the first
+push onto `$FFFF`, quietly corrupting the high byte of the `BRK` vector.
+Software should still set `SP` explicitly; this just makes forgetting
+survivable.
 
 ### 7.3 Interrupt sequence
 
