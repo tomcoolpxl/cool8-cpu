@@ -636,11 +636,75 @@ because of it. See [D15](01-decisions.md#d15--the-loader-is-hardware-not-a-rom-m
 
 ## M5 — Video
 
-- [ ] VGA timing generator, 640×480@60
+**In progress, and being built without a monitor.** The VGA PMOD is not
+bought yet, which changes how this is developed and not what is built —
+see §Working without the display below.
+
+- [x] VGA timing generator, 640×480@60 —
+      [`rtl/soc/cool8_vga.v`](../rtl/soc/cool8_vga.v)
+- [ ] Dual-clock scanline buffer, the join D26 designed for
 - [ ] Memory arbiter, video priority
 - [ ] Text mode 0 (80×30), font in EBR
 - [ ] Palette registers
 - [ ] Boot ROM prints a message
+
+```bash
+python sim/test_video.py             # every pixel of two frames, and a picture
+```
+
+**51 LUT4 and 46 flip-flops.** The timing generator is small enough that
+there is no reason to sample
+it, so [`cool8_vga_tb`](../sim/tb/cool8_vga_tb.v) runs a golden raster
+model beside it and compares **every output on every one of 840,000
+pixel clocks** — two whole frames, 6.7 million checks, and the tallies
+§5.1 states on top. Everything is registered off the same counters, so
+`x`, `y`, `visible` and the two syncs always describe the same pixel.
+
+`o_prefetch` is the hook the rest hangs off: one pulse per line at the
+start of the front porch, naming the line about to be displayed, which
+gives a scanline buffer the whole horizontal blank — 160 pixel clocks,
+6.4 µs — to fill itself. That is the shape
+[D26](01-decisions.md#d26--the-system-clock-is-12-mhz-the-pixel-clock-is-decoupled)
+chose when it decoupled the two clocks.
+
+### Working without the display
+
+None of the missing hardware blocks the work, which is worth stating
+because it looks like it should.
+
+**The keyboard was never the problem.** Keystrokes typed at a terminal
+go down the USB serial that already exists, through the sniffer, into
+`UART_DATA`. PS/2 is a *second* input path, added when the level shifter
+is built; the monitor reads `UART_DATA` today and `KBD_DATA` later.
+
+**The video engine is verified by looking at it.** `sim/test_video.py`
+renders a frame to `build/frame.png` — a real 640×480 image with a
+one-pixel border and a 45° diagonal in it, so a raster that is off by one
+anywhere shears or shifts visibly rather than merely failing a count.
+That image stays useful after the PMOD arrives, as the thing the
+hardware has to match.
+
+**The screen already exists as memory.** Mode 0 is 4800 bytes and a bus
+grant is architecturally invisible, so
+[`tools/cool8screen.py`](../tools/cool8screen.py) reads the framebuffer
+out from under a running program and draws it in a terminal, at about
+two frames a second over 115200. It is the same memory the video engine
+will read, decoded the same way — which makes it the thing that has to
+agree with the hardware, written first. Verified against the board:
+a screen written at `$8000`, read back, and `$80A4` holding
+`43 0F 4F 0F 4F 0F 4C 0F 38 0F` — "COOL8" in white on black.
+
+It paints **without halting**, deliberately. `Loader.write` halts first
+because loading a program over a running one has to; painting a
+framebuffer does not, and freezing the CPU to look at its output would
+defeat the only reason the tool exists. Getting that wrong is how the
+`RESET`-does-not-release-`HALT` behaviour in
+[07-loader.md §2](07-loader.md#06-reset) got found.
+
+**And a monitor is cheap when it is wanted.** The PMOD-VGA is three
+resistor ladders and a connector; a breadboard, nine resistors and a cut
+VGA cable is a couple of euro, and one resistor per channel gives eight
+colours and proves the timing.
 
 **A real monitor showing real text is the moment this becomes a
 computer.**

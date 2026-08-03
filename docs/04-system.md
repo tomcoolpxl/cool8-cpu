@@ -423,6 +423,16 @@ frame rate   = 25.125e6 / (800 × 525) = 59.82 Hz
 
 0.2 % below nominal. Every VGA monitor accepts this.
 
+[`rtl/soc/cool8_vga.v`](../rtl/soc/cool8_vga.v) generates it, in **51
+LUT4 and 46 flip-flops**, and every number in that table is checked
+against a golden model on every pixel clock of two frames by
+`sim/test_video.py`. It runs in the *pixel* domain: the system clock is
+12 MHz and these two are decoupled through a scanline buffer, which is
+what [D26](01-decisions.md#d26--the-system-clock-is-12-mhz-the-pixel-clock-is-decoupled)
+settled. `o_prefetch` fires once a line at the start of the front porch,
+naming the line about to be displayed, so the buffer has the whole
+horizontal blank — 160 pixel clocks, 6.4 µs — to fill.
+
 ### 5.2 Modes
 
 All modes use the 16-entry, 12-bit palette. Logical pixels are doubled

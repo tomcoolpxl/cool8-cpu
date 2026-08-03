@@ -148,6 +148,18 @@ owns memory.
 Clears `BOOTRAM` and pulses CPU reset, so the machine boots normally
 from the boot ROM. The way back to a known-good state.
 
+**It does not release a standing `HALT`.** `busrq` is still asserted, so
+the CPU comes out of reset, grants the bus at once and never fetches its
+vector — the machine looks reset and is not running. Send `RUN`. `GO` is
+the exception and clears the halt itself, because starting a program
+while refusing it the bus would be useless.
+
+This is easy to hit without noticing, because `HALT` is sent for you:
+anything that loads memory halts first (§2), so a `RESET` straight after
+a load leaves the machine frozen. The symptom is a boot that appears not
+to have happened — RAM still holding what was written to it, when the
+boot ROM should have cleared it.
+
 ### `$07 PING`
 
 Returns one byte: the loader version, currently `$01`. Confirms the

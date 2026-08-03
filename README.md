@@ -30,7 +30,8 @@ memory as the model — including through the multiplexed ASIC bus.
 | System (video/audio/keyboard) | Specified |
 | Board bring-up | **Done.** Boots, answers, runs loaded programs, echoes serial |
 | Open design questions | **None.** All 27 decisions logged; the last two closed at M4 |
-| Next | Video — a real monitor showing real text (M5) |
+| Video | **Started.** Raster verified pixel by pixel; screen visible on the PC over serial |
+| Next | Scanline buffer, text mode and the font (M5) |
 
 ```bash
 python tools/opcodes.py --check              # opcode map coverage
@@ -48,6 +49,7 @@ python sim/test_spram.py                     # the SPRAM controller
 python sim/test_boot.py                      # boot ROM and the overlay
 python sim/test_soc.py                       # the I/O page, and a cold boot
 python sim/test_load.py                      # the host loader
+python sim/test_video.py                     # the raster -> build/frame.png
 
 python tools/mkbit.py                        # build/cool8.bin
 ```
