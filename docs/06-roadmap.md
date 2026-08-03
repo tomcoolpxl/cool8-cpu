@@ -183,9 +183,9 @@ through ChipFoundry and close roughly quarterly rather than once a year,
 so "shuttle windows do not move" is less sharp than it was when this
 document was written.
 
-## M4 — First light on the FPGA
+## M4 — First light on the FPGA ✅
 
-**In progress.** The clock question is settled by measurement — see
+**Done — the machine runs on the board.** The clock question is settled by measurement — see
 [D26](01-decisions.md#d26--the-system-clock-is-12-mhz-the-pixel-clock-is-decoupled).
 The system runs at the board's raw 12 MHz with no PLL in the CPU path;
 the PLL is reserved for the pixel clock at M5, decoupled through a
@@ -473,7 +473,7 @@ is the number M5's video engine has to leave intact.
 `cool8_top` is deliberately thin — a power-on reset, an LED inversion,
 and the machine. Two facts in it are guesses that the hardware will
 settle, both with unmistakable symptoms and both listed in
-[05-board.md §3.1](05-board.md#31-the-two-facts-a-first-bitstream-is-guessing-at):
+[05-board.md §3.1](05-board.md#31-the-two-facts-a-first-bitstream-guessed-at):
 the LED's polarity, and which of pins 4 and 6 the FPGA transmits on.
 `cool8_top_tb` checks everything that is not a guess — that the reset
 counter releases and took the right number of clocks to do it, that each
@@ -529,12 +529,81 @@ is now in [07-loader.md §3](07-loader.md#3-host-side) along with its two
 consequences — chunk a large `READ`, and a running program's serial
 input is lost for the duration of any frame being answered.
 
-Remaining, in the order to do them:
+- [x] **Flashed, and it works.**
 
-1. [ ] Flash it and bring it up on real hardware
-2. [ ] Update the remaining constants D26 invalidates: audio reference
-       and table §4.4, timer rate §4.5. The UART divider (§4.6) and
-       `CPUDIV` (§4.1, §6.1) are done, since the SoC implements them
+Programmed by copying `build/cool8.bin` onto the iCELink drive. The
+first bitstream came up and answered, and everything below was read off
+the real board rather than out of a simulator:
+
+| Asked | Answered |
+|---|---|
+| `--ping` | `loader version 1` |
+| `$FE02` `SYSSTAT` | `04` — the build that was just flashed |
+| `$FE72/73` `UART_DIV` | `67 00` — 103, and 115200 baud works |
+| `$FE01` `CPUDIV` | `FF` — unimplemented, as documented |
+| `$FE03` `LED` | `01` — **the boot ROM ran** |
+| `$0000`, `$EFF0` | all zero — 60 KB cleared |
+| `$FFF8` with `ROMEN=0` | `00 F0 4B F0 …` — the vectors, in RAM |
+| `$F000` with `ROMEN=0` | `77 1C BA F4 …` — live uninitialised SPRAM |
+| `$F000` with `ROMEN=1` | `2F 60 00 02` — `LDW X,#$0200` |
+
+Those last three are the overlay proving itself on silicon: the vectors
+were written *through* the ROM's own read window into the RAM
+underneath, the RAM above `$EFFF` is the garbage the part really does
+come up with, and the ROM is where it should be. Nothing but hardware
+can demonstrate the middle one.
+
+Then loaded programs. `soc_led.bin` written, verified byte for byte,
+`GO`, and `$FE03` reads `06` — a CPU executing code that arrived over a
+wire. Then `soc_echo.bin`, and the machine held a conversation:
+
+```
+sending : Hello from COOL8 on real silicon!
+echoed  : Hello from COOL8 on real silicon!
+```
+
+Every byte of that went in as edges on pin 4, through the sniffer, the
+receive FIFO, the CPU's own `LD` and `ST` through the I/O page, the
+shared transmitter, and back out on pin 6. Two more things fell out of
+the same session, both of which had only ever been true in simulation:
+`$C8 $5A` came back as two bytes and not four — the `S_FWD2` bug
+simulation found at the top of this milestone — and a `PING` sent while
+the echo program was running flat out was answered, which is
+[D27](01-decisions.md#d27--the-loader-outranks-the-cpu-on-the-shared-transmitter)
+holding on real timing.
+
+Finally `RESET`: the machine rebooted from ROM, cleared RAM again — the
+loaded program at `$0400` reads back as zeros — and lit the LED.
+
+**One guess of the two was settled and one was not.** Pins 4 and 6 are
+the right way round, or nothing would have answered. LED *polarity*
+cannot be read back: the register says `01` either way, and only an eye
+on the board can say whether that is blue or yellow. See §3.1 of
+[05-board.md](05-board.md).
+
+- [x] The constants D26 invalidated
+
+Audio (§4.4), the timer (§4.5), the sigma-delta rate, the block diagram
+and the video bandwidth sum (§5.3) — the last two were not on the list
+and were wrong in the same way, which is reason enough. The UART divider
+(§4.6) and `CPUDIV` (§4.1, §6.1) were done when the SoC implemented them.
+
+Two of them are worth reading, because they went opposite ways for a
+stated reason. **Audio keeps its reference and changes its divider**:
+12 MHz ÷ 32 = 375 kHz rather than ÷64, because §4.4 is a table of notes
+that have to stay in tune and 375 kHz lands them within 0.05 % while
+keeping the bass floor at 45.8 Hz. **The timer keeps its divider and
+lets its rate follow**: nothing has to land on a frequency, so ÷256 and
+46.875 kHz, which halves the tick and doubles the reach of a 16-bit
+reload to 1.40 s.
+
+And §5.3's bandwidth arithmetic was doubly wrong — it divided by
+25.125 MHz, and it counted per pixel rather than per scanline, which is
+the unit a scanline buffer works in. Done properly it is 10.5 % in the
+worst mode and 1.3 % in text, against the 12.5 % it used to claim: the
+conclusion was right by accident and is now right on purpose.
+
+**M4 is done.**
 
 **The board is known good and connected:** iCELink DAPLink enumerates as
 `F:` for drag-and-drop programming and COM6 for the serial console at

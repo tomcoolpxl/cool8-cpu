@@ -26,11 +26,11 @@ memory as the model — including through the multiplexed ASIC bus.
 | ASIC pad wrapper | Three-phase bus, verified against latch and SRAM models |
 | **Silicon** | **Hardened.** Fits in two TinyTapeout tiles, clean DRC/LVS |
 | **SoC** | **Simulated.** Memory, boot ROM, UART, loader and I/O page; boots cold to a lit LED |
-| **Bitstream** | **Builds.** 1994 of 5280 logic cells, closes at 12 MHz |
+| **Bitstream** | **Running on the board.** 1994 of 5280 logic cells, closes at 12 MHz |
 | System (video/audio/keyboard) | Specified |
-| Board bring-up | Not yet flashed. Everything but the physical wire is tested |
+| Board bring-up | **Done.** Boots, answers, runs loaded programs, echoes serial |
 | Open design questions | **None.** All 27 decisions logged; the last two closed at M4 |
-| Next | First light on real hardware (M4) |
+| Next | Video — a real monitor showing real text (M5) |
 
 ```bash
 python tools/opcodes.py --check              # opcode map coverage

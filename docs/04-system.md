@@ -8,11 +8,13 @@ ASIC.
 ## 1. Block diagram
 
 ```
-        12 MHz ──▶ PLL ──▶ 25.125 MHz ──▶ everything
-                                │
-   ┌────────────┐   clock       │
-   │ COOL8 core │◀── enable ────┤   (programmable divider, D13)
-   └─────┬──────┘   (÷1…÷32)    │
+        12 MHz ──┬──────────────────────▶ everything below
+                 │
+                 └── PLL ──▶ 25.125 MHz ──▶ VGA pixels only (M5),
+                                             across a scanline buffer
+   ┌────────────┐
+   │ COOL8 core │            D26: no PLL in the CPU path
+   └─────┬──────┘
          │ 16-bit addr, 8-bit data
    ┌─────▼───────────────────────────────────────┐
    │              bus / decoder                   │
@@ -216,27 +218,37 @@ to reproduce.
 | `$FE5E` | `NSE_VOL` | Attenuation, bits 3:0 |
 | `$FE5F` | `AUD_MASTER` | `3:0` master attenuation |
 
-**Frequency.** Reference clock is 25.125 MHz ÷ 64 ≈ 392.6 kHz.
+**Frequency.** Reference clock is 12 MHz ÷ 32 = 375 kHz.
 
 ```
-f_out = 392578 / (2 × divider)
+f_out = 375000 / (2 × divider)
 ```
 
 | Divider | Frequency |
 |---|---|
-| 4095 | 48 Hz |
-| 892 | 220 Hz (A3) |
-| 446 | 440 Hz (A4) |
-| 223 | 880 Hz (A5) |
-| 4 | 49 kHz |
+| 4095 | 45.8 Hz |
+| 852 | 220.1 Hz (A3) |
+| 426 | 440.1 Hz (A4) |
+| 213 | 880.3 Hz (A5) |
+| 4 | 46.9 kHz |
 
-A 12-bit divider at this reference reaches down to 48 Hz — considerably
-better bass than the real SN76489 managed with 10 bits, and the same
-coarsening at high frequencies, which is part of the sound.
+A 12-bit divider at this reference reaches down to 45.8 Hz —
+considerably better bass than the real SN76489 managed with 10 bits, and
+the same coarsening at high frequencies, which is part of the sound.
+
+The divider off the system clock is ÷32 rather than the ÷64 this section
+carried when the system clock was going to be 25.125 MHz
+([D26](01-decisions.md#d26--the-system-clock-is-12-mhz-the-pixel-clock-is-decoupled)).
+**What was worth preserving was the reference, not the ratio**: the
+table above is a set of notes that have to stay reachable and in tune,
+and 375 kHz lands them within 0.05 % while keeping the bass floor where
+it was. Halving the reference instead would have doubled every divider,
+run out of resolution an octave sooner at the top, and moved the floor
+to 22.9 Hz, which is below hearing and buys nothing.
 
 **Output chain.** Four channels, each a signed ±volume square, summed
 into an 8-bit signed sample, then a first-order sigma-delta modulator
-running at the full 25.125 MHz clock drives one FPGA pin. External RC
+running at the full 12 MHz system clock drives one FPGA pin. External RC
 low-pass and coupling capacitor produce line level. See
 [05-board.md](05-board.md).
 
@@ -249,7 +261,14 @@ low-pass and coupling capacitor produce line level. See
 | `$FE62` | `TMR_CTRL` | `0` enable, `1` auto-reload, `4` interrupt enable |
 | `$FE63` | `TMR_STAT` | `0` expired (write 1 to clear) |
 
-Counts down at 25.125 MHz ÷ 256 ≈ 98.1 kHz.
+Counts down at 12 MHz ÷ 256 = 46.875 kHz — a 21.3 µs tick, and up to
+1.40 s from a 16-bit reload.
+
+Here the ÷256 is kept and the rate simply follows the clock, which is
+the opposite of the choice §4.4 makes. Nothing has to land on a specific
+frequency: a timer needs enough resolution and enough range, and halving
+the rate improves the range and leaves the resolution far finer than any
+8-bit machine can act on.
 
 ### 4.6 Serial — `$FE70`
 
@@ -430,18 +449,30 @@ bottom half of each glyph cell.
 The reason there is no banking, no separate video RAM and no display
 list:
 
+Counted per scanline, because that is the unit a scanline buffer works
+in and [D26](01-decisions.md#d26--the-system-clock-is-12-mhz-the-pixel-clock-is-decoupled)
+made the buffer the thing that joins the two clock domains:
+
 ```
 mode 4, the worst case:
-  logical pixel rate  = 25.125 MHz / 2          = 12.56 M px/s
-  4 bpp, 16-bit SPRAM = 4 pixels per access
-  video accesses      = 12.56 / 4               = 3.14 M/s
-  available           =                           25.125 M/s
-  video share         = 3.14 / 25.125           = 12.5 %
+  logical pixels per line = 320 at 4 bpp        = 80 SPRAM words
+  vertical doubling: one fetch feeds two lines  = 40 words per line
+  a line is 31.8 us, and at 12 MHz that is        381 memory cycles
+  video share             = 40 / 381            = 10.5 %
+
+mode 0, text:
+  80 cells of one 16-bit word, per 16 scanlines = 5 words per line
+  video share             = 5 / 381             = 1.3 %
 ```
 
-**The video engine steals one memory cycle in eight.** Text modes are
-the same or better. A round-robin arbiter with video priority is
+**The video engine steals about one memory cycle in ten**, worst case,
+and one in eighty in text. A round-robin arbiter with video priority is
 sufficient; the CPU sees an occasional `mem_ready` low and does not care.
+
+The pixel clock is still 25.125 MHz and unaffected by any of this — it
+has to be, since a monitor is counting. What changed at D26 is that the
+*memory* runs at 12 MHz and the two are decoupled, so the fetch rate is
+set by how much a scanline needs rather than by the pixel rate.
 
 ### 5.4 Not in v1
 

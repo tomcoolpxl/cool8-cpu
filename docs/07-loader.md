@@ -37,7 +37,7 @@ is a frame. Forwarding the second `$C8` as well would be a byte the host
 never sent, and refusing to reconsider it would swallow a frame the host
 is entitled to send; the sniffer must do neither. Simulation found the
 RTL doing the first of those two — see
-[06-roadmap.md](06-roadmap.md#m4--first-light-on-the-fpga).
+[06-roadmap.md](06-roadmap.md#m4--first-light-on-the-fpga-).
 
 Full frame:
 

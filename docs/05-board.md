@@ -135,20 +135,27 @@ assignment above assumes 45 is bit 0. Check against the PMOD-VGA
 schematic, or just display a horizontal ramp and look at the monitor —
 if the ramp is scrambled, reverse the order.
 
-### 3.1 The two facts a first bitstream is guessing at
+### 3.1 The two facts a first bitstream guessed at
 
-Both are cheap to check and both have an unmistakable symptom, which is
-most of why the boot ROM's last act is to light the LED.
+- **Which of pins 4 and 6 the FPGA transmits on — settled, correct.**
+  The board's own file calls 6 `TX` and `board/icesugar.pcf` reads that
+  as the FPGA's transmit. A `PING` on the real board answers, which it
+  could not do if they were swapped.
+- **LED polarity — still a guess.** `cool8_top` drives the pins low to
+  light them, assuming the common-anode wiring these boards normally
+  use. **This is not readable over the wire**: `$FE03` reads back what
+  was written to it whichever way the pins go, so the only instrument
+  that can settle it is an eye on the board.
 
-- **LED polarity.** `cool8_top` drives the pins low to light them,
-  assuming a common-anode LED. If it is the other way round, the board
-  comes up dark and turns *on* when the boot ROM finishes. Flip
-  `LED_ACTIVE_LOW` and rebuild.
-- **Which of pins 4 and 6 the FPGA transmits on.** The board's own file
-  calls 6 `TX`; `board/icesugar.pcf` reads that as the FPGA's transmit,
-  which is the natural reading and the only one that can be checked by
-  trying. If a `PING` is never answered but the LED says the ROM ran,
-  swap them.
+  The test is free, because the boot ROM ends by writing `$01`:
+
+  | What you see after a reset | Verdict |
+  |---|---|
+  | Blue | `LED_ACTIVE_LOW = 1` is right |
+  | Yellow (red + green) | It is backwards — flip it and rebuild |
+
+  Blue against yellow rather than lit against dark, because "dark" is
+  also what a board that never ran looks like.
 
 ### 3.2 No reset button
 
