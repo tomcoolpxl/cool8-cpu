@@ -706,6 +706,21 @@ a box in line-drawing characters, all 256 glyphs, all 16 colours — to
 two clocks running at incommensurate rates so the crossing is actually
 exercised.
 
+**Which is how the fetch engine's one awkward case got found.** Row *R*
+lives in bank *R*&1 and is filled at the boundary of row *R*−1 — and
+nothing fills row 0, because there is no row before it. The stand-in
+engine in the testbench seeded both banks before reset, so the first
+frame was perfect and the *second* had a blank top line: row 29's
+boundary had refilled bank 0 with a row that does not exist. So:
+
+- **Row 0 must be primed during vertical blanking.** There are 45 blank
+  lines, 1.4 ms, and nothing else to do in them.
+- **Rows past the bottom of the screen must not be fetched at all**, or
+  they overwrite the bank the top of the next frame reads from.
+
+Neither is visible in a count of anything. Both are obvious in a picture
+with a box drawn round the top of it, which is why the box is there.
+
 ### Working without the display
 
 None of the missing hardware blocks the work, which is worth stating

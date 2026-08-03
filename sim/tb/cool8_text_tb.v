@@ -251,13 +251,26 @@ module cool8_text_tb;
     // row boundary, point the raster at the bank already holding that
     // row and fill the other one. Filling costs 1.7 us and the rows are
     // 509 us apart, which is the margin the real one will have too.
+    //
+    // **Row 0 has to be primed in the vertical blanking**, because
+    // nothing else fills it — every other row is filled at the boundary
+    // of the row before it and there is no row before row 0. The first
+    // version of this did not, and the top line of the screen came out
+    // blank from the second frame onwards: the banks were seeded before
+    // reset, and row 29's boundary then overwrote bank 0 with the blanks
+    // of a row that does not exist. Off-screen rows are skipped for the
+    // same reason.
     initial begin : fetcher
         wait (rst_n);
         forever begin
             @(posedge pclk);
-            if (o_prefetch && o_prefetch_y[3:0] == 4'd0) begin
+            if (o_vblank_start) begin
+                fill_bank(0);
+            end else if (o_prefetch && o_prefetch_y[3:0] == 4'd0 &&
+                         o_prefetch_y < V_VIS) begin
                 read_bank = o_prefetch_y[4];
-                fill_bank(o_prefetch_y[8:4] + 1);
+                if (o_prefetch_y[8:4] + 1 < ROWS)
+                    fill_bank(o_prefetch_y[8:4] + 1);
             end
         end
     end
