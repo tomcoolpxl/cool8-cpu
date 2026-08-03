@@ -80,9 +80,22 @@ leading `'K'`.
 ### `$01 WRITE`
 
 Requests the bus, writes `len` bytes starting at `addr`, releases the
-bus. The CPU keeps running between frames unless it has been halted
-first — for loading a program you almost always want `HALT`, then one or
-more `WRITE`s, then `GO`.
+bus.
+
+**Send `HALT` first.** The grant is per frame, so between one `WRITE`
+and the next the CPU resumes — into whatever half of the new program has
+landed so far, at whatever PC it was holding. Simulation found this the
+first time `cool8_soc_tb` loaded over a program that was still running,
+and it produced output from code that was never written as a whole. The
+sequence a host sends is `HALT`, then one or more `WRITE`s, then `GO`,
+and `GO` releases the halt itself.
+
+`WRITE` reaches the I/O page as well as memory, because the page is
+decoded on the bus rather than on the CPU's port. Writing `$FE03` lights
+the LED with no CPU and no program at all, which is the first useful
+thing to do to a board that has just come up. Writing `$FE80` is the
+loader writing its own control register mid-frame; that is allowed and
+it is the caller's problem.
 
 `len` may be zero; the frame is then just a bus-grant round trip and a
 useful liveness check.
@@ -102,6 +115,10 @@ The debugger primitive. Reads `len` bytes from `addr` and streams them
 back. Because a bus grant preserves all architectural state, a running
 program cannot detect this — halt, dump all 64 KB, resume, and it never
 knows.
+
+**The address advances between bytes**, so a length-*n* `READ` at an I/O
+address reads *n* consecutive registers rather than the same one *n*
+times. To pop the receive FIFO repeatedly, send repeated length-1 reads.
 
 ### `$03 GO`
 

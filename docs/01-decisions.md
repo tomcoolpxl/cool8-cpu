@@ -659,12 +659,58 @@ Three consequences, stated plainly:
   turns before anyone asked out loud why anything needed 25 MHz.
 - **Every constant derived from 25.125 MHz is now wrong** — the UART
   divider in §4.6, the audio reference and frequency table in §4.4, and
-  the timer rate in §4.5. Arithmetic, not design, but not yet done.
+  the timer rate in §4.5. Arithmetic, not design. The UART divider is
+  done (103, and it is the SoC's reset value); audio and the timer are
+  not, and neither exists yet to be wrong in hardware.
 - **The CPU speed-up is demoted, not abandoned.** At 12 MHz it buys
   throughput instead of unblocking a milestone, and it can be done with
   a working board to test against rather than only a timing report.
 
 ---
+
+## D27 — The loader outranks the CPU on the shared transmitter
+
+**Decided at M4, after simulation showed the other way round failing.**
+
+There is one serial wire. The iCELink bridge presents a single USB CDC
+port on two FPGA pins, and both the hardware loader's replies and a
+running program's own output have to leave through it. A second UART on
+spare pins would need a second cable and a second port on the host,
+which is a worse machine for the sake of a simpler block.
+
+So the transmitter is shared, and something has to lose. The first
+arrangement gave the wire to the CPU whenever it had a byte queued and
+showed the loader a busy line instead, on the reasoning that the loader
+speaks rarely and can wait.
+
+**It cannot.** `cool8_loader` only asserts `tx_start` on a cycle it has
+already seen the wire idle on, and a program transmitting flat out never
+leaves one: it refills its holding register in about fifteen clocks and a
+byte takes a thousand to go out. The loader was starved completely — a
+`PING` sent to a machine running a two-instruction transmit loop was
+never answered. `cool8_soc_tb` found it on the first run.
+
+That is not a corner case, it is the case that matters. **A host that
+cannot interrupt a running program is a host reaching for the reset
+button**, and not needing to is most of why the loader is hardware
+rather than a ROM monitor ([D15](#d15--the-loader-is-hardware-not-a-rom-monitor)).
+
+**So the loader has absolute priority.** It exports `tx_want`, high from
+exactly the three states it ever transmits from, and the SoC holds the
+CPU's byte back on every cycle the loader could commit on. Because the
+loader commits one cycle after seeing the wire idle, and the CPU is
+blocked on every such cycle, neither can interrupt the other and neither
+loses a byte.
+
+What it costs, stated plainly:
+
+- **A program's output can be delayed**, by at most the byte the loader
+  is sending, and only while a host is actually talking to the board.
+- **It cannot be reordered or dropped.** The one-deep holding register
+  keeps the byte it has already accepted; a write arriving with no room
+  is the one that is lost, and `UART_STAT` bit 1 says so beforehand.
+- The alternative — a deep transmit FIFO — does not help. The wire is
+  still one wire, and buffering only moves the contention.
 
 ---
 

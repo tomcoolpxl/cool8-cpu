@@ -140,16 +140,34 @@ what you want at M4 when there isn't any.
 
 ## 4. I/O page
 
-Base `$FE00`. Unlisted addresses read as `$FF` and ignore writes.
+Base `$FE00`. Unlisted addresses read as `$FF` and ignore writes — `$FF`
+rather than `$00`, so a register that is not there reads like a bus
+nobody is driving instead of like a register holding zero.
+
+The page is decoded on the **bus**, in
+[`rtl/soc/cool8_soc.v`](../rtl/soc/cool8_soc.v), ahead of the memory and
+whoever the master is. Two consequences worth knowing:
+
+- **The loader reaches it.** A `WRITE` frame to `$FE03` lights the LED
+  with no CPU, no program and no working boot ROM. That is deliberate,
+  and it is the first useful thing to do to a board that has just come
+  up. The other end of it is that a `WRITE` to `$FE80` is the loader
+  writing its own control register mid-frame.
+- **A read costs the same one wait state a RAM read does.** Answering in
+  the address cycle would make the read data a combinational function of
+  the address, and the core's address is a combinational function of the
+  byte it is fetching — the two close a loop through the bus. So the I/O
+  page is read on the launch cycle and answers on the next one, exactly
+  as the SPRAM and the boot ROM do.
 
 ### 4.1 System — `$FE00`
 
 | Addr | Name | Access | Bits |
 |---|---|---|---|
-| `$FE00` | `SYSCTRL` | R/W | `0`: `ROMEN` (1 = boot ROM overlay on). Reloads from `~BOOTRAM` on every CPU reset, not from a constant — see §4.7. `1`: reserved. |
-| `$FE01` | `CPUDIV` | R/W | `2:0`: CPU clock enable divider — 0=÷1 (25.1 MHz) … 5=÷32 (~785 kHz). |
-| `$FE02` | `SYSSTAT` | R | Build/version identification. |
-| `$FE03` | `LED` | R/W | `2:0` = R, G, B on the board LED. |
+| `$FE00` | `SYSCTRL` | R/W | `0`: `ROMEN` (1 = boot ROM overlay on). Reloads from `~BOOTRAM` on every CPU reset, not from a constant — see §4.7. `7:1` read 0. |
+| `$FE01` | `CPUDIV` | — | CPU clock enable divider. **Not implemented**; reads `$FF`. It existed to divide a 25.125 MHz system clock down to something an 8-bit machine plausibly ran at, and [D26](01-decisions.md#d26--the-system-clock-is-12-mhz-the-pixel-clock-is-decoupled) put the core on the raw 12 MHz instead. Nothing needs it until there is a reason to run slower than that. |
+| `$FE02` | `SYSSTAT` | R | Build identification: a constant carried as a parameter on `cool8_soc`, `$04` at M4. It answers "which bitstream is this board actually running", which is a question that gets asked during bring-up and has no other way to be answered. |
+| `$FE03` | `LED` | R/W | `2:0` = R, G, B on the board LED, active high here. The board's own polarity is [cool8_top](../rtl/soc/) and the `.pcf`'s problem, not software's. |
 
 ### 4.2 Video — `$FE10`
 
@@ -237,16 +255,43 @@ Counts down at 25.125 MHz ÷ 256 ≈ 98.1 kHz.
 
 Connected to the iCELink USB CDC port. 115200 8N1.
 
-| Addr | Name | Description |
-|---|---|---|
-| `$FE70` | `UART_STAT` | `0` RX data available, `1` TX ready, `2` RX overrun |
-| `$FE71` | `UART_DATA` | Read pops RX, write pushes TX |
-| `$FE72` | `UART_DIV_L` | Baud divider, low byte |
-| `$FE73` | `UART_DIV_H` | Baud divider, high byte |
+| Addr | Name | Access | Description |
+|---|---|---|---|
+| `$FE70` | `UART_STAT` | R/W | `0` RX data available, `1` TX has room, `2` RX overrun — **write 1 to bit 2 to acknowledge the overrun**, the same shape `VID_IRQ` and `TMR_STAT` use |
+| `$FE71` | `UART_DATA` | R/W | Read pops RX, write pushes TX. **Read has a side effect.** |
+| `$FE72` | `UART_DIV_L` | R/W | Baud divider, low byte |
+| `$FE73` | `UART_DIV_H` | R/W | Baud divider, high byte |
+
+**Receive is 16 bytes deep** and it is not fed from the wire directly —
+every byte goes into the loader first and arrives here only if the
+sniffer decided it was not part of a frame (§4.7). Bit 0 says there is
+at least one byte; bit 2 says at least one was thrown away because there
+was no room, and stays set until acknowledged. The byte lost to an
+overrun is the *newest*: a receiver that dropped its oldest byte instead
+would turn a diagnosable overrun into scrambled input.
+
+**Transmit is one byte deep, and the wire is shared with the loader.**
+Bit 1 says the holding register is free, not that the wire is idle.
+Writing while it is occupied loses the byte being written — the one
+already accepted always wins, so output cannot be reordered by writing
+at the wrong moment. The loader has absolute priority for the wire
+itself; a program that transmits flat out delays the loader by at most
+one byte and cannot lock it out, which is
+[D27](01-decisions.md#d27--the-loader-outranks-the-cpu-on-the-shared-transmitter)
+and was not true of the first attempt.
 
 The divider is a register rather than a synthesis constant so the rate
 can be changed without rebuilding the bitstream. `div = round(f_clk /
-baud) − 1`; at 25.125 MHz, 115200 baud is `$00D9` (218).
+baud) − 1`; at the 12 MHz system clock
+([D26](01-decisions.md#d26--the-system-clock-is-12-mhz-the-pixel-clock-is-decoupled))
+115200 baud is `$0067` (103), which lands on 115385 — 0.16 % out, far
+inside the ~2 % a UART tolerates. That is the reset value.
+
+**Changing the divider desynchronises the byte after it**, necessarily:
+the new rate takes effect the moment the register lands and the host has
+not switched yet. Change the rate, switch, and let the receiver re-sync
+on the next start bit; do not expect an acknowledgement of the write
+that changed it.
 
 The iCELink debugger presents a USB CDC port whose baud rate is chosen
 by the host and bridged to FPGA pins 4 and 6. The FPGA end has no way to

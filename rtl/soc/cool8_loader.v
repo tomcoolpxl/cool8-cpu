@@ -31,9 +31,15 @@ module cool8_loader (
     input  wire [7:0]  rx_data,
     input  wire        rx_valid,
 
-    // To the UART transmitter
+    // To the UART transmitter. `tx_want` is high from the states that
+    // are going to claim it, so a second talker sharing the wire can
+    // stand off — see cool8_soc. Without it the loader can be starved
+    // outright: it only ever asserts tx_start on a cycle it has already
+    // seen the wire idle on, and a program transmitting flat out never
+    // leaves one.
     output reg  [7:0]  tx_data,
     output reg         tx_start,
+    output wire        tx_want,
     input  wire        tx_busy,
 
     // Pass-through to the CPU's receive FIFO
@@ -88,6 +94,12 @@ module cool8_loader (
 
     assign ctrl_rdata = {2'b00, bootram, halt_req, 3'b000, 1'b1};
     assign stat_rdata = {5'b00000, seen_frame, csum_bad, busak};
+
+    // These three are exactly the states from which tx_start is ever
+    // asserted, so a cycle on which the loader is about to commit to the
+    // wire is always a cycle on which this is already high.
+    assign tx_want = (state == S_RDATA) || (state == S_RSUM) ||
+                     (state == S_REPLY);
 
     wire cmd_write = (cmd == 8'h01);
     wire cmd_read  = (cmd == 8'h02);

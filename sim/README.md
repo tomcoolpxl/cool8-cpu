@@ -16,6 +16,8 @@ the whole 64 KB address space at the end of the run.
 | `test_loader.py` | The SoC serial path, across baud dividers and wait states |
 | `test_spram.py` | The SPRAM controller against its own 64 KB reference |
 | `test_boot.py` | The boot ROM image, the overlay, and the machine booting |
+| `test_soc.py` | The I/O page, the machine booting cold, and the SoC's area |
+| `asm/` | Test programs the CPU runs in `cool8_soc_tb`, assembled on every run |
 | `tb/cool8_tb.v` | Core against a byte-wide memory with programmable wait states |
 | `tb/cool8_bus_tb.v` | The ASIC path: pad wrapper, two 74HC573 latches, one SRAM |
 | `tb/cool8_loader_tb.v` | UART and loader, bit-banged 8N1 in, a real core arbitrating the bus |
@@ -24,6 +26,8 @@ the whole 64 KB address space at the end of the run.
 | `tb/cool8_rom_tb.v` | 4 KB read back through the port — runs against the RTL *and* the netlist |
 | `tb/cool8_mem_tb.v` | The ROM overlay: what answers where, and what `BOOTRAM` does to a reset |
 | `tb/cool8_boot_tb.v` | Cold boot from undefined SPRAM, then the loader's `BOOTRAM` path |
+| `tb/cool8_soc_tb.v` | The I/O page: what wins the decode, reached from the loader and then from the CPU |
+| `tb/cool8_soc_boot_tb.v` | The whole machine, cold, on the parameters the bitstream will carry |
 
 ```bash
 python sim/cosim.py all      # directed, random, interrupts, ASIC bus, SPRAM
@@ -31,9 +35,19 @@ python sim/cosim.py mul      # 65536 exhaustive operand pairs
 python sim/test_loader.py    # UART and loader
 python sim/test_spram.py     # SPRAM controller
 python sim/test_boot.py      # boot ROM, overlay, cold boot
+python sim/test_soc.py       # the I/O page, and the machine as a whole
 python sim/synth.py
 python sim/timing.py
 ```
+
+`test_soc.py` assembles `asm/soc_*.asm` into `build/` on every run and
+`cool8_soc_tb` loads them over the wire, so the program the CPU executes
+is the program in the file rather than a byte array that has drifted
+from its comment. It also runs a synthesis gate for `cool8_soc`, which
+`synth.py` does not cover — that one is about `rtl/core` and the ASIC
+rules, and the SoC's own hazards are different. A combinational loop
+through the bus is the interesting one, and it is a warning rather than
+an error, so it has to be read out of the yosys transcript deliberately.
 
 Everything involving SPRAM, EBR or the boot ROM uses the toolchain's own
 `SB_*` models (`share/yosys/ice40/cells_sim.v`), found through

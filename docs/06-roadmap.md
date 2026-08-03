@@ -351,17 +351,119 @@ be provably working. `tools/mkrom.py` refuses to build an image with
 anything at `$FE00-$FEFF`, since the I/O page wins that decode and code
 there would be silently unreachable.
 
+- [x] I/O page decode and the machine assembled —
+      [`rtl/soc/cool8_soc.v`](../rtl/soc/cool8_soc.v)
+
+```bash
+python sim/test_soc.py               # the I/O page, and the whole machine
+```
+
+**1636 LUT4 and 544 flip-flops** for the entire SoC — 31 % of the
+UP5K — with 8 EBR, all of them the boot ROM, and 2 SPRAM. The page is
+decoded on the **bus**, ahead of `cool8_mem` and whoever the master is,
+which is what makes `$FE00-$FEFF` win against 64 KB of SPRAM underneath
+it and a boot ROM over the top with no exception anywhere in the map.
+Registers: `$FE00` `SYSCTRL`, `$FE02` `SYSSTAT`, `$FE03` `LED`,
+`$FE70-$FE73` UART, `$FE80-$FE81` loader. `$FE01` `CPUDIV` is not
+implemented and reads `$FF` — D26 removed the thing it was for.
+
+Decoding on the bus rather than on the CPU's port also means **the
+loader reaches the I/O page**, so a `WRITE` frame to `$FE03` lights the
+LED with no CPU, no program and no working boot ROM. That is the first
+useful thing to do to a board that has just come up, and it is worth
+having before there is anything else to look at.
+
+**The obvious design does not synthesise, and the tools say so quietly.**
+The I/O page has nothing to wait for — the registers are flip-flops and a
+read is a mux — so the first version answered in the cycle it was
+addressed. That makes the read data a combinational function of the
+address, and §4 of the microarchitecture reads the opcode straight off
+`mem_rdata` during a fetch, so the address is a combinational function of
+the read data: a loop through the bus. `yosys` reports it as a *warning*
+and maps the design anyway, and `check -assert` does not see it at all,
+so it would have arrived as an unroutable placement or worse. The fix
+puts every access in the machine on one shape — launch, then data — and
+all three memories are now read on every launch with the answer picked
+afterwards. Full reasoning in
+[03-microarchitecture.md §6.3](03-microarchitecture.md#63-the-io-page-and-why-it-costs-a-wait-state).
+
+**Two talkers, one wire.** The transmitter is shared between the loader's
+replies and the program's own output, and the first arrangement — the
+CPU takes the wire whenever it has a byte queued, the loader is shown a
+busy line — let a program transmitting flat out **starve the loader
+completely**. It refills its holding register in about fifteen clocks and
+a byte takes a thousand, so the loader never saw an idle cycle to commit
+on. A host that cannot interrupt a running program is a host reaching for
+the reset button, which is the one thing the loader exists to avoid. The
+loader now has absolute priority through a `tx_want` line, and a program
+is delayed by at most one byte —
+[D27](01-decisions.md#d27--the-loader-outranks-the-cpu-on-the-shared-transmitter).
+
+Four tests, ordered so a failure localises:
+
+1. Every register read back **through the loader's `READ` command**
+   rather than by peeking at the RTL, so a register that exists but is
+   not decoded fails. Unlisted addresses read `$FF` and swallow writes.
+2. The page winning: a distinguishable byte deposited into the SPRAM
+   under each register, and a check that the register answered and that a
+   write to the page did not reach the RAM. And the other direction —
+   writes to `$1200`, `$1203`, `$1270`, `$1272`, whose low bytes alias
+   live registers. Every program load writes `$0400`, which aliases
+   `SYSCTRL`; a decode that forgot the high byte would corrupt the
+   machine every time software arrived and would look like a loader
+   fault.
+3. The serial path end to end: the 16-byte receive FIFO in order, full
+   exactly at sixteen, an overrun that loses the *newest* byte and is
+   acknowledged by writing bit 2, the divider register really driving the
+   UART at three different rates, and the transmit share under
+   contention.
+4. **Programs the CPU actually runs**, assembled out of
+   [`sim/asm/`](../sim/asm) on every run and loaded over the wire —
+   because everything above reaches the page from the loader's port and
+   the core's is a different master with a different address source. One
+   writes the LED and halts; one echoes the serial port, so a byte makes
+   the whole round trip through sniffer, FIFO, the CPU's own load and
+   store, and the shared transmitter; one transmits flat out while a
+   frame arrives; one overfills the transmitter to pin which byte is lost.
+
+Then the same SoC again on the parameters the bitstream will carry —
+default divider, default build id, the real boot image, SPRAM undefined —
+booting cold to a blue LED in **365,036 clocks, 30 ms**. That test is the
+answer to "will this work on the board", and it is the last thing to run
+before item 3 below.
+
+**Mutation-tested**: 25 deliberate bugs — the page twice as wide or at
+the wrong base, an I/O write also reaching RAM and a RAM write also
+reaching I/O, the read mux backwards, the read left combinational, a FIFO
+that cannot tell full from empty or drops its oldest byte, the overrun
+flag unacknowledgeable, `tx_want` missing the reply state — and all 25
+are caught.
+
+Three of them escaped the first pass and all three were real gaps rather
+than equivalent mutants, which is the useful part. A write that reached
+*every* register in the page survived because nothing wrote a RAM address
+whose low byte aliased a live one. `SYSCTRL` being written by any I/O
+write survived because the overlay only ever got checked at moments when
+`ROMEN` happened to be right anyway. And which byte a full transmitter
+drops was not pinned by anything, because no program wrote `UART_DATA`
+without looking first. All three now have a test.
+
+Loading over a **running** program also turned out to need `HALT` first:
+the grant is per frame, so between one `WRITE` and the next the CPU
+resumes into whatever half of the new program has landed. The testbench
+found it by doing exactly that, and
+[07-loader.md §2](07-loader.md#01-write) now says so as a requirement
+rather than a suggestion.
+
 Remaining, in the order to do them:
 
-1. [ ] I/O page decode and `rtl/soc/cool8_soc.v` — `$FE00` `SYSCTRL`,
-       `$FE03` `LED`, `$FE70` UART, `$FE80` loader. `$FE00-$FEFF` always
-       decodes and always wins
-2. [ ] `rtl/soc/cool8_top.v` and `board/icesugar.pcf`
-3. [ ] `tools/cool8load.py` — keep the transport separable, per
+1. [ ] `rtl/soc/cool8_top.v` and `board/icesugar.pcf`
+2. [ ] `tools/cool8load.py` — keep the transport separable, per
        [07-loader.md §4](07-loader.md)
-4. [ ] Bitstream, then flash and bring up on real hardware
-5. [ ] Update the constants D26 invalidates: UART divider §4.6, audio
-       reference and table §4.4, timer rate §4.5
+3. [ ] Bitstream, then flash and bring up on real hardware
+4. [ ] Update the remaining constants D26 invalidates: audio reference
+       and table §4.4, timer rate §4.5. The UART divider (§4.6) and
+       `CPUDIV` (§4.1, §6.1) are done, since the SoC implements them
 
 **The board is known good and connected:** iCELink DAPLink enumerates as
 `F:` for drag-and-drop programming and COM6 for the serial console at
@@ -375,11 +477,14 @@ Superseded by D26, kept so the change is legible:
 - [x] ~~SPRAM controller: byte addressing over 16-bit SPRAM,
       `mem_ready` handling~~ — done, above
 - [x] ~~Boot ROM in EBR with the overlay logic~~ — done, above
-- [ ] UART transmit and receive on the iCELink serial pins
-- [ ] **Hardware loader** — bus master, frame sniffer, `WRITE`/`READ`/
-      `GO`/`HALT`/`RUN`, per [07-loader.md](07-loader.md)
+- [x] ~~**Hardware loader** — bus master, frame sniffer, `WRITE`/`READ`/
+      `GO`/`HALT`/`RUN`~~ — done, above
+- [ ] UART transmit and receive on the iCELink serial *pins* — the UART
+      itself is done and simulated; what is left is the `.pcf`
 - [ ] `tools/cool8load.py` host side
-- [ ] Core + RAM + LED, running a loaded program that blinks the RGB LED
+- [ ] Core + RAM + LED, running a loaded program that lights the RGB LED
+      — **it does, in simulation**, in `cool8_soc_tb`. What remains is
+      the same thing on the board
 
 The least glamorous milestone and the one that catches the most bugs.
 

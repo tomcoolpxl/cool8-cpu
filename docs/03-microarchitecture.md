@@ -82,6 +82,7 @@ One protocol covers all three cases that matter:
 | Situation | How it appears |
 |---|---|
 | FPGA, uncontended SPRAM | Read: `mem_ready` low for one cycle (registered read), then high. Write: high immediately — see §6.2 |
+| FPGA, the I/O page | The same. It has nothing to wait for and waits anyway — see §6.3 |
 | FPGA, video stealing a cycle | `mem_ready` low for one extra cycle |
 | ASIC, 3-phase multiplexed bus | `mem_ready` low for two cycles, high on the third |
 
@@ -560,15 +561,19 @@ need invoking.
 
 ### 6.1 Clocking
 
-One clock domain for the entire SoC. The PLL turns the board's 12 MHz
-into approximately 25.125 MHz, which is the VGA pixel clock for
-640×480@60 (nominal 25.175 MHz, 0.2 % low, comfortably inside every
-monitor's tolerance).
+**The system runs at the board's raw 12 MHz, with no PLL in the CPU
+path** —
+[D26](01-decisions.md#d26--the-system-clock-is-12-mhz-the-pixel-clock-is-decoupled),
+settled by measurement. The PLL is reserved for the pixel clock at M5
+and the two domains are decoupled through a dual-clock scanline buffer,
+so the one-clock-domain rule this section used to state is withdrawn.
 
-The CPU runs from the same clock through a clock **enable**, never a
-gated clock. An I/O register sets the divider so the effective CPU rate
-can be dialled from full speed down to roughly 1 MHz — see
-[D13](01-decisions.md#d13--clock-fast-with-a-programmable-brake).
+`CPUDIV` at `$FE01` went with it. It existed to brake a 25.125 MHz core
+down to something an 8-bit machine plausibly ran at
+([D13](01-decisions.md#d13--clock-fast-with-a-programmable-brake)); at
+12 MHz there is nothing to brake, and it is not implemented. If a reason
+to run slower appears, it is a clock **enable** into the core and never
+a gated clock.
 
 ### 6.2 SPRAM and the memory interface
 
@@ -622,7 +627,46 @@ the abstract. The ROM's read is registered for the same reason: matching
 `cool8_spram`'s latency exactly makes the overlay a data mux rather than
 a second timing model.
 
-### 6.3 Verification plan
+### 6.3 The I/O page, and why it costs a wait state
+
+`rtl/soc/cool8_soc.v` assembles the machine — core, memory, UART, loader
+— and decodes `$FE00-$FEFF` on the **bus**, ahead of `cool8_mem` and
+whoever the master is. **1636 LUT4 and 544 flip-flops** for the whole
+SoC, with 8 EBR — all of them the boot ROM — and 2 SPRAM.
+
+The 16-byte receive FIFO is deliberately held in flip-flops. yosys will
+otherwise put its 128 bits into an EBR, retiming the I/O read capture
+into the block's own output register; that costs 89 LUT4 and 123
+flip-flops to refuse, and it buys not having a read data path inside a
+transform no netlist-level test here reaches.
+
+The first version answered an I/O read in the cycle it was addressed,
+since there is nothing to wait for: the registers are flip-flops and the
+read is a mux. That does not synthesise. Selecting the read data on the
+address makes `rdata` a combinational function of `addr`, and §4's
+decoder reads the opcode straight off `mem_rdata` during a fetch, so
+`addr` is a combinational function of `rdata` — the two close a loop
+through the bus that `yosys` reports and that no timing analysis can
+cross. It is a loop the memory could never create, because SPRAM and EBR
+both answer out of a register.
+
+So the I/O page answers the way they do: read on the launch cycle,
+answer on the next. **All three — RAM, boot ROM and I/O — are read on
+every launch and the answer is picked afterwards**, from selects
+captured on that cycle, and `mem_ready` has exactly one source. The
+launch itself is `cool8_spram`'s, exported through `cool8_mem`, so there
+is one definition of when an access starts rather than three that have
+to agree. A read's side effects — popping the receive FIFO — hang off
+the same signal, which is what stops a two-cycle read popping twice.
+
+Writes need none of this: a write completes in the cycle it is asserted
+everywhere in the machine, so the strobe is already one cycle wide.
+Reads go down to the SPRAM unconditionally, including at I/O addresses,
+because reading a shadowed byte costs nothing and gating them would mean
+a second copy of the timing. Writes are gated, because those do cost
+something.
+
+### 6.4 Verification plan
 
 1. **Reference emulator first.** A C or Python model of the ISA, written
    from [02-isa.md](02-isa.md), before any RTL. It is the specification

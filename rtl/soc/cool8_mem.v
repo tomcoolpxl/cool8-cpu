@@ -46,6 +46,11 @@ module cool8_mem #(
     output wire [7:0]  rdata,
     output wire        ready,
 
+    // The address cycle of a read, passed up from the SPRAM. The I/O
+    // page above answers in the same slot and captures its select and
+    // its data on this — see cool8_spram.
+    output wire        o_launch,
+
     input  wire        bootram,      // loader: ROMEN's reset value is ~this
 
     // $FE00 SYSCTRL, bit 0
@@ -59,6 +64,8 @@ module cool8_mem #(
 
     wire [7:0] ram_rdata, rom_rdata;
     wire       launch;
+
+    assign o_launch = launch;
 
     // $F000-$FFFF less the I/O page. The hole is stated here as well as
     // in the SoC's decode because this block must not answer for it: a

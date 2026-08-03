@@ -83,6 +83,7 @@ python sim/cosim.py mul              # exhaustive multiply (~2.5 min)
 python sim/test_loader.py            # UART and loader, over a bit-banged wire
 python sim/test_spram.py             # SPRAM controller against a byte array
 python sim/test_boot.py              # boot ROM, overlay, a cold boot
+python sim/test_soc.py               # the I/O page, and the whole machine
 python sim/synth.py                  # hygiene, LUT/FF count, gate estimate
 python sim/timing.py                 # measured clocks per encoding
 ```
@@ -137,6 +138,12 @@ Easy to get wrong:
 - **`cool8_rom.v` reads its image with `$readmemh` at elaboration**, so
   both `yosys` and `vvp` need `boot.hex` resolvable from their working
   directory. `sim/test_boot.py` builds it into `sim/build` and runs there.
+- **A combinational loop is a yosys *warning*, not an error.** `check
+  -assert` does not catch one that runs between modules, and `synth_ice40`
+  prints "found logic loop" and carries on. Anything that closes a path
+  from `mem_rdata` back to `mem_addr` — the core's decoder reads the
+  opcode straight off the bus during a fetch — has to be broken by a
+  register. `sim/test_soc.py` greps the transcript for it.
 - **cocotb does not run locally on Windows** with this toolchain — the
   suite's bundled Python has no SSL and `vvp` rejects an external
   interpreter. TinyTapeout's CI runs it on Linux; that is where those

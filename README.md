@@ -25,10 +25,11 @@ memory as the model — including through the multiplexed ASIC bus.
 | Timing | **Measured**, not estimated. 969 LUT4, 148 FF on iCE40 |
 | ASIC pad wrapper | Three-phase bus, verified against latch and SRAM models |
 | **Silicon** | **Hardened.** Fits in two TinyTapeout tiles, clean DRC/LVS |
+| **SoC** | **Simulated.** Memory, boot ROM, UART, loader and I/O page; boots cold to a lit LED |
 | System (video/audio/keyboard) | Specified |
 | Board bring-up | Pin budget verified against the board's own pinout |
-| Open design questions | **None.** All 25 decisions logged; the last one closed at M3 |
-| Next | First light on the FPGA (M4) |
+| Open design questions | **None.** All 27 decisions logged; the last two closed at M4 |
+| Next | A bitstream on the board (M4) |
 
 ```bash
 python tools/opcodes.py --check              # opcode map coverage
@@ -40,6 +41,11 @@ python sim/cosim.py all                      # RTL against the emulator
 python sim/cosim.py mul                      # 65536 exhaustive products
 python sim/synth.py                          # area and synthesis hygiene
 python sim/timing.py                         # measured cycles per encoding
+
+python sim/test_loader.py                    # UART and loader, over a wire
+python sim/test_spram.py                     # the SPRAM controller
+python sim/test_boot.py                      # boot ROM and the overlay
+python sim/test_soc.py                       # the I/O page, and a cold boot
 ```
 
 The RTL work needs [OSS CAD Suite](https://github.com/YosysHQ/oss-cad-suite-build)
