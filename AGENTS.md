@@ -1,0 +1,171 @@
+# AGENTS.md
+
+Notes for agents working on COOL8 — a clean-sheet 8-bit CPU and the
+retro home computer around it, built on an iCE40UP5K FPGA and designed
+to be fabricable on TinyTapeout.
+
+## This file is a pointer, not a record
+
+**`docs/` is the source of truth for everything about this project.**
+This file exists to tell you where to look and how to work; it does not
+restate what the documents say, and it must not start to.
+
+When you learn something durable — a decision, a measurement, a
+constraint, a piece of hardware behaviour — **write it into the relevant
+document under `docs/`**, not here and not into a new file. An
+architectural call gets a numbered entry in
+[docs/01-decisions.md](docs/01-decisions.md) with the argument on both
+sides. A measurement replaces the estimate it supersedes rather than
+sitting next to it.
+
+If you catch yourself adding a fact to this file, it belongs in `docs/`.
+If a fact here has drifted from `docs/`, `docs/` is right and this file
+is the bug.
+
+| Document | Owns, and is normative for |
+|---|---|
+| [00-goals.md](docs/00-goals.md) | Scope, the hard constraints C1–C3, non-goals, the FPGA resource budget |
+| [01-decisions.md](docs/01-decisions.md) | Every architectural decision and why, plus what was rejected. Open questions |
+| [02-isa.md](docs/02-isa.md) | The instruction set. **§1.2's flag table is normative** and wins over prose anywhere they conflict. §8 is measured cycle counts |
+| [03-microarchitecture.md](docs/03-microarchitecture.md) | Datapath, control FSM, bus protocol, the TinyTapeout pin profile, and the synthesis, area and timing results |
+| [04-system.md](docs/04-system.md) | Memory map, video, audio, keyboard, boot sequence |
+| [05-board.md](docs/05-board.md) | iCESugar pinout, PMODs, external circuits, BOM |
+| [06-roadmap.md](docs/06-roadmap.md) | Milestones, what each one delivers, and its gate |
+| [07-loader.md](docs/07-loader.md) | Loader wire protocol |
+| [08-assembler.md](docs/08-assembler.md) | Assembler reference |
+
+`README.md` is a summary derived from those. Keep it in step, but do not
+put anything in it that is not already recorded properly somewhere else.
+
+Two files are themselves normative, in code rather than prose:
+
+- **`tools/opcodes.py`** — the single source of truth for the encoding.
+  The emulator, assembler, disassembler and test generators all import
+  it; nothing carries its own copy of the opcode map. Adding an
+  instruction there makes it assemblable, disassemblable and tested with
+  no other change. If you find yourself writing a second mnemonic table,
+  stop.
+- **`tools/cool8emu.py`** — the executable specification. RTL is checked
+  against it instruction by instruction. When the two disagree, one is
+  wrong and `docs/02-isa.md` decides which. Do not resolve a
+  co-simulation failure by changing whichever side is easier to change.
+
+## The structural rule
+
+`rtl/core/` goes to the ASIC: Verilog-2001 strictly, no vendor
+primitives, no inferred RAM, no tri-state, no clock gating, no
+asynchronous reset. FPGA-only logic lives in `rtl/soc/` and may use
+iCE40 primitives freely; the ASIC pad wrapper is `rtl/pads/`. Stated in
+full in [00-goals.md](docs/00-goals.md) C2 and
+[03-microarchitecture.md](docs/03-microarchitecture.md) §1.
+
+`python sim/synth.py` enforces it. Run it before calling an RTL change
+done.
+
+## Toolchain
+
+Everything needs [OSS CAD Suite](https://github.com/YosysHQ/oss-cad-suite-build)
+on `PATH`, or `OSS_CAD_SUITE` pointing at its root.
+
+On Windows, export the POSIX form of the path (`/c/Users/...`, not
+`C:/Users/...`) and add both `bin` and `lib`.
+
+## Commands
+
+```bash
+python tools/opcodes.py --check      # opcode map coverage and doc examples
+python tools/cool8emu.py --selftest  # ISA semantics
+python sim/test_corpus.py            # the software corpus, end to end
+
+python sim/cosim.py all              # RTL vs emulator: directed, random,
+                                     #   interrupts, ASIC bus
+python sim/cosim.py mul              # exhaustive multiply (~2.5 min)
+python sim/synth.py                  # hygiene, LUT/FF count, gate estimate
+python sim/timing.py                 # measured clocks per encoding
+```
+
+`sim/cosim.py all` is the gate for any RTL change. It takes about a
+minute. Run it; do not reason about whether it would pass.
+
+`sim/build/` is generated and gitignored.
+
+## The verification contract
+
+Both models emit one line of full architectural state per retired
+instruction, in an identical format, and `sim/cosim.py` diffs them and
+reports the first divergence with disassembly. The whole 64 KB memory
+image is compared too, so a store to a wrong address cannot hide.
+
+Easy to get wrong:
+
+- **The trace formats must match exactly.** Icarus `%h` is lowercase;
+  the emulator's `%02x` matches it. Change one side, change both.
+- **What counts as a retired instruction.** `BRK` and the reserved
+  page-2 trap retire — they are instructions. A hardware interrupt entry
+  does not, and neither does reset. `o_retire` is the RTL's signal for
+  this and the emulator's `instructions` counter is its mirror.
+- **Interrupt injection is counted in retired instructions, not
+  cycles**, because the two models cannot agree on a cycle. Better
+  still, make a test deterministic through the program itself — assert
+  the line at reset and let `EI` decide the boundary, or inject during a
+  `HALT` where arrival time cannot change the instruction sequence.
+- **A bus grant must be architecturally invisible.** The test is that
+  the trace is byte-identical to a run without one. Keep it that way.
+
+## Traps already hit here
+
+- **Verilog-2001 requires declarations before use.** Icarus rejects a
+  testbench referring to a `reg` declared further down. Declare
+  everything at the top of the module.
+- **Verilog has no adjacent string-literal concatenation.** `$display("a"
+  "b", x)` is a syntax error, not C.
+- **Do not model a transparent latch as `always @* if (le) q = d;`.**
+  ALE and the address change on the same clock edge, so the outcome
+  depends on the order the simulator settles them. Capture on the edge
+  where LE actually falls — see `sim/tb/cool8_bus_tb.v`.
+- **`sim/progen.py` has a fixed memory map**, and the probe array's end
+  address is load-bearing: stubs and scratch must stay above it. Changing
+  `PROG`, `SLOT` or the probe count without rechecking silently corrupts
+  the generated program.
+- **cocotb does not run locally on Windows** with this toolchain — the
+  suite's bundled Python has no SSL and `vvp` rejects an external
+  interpreter. TinyTapeout's CI runs it on Linux; that is where those
+  tests get validated.
+
+## When timing changes
+
+Cycle counts live in three places that must agree: `rtl/core`,
+`tools/opcodes.py:cycles()`, and the emulator's own accounting — with
+[02-isa.md §8](docs/02-isa.md) as the human-readable copy. Touch the
+control FSM and you must run `python sim/timing.py`, which measures
+every encoding from the RTL, then update the other three. The
+assembler's listings read `cycles()`, so a stale table is a wrong
+listing.
+
+## The TinyTapeout submission
+
+`asic/tt/` holds the metadata; the Verilog is **not** duplicated there.
+`python asic/tt/prepare.py <checkout>` copies it out of `rtl/`, and
+`--check` reports drift. Never edit the generated repo directly —
+changes there are silently overwritten and the submission stops matching
+what co-simulation tested.
+
+The shuttle's CI config and cocotb harness are deliberately not
+vendored; they change between shuttles and TinyTapeout maintains them.
+
+## Writing style
+
+The documents explain *why*, not just what, and record what was rejected
+as well as what was chosen. Match that.
+
+Comments in the RTL follow the same rule. `// one 8-bit adder, shared by
+ADD/ADC/SUB/SBC/CMP` earns its place; `// increment the counter` does
+not.
+
+## Before proposing anything architectural
+
+Read [docs/01-decisions.md](docs/01-decisions.md) first. Most obvious
+improvements have already been considered and rejected there for a
+stated reason — the register count, a third pointer, where bus request
+belongs, what gets cut if area overruns. Reopening one needs new
+evidence of the kind that closed it: real code, measured.
