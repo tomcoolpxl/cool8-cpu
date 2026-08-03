@@ -1,0 +1,62 @@
+# Tiny Tapeout project information
+project:
+  title:        "COOL8"
+  author:       "Tom Cool"
+  discord:      ""
+  description:  "A clean-sheet 8-bit CPU with a three-phase multiplexed bus"
+  language:     "Verilog"
+  clock_hz:     10000000
+
+  # Measured, not estimated: both 2x2 and 1x2 were hardened. 1x2 closes
+  # at 61.2% utilisation with clean DRC, LVS, antenna and routing, and
+  # is better than 2x2 on wirelength, slew and setup slack because the
+  # only paths that violate are register-to-pad and a smaller die makes
+  # them shorter. See docs/03-microarchitecture.md section 5.9.
+  #
+  # 61% is TinyTapeout's default target density, so there is not much
+  # room beyond the design as it stands. Re-run before assuming this
+  # still holds if the core grows.
+  tiles: "1x2"
+
+  top_module:  "tt_um_cool8"
+
+  source_files:
+    - "cool8_alu.v"
+    - "cool8_agu.v"
+    - "cool8_core.v"
+    - "tt_um_cool8.v"
+
+# docs/03-microarchitecture.md section 5.2
+pinout:
+  # Inputs
+  ui[0]: "nIRQ - interrupt request, active low"
+  ui[1]: "nNMI - non-maskable interrupt, active low"
+  ui[2]: "READY - hold low to insert wait states"
+  ui[3]: "nBUSRQ - external agent requests the bus, active low"
+  ui[4]: ""
+  ui[5]: ""
+  ui[6]: ""
+  ui[7]: ""
+
+  # Outputs
+  uo[0]: "ALE_L - address low latch strobe"
+  uo[1]: "ALE_H - address high latch strobe"
+  uo[2]: "nRD - read strobe, active low"
+  uo[3]: "nWR - write strobe, active low"
+  uo[4]: "SYNC - this access is an opcode fetch"
+  uo[5]: "HALTED"
+  uo[6]: "IACK - interrupt acknowledge"
+  uo[7]: "BUSAK - bus granted, CPU is off the bus"
+
+  # Bidirectional pins
+  uio[0]: "AD0 - A[7:0], then A[15:8], then D[7:0]"
+  uio[1]: "AD1"
+  uio[2]: "AD2"
+  uio[3]: "AD3"
+  uio[4]: "AD4"
+  uio[5]: "AD5"
+  uio[6]: "AD6"
+  uio[7]: "AD7"
+
+# Do not change!
+yaml_version: 6

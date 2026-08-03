@@ -10,10 +10,10 @@ addressing model, and drops the historical baggage of both.
 
 ## Status
 
-Specification and toolchain complete; no RTL yet. The emulator and
-assembler exist so that the ISA could be checked by running real code
-before any Verilog is committed — which is how the last two design
-bugs were found.
+The CPU exists in Verilog and is checked against the reference emulator
+instruction by instruction. Every one of the 511 encodings runs on the
+RTL and produces the same architectural state and the same 64 KB of
+memory as the model — including through the multiplexed ASIC bus.
 
 | Area | State |
 |---|---|
@@ -21,18 +21,29 @@ bugs were found.
 | Reference emulator | **Working.** Full ISA, self-tested, mutation-tested |
 | Assembler | **Working.** Macros, listings, register-pressure report |
 | Software corpus | 26 routines, verified against Python in the emulator |
-| Microarchitecture | Bus, FSM and ASIC pin profile specified |
+| **CPU RTL** | **Working.** 511/511 encodings co-simulated against the emulator |
+| Timing | **Measured**, not estimated. 969 LUT4, 148 FF on iCE40 |
+| ASIC pad wrapper | Three-phase bus, verified against latch and SRAM models |
+| **Silicon** | **Hardened.** Fits in two TinyTapeout tiles, clean DRC/LVS |
 | System (video/audio/keyboard) | Specified |
 | Board bring-up | Pin budget verified against the board's own pinout |
-| Open design questions | **None.** All 22 decisions logged |
-| RTL | Next (M3) |
+| Open design questions | **None.** All 25 decisions logged; the last one closed at M3 |
+| Next | First light on the FPGA (M4) |
 
 ```bash
 python tools/opcodes.py --check              # opcode map coverage
 python tools/cool8emu.py --selftest          # ISA semantics
 python sim/test_corpus.py                    # 26 routines, end to end
 python tools/cool8asm.py sw/gfx.asm --pressure
+
+python sim/cosim.py all                      # RTL against the emulator
+python sim/cosim.py mul                      # 65536 exhaustive products
+python sim/synth.py                          # area and synthesis hygiene
+python sim/timing.py                         # measured cycles per encoding
 ```
+
+The RTL work needs [OSS CAD Suite](https://github.com/YosysHQ/oss-cad-suite-build)
+on `PATH`, or `OSS_CAD_SUITE` pointing at its root.
 
 ## Documents
 
@@ -50,6 +61,9 @@ python tools/cool8asm.py sw/gfx.asm --pressure
 | [tools/opcodes.py](tools/opcodes.py) | Machine-readable opcode table, disassembler, coverage check |
 | [tools/cool8emu.py](tools/cool8emu.py) | Reference emulator — the executable specification |
 | [tools/cool8asm.py](tools/cool8asm.py) | Assembler and disassembler |
+| [rtl/core/](rtl/core/) | The CPU: `cool8_core.v`, `cool8_alu.v`, `cool8_agu.v` |
+| [rtl/pads/](rtl/pads/) | `tt_um_cool8.v` — the TinyTapeout three-phase bus |
+| [sim/](sim/) | Co-simulation, program generators, synthesis and timing gates |
 | [sw/](sw/) | Software corpus: library, graphics, compiler-style frames |
 
 ## The shape of it in one screen
@@ -98,11 +112,27 @@ loop:   LD   R1,[X]        ; 1
 
 ## ASIC target
 
-TinyTapeout, within roughly a year. This is a hard constraint on the
-design, not an afterthought — see
+TinyTapeout. This is a hard constraint on the design, not an
+afterthought — see
 [docs/03-microarchitecture.md](docs/03-microarchitecture.md) for the
 multiplexed bus profile that makes an 8-bit CPU fit in TinyTapeout's
 8 in / 8 out / 8 bidir pin budget.
+
+**It fits.** Hardened through TinyTapeout's LibreLane flow on sky130 at
+M3, years ahead of any deadline, because area was the one risk that
+could have invalidated the architecture:
+
+| | |
+|---|---|
+| Standard cells | 2420, of which 158 sequential |
+| Cell area | 20,960 µm² — 61 % of a 1x2 tile |
+| Register-to-register timing | closes at 50 MHz at every PVT corner |
+| DRC / LVS / antenna | clean |
+| Power | 1.48 mW |
+
+The design target is around 10 MHz, which puts the chip in the same
+performance class as a 1 MHz 6502 — appropriate, and not the limiting
+factor when you are talking to a 55 ns SRAM.
 
 ## Licence
 

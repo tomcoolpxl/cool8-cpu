@@ -13,9 +13,13 @@ document is normative and the table is the bug.
 ```
 $ python tools/opcodes.py --check
 primary page : 256/256 encodings assigned
-page 2       : 234/256 assigned, 22 reserved
+page 2       : 236/256 assigned, 20 reserved
 doc examples : 20/20 match
+page-2 spots : 3/3 match
 ```
+
+The 20 reserved page-2 encodings are `$2E`, `$2F`, `$3C`–`$3F`, `$6F`
+and `$E3`–`$EF`. All of them trap.
 
 ---
 
@@ -64,7 +68,7 @@ Where this table and the prose disagree, this table wins.
 
 | Instruction | C | Z | N | V |
 |---|---|---|---|---|
-| `MOV Rd,Rs`, `MOV Rd,#imm8` | – | – | – | – |
+| `MOV Rd,Rs`, `MOV Rd,#imm8`, `MOV Rd,<pp>`, `MOV <pp>,Rs` | – | – | – | – |
 | `ADD`, `ADC` | ✓ carry out of bit 7 | ✓ | ✓ | ✓ signed overflow |
 | `SUB`, `SBC`, `CMP` | ✓ **no borrow** | ✓ | ✓ | ✓ |
 | `AND`, `OR`, `XOR` | – | ✓ | ✓ | – |
@@ -385,6 +389,12 @@ shifts being free.
 | `$40–$4F` | `MOV Rd,<pp>` (`0100 dd pp`) | 2 |
 | `$50–$5F` | `MOV <pp>,Rs` (`0101 ss pp`) | 2 |
 
+**Neither direction sets flags.** These are `MOV`s, and §1.2's first
+rule holds: `MOV` never touches flags. The question was open briefly at
+M3, because the flag table had not named these encodings and the
+emulator was setting `Z` and `N` on the load direction; see
+[D25](01-decisions.md#d25--mov-rdpp-sets-no-flags).
+
 ### 5.3 16-bit operations
 
 | Second byte | Mnemonic | Bytes | Operation |
@@ -571,36 +581,56 @@ See [03-microarchitecture.md §2.2](03-microarchitecture.md#22-bus-request-and-g
 
 ---
 
-## 8. Timing model (provisional)
+## 8. Timing model
 
-Cycle counts assume the FPGA configuration: one memory access per clock,
-no wait states. **These are targets, not measurements** — they will be
-replaced once the RTL exists.
+**Measured** from `rtl/core` by [`sim/timing.py`](../sim/timing.py),
+which runs every one of the 511 encodings once at a known address and
+reads the cycle delta out of the testbench. The same numbers are in
+`tools/opcodes.py:cycles()` and in the emulator's accounting; all three
+are checked against each other.
 
-| Class | Cycles |
+Counts assume the FPGA configuration: one memory access per clock, no
+wait states.
+
+| Class | Clocks |
 |---|---|
-| `NOP`, `CLC`, `SEC`, `EI`, `DI` | 2 |
+| `NOP`, `HALT`, `CLC`, `SEC`, `EI`, `DI` | 2 |
 | ALU `Rd,Rs` | 2 |
 | ALU `Rd,#imm8` | 3 |
 | `INCW`/`DECW X\|Y` | 2 |
-| `LD`/`ST Rd,[X\|Y]` | 3 |
-| `PUSH`/`POP Rd` | 3 |
-| `LD`/`ST Rd,[X+d8]` or `[SP+u8]` | 5 |
-| `LD`/`ST Rd,[abs16]` | 5 |
-| `PUSHW`/`POPW` | 4 |
-| `Bcc` not taken | 3 |
-| `Bcc` taken | 4 |
-| `JMP abs16` | 4 |
-| `JMP [X]` | 2 |
-| `CALL abs16` | 7 |
-| `RET` | 5 |
-| `RETI` | 6 |
-| Interrupt entry | 7 |
-| Any page-2 instruction | primary equivalent + 1 |
-| `MUL Rd,Rs` | 12 (8 shift-add steps + setup) |
+| `LD`/`ST Rd,[X\|Y]` | 2 |
+| `PUSH`/`POP Rd` | 2 |
+| `LD`/`ST Rd,[X+d8]` or `[SP+u8]` | 3 |
+| `LD`/`ST Rd,[abs16]` | 4 |
+| `PUSHW`/`POPW` | 3 |
+| `Bcc` not taken | 2 |
+| `Bcc` taken | 3 |
+| `JMP abs16` | 3 |
+| `JMP [X\|Y]` | 2 |
+| `CALL abs16` | 6 |
+| `CALL [X\|Y]` | 4 |
+| `RET` | 3 |
+| `RETI` | 4 |
+| `BRK` | 6 |
+| Reserved page-2 encoding (traps) | 7 |
+| Hardware interrupt entry | 5 |
+| `XOR Rd,Rs`, unary `Rd`, `MOVW`, half-register moves | 3 |
+| `XOR Rd,#imm8`, `BSET`/`BCLR`/`BTST` | 4 |
+| `LD`/`ST [X\|Y + Rs]`, auto-increment/decrement | 3 |
+| `ADDW`/`SUBW X\|Y,Rd`, `PUSH F`, `POP F`, `CLV` | 3 |
+| `ADDW SP,#d8`, `LEA X\|Y,[SP+u8]` | 4 |
+| `LDW X\|Y,#imm16`, `ADDW X\|Y,#imm16` | 5 |
+| `LDW X\|Y,[abs16]`, `STW [abs16],X\|Y` | 6 |
+| `MUL Rd,Rs` | 11 (8 shift-add steps + setup) |
+
+The RTL came out faster than the provisional targets that stood here
+before it existed, mostly by one or two clocks: there is no separate
+`ADDR` state and no memory address register, so an effective address is
+computed in the same cycle the access is made. See
+[D23](01-decisions.md#d23--no-memory-address-register).
 
 On the TinyTapeout ASIC every memory access takes three bus cycles
-instead of one; see
+instead of one, so add two clocks per access; see
 [03-microarchitecture.md](03-microarchitecture.md).
 
 ---

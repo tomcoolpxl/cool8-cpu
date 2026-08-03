@@ -114,22 +114,74 @@ in Python. That suite is mutation-tested too.
 
 ## M3 — CPU RTL
 
-- [ ] `cool8_core` against a simple synchronous RAM model
-- [ ] Directed test per opcode, generated from the opcode table
-- [ ] Randomised co-simulation against the M1 emulator, comparing full
+- [x] `cool8_core` against a simple synchronous RAM model
+- [x] Directed test per opcode, generated from the opcode table
+- [x] Randomised co-simulation against the M1 emulator, comparing full
       architectural state after every instruction
-- [ ] Interrupt, reset and bus-grant behaviour
-- [ ] `MUL` sequencer, checked against 65536 exhaustive operand pairs
-- [ ] Synthesis check: no FPGA primitives, no inferred RAM, no latches
+- [x] Interrupt, reset and bus-grant behaviour
+- [x] `MUL` sequencer, checked against 65536 exhaustive operand pairs
+- [x] Synthesis check: no FPGA primitives, no inferred RAM, no latches
+- [x] LibreLane area run through the TinyTapeout flow
 
-**Gate:** `yosys` reports the core's LUT and FF count. If it is wildly
-outside the ~1000 LUT estimate, find out why before continuing.
+```bash
+python sim/cosim.py all          # 511 encodings + random + interrupts + bus
+python sim/cosim.py mul          # 65536 exhaustive operand pairs
+python sim/synth.py              # hygiene, LUT/FF count, gate estimate
+python sim/timing.py             # measured cycles per encoding
+```
 
-**Also at M3, not M8: run OpenLane.** Area is the one risk that could
-invalidate the architecture, it is knowable from here onward, and
+**Every one of the 511 encodings** is exercised by a generated probe
+that sets the whole architectural state, runs one instruction and
+converges on a common jump, at zero, one and randomised wait states.
+Twelve randomised streams of 4000 instructions run on top of that, and
+the full 64 KB memory image is compared as well as the register trace.
+A bus grant is proved architecturally invisible by requiring the trace
+to be byte-identical to a run without one.
+
+**The gate passed.** `yosys` reports **969 LUT4 and 148 flip-flops**
+against the ~1000 LUT estimate, and 3084 gate equivalents against
+~2750 — see [03-microarchitecture.md §5.7](03-microarchitecture.md#57-area-estimate).
+No latches, no inferred RAM, no vendor primitives, no tri-state.
+
+The RTL turned out **faster than the provisional cycle table**, by one
+or two clocks nearly everywhere, because there is no memory address
+register and so no separate address state
+([D23](01-decisions.md#d23--no-memory-address-register)).
+[02-isa.md §8](02-isa.md#8-timing-model) now carries measured numbers,
+and `opcodes.py`, the emulator and the RTL agree on all 511.
+
+Two things co-simulation found that reading could not:
+[D24](01-decisions.md#d24--ei-and-di-take-effect-immediately-no-delay-slot),
+and the one remaining open ISA question, `MOV Rd,<pp>`'s flags.
+
+**Brought forward from M8:** `rtl/pads/tt_um_cool8.v`, the three-phase
+bus multiplexer, because LibreLane needs a `tt_um_` top to harden and a
+core-only number would not be the number that matters. All 511
+encodings also pass through it against a behavioural 74HC573 pair and
+an SRAM, with and without wait states. The end-to-end bus-grant *load*
+path — an external agent driving the merged strobes — is still M8.
+
+### The area risk is closed
+
+Hardened through TinyTapeout's own LibreLane flow on sky130:
+**20,960 µm² of cells at 61.2 % utilisation in a 1×2 — two tiles —
+with clean DRC, LVS and antenna.** Register-to-register timing closes at 50 MHz at
+every PVT corner, against a design target of about 10 MHz. Full numbers
+in [03-microarchitecture.md §5.8](03-microarchitecture.md#58-placed-and-routed--the-real-number).
+
+The single biggest unknown in the schedule is now a measurement, taken
+years before the deadline instead of weeks before it, and
 [D19](01-decisions.md#d19--area-overruns-are-paid-for-in-tiles-not-isa-cuts)
-says the answer is to buy tiles — a decision much easier to make years
-early than weeks before a shuttle deadline.
+did not need invoking. The open question that remains is only whether to
+buy 4 tiles or 2 (§5.9) — a cost decision, not an
+architectural one, and it was settled by running both: 1×2 closes, and
+is better than 2×2 on every metric that moved.
+
+Note that OpenLane 2 was renamed **LibreLane** in early 2026 and
+TinyTapeout's `tt-gds-action` runs it; the SKY130 shuttles now go
+through ChipFoundry and close roughly quarterly rather than once a year,
+so "shuttle windows do not move" is less sharp than it was when this
+document was written.
 
 ## M4 — First light on the FPGA
 
@@ -196,11 +248,19 @@ The deadline milestone. Shuttle windows do not move.
 - [ ] Timing closure at the target frequency
 - [ ] Submit
 
-**Risk:** the area estimate in
+**Risk, mostly retired at M3.**
 [03-microarchitecture.md §5.7](03-microarchitecture.md#57-area-estimate)
-is unverified. Run OpenLane on the core as soon as M3 passes — do not
-wait for M8. If the core is too large, the cuts come out of the
-addressing modes and page 2, not the orthogonal ALU.
+now carries synthesised numbers rather than an estimate: 969 LUT4 and
+148 flip-flops on the FPGA, 3084 gate equivalents mapped to two-input
+gates against a 2750 guess. That points at a 2×2 tile project. What is
+still outstanding is the LibreLane run, which is the only thing that
+gives a real placed-and-routed cell count and utilisation — the M3 list
+has it.
+
+The three-phase bus multiplexer was also brought forward to M3, so
+`rtl/pads` and its instruction-level verification against latch and
+SRAM models are already done. What remains here is the bus-*grant* load
+path with an external agent, and timing closure.
 
 **Also required:** a physical test board — TT chip, two 74HC573 latches,
 one SRAM, a 74HC32 and a 74HC00 to merge the bus strobes, and an RP2040

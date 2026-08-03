@@ -62,7 +62,8 @@ module cool8_core (
     // Status / debug
     output wire        o_fetch,      // this access is an opcode fetch
     output wire        o_halted,
-    output wire        o_iack
+    output wire        o_iack,
+    output wire        o_retire      // an instruction completes this cycle
 );
 ```
 
@@ -108,9 +109,12 @@ pushed, no vector is taken, `PC` does not move. Architectural state is
 untouched — which is what makes it usable as a debugger: halt, read all
 of memory, resume, and the program cannot tell.
 
-`busrq` is sampled at the same point as interrupts (in `FETCH`), and
-takes priority over both. Worst-case grant latency is the longest
-instruction, roughly 7 cycles on the FPGA and ~21 on the ASIC.
+`busrq` is sampled at the same point as interrupts — an instruction
+boundary — and takes priority over both. Worst-case grant latency is the
+longest instruction, which is `MUL` at 11 clocks. `MUL` touches no
+memory, so on the ASIC it is still 11: the three-phase bus stretches
+only the instructions that access memory, and the worst of those is
+`CALL abs16` at 6 clocks with 5 accesses, so 6 + 5×2 = 16.
 
 ---
 
@@ -120,9 +124,9 @@ instruction, roughly 7 cycles on the FPGA and ~21 on the ASIC.
                   ┌──────────────────────────────────────────┐
                   │              8-bit data path             │
                   │                                          │
-   mem_rdata ────▶│  IR  IR2  TMP        R0 R1 R2 R3         │
-                  │   │        │          │  │  │  │         │
-                  │   │        └────┬─────┴──┴──┴──┘         │
+   mem_rdata ────▶│  IR  TMP  TMPH       R0 R1 R2 R3         │
+                  │   │   └────┬───┘        │  │  │  │        │
+                  │   │        └────┬───────┴──┴──┴──┘        │
                   │   │             ▼                        │
                   │   │        ┌─────────┐                   │
                   │   │        │ 8-bit   │──▶ flags C Z N V  │
@@ -134,17 +138,17 @@ instruction, roughly 7 cycles on the FPGA and ~21 on the ASIC.
                   ┌───▼──────────────────────────────────────┐
                   │            16-bit address path           │
                   │                                          │
-                  │   PC     SP     X      Y      MAR        │
+                  │   PC     SP     X      Y    {TMPH,TMP}   │
                   │    │      │     │      │       │         │
-                  │    └──────┴──┬──┴──────┘       │         │
-                  │              ▼                 │         │
-                  │       ┌─────────────┐          │         │
-                  │       │  16-bit AGU │──────────┘         │
-                  │       │   adder     │                    │
+                  │    └──────┴──┬──┴──────┴───────┘         │
+                  │              ▼                           │
+                  │       ┌─────────────┐                    │
+                  │       │  16-bit AGU │───┬──▶ A operand   │
+                  │       │   adder     │───┴──▶ sum         │
                   │       └─────────────┘                    │
                   └──────────────────────────────────────────┘
                                      │
-                                     └──▶ mem_addr
+                                     └──▶ mem_addr  (2:1, no MAR)
 ```
 
 ### 3.1 Storage
@@ -156,14 +160,31 @@ instruction, roughly 7 cycles on the FPGA and ~21 on the ASIC.
 | `SP` | 16 | |
 | `PC` | 16 | |
 | `F` | 5 | C, Z, N, V, I |
-| `IR` | 8 | Instruction register |
-| `IR2` | 8 | Page-2 second opcode byte |
-| `TMP` | 8 | Immediate / displacement / high address byte |
-| `MAR` | 16 | Memory address register |
-| FSM state | ~4 | |
-| **Total** | **~137** | |
+| `IR` | 8 | Opcode, or the page-2 second byte |
+| `p2` | 1 | `IR` holds a page-2 opcode |
+| `TMP`, `TMPH` | 16 | Immediate / displacement / 16-bit operand |
+| FSM state + step counter | 7 | |
+| `vec_sel`, `in_int`, `iack`, `halted`, NMI edge | 6 | |
+| **Total** | **139** | 148 as synthesised, see §5.7 |
+
+The interface gains `o_retire`, which pulses as an instruction
+completes. It is not architectural — it exists so the co-simulation
+harness can sample state at exactly the points the emulator does.
 
 Two read ports on a 4-entry file is four 4:1 muxes — trivial.
+
+There is **no memory address register**. `mem_addr` is driven straight
+from the AGU, which removes 16 flip-flops and, more importantly, a whole
+pipeline stage from every memory access: an effective address is
+computed in the same cycle the access is made rather than the cycle
+before. That is where most of the difference between the measured cycle
+counts and the earlier targets comes from. See
+[D23](01-decisions.md#d23--no-memory-address-register).
+
+`IR2` is gone for the same reason: after a `$2F` escape the primary
+opcode is known to be `$2F` and carries no further information, so the
+second byte overwrites `IR` and a single `p2` bit records that it did.
+`TMPH` is new, and holds the high byte of a 16-bit operand.
 
 ### 3.2 The single 16-bit adder
 
@@ -214,44 +235,63 @@ sampled.
 
 ## 4. Control FSM
 
-Six states. Not every instruction visits every state.
+Twelve states and a 3-bit step counter. Not every instruction visits
+every state, and most visit two or three.
 
 | State | Action |
 |---|---|
-| `FETCH` | `MAR ← PC`, read. `PC ← PC+1`. Latch `mem_rdata` into `IR`. |
-| `FETCH2` | Read the second instruction byte into `TMP` (or `IR2` for page 2). `PC ← PC+1`. |
-| `FETCH3` | Read the third byte (high address). `PC ← PC+1`. |
-| `ADDR` | AGU computes the effective address into `MAR`. |
-| `MEM` | Data read or write at `MAR`. |
-| `EXEC` | ALU operation, flag update, register writeback. |
+| `RESET` | Select the reset vector. |
+| `VEC` | Read a vector, low byte then high, into `PC`. |
+| `FETCH` | Read at `PC`. `PC ← PC+1`. Latch the opcode into `IR`. |
+| `FETCH2` | The page-2 second opcode byte. `IR ← it`, `p2 ← 1`. |
+| `OPND` | One or two operand bytes into `TMP` and `TMPH`. |
+| `EXEC` | ALU or AGU operation, flag update, writeback. |
+| `MEM` | One or two data accesses. |
+| `PUSH` | Two or three byte push: `PUSHW`, `CALL`, interrupt entry. |
+| `POP` | Two or three byte pop: `POPW`, `RET`, `RETI`. |
+| `MULT` | One shift-add step; loops eight times. |
+| `HALT` | Stopped, waiting for an interrupt or reset. |
+| `BUSAK` | Off the bus, waiting for `busrq` to release. |
+
+There is no `ADDR` state. Because `mem_addr` comes straight from the
+AGU (§3.1), the effective address is computed in the cycle the access
+happens rather than the cycle before it.
 
 ### 4.1 Sequences by instruction class
 
 ```
-ALU Rd,Rs           FETCH → EXEC
-ALU Rd,#imm8        FETCH → FETCH2 → EXEC
-INCW X              FETCH → EXEC                (AGU, not ALU)
-LD Rd,[X]           FETCH → ADDR → MEM
-ST [X],Rd           FETCH → ADDR → MEM
-LD Rd,[X+d8]        FETCH → FETCH2 → ADDR → MEM
-LD Rd,[SP+u8]       FETCH → FETCH2 → ADDR → MEM
-LD Rd,[abs16]       FETCH → FETCH2 → FETCH3 → ADDR → MEM
-PUSH Rd             FETCH → ADDR → MEM
-POP Rd              FETCH → ADDR → MEM
-Bcc (not taken)     FETCH → FETCH2
-Bcc (taken)         FETCH → FETCH2 → ADDR
-JMP abs16           FETCH → FETCH2 → FETCH3 → ADDR
-CALL abs16          FETCH → FETCH2 → FETCH3 → MEM → MEM → ADDR
-RET                 FETCH → MEM → MEM → ADDR
-page 2              FETCH → FETCH2(→IR2) → …as above…
+ALU Rd,Rs           FETCH → EXEC                             2
+ALU Rd,#imm8        FETCH → OPND → EXEC                      3
+INCW X              FETCH → EXEC                (AGU)        2
+LD Rd,[X]           FETCH → MEM                              2
+ST [X],Rd           FETCH → MEM                              2
+LD Rd,[X+d8]        FETCH → OPND → MEM                       3
+LD Rd,[SP+u8]       FETCH → OPND → MEM                       3
+LD Rd,[abs16]       FETCH → OPND ×2 → MEM                    4
+PUSH Rd             FETCH → MEM                              2
+POP Rd              FETCH → MEM                              2
+Bcc (not taken)     FETCH → OPND                             2
+Bcc (taken)         FETCH → OPND → EXEC                      3
+JMP abs16           FETCH → OPND ×2      (PC ← {rdata,TMP})  3
+CALL abs16          FETCH → OPND ×2 → PUSH ×2 → EXEC         6
+RET                 FETCH → POP ×2                           3
+RETI                FETCH → POP ×3                           4
+MUL Rd,Rs           FETCH → FETCH2 → EXEC → MULT ×8         11
+interrupt entry     PUSH ×3 → VEC ×2                         5
+page 2              FETCH → FETCH2 → …as above…             +1
 ```
 
-Interrupts and `busrq` are sampled in `FETCH` only. Because no
-instruction is restartable-in-the-middle — there are no block
+Interrupts and `busrq` are sampled at instruction boundaries only.
+Because no instruction is restartable-in-the-middle — there are no block
 operations, by design — latency is bounded by the longest instruction
 and no mid-instruction state ever needs saving.
 
-Priority at the `FETCH` sample point: `busrq` > `nmi` > `irq`.
+Priority at the boundary: `busrq` > `nmi` > `irq`.
+
+An instruction that changes `I` does so in the cycle it retires, and the
+boundary check reads the **new** value: reading the old one would let an
+interrupt in immediately after `DI` and keep one out immediately after
+`EI`. See [D24](01-decisions.md#d24--ei-and-di-take-effect-immediately-no-delay-slot).
 
 ---
 
@@ -406,26 +446,113 @@ does not preclude it — `ALE_H` simply stops toggling on the fast path.
 
 Rough, pending synthesis:
 
-| Block | Estimate |
+The estimate this section carried before the RTL existed was ~2750
+gates, made up of ~1100 for state, ~300 for the ALU, ~450 for the AGU,
+~600 for decode and the FSM, ~150 for multiply and ~150 for the pad
+wrapper.
+
+**Synthesised**, by [`sim/synth.py`](../sim/synth.py):
+
+| Measure | Result |
 |---|---|
-| Architectural + microarchitectural state (~140 FF) | ~1100 gates |
-| 8-bit ALU with flag logic | ~300 gates |
-| 16-bit AGU adder + input muxes | ~450 gates |
-| Instruction decoder + FSM | ~600 gates |
-| Multiply sequencer (§3.3) | ~150 gates |
-| Bus multiplexer / pad wrapper | ~150 gates |
-| **Total** | **~2750 gates ≈ 750 cells** |
+| iCE40UP5K, `cool8_core` | **969 LUT4, 148 FF, 24 carry** |
+| — of which `cool8_alu` | 78 LUT4 |
+| — of which `cool8_agu` | 128 LUT4 |
+| Mapped to two-input gates | 2196 combinational + 148 FF |
+| Gate equivalents at 6 GE per flip-flop | **3084** |
 
-A TinyTapeout 1×1 tile gives 161 × 111.52 µm of usable area — about
-17,955 µm², which is roughly **1000 digital logic gates** depending on
-cell sizes. Extra tiles can be bought. At ~2750 gates the core should
-land around **3 tiles**. **This must be confirmed with real synthesis
-before committing to a shuttle**, and it is the single biggest unknown
-in the schedule.
+969 LUTs against a ~1000 estimate is close enough to be luck. The gate
+count is 12 % over the estimate, which for a figure written before any
+code existed is well inside the noise and does not change the
+conclusion: at a TinyTapeout tile of roughly 1000 gates this is a
+**2×2 project**, since the shuttle sells 1×1, 1×2, 2×2, 3×2, 4×2, 6×2
+and 8×2 and there is no three-tile option.
 
-If it comes in larger, the answer is to buy tiles, not to cut the ISA —
-see [D19](01-decisions.md#d19--area-overruns-are-paid-for-in-tiles-not-isa-cuts).
-Run OpenLane at M3, not at M8.
+### 5.8 Placed and routed — the real number
+
+Run at M3 through TinyTapeout's own flow (LibreLane, sky130, `ttsky26c`),
+on `tt_um_cool8`: the core **and** the bus multiplexer, not just the core.
+
+| Measure | Result |
+|---|---|
+| Standard cells | **3009**, of which 158 sequential |
+| Cell area | **21,706 µm²** |
+| Die area, as a 1×2 | 36,349 µm² |
+| **Utilisation** | **61.2 %** |
+| Setup, worst corner (`ss` 100 °C 1.60 V) | −2.13 ns |
+| — of which register to register | **0** |
+| Setup, typical and fast corners | +4.74 ns, +5.27 ns |
+| Hold, worst corner | +0.11 ns, no violations |
+| DRC / LVS / antenna / routing DRC | 0 / 0 / 0 / 0 |
+| Power | 1.48 mW |
+
+**The architecture is not at risk on area.** 3009 cells against a guess
+of "750 cells" — the guess was in the wrong unit more than the wrong
+ballpark; the gate-equivalent estimate of 2750 against 21,706 µm² of
+real cells is the comparison that holds up, and it is close. At 29.9 %
+utilisation this fits in two tiles, not four. See §5.9.
+
+**The timing violations are all at the pins, not inside the CPU.**
+Register-to-register setup slack is positive at every corner: the
+control FSM, the ALU and the shared 16-bit adder all close at 50 MHz in
+slow silicon at 100 °C. Every one of the 27 violating paths ends at an
+output pad or starts at an input pad, against TinyTapeout's default
+assumption about what is on the other side of them. What is actually on
+the other side here is two 74HC573 latches and a 55 ns SRAM clocked at
+around 10 MHz, where the budget is 100 ns rather than the few
+nanoseconds the default reserves.
+
+So the honest statement is: **the CPU closes at 50 MHz; the chip's I/O
+timing is constrained by a boundary assumption that does not describe
+this board.** Setting `CLOCK_PERIOD` in `src/config.json` to the real
+target would clear the remaining violations and, incidentally, remove
+the 246 timing-repair buffers and 688 slow-corner slew violations that
+chasing a 20 ns constraint bought.
+
+Dropping the memory address register (§3.1, [D23](01-decisions.md#d23--no-memory-address-register))
+lengthened the path from the pointer registers through the AGU adder to
+the address pins, which is exactly where these paths are. It cost
+nothing that matters at the target frequency, and it is worth
+remembering that it is the path to watch if the frequency target ever
+moves.
+
+### 5.9 Tile count
+
+A 1×1 tile is 161 × 111.52 µm, about 17,955 µm². There is no 3-tile
+option — the shuttle sells 1×1, 1×2, 2×2, 3×2, 4×2, 6×2 and 8×2 — so
+the earlier estimate of "around 3 tiles" had to resolve one way or the
+other. **Both were run.**
+
+| | 2×2 | 1×2 |
+|---|---|---|
+| Die area | 75,603 µm² | 36,349 µm² |
+| Cell area | 21,706 µm² | 20,960 µm² |
+| Utilisation | 29.9 % | 61.2 % |
+| Setup slack, worst corner | −2.128 ns | −2.023 ns |
+| Routing wirelength | 82,341 µm | 78,117 µm |
+| Routing DRC / magic DRC / LVS / antenna | 0 / 0 / 0 / 0 | 0 / 0 / 0 / 0 |
+| Max slew violations | 688 | 623 |
+| Power | 1.479 mW | 1.478 mW |
+
+**1×2 closes, and is better on every metric that moved.** Global
+placement did not struggle at 61 %, and routing reached zero DRC errors
+as it did at 2×2. Timing improved rather than degraded: the only
+violating paths are register-to-pad (§5.8), and halving the die
+shortened them.
+
+The apparent drop in cell count from 3009 to 2420 is tap cells and
+fill, which scale with die area rather than with logic. Real cell area
+barely moved.
+
+So the honest answer is **2 tiles, not 3 and not 4**. The caveat worth
+recording: 61 % is TinyTapeout's default target density, so it closed
+with the design as it stands and not much room beyond it. Anything that
+grows the core later — the two-phase page mode in §5.6, for instance —
+should be re-run before assuming 1×2 still holds.
+
+[D19](01-decisions.md#d19--area-overruns-are-paid-for-in-tiles-not-isa-cuts)
+— area overruns are paid for in tiles, not ISA cuts — turned out not to
+need invoking.
 
 ---
 

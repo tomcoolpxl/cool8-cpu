@@ -194,9 +194,17 @@ for dd, d in enumerate(REGS):
 # ---------------------------------------------------------------- API
 
 def cycles(op, op2=None):
-    """Cycle cost per docs/02-isa.md section 8, FPGA timing (1-cycle
-    memory). Returns an int, or (not_taken, taken) for conditional
-    branches. The emulator cross-checks its own accounting against this.
+    """Clocks per instruction, **measured** from rtl/core by
+    sim/timing.py. One memory access per clock, no wait states — the
+    FPGA configuration. Returns an int, or (not_taken, taken) for
+    conditional branches.
+
+    Every access costs three clocks on the TinyTapeout bus instead of
+    one, so the ASIC figure is this number plus two per memory access.
+
+    These replace the provisional targets that stood here before the RTL
+    existed; docs/02-isa.md section 8 carries the same numbers. Re-run
+    `python sim/timing.py` after any change to the control FSM.
     """
     if op == 0x2F:                                    # page 2: escape + op
         if op2 is None or op2 not in page2:
@@ -204,42 +212,50 @@ def cycles(op, op2=None):
         if op2 < 0x10:
             return 3                                  # XOR Rd,Rs
         if op2 in (0x2C, 0x2D):
-            return 6                                  # ADDW X|Y,#imm16
+            return 5                                  # ADDW X|Y,#imm16
         if op2 < 0x40:
             g = (op2 - 0x10) >> 2
-            return 4 if g in (0, 8, 9, 10) else 3     # imm/bit forms cost 1
+            return 4 if g in (0, 8, 9, 10) else 3     # imm/mask forms cost 1
         if op2 < 0x60:
             return 3                                  # half-register moves
         if op2 < 0x70:
-            return {0x60: 6, 0x61: 6, 0x62: 8, 0x63: 8, 0x64: 8, 0x65: 8,
+            return {0x60: 5, 0x61: 5, 0x62: 6, 0x63: 6, 0x64: 6, 0x65: 6,
                     0x66: 3, 0x67: 3, 0x68: 3, 0x69: 3, 0x6A: 3, 0x6B: 3,
-                    0x6C: 5, 0x6D: 5, 0x6E: 5}[op2]
+                    0x6C: 4, 0x6D: 4, 0x6E: 4}[op2]
         if op2 < 0x80:
-            return 4                                  # ADDW/SUBW X|Y,Rd
+            return 3                                  # ADDW/SUBW X|Y,Rd
         if op2 < 0xC0:
-            return 5                                  # [X|Y + Rs]
+            return 3                                  # [X|Y + Rs]
         if op2 < 0xE0:
-            return 5                                  # auto inc / dec
+            return 3                                  # auto inc / dec
         if op2 < 0xE3:
-            return 4 if op2 < 0xE2 else 3             # PUSH F/POP F, CLV
-        return 13                                     # MUL: escape + 12
+            return 3                                  # PUSH F, POP F, CLV
+        return 11                                     # MUL: escape + 10
     if op < 0x20:
         return 3                                      # ALU Rd,#imm8
     if op < 0x30:
-        return {0x20: 2, 0x21: 2, 0x22: 5, 0x23: 6, 0x24: 2, 0x25: 2,
-                0x26: 2, 0x27: 2, 0x28: 4, 0x29: 7, 0x2A: 2, 0x2B: 2,
-                0x2C: 5, 0x2D: 5, 0x2E: 7}[op]
+        return {0x20: 2, 0x21: 2, 0x22: 3, 0x23: 4, 0x24: 2, 0x25: 2,
+                0x26: 2, 0x27: 2, 0x28: 3, 0x29: 6, 0x2A: 2, 0x2B: 2,
+                0x2C: 4, 0x2D: 4, 0x2E: 6}[op]
     if op < 0x38:
-        return 3                                      # PUSH/POP Rd
+        return 2                                      # PUSH/POP Rd
     if op < 0x40:
-        return 2 if (op & 7) < 4 else 4               # INCW/DECW vs PUSHW
+        return 2 if (op & 7) < 4 else 3               # INCW/DECW vs PUSHW
     if op < 0x50:
-        return 3                                      # LD/ST [X|Y]
+        return 2                                      # LD/ST [X|Y]
+    if op < 0x60:
+        return 3                                      # LD/ST [X|Y + d8]
     if op < 0x70:
-        return 5                                      # displaced / absolute
+        return 4 if (op & 1) else 3                   # [abs16] vs [SP+u8]
     if op < 0x80:
-        return (3, 4)                                 # Bcc not taken, taken
+        return (2, 3)                                 # Bcc not taken, taken
     return 2                                          # ALU Rd,Rs
+
+
+#: Clocks for a hardware interrupt entry: three pushes and two vector
+#: reads. BRK is this plus its own fetch; the reserved page-2 trap is
+#: this plus two.
+INTERRUPT_CYCLES = 5
 
 
 def length(op, op2=None):

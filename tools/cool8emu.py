@@ -206,7 +206,7 @@ class Cool8:
         self._push(self.f)
         self.I = False
         self.pc = self.bus.read16(vector)
-        self.cycles += 7
+        self.cycles += opcodes.INTERRUPT_CYCLES   # three pushes, two reads
         self.halted = False
 
     def _service_interrupts(self):
@@ -224,7 +224,7 @@ class Cool8:
     def step(self):
         """Execute one instruction. Returns the cycles it consumed."""
         if self._service_interrupts():
-            return 7
+            return opcodes.INTERRUPT_CYCLES
         if self.halted:
             self.cycles += 1
             return 1
@@ -277,7 +277,7 @@ class Cool8:
             self._nz(self.r[dd])                        # POP sets Z/N
         else:
             self._push(self.r[dd])                      # PUSH sets nothing
-        self.cycles += 3
+        self.cycles += 2
 
     def _ptr_quick(self, op):                           # $38-$3F
         which = op & 7
@@ -299,27 +299,28 @@ class Cool8:
                     self.y = v
                 else:
                     self.x = v
-            self.cycles += 4
+            self.cycles += 3
 
     def _ldst_ptr(self, op):                            # $40-$4F
         dd, ptr = (op >> 1) & 3, (self.y if op & 1 else self.x)
         self._memop(op & 8, dd, ptr)
-        self.cycles += 3
+        self.cycles += 2
 
     def _ldst_ptr_disp(self, op):                       # $50-$5F
         d = self._fetch()
         d = d - 256 if d > 127 else d                   # signed
         base = self.y if op & 1 else self.x
         self._memop(op & 8, (op >> 1) & 3, (base + d) & 0xFFFF)
-        self.cycles += 5
+        self.cycles += 3
 
     def _ldst_sp_abs(self, op):                         # $60-$6F
         if op & 1:
             ea = self._fetch16()                        # absolute
+            self.cycles += 4
         else:
             ea = (self.sp + self._fetch()) & 0xFFFF     # SP + unsigned
+            self.cycles += 3
         self._memop(op & 8, (op >> 1) & 3, ea)
-        self.cycles += 5
 
     def _memop(self, is_store, dd, ea):
         if is_store:
@@ -333,9 +334,9 @@ class Cool8:
         d = d - 256 if d > 127 else d
         if self.cond(op & 15):
             self.pc = (self.pc + d) & 0xFFFF            # relative to next
-            self.cycles += 4
-        else:
             self.cycles += 3
+        else:
+            self.cycles += 2
 
     def _control(self, op):                             # $20-$2F
         if op == 0x20:
@@ -346,11 +347,11 @@ class Cool8:
             self.on_halt()
         elif op == 0x22:
             self.pc = self._pop16()
-            self.cycles += 5
+            self.cycles += 3
         elif op == 0x23:
             self.f = self._pop()
             self.pc = self._pop16()
-            self.cycles += 6
+            self.cycles += 4
         elif op == 0x24:
             self.I = True
             self.cycles += 2
@@ -365,12 +366,12 @@ class Cool8:
             self.cycles += 2
         elif op == 0x28:
             self.pc = self._fetch16()
-            self.cycles += 4
+            self.cycles += 3
         elif op == 0x29:
             t = self._fetch16()
             self._push16(self.pc)
             self.pc = t
-            self.cycles += 7
+            self.cycles += 6
         elif op in (0x2A, 0x2B):
             self.pc = self.y if op & 1 else self.x
             self.cycles += 2
@@ -378,8 +379,9 @@ class Cool8:
             t = self.y if op & 1 else self.x
             self._push16(self.pc)
             self.pc = t
-            self.cycles += 5
+            self.cycles += 4
         elif op == 0x2E:
+            self.cycles += 1                            # the BRK fetch
             self._enter(BRK_VEC)
         else:
             self._page2()
@@ -391,6 +393,7 @@ class Cool8:
         self.cycles += 1
 
         if op not in opcodes.page2:                     # reserved -> trap
+            self.cycles += 1                            # the second byte
             self._enter(BRK_VEC)
             return
 
@@ -406,12 +409,11 @@ class Cool8:
                 self.y = (self.y + v) & 0xFFFF          # sets no flags
             else:
                 self.x = (self.x + v) & 0xFFFF
-            self.cycles += 5
+            self.cycles += 4
         elif op < 0x40:
             self._unary(op)
         elif op < 0x50:                                 # MOV Rd,<half>
-            self.r[dd] = self._half(op & 3)
-            self._nz(self.r[dd])
+            self.r[dd] = self._half(op & 3)             # a MOV: no flags
             self.cycles += 2
         elif op < 0x60:                                 # MOV <half>,Rs
             self._set_half(op & 3, self.r[(op >> 2) & 3])
@@ -425,19 +427,19 @@ class Cool8:
                 self.y = (self.y + delta) & 0xFFFF      # sets no flags
             else:
                 self.x = (self.x + delta) & 0xFFFF
-            self.cycles += 3
+            self.cycles += 2
         elif op < 0xC0:                                 # [X|Y + Rs]
             base = self.y if (op >> 4) & 1 else self.x
             self._memop(op >= 0xA0, dd, (base + self.r[ss]) & 0xFFFF)
-            self.cycles += 4
+            self.cycles += 2
         elif op < 0xE0:                                 # auto inc / dec
             self._autoinc(op)
         elif op == 0xE0:
             self._push(self.f)
-            self.cycles += 3
+            self.cycles += 2
         elif op == 0xE1:
             self.f = self._pop()
-            self.cycles += 3
+            self.cycles += 2
         elif op == 0xE2:
             self.V = False
             self.cycles += 2
@@ -447,7 +449,7 @@ class Cool8:
             self.Z = self.x == 0
             self.N = bool(self.x & 0x8000)
             self.C = self.V = False
-            self.cycles += 12
+            self.cycles += 10
 
     def _unary(self, op):
         group, dd = (op - 0x10) >> 2, op & 3
@@ -515,17 +517,17 @@ class Cool8:
                 self.y = v
             else:
                 self.x = v
-            self.cycles += 5
+            self.cycles += 4
         elif op in (0x62, 0x63):
             v = self.bus.read16(self._fetch16())
             if op & 1:
                 self.y = v
             else:
                 self.x = v
-            self.cycles += 7
+            self.cycles += 5
         elif op in (0x64, 0x65):
             self.bus.write16(self._fetch16(), self.y if op & 1 else self.x)
-            self.cycles += 7
+            self.cycles += 5
         elif op == 0x66:
             self.x = self.y
             self.cycles += 2
@@ -547,14 +549,14 @@ class Cool8:
         elif op == 0x6C:                                # ADDW SP,#d8 signed
             d = self._fetch()
             self.sp = (self.sp + (d - 256 if d > 127 else d)) & 0xFFFF
-            self.cycles += 4
+            self.cycles += 3
         else:                                           # LEA X|Y,[SP+u8]
             v = (self.sp + self._fetch()) & 0xFFFF
             if op == 0x6D:
                 self.x = v
             else:
                 self.y = v
-            self.cycles += 4
+            self.cycles += 3
 
     def _autoinc(self, op):
         pre = bool(op & 0x10)
@@ -569,7 +571,7 @@ class Cool8:
             self.y = ptr
         else:
             self.x = ptr
-        self.cycles += 4
+        self.cycles += 2
 
     # -------------------------------------------------------- harness
 

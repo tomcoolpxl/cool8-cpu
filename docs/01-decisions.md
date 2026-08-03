@@ -527,6 +527,87 @@ not the bottleneck.
 
 ---
 
+## D23 — No memory address register
+
+**Decided at M3, when the RTL was written.**
+
+[03-microarchitecture.md](03-microarchitecture.md) originally specified
+a `MAR` and a dedicated `ADDR` state that loaded it. The RTL has
+neither: `mem_addr` is driven straight out of the AGU through a 2:1 mux
+that selects either the adder's A input (fetch at `PC`, pop at `SP`,
+post-increment at `X`) or its sum (displaced addressing, push at `SP-1`,
+pre-decrement at `X-1`).
+
+It buys two things:
+
+- **16 flip-flops**, about 12 % of the machine's state.
+- **A cycle off every memory access with a computed address.**
+  `LD Rd,[X+d8]` is 3 clocks instead of 5, `RET` is 3 instead of 5,
+  `CALL abs16` is 6 instead of 7. Section 8 of the ISA now carries the
+  measured numbers.
+
+The cost is a longer combinational path — register file or pointer, AGU
+adder, address pins — instead of a clock-to-Q out of a flop. At the
+FPGA's 25 MHz and the ASIC's target of around 10 MHz that path has an
+enormous amount of slack, and on the ASIC the bus multiplexer registers
+the address on its way out anyway.
+
+`IR2` went the same way. After a `$2F` escape the primary opcode is
+known, so the second byte overwrites `IR` and one `p2` bit records that
+it did — 8 flip-flops for 1.
+
+## D24 — `EI` and `DI` take effect immediately, no delay slot
+
+**Decided at M3.** The first RTL sampled the `I` flag at an instruction
+boundary *before* that instruction's own writeback. That is the 6502 and
+Z80 behaviour, and it produces the familiar "`EI` delay slot": an
+interrupt cannot be taken at the boundary immediately after the
+instruction that enabled it.
+
+It also produces the much less familiar consequence that an interrupt
+**can** be taken immediately after `DI`, which makes `DI` unreliable as
+a way of protecting a critical section — the one thing it is for.
+
+The asymmetry is not worth having. The core now derives the
+interrupt-enable value for the boundary check from the decode of the
+retiring instruction, so `EI`, `DI` and `POP F` all take effect at their
+own boundary. This costs one 3:1 mux on a single bit.
+
+The reference emulator already behaved this way, which is how the
+disagreement was found: the RTL and the emulator are checked against
+each other after every instruction, and this is exactly the class of
+question that comparison exists to settle.
+
+`RETI` is unaffected either way — it restores `I` from the stack two
+cycles before its boundary — so the guarantee of forward progress out of
+a handler that the delay slot is usually justified by does not depend on
+it here.
+
+## D25 — `MOV Rd,<pp>` sets no flags
+
+**Decided at M3**, having been open for about an hour.
+
+The page-2 pointer-half moves ([02-isa.md §5.2](02-isa.md#52-pointer-half-register-access))
+were not named in the normative flag table, and the reference emulator
+was setting `Z` and `N` on the load direction while the store direction
+set nothing. Nobody chose that; the table simply had a hole in it and
+the emulator filled it one way.
+
+They are `MOV`s. §1.2's first rule — *"`MOV` never touches flags; loads
+do"* — applies, and the two directions are now symmetric.
+
+The reasoning behind rule 1 is that `LD` then `BEQ` is the commonest
+two-instruction sequence in 8-bit code and should not need a `TST`
+between them. `MOV R0,XH` then `BEQ` is not that sequence: extracting a
+pointer half is nearly always followed by arithmetic, which sets the
+flags itself. Nothing is lost, and `MOV` keeps meaning one thing
+everywhere.
+
+The change was one line in the RTL, one in the emulator and one row of
+the table, and the co-simulation confirmed all three agree.
+
+---
+
 ## Resolved former open questions
 
 Recorded so they are not re-opened without new information.
@@ -540,8 +621,56 @@ Recorded so they are not re-opened without new information.
 
 ## Open questions
 
-**None.** The last one — whether four registers is enough — was closed
-by measurement at the M2 gate; see [D21](#d21--four-general-registers-is-enough-confirmed-question-closed).
+**None.**
+
+The last one lasted about an hour: co-simulation at M3 exposed that the
+flag table did not say whether `MOV Rd,<pp>` set `Z` and `N`, and the
+emulator had quietly decided that it did. Closed as
+[D25](#d25--mov-rdpp-sets-no-flags) — it does not.
+
+The section below is kept because the reasoning is worth not
+re-deriving.
+
+<details>
+<summary>The argument, as it stood</summary>
+
+**Does `MOV Rd,<pp>` set flags?**
+
+[02-isa.md §1.2](02-isa.md#12-flag-effects) states three rules, the
+first of which is *"`MOV` never touches flags; loads do"*. The normative
+flag table underneath it lists `MOV Rd,Rs` and `MOV Rd,#imm8` by name
+and does not mention the page-2 pointer-half move `MOV Rd,XL` at all.
+
+The reference emulator sets `Z` and `N` from the moved byte, treating it
+as a load. The RTL now matches the emulator, because the emulator is the
+co-simulation reference and a disagreement there would have masked real
+bugs. But that is a decision made by omission rather than on purpose,
+and it should be made on purpose.
+
+The case for making it **flagless**, which is the recommendation:
+
+- The instruction is called `MOV`, and rule 1 is unambiguous about what
+  `MOV` does. A reader of the ISA will expect it.
+- The reason loads set `Z`/`N` is that `LD` then `BEQ` is the commonest
+  two-instruction sequence in 8-bit code. `MOV R0,XH` then `BEQ` is not
+  that sequence; extracting a pointer half is nearly always followed by
+  arithmetic, which sets the flags itself.
+- It makes the two directions symmetric: `MOV <pp>,Rs` already sets no
+  flags.
+
+The case for leaving it as it is: it is a byte arriving in a register
+from somewhere other than the ALU, which is what rule 1's "loads" means,
+and changing it now means changing the emulator, the RTL and the table.
+
+Either way it is a one-line change in each of the three, and the
+co-simulation will prove they agree. It needs a decision, not more
+analysis.
+
+</details>
+
+The question before that — whether four general registers are enough —
+was closed by measurement at the M2 gate; see
+[D21](#d21--four-general-registers-is-enough-confirmed-question-closed).
 
 The architecture is settled. Anything that reopens it now needs new
 evidence of the same kind: real code, measured, not an argument.
