@@ -30,8 +30,8 @@ memory as the model — including through the multiplexed ASIC bus.
 | System (video/audio/keyboard) | Specified |
 | Board bring-up | **Done.** Boots, answers, runs loaded programs, echoes serial |
 | Open design questions | **None.** All 27 decisions logged; the last two closed at M4 |
-| Video | **Started.** Raster verified pixel by pixel; screen visible on the PC over serial |
-| Next | Scanline buffer, text mode and the font (M5) |
+| Video | **Text mode 0 draws.** Raster verified pixel by pixel, real CP437 font, 16 colours |
+| Next | The fetch engine and the memory arbiter (M5) |
 
 ```bash
 python tools/opcodes.py --check              # opcode map coverage
@@ -49,7 +49,7 @@ python sim/test_spram.py                     # the SPRAM controller
 python sim/test_boot.py                      # boot ROM and the overlay
 python sim/test_soc.py                       # the I/O page, and a cold boot
 python sim/test_load.py                      # the host loader
-python sim/test_video.py                     # the raster -> build/frame.png
+python sim/test_video.py                     # raster, font, text -> build/*.png
 
 python tools/mkbit.py                        # build/cool8.bin
 ```
@@ -77,6 +77,7 @@ on `PATH`, or `OSS_CAD_SUITE` pointing at its root.
 | [rtl/pads/](rtl/pads/) | `tt_um_cool8.v` — the TinyTapeout three-phase bus |
 | [sim/](sim/) | Co-simulation, program generators, synthesis and timing gates |
 | [sw/](sw/) | Software corpus: library, graphics, compiler-style frames |
+| [assets/font/](assets/font/) | Spleen 8x16, BSD 2-clause, converted to the font EBR image |
 
 ## The shape of it in one screen
 

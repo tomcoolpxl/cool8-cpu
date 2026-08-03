@@ -33,6 +33,7 @@ the whole 64 KB address space at the end of the run.
 | `tb/cool8_top_tb.v` | The board wrapper: the reset it manufactures, and the LED pins' polarity |
 | `tb/cool8_wire_tb.v` | The serial port as a pipe, so the host tool can be tested against the machine |
 | `tb/cool8_vga_tb.v` | The raster against a golden model of a raster, output for output |
+| `tb/cool8_text_tb.v` | A screen of real characters, off the RGB pins, with the two clocks running apart |
 
 ```bash
 python sim/cosim.py all      # directed, random, interrupts, ASIC bus, SPRAM

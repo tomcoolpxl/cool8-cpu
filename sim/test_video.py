@@ -33,10 +33,17 @@ BUILD = os.path.join(HERE, "build")
 
 sys.path.insert(0, HERE)
 
+sys.path.insert(0, os.path.join(ROOT, "tools"))
+
 import cosim                                    # noqa: E402
+import mkfont                                   # noqa: E402
 
 VGA = os.path.join(ROOT, "rtl", "soc", "cool8_vga.v")
+TEXT = [os.path.join(ROOT, "rtl", "soc", f)
+        for f in ("cool8_vga.v", "cool8_rom.v", "cool8_text.v")]
 TB = os.path.join(HERE, "tb", "cool8_vga_tb.v")
+TEXT_TB = os.path.join(HERE, "tb", "cool8_text_tb.v")
+BDF = os.path.join(ROOT, "assets", "font", "spleen-8x16.bdf")
 
 H_VIS, V_VIS = 640, 480
 
@@ -103,6 +110,39 @@ def main():
     else:
         print(f"  {'a frame, rendered':<44} ok")
         print(f"    {n} pixels -> {os.path.relpath(png, ROOT)}")
+
+    # ---- the font, and a screen of text through it
+    img, present, fb = mkfont.build(BDF)
+    with open(os.path.join(BUILD, "font.hex"), "w") as fh:
+        for b in img:
+            fh.write("%02x\n" % b)
+    blank = sum(1 for i in range(256) if not any(img[i * 16:(i + 1) * 16]))
+    print(f"  {'the font':<44} ok")
+    print(f"    {present}/256 CP437 glyphs from a {fb[0]}x{fb[1]} box, "
+          f"{blank} blank")
+
+    vvp = cosim._build("cool8_text_tb", TEXT_TB, TEXT)
+    r = subprocess.run([cosim._tool("vvp"), vvp, "+frame=text.hex"],
+                       cwd=BUILD, capture_output=True, text=True)
+    out = r.stdout + r.stderr
+    good = "\nPASS" in out
+    print(f"  {'text mode 0, through the raster':<44} "
+          f"{'ok' if good else 'FAIL'}")
+    for line in out.splitlines():
+        if line.startswith("FAIL") or "captured" in line:
+            print("    " + line)
+    ok &= good
+
+    if good:
+        png = os.path.join(BUILD, "text.png")
+        n, err = render(os.path.join(BUILD, "text.hex"), png)
+        if err:
+            print(f"  {'a screen, rendered':<44} FAIL")
+            print("    " + err)
+            ok = False
+        else:
+            print(f"  {'a screen, rendered':<44} ok")
+            print(f"    {n} pixels -> {os.path.relpath(png, ROOT)}")
 
     print("\n" + ("PASS" if ok else "FAIL"))
     return 0 if ok else 1

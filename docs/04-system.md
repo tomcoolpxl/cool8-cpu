@@ -454,6 +454,14 @@ The font is 256 glyphs of 8×16 in EBR (4 KB), on its own port, so glyph
 fetches cost no main-memory bandwidth at all. Mode 1 uses the top or
 bottom half of each glyph cell.
 
+Mode 0 is built: [`rtl/soc/cool8_text.v`](../rtl/soc/cool8_text.v), **266
+LUT4, 212 flip-flops and 9 EBR** — eight of them the font, one the
+dual-clock line buffer that joins the 12 MHz memory to the 25.125 MHz
+raster. The character set is **CP437**, and the font is Spleen 8×16
+(BSD 2-clause), vendored in [`assets/font/`](../assets/font) and
+converted by `tools/mkfont.py`. Codes `$00-$1F` are blank: those are
+CP437's decorative glyphs and Spleen does not carry them.
+
 ### 5.3 Bandwidth
 
 The reason there is no banking, no separate video RAM and no display

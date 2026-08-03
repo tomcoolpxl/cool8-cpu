@@ -642,10 +642,11 @@ see §Working without the display below.
 
 - [x] VGA timing generator, 640×480@60 —
       [`rtl/soc/cool8_vga.v`](../rtl/soc/cool8_vga.v)
-- [ ] Dual-clock scanline buffer, the join D26 designed for
+- [x] Text mode 0 (80×30), font in EBR, dual-clock line buffer and the
+      palette — [`rtl/soc/cool8_text.v`](../rtl/soc/cool8_text.v)
+- [ ] The fetch engine: 80 cells a character row, out of main memory
 - [ ] Memory arbiter, video priority
-- [ ] Text mode 0 (80×30), font in EBR
-- [ ] Palette registers
+- [ ] `VID_*` registers wired to the I/O page
 - [ ] Boot ROM prints a message
 
 ```bash
@@ -661,11 +662,49 @@ pixel clocks** — two whole frames, 6.7 million checks, and the tallies
 `x`, `y`, `visible` and the two syncs always describe the same pixel.
 
 `o_prefetch` is the hook the rest hangs off: one pulse per line at the
-start of the front porch, naming the line about to be displayed, which
-gives a scanline buffer the whole horizontal blank — 160 pixel clocks,
-6.4 µs — to fill itself. That is the shape
+start of the front porch, naming the line about to be displayed. That is
+the shape
 [D26](01-decisions.md#d26--the-system-clock-is-12-mhz-the-pixel-clock-is-decoupled)
 chose when it decoupled the two clocks.
+
+### Text mode 0, and the font
+
+**266 LUT4, 212 flip-flops and 9 EBR** — eight of those the font, one the
+line buffer. It draws 80×30 cells of 8×16, one 16-bit word each, through
+a 16-entry 12-bit palette.
+
+**The line buffer is the clock crossing, and the only one.** Memory runs
+at 12 MHz and the raster at 25.125 MHz; `SB_RAM40_4K` has independent
+clocks, so the two domains meet inside a block RAM rather than across an
+arbiter. Two banks of 80 cells: the fetch fills one while the raster
+reads the other, and a character row lasts sixteen scanlines — 509 µs
+against the 13.3 µs that 80 word reads cost, forty times the room it
+needs. `read_bank` is stable for a whole row, which is what makes it
+safe to sample without a handshake.
+
+**Two cycles of lookahead, and no cadence.** A cell read costs a cycle
+and the font read after it another, so rather than a shift register and
+a load strobe the address simply runs two pixels ahead and wraps with
+the line. That puts the glyph byte for cell *x*/8 on the bus exactly at
+*x*. The wrap is the part worth reading twice: at the last two pixels of
+a line the raster still reports the old `y`, so the row index has to
+look ahead as well or column 0 of every character row is drawn from the
+wrong slice of the glyph.
+
+**The font is downloaded, not drawn.** Spleen 8×16, BSD 2-clause,
+vendored in [`assets/font/`](../assets/font) with its licence, converted
+by [`tools/mkfont.py`](../tools/mkfont.py) — which parses the BDF
+bounding boxes rather than assuming them, because most glyphs are
+smaller than the cell and a descender placed a row out is invisible in
+any count and obvious in a picture. The character set is CP437 through
+Python's own codec; Spleen covers 224 of 256, the rest being the
+decorative `$00-$1F` range. Any BDF of the same cell size drops in.
+
+And there is a picture: `sim/test_video.py` renders a whole screen —
+a box in line-drawing characters, all 256 glyphs, all 16 colours — to
+`build/text.png`, off the RGB pins, through the real raster, with the
+two clocks running at incommensurate rates so the crossing is actually
+exercised.
 
 ### Working without the display
 
