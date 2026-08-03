@@ -28,6 +28,7 @@ the whole 64 KB address space at the end of the run.
 | `tb/cool8_boot_tb.v` | Cold boot from undefined SPRAM, then the loader's `BOOTRAM` path |
 | `tb/cool8_soc_tb.v` | The I/O page: what wins the decode, reached from the loader and then from the CPU |
 | `tb/cool8_soc_boot_tb.v` | The whole machine, cold, on the parameters the bitstream will carry |
+| `tb/cool8_top_tb.v` | The board wrapper: the reset it manufactures, and the LED pins' polarity |
 
 ```bash
 python sim/cosim.py all      # directed, random, interrupts, ASIC bus, SPRAM

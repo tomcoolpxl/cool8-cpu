@@ -26,10 +26,11 @@ memory as the model — including through the multiplexed ASIC bus.
 | ASIC pad wrapper | Three-phase bus, verified against latch and SRAM models |
 | **Silicon** | **Hardened.** Fits in two TinyTapeout tiles, clean DRC/LVS |
 | **SoC** | **Simulated.** Memory, boot ROM, UART, loader and I/O page; boots cold to a lit LED |
+| **Bitstream** | **Builds.** 1994 of 5280 logic cells, closes at 12 MHz |
 | System (video/audio/keyboard) | Specified |
-| Board bring-up | Pin budget verified against the board's own pinout |
+| Board bring-up | Not yet flashed. Needs the host loader first |
 | Open design questions | **None.** All 27 decisions logged; the last two closed at M4 |
-| Next | A bitstream on the board (M4) |
+| Next | `cool8load.py`, then first light on real hardware (M4) |
 
 ```bash
 python tools/opcodes.py --check              # opcode map coverage
@@ -46,6 +47,8 @@ python sim/test_loader.py                    # UART and loader, over a wire
 python sim/test_spram.py                     # the SPRAM controller
 python sim/test_boot.py                      # boot ROM and the overlay
 python sim/test_soc.py                       # the I/O page, and a cold boot
+
+python tools/mkbit.py                        # build/cool8.bin
 ```
 
 The RTL work needs [OSS CAD Suite](https://github.com/YosysHQ/oss-cad-suite-build)

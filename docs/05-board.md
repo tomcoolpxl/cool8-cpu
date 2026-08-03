@@ -73,6 +73,13 @@ signals. What's left is exactly enough, and no more:
 
 ## 3. Full pin assignment
 
+The live constraint file is [`board/icesugar.pcf`](../board/icesugar.pcf)
+and it carries only the pins `cool8_top` currently has a port for —
+`nextpnr` rejects a constraint for a port that does not exist, so VGA,
+PS/2, audio and the buttons are added to it as their milestones arrive.
+What follows is the whole map, which is the thing to check against when
+adding one.
+
 ```
 # clock
 set_io clk        35
@@ -127,6 +134,33 @@ names the red signals `vga_R`, `vga_R1`, `vga_R2`, `vga_R3` on pins
 assignment above assumes 45 is bit 0. Check against the PMOD-VGA
 schematic, or just display a horizontal ramp and look at the monitor —
 if the ramp is scrambled, reverse the order.
+
+### 3.1 The two facts a first bitstream is guessing at
+
+Both are cheap to check and both have an unmistakable symptom, which is
+most of why the boot ROM's last act is to light the LED.
+
+- **LED polarity.** `cool8_top` drives the pins low to light them,
+  assuming a common-anode LED. If it is the other way round, the board
+  comes up dark and turns *on* when the boot ROM finishes. Flip
+  `LED_ACTIVE_LOW` and rebuild.
+- **Which of pins 4 and 6 the FPGA transmits on.** The board's own file
+  calls 6 `TX`; `board/icesugar.pcf` reads that as the FPGA's transmit,
+  which is the natural reading and the only one that can be checked by
+  trying. If a `PING` is never answered but the LED says the ROM ran,
+  swap them.
+
+### 3.2 No reset button
+
+There is no reset pin and none of `SW[0..3]` is wired to one.
+`cool8_top` makes its own reset from a counter that stops at all-ones —
+iCE40 flip-flops leave configuration at zero, so it holds the machine
+down for 4096 clocks, 341 µs, and then never moves again.
+
+A button would be nicer and is deliberately not there yet: one whose
+polarity is guessed wrong holds the machine in reset forever and is
+indistinguishable from a dead board. It costs nothing to add once there
+is a board known to work.
 
 ---
 
@@ -224,19 +258,47 @@ Everything except the VGA PMOD is a few euro of passives.
 
 ## 6. Toolchain
 
-Fully open source:
+Fully open source, and wrapped in one script:
 
 ```bash
-yosys -p "synth_ice40 -top cool8_top -json cool8.json" rtl/**/*.v
-nextpnr-ice40 --up5k --package sg48 --pcf board/icesugar.pcf \
-              --json cool8.json --asc cool8.asc
-icepack cool8.asc cool8.bin
+python tools/mkbit.py                    # yosys, nextpnr, icepack
 ```
 
+It assembles the boot ROM first — `cool8_rom.v` reads its image at
+elaboration, so `yosys` runs with `build/` as its working directory —
+and constrains the design to 12 MHz, which `nextpnr` enforces rather
+than reports.
+
+**Measured, the whole machine placed and routed:**
+
+| | |
+|---|---|
+| Logic cells | 1994 / 5280 — 37 % |
+| EBR | 8 / 30 — the boot ROM |
+| SPRAM | 2 / 4 |
+| I/O | 6 / 39 |
+| Timing | closes at 12 MHz |
+| Bitstream | 104 KB |
+
+The critical path is what
+[D26](01-decisions.md#d26--the-system-clock-is-12-mhz-the-pixel-clock-is-decoupled)
+said it would be: SPRAM read data, through the read mux and the
+instruction decode, to the next state. D26's own 16.9 MHz figure was
+measured on the core and two SPRAM alone; the assembled machine adds the
+boot ROM's block mux and the I/O page's, and `nextpnr`'s result moves by
+about 6 % across placer seeds. This is the first measurement of the
+whole thing, and it is the number the video engine at M5 has to leave
+intact.
+
 Programming is drag-and-drop: the iCELink debugger enumerates as a mass
-storage device, so copying `cool8.bin` onto it flashes the board. The
-`icesprog` utility in the board's repository does the same from a
+storage device, so copying `build/cool8.bin` onto it flashes the board.
+The `icesprog` utility in the board's repository does the same from a
 script, and there is a prebuilt `icesprog.win.exe` for Windows.
+
+> **Do not use `icesprog -e`.** Whole-chip erase, not sector erase — it
+> takes the bitstream with it. Also in
+> [04-system.md §4.8](04-system.md#48-spi-flash--fe88), because that is
+> where you would go looking for the flash commands.
 
 Simulation: `iverilog` + `gtkwave`, or `verilator` for the
 co-simulation against the reference emulator.

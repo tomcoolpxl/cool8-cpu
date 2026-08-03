@@ -1,22 +1,28 @@
 #!/usr/bin/env python3
 """The SoC: the I/O page decode, and the machine as a whole.
 
-Three tests, in the order that localises a failure fastest:
+Four tests, in the order that localises a failure fastest:
 
   1. `cool8_soc_tb` — the decode, driven by loader frames over a
      bit-banged wire and then by programs the CPU runs. Fast: a short
      baud divider and a filled-in boot ROM, because what is under test
      is which block answered, not how long it took.
-  2. `cool8_soc_boot_tb` — the same SoC on the parameters the bitstream
+  2. `cool8_top_tb` — only what the board wrapper adds: a reset that has
+     to be manufactured and then has to release, and LED pins that are
+     the inverse of the register.
+  3. `cool8_soc_boot_tb` — the same SoC on the parameters the bitstream
      will carry, from power-on with SPRAM undefined, running the real
      boot image. This is the one that says whether the thing boots.
-  3. Synthesis: `cool8_soc` mapped to iCE40 cells, with the latch and
+  4. Synthesis: `cool8_soc` mapped to iCE40 cells, with the latch and
      hierarchy checks that `sim/synth.py` runs over `rtl/core`.
 
     python sim/test_soc.py
     python sim/test_soc.py --skip-boot     # the slow one
 
-The three test programs are assembled out of `sim/asm/` on every run
+`tools/mkbit.py` is the other half of this: it places and routes the
+same design and fails if it does not close at 12 MHz.
+
+The four test programs are assembled out of `sim/asm/` on every run
 rather than checked in as bytes, so the program the CPU executes is the
 program in the file next to it.
 
@@ -42,7 +48,8 @@ import mkrom                                    # noqa: E402
 
 SOC = [os.path.join(ROOT, "rtl", "soc", f)
        for f in ("cool8_rom.v", "cool8_spram.v", "cool8_mem.v",
-                 "cool8_uart.v", "cool8_loader.v", "cool8_soc.v")]
+                 "cool8_uart.v", "cool8_loader.v", "cool8_soc.v",
+                 "cool8_top.v")]
 CORE = [os.path.join(ROOT, "rtl", "core", f)
         for f in ("cool8_alu.v", "cool8_agu.v", "cool8_core.v")]
 TB = os.path.join(HERE, "tb")
@@ -151,6 +158,12 @@ def main():
     good, out = run(vvp, (["+verbose"] if args.verbose else []) +
                     [f"+{n}=prog_{n}.hex" for n in PROGS], cwd=BUILD)
     ok &= report("the I/O page", good, out, ["checks,"])
+
+    vvp = cosim._build("cool8_top_tb", os.path.join(TB, "cool8_top_tb.v"),
+                       SOC + CORE + [cells], gen="2012")
+    good, out = run(vvp, [], cwd=BUILD)
+    ok &= report("the board wrapper: reset, pins, polarity", good, out,
+                 ["checks,"])
 
     if not args.skip_boot:
         vvp = cosim._build("cool8_soc_boot_tb",

@@ -1,0 +1,29 @@
+# icesugar.pcf — iCESugar v1.5, Lattice iCE40UP5K-SG48.
+#
+# Only what cool8_top actually has a port for. The full board map, with
+# the two traps that constrain it, is docs/05-board.md section 3; VGA,
+# PS/2, audio and the buttons are added to both as their milestones
+# arrive, because nextpnr rejects a constraint for a port that does not
+# exist.
+#
+#   yosys ... -p 'synth_ice40 -top cool8_top -json cool8.json'
+#   nextpnr-ice40 --up5k --package sg48 --pcf board/icesugar.pcf ...
+#
+# tools/mkbit.py runs the whole thing.
+
+# 12 MHz from the iCELink debugger. The system clock, undivided and with
+# no PLL in front of it — docs/01-decisions.md D26.
+set_io clk       35
+
+# iCELink USB CDC serial. This is the console *and* the hardware loader,
+# which is why PMOD1 can never be used as a whole PMOD: pins 4 and 6 are
+# two of its eight signals. Named from the FPGA's point of view — it
+# receives on 4 and transmits on 6. If nothing answers a PING and the
+# board is otherwise alive, try them the other way round.
+set_io uart_rx    4
+set_io uart_tx    6
+
+# RGB LED. Common anode, so cool8_top drives these low to light them.
+set_io led_r     40
+set_io led_g     41
+set_io led_b     39

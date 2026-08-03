@@ -455,13 +455,41 @@ found it by doing exactly that, and
 [07-loader.md §2](07-loader.md#01-write) now says so as a requirement
 rather than a suggestion.
 
+- [x] `rtl/soc/cool8_top.v`, [`board/icesugar.pcf`](../board/icesugar.pcf)
+      and [`tools/mkbit.py`](../tools/mkbit.py) — **there is a bitstream**
+
+```bash
+python tools/mkbit.py                # yosys, nextpnr, icepack
+```
+
+**1994 logic cells of 5280 — 37 % — 8 EBR, 2 SPRAM, 6 pins, and it
+closes at 12 MHz.** The full numbers and the critical path are in
+[05-board.md §6](05-board.md#6-toolchain). This is the first time the
+assembled machine has been placed and routed; D26's 16.9 MHz was the
+core and two SPRAM alone, without the boot ROM's block mux or the I/O
+page's, and `nextpnr`'s result moves about 6 % across placer seeds. It
+is the number M5's video engine has to leave intact.
+
+`cool8_top` is deliberately thin — a power-on reset, an LED inversion,
+and the machine. Two facts in it are guesses that the hardware will
+settle, both with unmistakable symptoms and both listed in
+[05-board.md §3.1](05-board.md#31-the-two-facts-a-first-bitstream-is-guessing-at):
+the LED's polarity, and which of pins 4 and 6 the FPGA transmits on.
+`cool8_top_tb` checks everything that is not a guess — that the reset
+counter releases and took the right number of clocks to do it, that each
+colour is its own pin and inverted, and that a frame at the default
+115200 divider is answered.
+
+**No reset button, on purpose.** One with the polarity guessed wrong
+holds the machine in reset forever and looks exactly like a dead board.
+It goes on once there is a board known to work.
+
 Remaining, in the order to do them:
 
-1. [ ] `rtl/soc/cool8_top.v` and `board/icesugar.pcf`
-2. [ ] `tools/cool8load.py` — keep the transport separable, per
+1. [ ] `tools/cool8load.py` — keep the transport separable, per
        [07-loader.md §4](07-loader.md)
-3. [ ] Bitstream, then flash and bring up on real hardware
-4. [ ] Update the remaining constants D26 invalidates: audio reference
+2. [ ] Flash it and bring it up on real hardware
+3. [ ] Update the remaining constants D26 invalidates: audio reference
        and table §4.4, timer rate §4.5. The UART divider (§4.6) and
        `CPUDIV` (§4.1, §6.1) are done, since the SoC implements them
 

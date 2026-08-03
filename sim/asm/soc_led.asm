@@ -9,6 +9,6 @@
 
 LED     = $FE03
 
-        MOV   R0,#$06           ; green + blue
+        MOV   R0,#$06           ; bit 2 red + bit 1 green; the ROM uses $01, blue
         ST    [LED],R0
         HALT
