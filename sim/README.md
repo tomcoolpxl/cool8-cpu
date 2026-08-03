@@ -18,7 +18,7 @@ the whole 64 KB address space at the end of the run.
 | `test_boot.py` | The boot ROM image, the overlay, and the machine booting |
 | `test_soc.py` | The I/O page, the machine booting cold, and the SoC's area |
 | `test_load.py` | `tools/cool8load.py`: its wire format against the RTL, its command loops against a fake board |
-| `test_video.py` | The raster, every pixel of two frames — and a frame rendered to PNG |
+| `test_video.py` | The raster, the font, text mode 0 — and the frames README.md shows |
 | `asm/` | Test programs the CPU runs in `cool8_soc_tb`, assembled on every run |
 | `tb/cool8_tb.v` | Core against a byte-wide memory with programmable wait states |
 | `tb/cool8_bus_tb.v` | The ASIC path: pad wrapper, two 74HC573 latches, one SRAM |

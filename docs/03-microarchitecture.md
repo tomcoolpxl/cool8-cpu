@@ -456,13 +456,19 @@ wrapper.
 
 | Measure | Result |
 |---|---|
-| iCE40UP5K, `cool8_core` | **969 LUT4, 148 FF, 24 carry** |
+| iCE40UP5K, `cool8_core` | **948 LUT4, 148 FF, 24 carry** |
 | — of which `cool8_alu` | 78 LUT4 |
 | — of which `cool8_agu` | 128 LUT4 |
-| Mapped to two-input gates | 2196 combinational + 148 FF |
-| Gate equivalents at 6 GE per flip-flop | **3084** |
+| Mapped to two-input gates | 2192 combinational + 148 FF |
+| Gate equivalents at 6 GE per flip-flop | **3080** |
 
-969 LUTs against a ~1000 estimate is close enough to be luck. The gate
+Measured on yosys 0.67. It was 969 LUT4 and 3084 GE when this was
+first written, on an older yosys; the RTL has not changed and the
+mapper has. Worth knowing before reading a 2 % move as a regression —
+and worth re-running `sim/synth.py` rather than trusting this line
+after a toolchain update.
+
+948 LUTs against a ~1000 estimate is close enough to be luck. The gate
 count is 12 % over the estimate, which for a figure written before any
 code existed is well inside the noise and does not change the
 conclusion: at a TinyTapeout tile of roughly 1000 gates this is a

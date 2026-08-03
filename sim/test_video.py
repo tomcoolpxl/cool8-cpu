@@ -22,6 +22,7 @@ Set OSS_CAD_SUITE to the toolchain root if the tools are not on PATH.
 """
 
 import os
+import argparse
 import struct
 import subprocess
 import sys
@@ -85,7 +86,46 @@ def render(src, dst):
     return len(px), None
 
 
+DOCS_IMG = os.path.join(ROOT, "docs", "img")
+
+# What README.md shows. These have to be committed for GitHub to render
+# them, which makes them the one generated thing in the project that
+# lives in the repo — so they are checked against what the suite
+# actually produces rather than trusted.
+PUBLISHED = {
+    "frame.png": "raster-test-pattern.png",
+    "text.png": "text-mode-0.png",
+}
+
+
+def check_published(refresh):
+    out = []
+    for built, shown in PUBLISHED.items():
+        src = os.path.join(BUILD, built)
+        dst = os.path.join(DOCS_IMG, shown)
+        if not os.path.exists(src):
+            continue
+        new = open(src, "rb").read()
+        old = open(dst, "rb").read() if os.path.exists(dst) else None
+        if new == old:
+            continue
+        if refresh:
+            os.makedirs(DOCS_IMG, exist_ok=True)
+            with open(dst, "wb") as fh:
+                fh.write(new)
+            out.append(f"refreshed docs/img/{shown}")
+        else:
+            out.append(f"docs/img/{shown} is not what this run produced "
+                       f"— rerun with --refresh")
+    return out
+
+
 def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--refresh", action="store_true",
+                    help="update the images README.md shows")
+    args = ap.parse_args()
+
     os.makedirs(BUILD, exist_ok=True)
     ok = True
 
@@ -143,6 +183,14 @@ def main():
         else:
             print(f"  {'a screen, rendered':<44} ok")
             print(f"    {n} pixels -> {os.path.relpath(png, ROOT)}")
+
+    notes = check_published(args.refresh)
+    stale = any("not what this run" in n for n in notes)
+    print(f"  {'the images README.md shows':<44} "
+          f"{'FAIL' if stale else 'ok'}")
+    for n in notes:
+        print("    " + n)
+    ok &= not stale
 
     print("\n" + ("PASS" if ok else "FAIL"))
     return 0 if ok else 1

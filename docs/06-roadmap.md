@@ -138,8 +138,8 @@ the full 64 KB memory image is compared as well as the register trace.
 A bus grant is proved architecturally invisible by requiring the trace
 to be byte-identical to a run without one.
 
-**The gate passed.** `yosys` reports **969 LUT4 and 148 flip-flops**
-against the ~1000 LUT estimate, and 3084 gate equivalents against
+**The gate passed.** `yosys` reports **948 LUT4 and 148 flip-flops**
+against the ~1000 LUT estimate, and 3080 gate equivalents against
 ~2750 — see [03-microarchitecture.md §5.7](03-microarchitecture.md#57-area-estimate).
 No latches, no inferred RAM, no vendor primitives, no tri-state.
 
@@ -799,8 +799,8 @@ The deadline milestone. Shuttle windows do not move.
 
 **Risk, mostly retired at M3.**
 [03-microarchitecture.md §5.7](03-microarchitecture.md#57-area-estimate)
-now carries synthesised numbers rather than an estimate: 969 LUT4 and
-148 flip-flops on the FPGA, 3084 gate equivalents mapped to two-input
+now carries synthesised numbers rather than an estimate: 948 LUT4 and
+148 flip-flops on the FPGA, 3080 gate equivalents mapped to two-input
 gates against a 2750 guess. That points at a 2×2 tile project. What is
 still outstanding is the LibreLane run, which is the only thing that
 gives a real placed-and-routed cell count and utilisation — the M3 list
