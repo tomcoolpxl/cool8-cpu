@@ -17,6 +17,7 @@ the whole 64 KB address space at the end of the run.
 | `test_spram.py` | The SPRAM controller against its own 64 KB reference |
 | `test_boot.py` | The boot ROM image, the overlay, and the machine booting |
 | `test_soc.py` | The I/O page, the machine booting cold, and the SoC's area |
+| `test_load.py` | `tools/cool8load.py`: its wire format against the RTL, its command loops against a fake board |
 | `asm/` | Test programs the CPU runs in `cool8_soc_tb`, assembled on every run |
 | `tb/cool8_tb.v` | Core against a byte-wide memory with programmable wait states |
 | `tb/cool8_bus_tb.v` | The ASIC path: pad wrapper, two 74HC573 latches, one SRAM |
@@ -29,6 +30,7 @@ the whole 64 KB address space at the end of the run.
 | `tb/cool8_soc_tb.v` | The I/O page: what wins the decode, reached from the loader and then from the CPU |
 | `tb/cool8_soc_boot_tb.v` | The whole machine, cold, on the parameters the bitstream will carry |
 | `tb/cool8_top_tb.v` | The board wrapper: the reset it manufactures, and the LED pins' polarity |
+| `tb/cool8_wire_tb.v` | The serial port as a pipe, so the host tool can be tested against the machine |
 
 ```bash
 python sim/cosim.py all      # directed, random, interrupts, ASIC bus, SPRAM
@@ -37,6 +39,7 @@ python sim/test_loader.py    # UART and loader
 python sim/test_spram.py     # SPRAM controller
 python sim/test_boot.py      # boot ROM, overlay, cold boot
 python sim/test_soc.py       # the I/O page, and the machine as a whole
+python sim/test_load.py      # the host loader
 python sim/synth.py
 python sim/timing.py
 ```

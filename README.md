@@ -28,9 +28,9 @@ memory as the model — including through the multiplexed ASIC bus.
 | **SoC** | **Simulated.** Memory, boot ROM, UART, loader and I/O page; boots cold to a lit LED |
 | **Bitstream** | **Builds.** 1994 of 5280 logic cells, closes at 12 MHz |
 | System (video/audio/keyboard) | Specified |
-| Board bring-up | Not yet flashed. Needs the host loader first |
+| Board bring-up | Not yet flashed. Everything but the physical wire is tested |
 | Open design questions | **None.** All 27 decisions logged; the last two closed at M4 |
-| Next | `cool8load.py`, then first light on real hardware (M4) |
+| Next | First light on real hardware (M4) |
 
 ```bash
 python tools/opcodes.py --check              # opcode map coverage
@@ -47,6 +47,7 @@ python sim/test_loader.py                    # UART and loader, over a wire
 python sim/test_spram.py                     # the SPRAM controller
 python sim/test_boot.py                      # boot ROM and the overlay
 python sim/test_soc.py                       # the I/O page, and a cold boot
+python sim/test_load.py                      # the host loader
 
 python tools/mkbit.py                        # build/cool8.bin
 ```

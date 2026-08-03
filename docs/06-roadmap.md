@@ -484,12 +484,55 @@ colour is its own pin and inverted, and that a frame at the default
 holds the machine in reset forever and looks exactly like a dead board.
 It goes on once there is a board known to work.
 
+- [x] [`tools/cool8load.py`](../tools/cool8load.py), the host side
+
+```bash
+python sim/test_load.py              # against the RTL, and against itself
+```
+
+Three layers, because the transport has to come out: `frame` and the
+`parse_*` functions are the wire format and nothing else, `Transport` is
+bytes in and bytes out, and `Loader` is the commands, chunking and retry
+built on both. The ASIC's microcontroller bridge is one new `Transport`
+subclass and no other change —
+[07-loader.md §4](07-loader.md#4-on-the-asic). pyserial is imported only
+by the transport that needs it, so nothing else in the tool depends on
+it being installed.
+
+Tested in two halves, because the tool has two kinds of thing in it.
+**The wire format goes against the real RTL**: a session is built with
+`frame`, bit-banged at `cool8_soc` by
+[`cool8_wire_tb.v`](../sim/tb/cool8_wire_tb.v), and the board's actual
+replies are parsed back with `parse_read` and `parse_ack`, with nothing
+modelled in between. That covers the things that are wrong in practice —
+byte order, what the checksum spans, how many bytes a command answers
+with — and it means a board plugged in for the first time has only the
+physical wire left untested. **The command loops go against a fake
+board** that can be unreliable on demand: chunking, resending a rejected
+chunk, and `--verify` catching a byte an ACK said nothing about.
+
+Two behaviours are now pinned that were only prose before. A `WRITE`
+whose checksum fails **has already modified memory** — the loader has no
+frame buffer and commits bytes as they arrive — so the test writes
+garbage, reads it back to prove it landed, and then recovers by
+resending. And:
+
+**The host must wait for a reply before sending the next frame.** The
+loader stops looking at its receiver from the moment it asks for the bus
+until it has finished answering, so a frame sent on top of a reply is
+discarded — not executed, not forwarded to the CPU, not reported. The
+first version of the wire testbench replayed a whole session
+back-to-back and four commands vanished without a symptom. Nothing is
+wrong with the hardware; the transmitter is busy and the frame has
+nowhere to go. It is a rule, it is easy to break by pipelining, and it
+is now in [07-loader.md §3](07-loader.md#3-host-side) along with its two
+consequences — chunk a large `READ`, and a running program's serial
+input is lost for the duration of any frame being answered.
+
 Remaining, in the order to do them:
 
-1. [ ] `tools/cool8load.py` — keep the transport separable, per
-       [07-loader.md §4](07-loader.md)
-2. [ ] Flash it and bring it up on real hardware
-3. [ ] Update the remaining constants D26 invalidates: audio reference
+1. [ ] Flash it and bring it up on real hardware
+2. [ ] Update the remaining constants D26 invalidates: audio reference
        and table §4.4, timer rate §4.5. The UART divider (§4.6) and
        `CPUDIV` (§4.1, §6.1) are done, since the SoC implements them
 

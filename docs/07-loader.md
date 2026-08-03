@@ -157,23 +157,49 @@ right board is on the right COM port before you send it anything.
 
 ## 3. Host side
 
-The reference host tool is `tools/cool8load.py`. Typical use:
+**Wait for the reply before sending the next frame.** The loader stops
+looking at its receiver the moment it asks for the bus and does not look
+again until it has finished answering, so anything sent on top of a
+reply is discarded — not executed, not forwarded to the CPU, not
+reported. There is no symptom except a command that appears not to have
+happened.
+
+That is not a defect to design around: the transmitter is busy and the
+frame would have nowhere to go. It is a rule the host has to keep, and
+one that is easy to keep by accident and easy to break deliberately by
+pipelining. `sim/tb/cool8_wire_tb.v` found it by not keeping it.
+
+Two consequences worth knowing:
+
+- A `READ` of 4 KB holds the loader deaf for the whole dump. Chunk it.
+- A running program's serial *input* is lost for the duration of any
+  frame the loader is answering. Interactive software and a memory dump
+  do not mix, which is what `HALT` is for.
+
+The reference host tool is [`tools/cool8load.py`](../tools/cool8load.py).
+Typical use:
 
 ```bash
-# load and run
-python tools/cool8load.py --port COM3 --load game.bin --at 0x4000 --go 0x4000
-
-# dump memory
-python tools/cool8load.py --port COM3 --dump 0x0000 --len 256
-
-# freeze, poke, thaw
-python tools/cool8load.py --port COM3 --halt
-python tools/cool8load.py --port COM3 --write 0xFE12 --bytes 07
-python tools/cool8load.py --port COM3 --run
+python tools/cool8load.py --port COM6 --ping
+python tools/cool8load.py --port COM6 --load game.bin --at 0x4000 \
+                          --verify --go 0x4000
+python tools/cool8load.py --port COM6 --dump 0x0000 --len 256
+python tools/cool8load.py --port COM6 --halt
+python tools/cool8load.py --port COM6 --write 0xFE03 --bytes 01
+python tools/cool8load.py --port COM6 --run
 ```
 
-Large `WRITE`s should be split into chunks of a few hundred bytes so a
-corrupted frame costs a retry rather than the whole image.
+Actions run in the order they are listed above, so `--load … --go` is
+one invocation. `--load` sends `HALT` first, because it has to (§2), and
+`GO` releases it.
+
+`WRITE` and `READ` are both split into 256-byte chunks so a corrupted
+frame costs a retry rather than the whole image, and a rejected chunk is
+resent up to three times. `--verify` reads the image back and compares:
+an `'K'` says the checksum matched, not that the memory is right.
+
+It needs pyserial (`pip install pyserial`) — and only for the serial
+transport, which is imported when it is used and not before.
 
 ---
 
@@ -188,5 +214,20 @@ with the CPU's on the board. See
 
 The commands above map one-for-one onto what that microcontroller does,
 so the same host tool can drive either target with a different transport
-underneath. Worth keeping the layering clean in `cool8load.py` for
-exactly that reason.
+underneath.
+
+That layering exists. `cool8load.py` is three parts: `frame` and the
+`parse_*` functions are the wire format and nothing else, `Transport` is
+bytes in and bytes out, and `Loader` is the commands, chunking and retry
+built on both and blind to which transport it has. Swapping the ASIC's
+bridge in means one new `Transport` subclass and no other change.
+
+Keeping the wire format as pure functions is also what makes it testable
+without hardware: `sim/test_load.py` builds a session with `frame`,
+bit-bangs it at the real `cool8_soc` in
+[`cool8_wire_tb.v`](../sim/tb/cool8_wire_tb.v), and parses the board's
+actual replies back with `parse_read` and `parse_ack`. Nothing between
+the two is modelled, so byte order, checksum span and reply length are
+checked against the hardware rather than against a description of it —
+and a board plugged in for the first time has only the physical wire
+left untested.
