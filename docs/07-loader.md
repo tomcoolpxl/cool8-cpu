@@ -5,8 +5,10 @@ described in [04-system.md §4.7](04-system.md#47-loader--fe80).
 
 Deliberately trivial. It runs over USB CDC, which already does CRC and
 retransmission at the USB layer, so this does not need to be a robust
-link protocol — it needs to be small enough to implement in ~60 LUTs
-and simple enough to drive from a shell script.
+link protocol — it needs to be small and simple enough to drive from a
+shell script. Built, it is **250 LUT4 and 139 flip-flops**, with the
+UART another 141 and 72; the 64 KB address, length and byte counters are
+most of it.
 
 ---
 
@@ -28,6 +30,15 @@ vanishingly unlikely in text or in a program's own serial output. If the
 sniffer sees `$C8` not followed by `$8C`, it forwards both bytes to the
 CPU and resumes watching.
 
+**Except when the byte that followed was itself `$C8`.** Then only the
+first is forwarded and the second stays a candidate, so `$C8 $C8 $8C` is
+a data `$C8` followed by a frame, and a run of any length ending `$8C`
+is a frame. Forwarding the second `$C8` as well would be a byte the host
+never sent, and refusing to reconsider it would swallow a frame the host
+is entitled to send; the sniffer must do neither. Simulation found the
+RTL doing the first of those two — see
+[06-roadmap.md](06-roadmap.md#m4--first-light-on-the-fpga).
+
 Full frame:
 
 ```
@@ -47,7 +58,7 @@ Full frame:
 | Reply | Meaning |
 |---|---|
 | `$4B` `'K'` | Accepted |
-| `$21` `'!'` | Checksum mismatch or unknown command; frame discarded |
+| `$21` `'!'` | Checksum mismatch or unknown command; the command is not executed (but see `WRITE`) |
 
 A `READ` reply is the data bytes followed by their checksum, with no
 leading `'K'`.
@@ -76,6 +87,15 @@ more `WRITE`s, then `GO`.
 `len` may be zero; the frame is then just a bus-grant round trip and a
 useful liveness check.
 
+**The payload is written as it arrives**, byte by byte, because the
+loader has no frame buffer and is not going to grow one — buffering 64 KB
+to make a checksum atomic would cost more than the whole block. So a
+`WRITE` that fails its checksum has already modified memory: the `'!'`
+means the data was not what was sent, not that nothing happened. The
+recovery is to send the same `WRITE` again, which is what a host does
+anyway. Nothing else in the protocol touches memory before its checksum
+is verified.
+
 ### `$02 READ`
 
 The debugger primitive. Reads `len` bytes from `addr` and streams them
@@ -88,14 +108,17 @@ knows.
 The one that actually starts things:
 
 ```
-1.  Hold the CPU in reset.
+1.  Set LDR_CTRL.BOOTRAM so the boot ROM overlay stays suppressed.
 2.  Write addr16 to $FFF8/$FFF9 in RAM   (the RESET vector).
-3.  Set LDR_CTRL.BOOTRAM so the boot ROM overlay stays suppressed.
-4.  Release reset.
+3.  Pulse CPU reset, release any standing HALT, release the bus.
 ```
 
-The CPU comes up at `addr` with the full 64 KB of RAM visible and the
-boot ROM out of the map entirely.
+The CPU is off the bus for all of this because the frame holds the grant,
+which is what makes step 2 safe; it does not additionally need to be held
+in reset while the vector is written. Reset is one clock wide — the core
+resets synchronously — and it lands before the grant is released, so the
+CPU's first fetch after it is the vector read. It comes up at `addr` with
+the full 64 KB of RAM visible and the boot ROM out of the map entirely.
 
 ### `$04 HALT` / `$05 RUN`
 

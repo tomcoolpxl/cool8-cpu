@@ -198,32 +198,117 @@ Done so far:
 - [x] `rtl/soc/cool8_loader.v` — frame sniffer and bus master, all seven
       commands, including the two-byte forward path a lone `$C8` needs
 
-Both lint clean under `iverilog -Wall` and `yosys check -assert`, with
-no latches. **Neither has been simulated yet.**
+- [x] Loader and UART testbench —
+      [`sim/tb/cool8_loader_tb.v`](../sim/tb/cool8_loader_tb.v), driven by
+      [`sim/test_loader.py`](../sim/test_loader.py)
+
+All three lint clean under `iverilog -Wall` and `yosys check -assert`
+with no latches; the UART is **141 LUT4 and 72 flip-flops**, the loader
+**250 LUT4 and 139**.
+
+```bash
+python sim/test_loader.py            # 357 checks × 6 divider/wait-state pairs
+```
+
+Nothing on the paths that matter is stubbed. The host end bit-bangs real
+8N1 at the divider the UART is programmed with, so a disagreement about
+what a bit time is corrupts a byte rather than drifting quietly. The bus
+is arbitrated by `cool8_core`'s own `busak` against a CPU that is
+genuinely executing — spinning in a `BRA -2` at `$0000` — so the loader
+only gets memory when the CPU has really let go of it, and the testbench
+fails if the core drives a strobe while granted. `GO` is checked by
+loading a program over the wire and requiring it to run.
+
+**The `$C8` path was wrong, exactly where this list guessed it would
+be.** `S_FWD2` forwarded the held byte unconditionally *and* re-entered
+`S_MAGIC` when that byte was another `$C8`, so the byte was both passed
+to the CPU and consumed as magic: `$C8 $C8 $8C` forwarded two `$C8`s
+where the host sent one as data, and `$C8 $C8 $5A` forwarded four bytes
+for three. A program's own serial output would have been corrupted at
+about one byte in 65536, which is exactly the kind of fault that is
+invisible in a bring-up and unbearable to find later. The rule is now
+stated properly in [07-loader.md §1](07-loader.md#1-framing).
+
+Two documented behaviours also turned out not to match the RTL, and the
+documents were wrong rather than the code: `GO` does not need to hold the
+CPU in reset while it writes the vector, because the bus grant already
+keeps it away; and `LDR_CTRL` bit 0, the sniffer enable, is not
+implemented at all.
+
+**Mutation-tested, as M1 and M2 were.** Thirty-two deliberate bugs — a
+big-endian `GO` vector, a checksum over the payload but not the header, a
+byte-swapped `len16`, `ACK` and `NAK` exchanged, `RUN` not releasing the
+bus, `mem_ready` ignored, the UART sampling on the bit edge instead of
+the middle, transmitting one bit short — and the suite caught all 32.
+
+- [x] `rtl/soc/cool8_spram.v` — 64 KB over 2 × `SB_SPRAM256KA`, in
+      **31 LUT4 and 3 flip-flops** on top of the two blocks. One wait
+      state on a read, none on a write; the mapping and the reasoning are
+      in [03-microarchitecture.md §6.2](03-microarchitecture.md#62-spram-and-the-memory-interface)
+
+```bash
+python sim/test_spram.py             # the controller against a byte array
+python sim/cosim.py spram            # the CPU running out of it
+```
+
+Two tests, because they answer different questions. The unit testbench
+drives the controller as a bus master with its own 64 KB reference and a
+written/not-written bitmap — SPRAM comes up undefined and an unwritten
+byte reads `x`, which is the truth — and covers the handshake, both byte
+lanes of a word, the block seam, every address bit as a walking one,
+accesses with no gap between them, and 30 000 randomised accesses per
+seed followed by a read-back sweep in address order. It localises a
+fault. The co-simulation runs **all 511 encodings and three random
+streams through the real `SB_SPRAM256KA` models**, comparing the
+instruction trace and the whole 64 KB image against the emulator, with
+the image loaded a byte at a time through the controller's own port
+because that is the only way this memory can be loaded. It says whether
+a fault matters.
+
+The dump the co-simulation compares reads the SPRAM arrays directly
+using the documented mapping rather than through the controller, so a
+controller that consistently reads back its own wrong mapping still
+fails.
+
+**Mutation-tested**: 19 deliberate bugs — swapped byte lanes, `MASKWREN`
+writing the whole word, a shifted word address, the block select taken
+from `addr[14]`, no wait state on a read, a wait state on a write, a read
+relaunched on its data cycle, the byte not mirrored into both halves —
+and the unit testbench catches 18.
+
+The one that escapes is **equivalent, not missed**: leaving `CHIPSELECT`
+asserted through the read's data cycle re-reads the same word, because
+the address is stable, so `DATAOUT` does not change. It costs power and
+nothing else, and no test at the port can tell the two apart.
+
+Running the same mutants past both testbenches also priced them against
+each other, which is the reason to keep both: **two are caught only by
+the unit testbench** — the ones that stop the block and half selects
+being captured on the launch cycle. The CPU holds its address while
+stalled, so it can never expose them, and only a testbench that
+deliberately scribbles a different address onto the bus mid-stall does.
+
+The simulation build needs `-g2012`, not because anything in `rtl/` is
+SystemVerilog but because yosys's `cells_sim.v` uses default port values.
+The models are not vendored: they have to match the yosys that maps the
+design, and a stale copy of a memory primitive is a bug that looks like
+an RTL bug.
 
 Remaining, in the order to do them:
 
-1. [ ] Loader and UART testbench — drive frames in through a UART model
-       and check memory. Do this *before* touching hardware: the
-       `$C8`-not-followed-by-`$8C` path, the checksum boundary and
-       `GO`'s write-vector-then-release-reset sequence are all easy to
-       get subtly wrong and miserable to diagnose down a serial cable
-2. [ ] `rtl/soc/cool8_spram.v` — 64 KB over 2 × `SB_SPRAM256KA`;
-       `addr[15]` picks the block, `addr[14:1]` the word, `addr[0]` the
-       byte. One wait state for the registered read
-3. [ ] Boot ROM in EBR plus the overlay: reads at `$F000-$FDFF` and
+1. [ ] Boot ROM in EBR plus the overlay: reads at `$F000-$FDFF` and
        `$FF00-$FFFF` when `ROMEN`, **writes always to RAM**, `BOOTRAM`
        suppressing the overlay at CPU reset. Minimal ROM contents — the
        overlay is the part that is hard to retrofit, the contents are
        software and belong with the monitor at M6
-4. [ ] I/O page decode and `rtl/soc/cool8_soc.v` — `$FE00` `SYSCTRL`,
+2. [ ] I/O page decode and `rtl/soc/cool8_soc.v` — `$FE00` `SYSCTRL`,
        `$FE03` `LED`, `$FE70` UART, `$FE80` loader. `$FE00-$FEFF` always
        decodes and always wins
-5. [ ] `rtl/soc/cool8_top.v` and `board/icesugar.pcf`
-6. [ ] `tools/cool8load.py` — keep the transport separable, per
+3. [ ] `rtl/soc/cool8_top.v` and `board/icesugar.pcf`
+4. [ ] `tools/cool8load.py` — keep the transport separable, per
        [07-loader.md §4](07-loader.md)
-7. [ ] Bitstream, then flash and bring up on real hardware
-8. [ ] Update the constants D26 invalidates: UART divider §4.6, audio
+5. [ ] Bitstream, then flash and bring up on real hardware
+6. [ ] Update the constants D26 invalidates: UART divider §4.6, audio
        reference and table §4.4, timer rate §4.5
 
 **The board is known good and connected:** iCELink DAPLink enumerates as
@@ -235,8 +320,8 @@ the bitstream with it.
 Superseded by D26, kept so the change is legible:
 
 - [ ] ~~PLL: 12 MHz → 25.125 MHz~~
-- [ ] SPRAM controller: byte addressing over 16-bit SPRAM, `mem_ready`
-      handling
+- [x] ~~SPRAM controller: byte addressing over 16-bit SPRAM,
+      `mem_ready` handling~~ — done, above
 - [ ] Boot ROM in EBR with the overlay logic
 - [ ] UART transmit and receive on the iCELink serial pins
 - [ ] **Hardware loader** — bus master, frame sniffer, `WRITE`/`READ`/

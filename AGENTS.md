@@ -78,8 +78,10 @@ python tools/cool8emu.py --selftest  # ISA semantics
 python sim/test_corpus.py            # the software corpus, end to end
 
 python sim/cosim.py all              # RTL vs emulator: directed, random,
-                                     #   interrupts, ASIC bus
+                                     #   interrupts, ASIC bus, SPRAM
 python sim/cosim.py mul              # exhaustive multiply (~2.5 min)
+python sim/test_loader.py            # UART and loader, over a bit-banged wire
+python sim/test_spram.py             # SPRAM controller against a byte array
 python sim/synth.py                  # hygiene, LUT/FF count, gate estimate
 python sim/timing.py                 # measured clocks per encoding
 ```

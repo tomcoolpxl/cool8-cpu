@@ -135,12 +135,16 @@ module cool8_loader (
                 end
             end
 
-            S_FWD2: begin
-                fwd_data <= held; fwd_valid <= 1'b1;
-                // A second $C8 starts a fresh candidate rather than
-                // being swallowed.
-                state <= (held == MAGIC0) ? S_MAGIC : S_IDLE;
-            end
+            // A second $C8 starts a fresh candidate rather than being
+            // swallowed — and it must not be forwarded from here, or it
+            // would be both passed to the CPU and consumed as magic.
+            // S_MAGIC forwards it if the byte after it is not $8C, which
+            // is the same decision one byte later.
+            S_FWD2: if (held == MAGIC0) state <= S_MAGIC;
+                    else begin
+                        fwd_data <= held; fwd_valid <= 1'b1;
+                        state <= S_IDLE;
+                    end
 
             S_HDR: if (rx_valid) begin
                 csum <= csum + rx_data;

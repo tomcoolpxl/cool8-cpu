@@ -254,7 +254,7 @@ port normally and still be interrupted and reloaded.
 
 | Addr | Name | Access | Description |
 |---|---|---|---|
-| `$FE80` | `LDR_CTRL` | R/W | `0` sniffer enable (resets to 1). `4` CPU requests a bus grant for itself. `5` `BOOTRAM` — see below. |
+| `$FE80` | `LDR_CTRL` | R/W | `0` sniffer enable (resets to 1; reads 1 and is not yet implemented — the sniffer is always on). `4` CPU requests a bus grant for itself. `5` `BOOTRAM` — see below. |
 | `$FE81` | `LDR_STAT` | R | `0` loader currently owns the bus, `1` last frame had a checksum error, `2` a frame has been received since reset |
 
 `BOOTRAM` is the piece that makes the `GO` command work. When set, the

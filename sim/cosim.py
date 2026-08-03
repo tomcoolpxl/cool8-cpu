@@ -39,6 +39,8 @@ RTL = [os.path.join(ROOT, "rtl", "core", f)
 TB = os.path.join(HERE, "tb", "cool8_tb.v")
 PADS = os.path.join(ROOT, "rtl", "pads", "tt_um_cool8.v")
 BUSTB = os.path.join(HERE, "tb", "cool8_bus_tb.v")
+SPRAM = os.path.join(ROOT, "rtl", "soc", "cool8_spram.v")
+SPRAMTB = os.path.join(HERE, "tb", "cool8_spram_cpu_tb.v")
 
 
 # ------------------------------------------------------------- toolchain
@@ -59,13 +61,32 @@ def _tool(name):
     return found
 
 
-def _build(name, tb, sources):
+def ice40_cells():
+    """The toolchain's own SB_* simulation models.
+
+    Not vendored into the repository: the models must match the yosys
+    that maps the design, and a stale copy of a memory primitive is a bug
+    that looks like an RTL bug.
+    """
+    roots = []
+    if os.environ.get("OSS_CAD_SUITE"):
+        roots.append(os.environ["OSS_CAD_SUITE"])
+    roots.append(os.path.dirname(os.path.dirname(_tool("yosys"))))
+    for r in roots:
+        cand = os.path.join(r, "share", "yosys", "ice40", "cells_sim.v")
+        if os.path.exists(cand):
+            return cand
+    sys.exit("ice40 cells_sim.v not found; set OSS_CAD_SUITE to the "
+             "toolchain root")
+
+
+def _build(name, tb, sources, gen="2005"):
     os.makedirs(BUILD, exist_ok=True)
     out = os.path.join(BUILD, name + ".vvp")
     newest = max(os.path.getmtime(f) for f in sources + [tb])
     if os.path.exists(out) and os.path.getmtime(out) > newest:
         return out
-    subprocess.run([_tool("iverilog"), "-g2005", "-Wall", "-Wno-timescale",
+    subprocess.run([_tool("iverilog"), "-g" + gen, "-Wall", "-Wno-timescale",
                     "-o", out, tb] + sources, check=True)
     return out
 
@@ -76,6 +97,14 @@ def build_sim():
 
 def build_bus_sim():
     return _build("cool8_bus_tb", BUSTB, RTL + [PADS])
+
+
+def build_spram_sim():
+    # -g2012 only because yosys's cells_sim.v uses default port values.
+    # Everything in rtl/ is still Verilog-2001 and is compiled as such by
+    # sim/synth.py and by every other build here.
+    return _build("cool8_spram_cpu_tb", SPRAMTB,
+                  RTL + [SPRAM, ice40_cells()], gen="2012")
 
 
 def run_sim(vvp_file, args):
@@ -436,6 +465,36 @@ def test_bus(vvp_unused):
     return allok
 
 
+def test_spram(vvp_unused):
+    """The same instruction-level check, but out of two SB_SPRAM256KA.
+
+    The timing here is not a testbench's idea of a wait state — it is the
+    registered read the part actually has, one clock on every fetch and
+    every load, and none on a store. A failure here that does not also
+    fail cool8_tb is in rtl/soc/cool8_spram.v, not in the CPU.
+    """
+    print("SPRAM — the core running out of two SB_SPRAM256KA")
+    vvp = build_spram_sim()
+    allok = True
+
+    mem, nprobes = progen.directed()
+    t0 = time.time()
+    ok, n = _run_pair("spram_directed", mem, vvp)
+    allok &= ok
+    print(f"  {nprobes} encodings, {n} instructions : "
+          f"{'ok' if ok else 'FAIL'} ({time.time() - t0:.1f}s)")
+
+    for s in (1, 2, 3):
+        mem = progen.random_prog(s, count=3000)
+        ok, _ = _run_pair(f"spram_random{s}", mem, vvp, max_instr=3000)
+        allok &= ok
+        if not ok:
+            print(f"  seed {s}: FAIL")
+    if allok:
+        print("  3 random streams of 3000 instructions : ok")
+    return allok
+
+
 def test_mul(vvp):
     print("multiply — 65536 exhaustive operand pairs")
     mem = _mul_prog()
@@ -474,7 +533,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("what", nargs="?", default="all",
                     choices=["directed", "random", "interrupts", "bus",
-                             "mul", "all"])
+                             "spram", "mul", "all"])
     ap.add_argument("--seeds", type=int, default=8)
     ap.add_argument("--count", type=int, default=3000)
     args = ap.parse_args()
@@ -489,6 +548,8 @@ def main():
         ok &= test_interrupts(vvp)
     if args.what in ("bus", "all"):
         ok &= test_bus(vvp)
+    if args.what in ("spram", "all"):
+        ok &= test_spram(vvp)
     if args.what == "mul":
         ok &= test_mul(vvp)
 

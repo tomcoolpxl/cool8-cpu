@@ -81,7 +81,7 @@ One protocol covers all three cases that matter:
 
 | Situation | How it appears |
 |---|---|
-| FPGA, uncontended SPRAM | `mem_ready` low for one cycle (registered read), then high |
+| FPGA, uncontended SPRAM | Read: `mem_ready` low for one cycle (registered read), then high. Write: high immediately — see §6.2 |
 | FPGA, video stealing a cycle | `mem_ready` low for one extra cycle |
 | ASIC, 3-phase multiplexed bus | `mem_ready` low for two cycles, high on the third |
 
@@ -577,10 +577,30 @@ enables (`MASKWREN`), and its read output is registered — data appears
 the cycle *after* the address. Byte access uses two of the four mask
 bits and address bit 0 to select the half-word.
 
-The SPRAM controller in `rtl/soc/` handles all of that and presents the
-core's flat 16-bit byte-addressed interface. `mem_ready` goes low for
-the registered-read latency and for any cycle the video engine has
-taken.
+`rtl/soc/cool8_spram.v` handles all of that and presents the core's flat
+16-bit byte-addressed interface, in **31 LUT4 and 3 flip-flops** on top
+of the two blocks:
+
+| Field | Use |
+|---|---|
+| `addr[15]` | which block — `CHIPSELECT` |
+| `addr[14:1]` | the word inside it — `ADDRESS` |
+| `addr[0]` | which half — two of the four `MASKWREN` bits, and the read mux |
+
+**A read costs one wait state and a write costs none.** The registered
+output is why a read waits; a write commits on the same rising edge the
+core completes its transfer on, so making it wait would spend a cycle to
+buy nothing. `mem_ready` is low only during a read's address cycle —
+high when idle and high through a write — and the asymmetry is invisible
+above the bus. Video contention (M5) will pull it low for the cycles it
+takes.
+
+The block and half selects are captured on the launch cycle rather than
+re-read on the data cycle. The bus protocol above does say a master
+holds its address stable while stalled, so this is not strictly
+required; it costs two flip-flops and keeps both selects off the read
+data path, which [D26](01-decisions.md#d26--the-system-clock-is-12-mhz-the-pixel-clock-is-decoupled)
+measured as the critical path in the whole system.
 
 **SPRAM cannot be initialised from the bitstream.** All 64 KB is garbage
 at power-on. See [04-system.md](04-system.md) for the boot sequence.
