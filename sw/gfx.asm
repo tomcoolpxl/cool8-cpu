@@ -22,10 +22,9 @@
 ; pixel_addr -- R0 = x (0..255), R1 = y (0..199)
 ; Returns X = byte address, R2 = bit mask.
 ;
-; Note the three-instruction dance to add SCREEN to X. The ISA has
-; ADDW X,Rd (8-bit) but no ADDW X,#imm16, so a 16-bit constant has to go
-; in through the pointer halves. It is only three instructions here
-; because SCREEN is page-aligned and the low byte is therefore zero.
+; ADDW X,#imm16 exists because this routine needed it: adding SCREEN to
+; X previously took three instructions via the pointer halves, and six
+; if the base had not been page-aligned. See D20.
 ; ---------------------------------------------------------------------
 pixel_addr:
         MOV  R2,#STRIDE
@@ -35,9 +34,7 @@ pixel_addr:
         SHR  R2
         SHR  R2                 ; x >> 3
         ADDW X,R2
-        MOV  R2,XH
-        ADD  R2,#>SCREEN        ; page-aligned base, low byte is zero
-        MOV  XH,R2
+        ADDW X,#SCREEN
         AND  R0,#7              ; bit within the byte
         MOV  R2,#$80
 .shift: TST  R0

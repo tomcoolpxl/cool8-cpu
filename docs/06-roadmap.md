@@ -6,7 +6,7 @@ a real deadline attached to it.
 
 ---
 
-## M0 — Specification (current)
+## M0 — Specification ✅
 
 - [x] Decide the register model, encoding style, I/O model, audio style
 - [x] Complete opcode map
@@ -61,20 +61,56 @@ not need to be fast. If M3's randomised runs turn out to be
 throughput-limited, a C model can be added then — but two
 implementations that must agree is a cost worth deferring.
 
-## M2 — Assembler
+## M2 — Assembler ✅
 
-- [ ] Two-pass assembler for the syntax in
-      [02-isa.md §10](02-isa.md#10-assembler-syntax-conventions)
-- [ ] Labels, local labels, expressions, `.byte` / `.word` / `.ascii`
-- [ ] The §4.9.1 aliases (`SHL`, `ROL`, `CLR`, `TST`) emit the
-      orthogonal encodings
-- [ ] Disassembler, sharing the opcode table with the assembler
+[`tools/cool8asm.py`](../tools/cool8asm.py), documented in
+[08-assembler.md](08-assembler.md).
 
-**Gate:** write a few hundred lines of real assembly — string routines,
-16-bit arithmetic, a sort — and see whether four registers hold up.
-This is the checkpoint for open question 1 in
-[01-decisions.md](01-decisions.md#open-questions). Changing the register
-model after RTL exists is expensive; changing it here is free.
+- [x] Two-pass assembler, labels, local labels, expressions,
+      `.byte` / `.word` / `.ascii` / `.space` / `.align` / `.include`
+- [x] Macros with named parameters and invocation-local labels
+- [x] The §4.9.1 aliases emit the orthogonal encodings
+- [x] Disassembler sharing the opcode table
+- [x] Listing with per-instruction cycle counts, symbol file,
+      register-pressure report
+
+```bash
+python tools/cool8asm.py sw/lib.asm -o lib.bin --listing lib.lst
+python sim/test_corpus.py
+```
+
+The assembler has **no mnemonic table of its own**. It builds one at
+import by disassembling every encoding in `opcodes.py` and normalising
+the result through the same function it normalises source lines with, so
+any text the disassembler emits is text the assembler accepts. Adding an
+instruction to the table makes it assemblable with no change to the
+assembler — which is exactly what happened with `ADDW X,#imm16`.
+
+### The gate: four registers is enough ✅
+
+Question closed by measurement — see
+[D21](01-decisions.md#d21--four-general-registers-is-enough-confirmed-question-closed).
+
+26 hand-written routines, 277 instructions: **6 spill instructions,
+2.2 %. 23 of 26 routines never touch the stack.** `blit8_or` uses all
+four general registers and both pointers with nothing spare and nothing
+spilled.
+
+Two things the gate found that the question had not anticipated:
+
+- **The binding constraint is pointers, not general registers.** Four of
+  the six spills are pointer pressure. A third pointer is still not
+  worth it ([D22](01-decisions.md#d22--no-third-pointer-register)) —
+  the primary page has a one-bit pointer field and no room — but it is
+  recorded as the first thing to spend future opcode space on.
+- **A missing instruction.** There was no `ADDW X,#imm16`, so adding a
+  16-bit constant to a pointer took six instructions. Invisible while
+  the ISA was only a document; obvious after forty lines of graphics
+  code. Added as [D20](01-decisions.md#d20--addw-xyimm16-added-after-the-m2-gate).
+
+The corpus lives in `sw/` and is verified end-to-end by
+[`sim/test_corpus.py`](../sim/test_corpus.py) against results computed
+in Python. That suite is mutation-tested too.
 
 ## M3 — CPU RTL
 

@@ -10,22 +10,28 @@ addressing model, and drops the historical baggage of both.
 
 ## Status
 
-Design phase. No RTL yet. The documents below are the specification
-being written before any Verilog is committed.
+Specification and toolchain complete; no RTL yet. The emulator and
+assembler exist so that the ISA could be checked by running real code
+before any Verilog is committed — which is how the last two design
+bugs were found.
 
 | Area | State |
 |---|---|
 | ISA | v0.1 complete. 256/256 primary opcodes, normative flag table |
 | Reference emulator | **Working.** Full ISA, self-tested, mutation-tested |
+| Assembler | **Working.** Macros, listings, register-pressure report |
+| Software corpus | 26 routines, verified against Python in the emulator |
 | Microarchitecture | Bus, FSM and ASIC pin profile specified |
 | System (video/audio/keyboard) | Specified |
 | Board bring-up | Pin budget verified against the board's own pinout |
-| Assembler | Next (M2) |
-| RTL | Not started |
+| Open design questions | **None.** All 22 decisions logged |
+| RTL | Next (M3) |
 
 ```bash
-python tools/cool8emu.py --selftest          # 0 failures
-python tools/cool8emu.py sw/hello.bin --at 0x0200 --trace
+python tools/opcodes.py --check              # opcode map coverage
+python tools/cool8emu.py --selftest          # ISA semantics
+python sim/test_corpus.py                    # 26 routines, end to end
+python tools/cool8asm.py sw/gfx.asm --pressure
 ```
 
 ## Documents
@@ -40,8 +46,11 @@ python tools/cool8emu.py sw/hello.bin --at 0x0200 --trace
 | [docs/05-board.md](docs/05-board.md) | iCESugar v1.5 pinout, PMODs, external circuits, BOM |
 | [docs/06-roadmap.md](docs/06-roadmap.md) | Milestones |
 | [docs/07-loader.md](docs/07-loader.md) | Loader wire protocol |
+| [docs/08-assembler.md](docs/08-assembler.md) | Assembler reference |
 | [tools/opcodes.py](tools/opcodes.py) | Machine-readable opcode table, disassembler, coverage check |
 | [tools/cool8emu.py](tools/cool8emu.py) | Reference emulator — the executable specification |
+| [tools/cool8asm.py](tools/cool8asm.py) | Assembler and disassembler |
+| [sw/](sw/) | Software corpus: library, graphics, compiler-style frames |
 
 ## The shape of it in one screen
 

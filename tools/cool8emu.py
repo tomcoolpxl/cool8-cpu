@@ -400,6 +400,13 @@ class Cool8:
             self.r[dd] ^= self.r[ss]
             self._nz(self.r[dd])
             self.cycles += 2
+        elif op in (0x2C, 0x2D):                        # ADDW X|Y,#imm16
+            v = self._fetch16()
+            if op & 1:
+                self.y = (self.y + v) & 0xFFFF          # sets no flags
+            else:
+                self.x = (self.x + v) & 0xFFFF
+            self.cycles += 5
         elif op < 0x40:
             self._unary(op)
         elif op < 0x50:                                 # MOV Rd,<half>

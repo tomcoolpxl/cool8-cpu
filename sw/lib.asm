@@ -17,15 +17,12 @@
 ; Macros
 ; ---------------------------------------------------------------------
 
-; The ISA has ADDW X,Rd but no ADDW X,#imm16, so adding a 16-bit
-; constant to a pointer takes six instructions. Worth a macro.
+; This macro used to expand to six instructions, because the ISA had no
+; ADDW X,#imm16. Writing this corpus is what found that gap, and the
+; instruction now exists (D20), so the macro is a one-liner. Kept as a
+; macro only so the macro facility stays exercised.
 .macro  addx16 val
-        MOV  R2,XL
-        ADD  R2,#<\val
-        MOV  XL,R2
-        MOV  R2,XH
-        ADC  R2,#>\val
-        MOV  XH,R2
+        ADDW X,#\val
 .endm
 
 ; Zero a block. @loop is macro-local: it expands to a label scoped to

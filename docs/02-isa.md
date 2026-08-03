@@ -354,11 +354,19 @@ costs only one because only page 2 needs checking.
 | `$20–$23` | `SHR Rd` | 2 | Logical right, `0 → b7`, `b0 → C` |
 | `$24–$27` | `SAR Rd` | 2 | Arithmetic right, `b7` preserved |
 | `$28–$2B` | `ROR Rd` | 2 | Rotate right through carry |
-| `$2C–$2F` | *reserved* | | |
+| `$2C` | `ADDW X,#imm16` | 4 | `X ← X + imm16`, no flags |
+| `$2D` | `ADDW Y,#imm16` | 4 | `Y ← Y + imm16`, no flags |
+| `$2E–$2F` | *reserved* | | |
 | `$30–$33` | `BSET Rd,#mask8` | 3 | `Rd ← Rd \| mask` |
 | `$34–$37` | `BCLR Rd,#mask8` | 3 | `Rd ← Rd & ~mask` |
 | `$38–$3B` | `BTST Rd,#mask8` | 3 | Flags from `Rd & mask`, no writeback |
 | `$3C–$3F` | *reserved* | | |
+
+`ADDW X,#imm16` exists because writing the M2 corpus proved it was
+missing: adding a 16-bit constant to a pointer otherwise takes six
+instructions through the pointer halves, and pixel-address computation
+does it on every call. See
+[D20](01-decisions.md#d20--addw-xyimm16-added-after-the-m2-gate).
 
 There is deliberately **no page-2 `ROL` or `SHL`**. Both already exist as
 one-byte primary encodings (`ADC Rd,Rd` and `ADD Rd,Rd`, §4.9.1), so a

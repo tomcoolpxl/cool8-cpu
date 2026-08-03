@@ -118,8 +118,9 @@ for dd, d in enumerate(REGS):
         put(page2, (dd << 2) | ss, f"XOR {d},{s}")
 
 # $10-$3B  unary and bit operations, 4 opcodes each.
-# $2C-$2F is deliberately empty: ROL/SHL already exist as one-byte
+# The ROL slot is deliberately empty: ROL/SHL already exist as one-byte
 # ADC Rd,Rd / ADD Rd,Rd, so a two-byte duplicate would be strictly worse.
+# $2C-$2D were later reclaimed for ADDW X|Y,#imm16 (see below).
 for i, name in enumerate(["XOR", "NOT", "NEG", "SWAP", "SHR", "SAR",
                           "ROR", None, "BSET", "BCLR", "BTST"]):
     if name is None:
@@ -131,6 +132,12 @@ for i, name in enumerate(["XOR", "NOT", "NEG", "SWAP", "SHR", "SAR",
             put(page2, 0x10 + i * 4 + dd, f"{name} {d},#{{m}}", MASK8)
         else:
             put(page2, 0x10 + i * 4 + dd, f"{name} {d}")
+
+# $2C-$2D  16-bit immediate added to a pointer.
+# Found by writing real code: adding a 16-bit constant to X otherwise
+# takes six instructions. See docs/01-decisions.md D20.
+put(page2, 0x2C, "ADDW X,#{w}", IMM16)
+put(page2, 0x2D, "ADDW Y,#{w}", IMM16)
 
 # $40-$5F  pointer half-register moves
 for dd, d in enumerate(REGS):
@@ -196,6 +203,8 @@ def cycles(op, op2=None):
             return 7                                  # reserved -> BRK trap
         if op2 < 0x10:
             return 3                                  # XOR Rd,Rs
+        if op2 in (0x2C, 0x2D):
+            return 6                                  # ADDW X|Y,#imm16
         if op2 < 0x40:
             g = (op2 - 0x10) >> 2
             return 4 if g in (0, 8, 9, 10) else 3     # imm/bit forms cost 1

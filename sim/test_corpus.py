@@ -141,6 +141,12 @@ def main():
             bad += 1
     check("mul16 (300 random pairs)", bad == 0, f"{bad} wrong")
 
+    # mul16 spills X precisely so the caller's pointer survives. If that
+    # is not checked, the spill can be deleted and every other test still
+    # passes -- which is exactly what mutation testing found.
+    c = call(bus, S["mul16"], x=0xBEEF, r0=0x34, r1=0x12, r2=0x78, r3=0x56)
+    check("mul16 preserves the caller's X", c.x == 0xBEEF, hex(c.x))
+
     bad = 0
     for _ in range(400):
         a, b = rnd.randrange(256), rnd.randrange(1, 256)

@@ -443,6 +443,90 @@ so this decision never has to be made in a hurry.
 
 ---
 
+## D20 — `ADDW X|Y,#imm16`, added after the M2 gate
+
+**Decision:** two of the free page-2 encodings (`$2C`, `$2D`) become
+`ADDW X,#imm16` and `ADDW Y,#imm16`.
+
+**Why:** writing the M2 corpus found the gap. The ISA had `ADDW X,Rd`
+(8-bit, through a register) but no way to add a 16-bit constant to a
+pointer, so doing it took six instructions through `XL`/`XH` — or three
+if you got lucky and the constant was page-aligned. `pixel_addr` does it
+on every single call, and every graphics routine goes through
+`pixel_addr`.
+
+Cost: two encodings of the twenty-two that were free, and one wider
+input mux on the AGU, which already does 16-bit adds. `pixel_addr` lost
+two instructions and two bytes; the `addx16` macro that had been
+papering over the gap collapsed to a one-liner.
+
+**This is what the gate was for.** The gap was invisible while the ISA
+was only a document. It took about forty lines of real graphics code to
+make it obvious.
+
+---
+
+## D21 — Four general registers is enough. Confirmed, question closed.
+
+**Decision:** the register model stands. Four 8-bit general registers,
+two 16-bit pointers. The M2 gate question is closed.
+
+**Evidence.** 26 hand-written routines, 277 instructions, 430 bytes,
+across a standard library, graphics inner loops and formatting code:
+
+| Corpus | Routines | Instructions | Spill instructions | Rate |
+|---|---|---|---|---|
+| `lib.asm` — library and 16-bit maths | 17 | 175 | 4 | 2.3 % |
+| `gfx.asm` — graphics inner loops | 9 | 102 | 2 | 2.0 % |
+| **Hand-written total** | **26** | **277** | **6** | **2.2 %** |
+| `frames.asm` — naive compiler output | 8 | 86 | 33 | 38.4 % |
+
+**23 of 26 hand-written routines never touch the stack.** The
+`frames.asm` figure is high by design — it is deliberately unoptimised
+compiler-style codegen that spills everything, and it is there to test
+that `[SP+u8]` works, not to measure hand-written pressure.
+
+`blit8_or` is the proof point: source pointer, destination pointer, row
+counter, stride, sprite byte and background byte all live at once. It
+uses all four general registers and both pointers, with nothing spare
+and nothing spilled. Four is exactly enough.
+
+**The interesting part — the constraint is pointers, not registers.**
+Of the six spill instructions in hand-written code, **four are pointer
+pressure and only two are general-register pressure**:
+
+| Routine | Spills | Cause |
+|---|---|---|
+| `mul16` | 2 | `MUL` writes to `X`, so a caller's pointer must be saved across it — a consequence of [D18](#d18--8x8-multiply-landing-in-x), not of the register count |
+| `blit8_mask` | 2 | Wants a *third pointer*; pushes `Y` to reach a mask pointer |
+| `sort8` | 2 | Six live values in four registers. The only genuine GPR spill in the corpus. |
+
+So the question the gate was designed to answer turned out to have a
+different answer than the question assumed. See D22.
+
+---
+
+## D22 — No third pointer register
+
+**Decision:** two pointer registers, X and Y. No Z.
+
+**Why not**, given that D21 shows pointer pressure is the real
+constraint: the primary page's pointer-select field is **one bit wide**.
+There is nowhere to put a third pointer without either making `[Z]` a
+page-2-only, two-byte, second-class addressing mode, or widening the
+field to two bits — which costs sixteen more primary opcodes in the
+load/store groups, and there are none spare.
+
+Measured benefit: four instructions across twenty-six routines. That is
+not worth rebuilding the primary opcode page.
+
+**Recorded so it is not re-derived:** if a future revision ever does get
+more primary opcode space, a third pointer is the first thing to spend
+it on — ahead of more general registers, which the evidence says are
+not the bottleneck.
+
+---
+
 ## Resolved former open questions
 
 Recorded so they are not re-opened without new information.
@@ -456,16 +540,8 @@ Recorded so they are not re-opened without new information.
 
 ## Open questions
 
-One left. Deliberately unresolved, to be settled by writing real code:
+**None.** The last one — whether four registers is enough — was closed
+by measurement at the M2 gate; see [D21](#d21--four-general-registers-is-enough-confirmed-question-closed).
 
-1. **Is four registers enough?** The answer is in the first thousand
-   lines of assembly, not in a spec document. The question closes at the
-   **M2 gate**, after the assembler exists and a few hundred lines of
-   real routines have been written against it — string handling, 16-bit
-   arithmetic, a sort. Changing the register model there is free;
-   changing it after RTL exists is not.
-
-   If the answer turns out to be "no", the cheapest fix is a third
-   16-bit pointer register `Z` (~16 flip-flops) rather than expanding
-   the general register file, which would force reg-reg ALU to two bytes
-   and rebuild the entire opcode map.
+The architecture is settled. Anything that reopens it now needs new
+evidence of the same kind: real code, measured, not an argument.
