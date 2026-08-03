@@ -39,7 +39,14 @@ module cool8_spram (
     input  wire        read,
     input  wire        write,
     output wire [7:0]  rdata,
-    output wire        ready
+    output wire        ready,
+
+    // The address cycle of a read. Anything sharing this port and
+    // answering in the same slot — the boot ROM overlay, the video
+    // arbiter later — captures its own selects on this, so there is one
+    // definition of when an access starts rather than two that must
+    // agree.
+    output wire        o_launch
 );
 
     reg  rd_pend;                  // the data cycle of a read is now
@@ -53,7 +60,8 @@ module cool8_spram (
 
     // Low only while a read is waiting for its data. High when idle, so
     // a master that samples it outside an access is not misled.
-    assign ready = ~launch_rd;
+    assign ready    = ~launch_rd;
+    assign o_launch = launch_rd;
 
     wire [15:0] dout0, dout1;
     wire [15:0] dout = blk_r ? dout1 : dout0;

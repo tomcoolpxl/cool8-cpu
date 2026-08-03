@@ -605,6 +605,23 @@ measured as the critical path in the whole system.
 **SPRAM cannot be initialised from the bitstream.** All 64 KB is garbage
 at power-on. See [04-system.md](04-system.md) for the boot sequence.
 
+`rtl/soc/cool8_mem.v` wraps that block together with `cool8_rom.v` — the
+4 KB boot ROM, **8 `SB_RAM40_4K`**, which is initialisable and is the
+only memory with anything in it at power-on — and applies the overlay:
+reads at `$F000-$FDFF` and `$FF00-$FFFF` come from ROM while `ROMEN`,
+writes always go to RAM, and `$FE00-$FEFF` is a hole in the window
+because the I/O page wins that decode. The whole map is **53 LUT4 and 6
+flip-flops** on top of the two SPRAM and eight EBR blocks.
+
+Both memories are read on every launch and the answer is picked
+afterwards, from a select captured on the launch cycle. Suppressing the
+SPRAM read under the overlay would save a little power for the 30 ms the
+ROM is mapped and would cost a second copy of the ready logic to keep in
+step with the first, which is the kind of trade that only looks good in
+the abstract. The ROM's read is registered for the same reason: matching
+`cool8_spram`'s latency exactly makes the overlay a data mux rather than
+a second timing model.
+
 ### 6.3 Verification plan
 
 1. **Reference emulator first.** A C or Python model of the ISA, written

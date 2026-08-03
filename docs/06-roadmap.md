@@ -294,21 +294,73 @@ The models are not vendored: they have to match the yosys that maps the
 design, and a stale copy of a memory primitive is a bug that looks like
 an RTL bug.
 
+- [x] Boot ROM in EBR plus the overlay — `rtl/soc/cool8_rom.v` and
+      `rtl/soc/cool8_mem.v`, with the image built out of
+      [`sw/boot.asm`](../sw/boot.asm) by
+      [`tools/mkrom.py`](../tools/mkrom.py)
+
+```bash
+python sim/test_boot.py              # the ROM, the overlay, and a cold boot
+```
+
+**8 EBR blocks, 2 SPRAM, 53 LUT4 and 6 flip-flops** for the whole memory
+map. `ROMEN` reloads from `~bootram` on every CPU reset rather than from
+a constant, which is the entire mechanism behind the loader's `GO`: set
+BOOTRAM, pulse reset, and the machine wakes with the ROM out of the map
+and its reset vector taken from the RAM the loader just wrote. Clear it
+and reset and it boots normally.
+
+Four tests, ordered so a failure localises:
+
+1. The ROM image read back through the port **against the netlist
+   `synth_ice40` produces**, not just against the RTL. The RTL run proves
+   `$readmemh` parses the file; only the mapped `SB_RAM40_4K` blocks with
+   their `INIT_0..INIT_F` prove the image will be in the *bitstream*. A
+   boot ROM that is right in simulation and empty on the board is not a
+   hypothetical failure, and it is a miserable one to diagnose through a
+   blank screen.
+2. The overlay's four rules against patterns rather than real code, so
+   which memory answered is readable from the data byte alone.
+3. **The machine booting**, from power-on, with SPRAM undefined exactly
+   as the part is — so the CPU cannot get anywhere at all unless its
+   reset vector really came out of the ROM. It clears 60 KB, installs the
+   vectors *through* its own read window, and halts. Reset to HALT is
+   **365,036 clocks, 30 ms at 12 MHz**.
+4. The loader's path: BOOTRAM set, a program and a vector poked into RAM,
+   CPU reset pulsed, and a check that not one byte was fetched from the
+   ROM window.
+
+**Mutation-tested**: 17 deliberate bugs — the ROM window a nibble low or
+covering the I/O page, writes suppressed under the overlay, the read mux
+backwards, BOOTRAM inverted or ignored, the ROM given 11 address bits —
+and 14 are caught. The three that are not are the same family as the one
+`cool8_spram.v` has: each drops a qualification that only ever avoids
+re-deriving a value nothing reads before it is re-derived, so no test at
+the port can see them.
+
+One of the escapes was real and is now closed. The testbench filled ROM
+and RAM with `addr[7:0] ^ constant`, which made aliasing of the *high*
+address bits invisible — a ROM wired to 11 bits passed, because the two
+addresses that collided had the same low byte. Both patterns now depend
+on the whole address.
+
+Contents deliberately stop there. Bringing up video, copying a monitor
+down and dropping the overlay need hardware and software that do not
+exist until M5 and M6; what is here is what the overlay needs in order to
+be provably working. `tools/mkrom.py` refuses to build an image with
+anything at `$FE00-$FEFF`, since the I/O page wins that decode and code
+there would be silently unreachable.
+
 Remaining, in the order to do them:
 
-1. [ ] Boot ROM in EBR plus the overlay: reads at `$F000-$FDFF` and
-       `$FF00-$FFFF` when `ROMEN`, **writes always to RAM**, `BOOTRAM`
-       suppressing the overlay at CPU reset. Minimal ROM contents — the
-       overlay is the part that is hard to retrofit, the contents are
-       software and belong with the monitor at M6
-2. [ ] I/O page decode and `rtl/soc/cool8_soc.v` — `$FE00` `SYSCTRL`,
+1. [ ] I/O page decode and `rtl/soc/cool8_soc.v` — `$FE00` `SYSCTRL`,
        `$FE03` `LED`, `$FE70` UART, `$FE80` loader. `$FE00-$FEFF` always
        decodes and always wins
-3. [ ] `rtl/soc/cool8_top.v` and `board/icesugar.pcf`
-4. [ ] `tools/cool8load.py` — keep the transport separable, per
+2. [ ] `rtl/soc/cool8_top.v` and `board/icesugar.pcf`
+3. [ ] `tools/cool8load.py` — keep the transport separable, per
        [07-loader.md §4](07-loader.md)
-5. [ ] Bitstream, then flash and bring up on real hardware
-6. [ ] Update the constants D26 invalidates: UART divider §4.6, audio
+4. [ ] Bitstream, then flash and bring up on real hardware
+5. [ ] Update the constants D26 invalidates: UART divider §4.6, audio
        reference and table §4.4, timer rate §4.5
 
 **The board is known good and connected:** iCELink DAPLink enumerates as
@@ -322,7 +374,7 @@ Superseded by D26, kept so the change is legible:
 - [ ] ~~PLL: 12 MHz → 25.125 MHz~~
 - [x] ~~SPRAM controller: byte addressing over 16-bit SPRAM,
       `mem_ready` handling~~ — done, above
-- [ ] Boot ROM in EBR with the overlay logic
+- [x] ~~Boot ROM in EBR with the overlay logic~~ — done, above
 - [ ] UART transmit and receive on the iCELink serial pins
 - [ ] **Hardware loader** — bus master, frame sniffer, `WRITE`/`READ`/
       `GO`/`HALT`/`RUN`, per [07-loader.md](07-loader.md)

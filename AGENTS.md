@@ -82,6 +82,7 @@ python sim/cosim.py all              # RTL vs emulator: directed, random,
 python sim/cosim.py mul              # exhaustive multiply (~2.5 min)
 python sim/test_loader.py            # UART and loader, over a bit-banged wire
 python sim/test_spram.py             # SPRAM controller against a byte array
+python sim/test_boot.py              # boot ROM, overlay, a cold boot
 python sim/synth.py                  # hygiene, LUT/FF count, gate estimate
 python sim/timing.py                 # measured clocks per encoding
 ```
@@ -129,6 +130,13 @@ Easy to get wrong:
   address is load-bearing: stubs and scratch must stay above it. Changing
   `PROG`, `SLOT` or the probe count without rechecking silently corrupts
   the generated program.
+- **Anything instantiating an `SB_` primitive must compile at `-g2012`**,
+  because yosys's `cells_sim.v` uses default port values. That drags in
+  the SystemVerilog keyword list with it: a testbench array called `ref`
+  stops being legal. The RTL itself stays Verilog-2001.
+- **`cool8_rom.v` reads its image with `$readmemh` at elaboration**, so
+  both `yosys` and `vvp` need `boot.hex` resolvable from their working
+  directory. `sim/test_boot.py` builds it into `sim/build` and runs there.
 - **cocotb does not run locally on Windows** with this toolchain — the
   suite's bundled Python has no SSL and `vvp` rejects an external
   interpreter. TinyTapeout's CI runs it on Linux; that is where those

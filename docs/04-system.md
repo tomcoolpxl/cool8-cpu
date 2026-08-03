@@ -103,6 +103,20 @@ of main RAM is undefined at power-on. The boot ROM lives in EBR, which
       Prompt on screen and on the USB serial port.
 ```
 
+**Steps 1, 2 and 4 exist**, in [`sw/boot.asm`](../sw/boot.asm), built
+into the EBR image by `tools/mkrom.py`. Reset to the end of step 4 is
+365,036 clocks — 30 ms at 12 MHz, nearly all of it clearing RAM. Steps 3,
+5 and 6 need video and a monitor and arrive with them at M5 and M6; until
+then the ROM lights the LED blue and halts, and software arrives through
+the loader.
+
+Step 4 is the one worth looking at twice: the vectors live at
+`$FFF8-$FFFF`, which is inside the ROM's own read window. The write goes
+to RAM and a read of the same address still returns the ROM byte. That
+asymmetry is the whole reason the overlay is read-only, and without it
+there would be no way to install a vector the machine could use after
+the ROM went away.
+
 ### 3.1 …or not, if the loader says otherwise
 
 The hardware loader (§4.7) can bypass all of that. It holds the CPU off
@@ -132,7 +146,7 @@ Base `$FE00`. Unlisted addresses read as `$FF` and ignore writes.
 
 | Addr | Name | Access | Bits |
 |---|---|---|---|
-| `$FE00` | `SYSCTRL` | R/W | `0`: `ROMEN` (1 = boot ROM overlay on). `1`: reserved. |
+| `$FE00` | `SYSCTRL` | R/W | `0`: `ROMEN` (1 = boot ROM overlay on). Reloads from `~BOOTRAM` on every CPU reset, not from a constant — see §4.7. `1`: reserved. |
 | `$FE01` | `CPUDIV` | R/W | `2:0`: CPU clock enable divider — 0=÷1 (25.1 MHz) … 5=÷32 (~785 kHz). |
 | `$FE02` | `SYSSTAT` | R | Build/version identification. |
 | `$FE03` | `LED` | R/W | `2:0` = R, G, B on the board LED. |
@@ -257,9 +271,12 @@ port normally and still be interrupted and reloaded.
 | `$FE80` | `LDR_CTRL` | R/W | `0` sniffer enable (resets to 1; reads 1 and is not yet implemented — the sniffer is always on). `4` CPU requests a bus grant for itself. `5` `BOOTRAM` — see below. |
 | `$FE81` | `LDR_STAT` | R | `0` loader currently owns the bus, `1` last frame had a checksum error, `2` a frame has been received since reset |
 
-`BOOTRAM` is the piece that makes the `GO` command work. When set, the
-boot ROM overlay is suppressed at CPU reset, so the CPU fetches its
-reset vector from `$FFF8` in RAM — which the loader has just written.
+`BOOTRAM` is the piece that makes the `GO` command work. Concretely, it
+is **`ROMEN`'s reset value**: every CPU reset reloads `ROMEN` from
+`~BOOTRAM` rather than from a constant, so with the bit set the machine
+wakes with the overlay already gone and fetches its reset vector from
+`$FFF8` in RAM — which the loader has just written. Software can still
+set `ROMEN` back afterwards; `BOOTRAM` decides again at the next reset.
 The bit is owned by the loader and survives a CPU reset; only a full
 board reset clears it.
 
