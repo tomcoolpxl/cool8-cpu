@@ -606,6 +606,66 @@ everywhere.
 The change was one line in the RTL, one in the emulator and one row of
 the table, and the co-simulation confirmed all three agree.
 
+## D26 — The system clock is 12 MHz; the pixel clock is decoupled
+
+**Decided at M4, by measurement.**
+
+[04-system.md §4.1](04-system.md) specified one clock domain for the
+entire SoC at the 25.125 MHz VGA pixel clock, with the CPU on a clock
+enable. The CPU does not close at 25.125 MHz on this part, and the
+one-domain rule was the reason it had to.
+
+**Measured on iCE40UP5K — core, two SPRAM and the PLL:** 1040 LCs, and
+**16.90 MHz** maximum. The critical path is read data arriving from
+SPRAM, through instruction decode, to the next address; the decode cone
+alone is about 35 ns. Two attempts to break it elsewhere both failed,
+and the failures are the useful part:
+
+- Making `adv` a flip-flop enable rather than a term in the logic, so
+  `mem_ready` leaves the cone: **17.24 MHz for 109 more LCs.** Not worth
+  it, and it introduced a bug — `o_retire` pulsing during a stall —
+  which the wait-state co-simulation caught immediately.
+- Registering the address in the memory controller, the D23 path
+  [03-microarchitecture.md §5.8](03-microarchitecture.md) flagged as the
+  one to watch: **16.20 MHz.** The path did go away; nextpnr reported
+  the next one.
+
+The floor is the decode cone. Only splitting fetch and decode across two
+cycles moves it, at one clock per instruction.
+
+**None of that is necessary, because only the VGA pins need 25.175 MHz.**
+A monitor syncs 640×480@60 from 800 pixel clocks per line at 31.469 kHz,
+and that is not negotiable. The CPU, memory, UART, keyboard, timer and
+audio have no opinion. Decoupling them is what block RAM is for:
+`SB_RAM40_4K` has independent `RCLK` and `WCLK`, so a scanline buffer
+written in the system domain and read in the pixel domain confines the
+crossing to a single primitive — no arbiter crossing, no handshake,
+nothing on the CPU side.
+
+The bandwidth closes comfortably. A line is 31.8 µs, which at 12 MHz is
+381 memory cycles; mode 4, the worst case, needs about 40 word accesses
+per scanline, and text mode 0 needs 80 per sixteen. Both sit near the
+12.5 % §5.3 already budgets.
+
+**So the system runs at the board's raw 12 MHz** — no PLL in the CPU
+path, 41 % margin against the measured 16.90 MHz, and real static timing
+sign-off rather than an argument. The PLL is left entirely for the pixel
+clock at M5.
+
+Three consequences, stated plainly:
+
+- **§4.1's one-clock-domain rule is withdrawn.** It was a simplification
+  that read as a constraint, and it cost a milestone's worth of wrong
+  turns before anyone asked out loud why anything needed 25 MHz.
+- **Every constant derived from 25.125 MHz is now wrong** — the UART
+  divider in §4.6, the audio reference and frequency table in §4.4, and
+  the timer rate in §4.5. Arithmetic, not design, but not yet done.
+- **The CPU speed-up is demoted, not abandoned.** At 12 MHz it buys
+  throughput instead of unblocking a milestone, and it can be done with
+  a working board to test against rather than only a timing report.
+
+---
+
 ---
 
 ## Resolved former open questions

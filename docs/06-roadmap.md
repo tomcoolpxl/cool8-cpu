@@ -185,7 +185,56 @@ document was written.
 
 ## M4 — First light on the FPGA
 
-- [ ] PLL: 12 MHz → 25.125 MHz
+**In progress.** The clock question is settled by measurement — see
+[D26](01-decisions.md#d26--the-system-clock-is-12-mhz-the-pixel-clock-is-decoupled).
+The system runs at the board's raw 12 MHz with no PLL in the CPU path;
+the PLL is reserved for the pixel clock at M5, decoupled through a
+dual-clock scanline buffer. §4.1's one-clock-domain rule is withdrawn.
+
+Done so far:
+
+- [x] `rtl/soc/cool8_uart.v` — 8N1, register-programmed divider. At
+      12 MHz, 115200 baud is `div = 103` (115385, 0.16 % out)
+- [x] `rtl/soc/cool8_loader.v` — frame sniffer and bus master, all seven
+      commands, including the two-byte forward path a lone `$C8` needs
+
+Both lint clean under `iverilog -Wall` and `yosys check -assert`, with
+no latches. **Neither has been simulated yet.**
+
+Remaining, in the order to do them:
+
+1. [ ] Loader and UART testbench — drive frames in through a UART model
+       and check memory. Do this *before* touching hardware: the
+       `$C8`-not-followed-by-`$8C` path, the checksum boundary and
+       `GO`'s write-vector-then-release-reset sequence are all easy to
+       get subtly wrong and miserable to diagnose down a serial cable
+2. [ ] `rtl/soc/cool8_spram.v` — 64 KB over 2 × `SB_SPRAM256KA`;
+       `addr[15]` picks the block, `addr[14:1]` the word, `addr[0]` the
+       byte. One wait state for the registered read
+3. [ ] Boot ROM in EBR plus the overlay: reads at `$F000-$FDFF` and
+       `$FF00-$FFFF` when `ROMEN`, **writes always to RAM**, `BOOTRAM`
+       suppressing the overlay at CPU reset. Minimal ROM contents — the
+       overlay is the part that is hard to retrofit, the contents are
+       software and belong with the monitor at M6
+4. [ ] I/O page decode and `rtl/soc/cool8_soc.v` — `$FE00` `SYSCTRL`,
+       `$FE03` `LED`, `$FE70` UART, `$FE80` loader. `$FE00-$FEFF` always
+       decodes and always wins
+5. [ ] `rtl/soc/cool8_top.v` and `board/icesugar.pcf`
+6. [ ] `tools/cool8load.py` — keep the transport separable, per
+       [07-loader.md §4](07-loader.md)
+7. [ ] Bitstream, then flash and bring up on real hardware
+8. [ ] Update the constants D26 invalidates: UART divider §4.6, audio
+       reference and table §4.4, timer rate §4.5
+
+**The board is known good and connected:** iCELink DAPLink enumerates as
+`F:` for drag-and-drop programming and COM6 for the serial console at
+`1D50:602B`. Programming is reversible; the next bitstream overwrites
+the last. Never `icesprog -e` — that is a whole-chip erase and it takes
+the bitstream with it.
+
+Superseded by D26, kept so the change is legible:
+
+- [ ] ~~PLL: 12 MHz → 25.125 MHz~~
 - [ ] SPRAM controller: byte addressing over 16-bit SPRAM, `mem_ready`
       handling
 - [ ] Boot ROM in EBR with the overlay logic
