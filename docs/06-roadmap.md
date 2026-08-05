@@ -649,10 +649,121 @@ answer that with a synthesis report rather than an estimate.
       [`rtl/soc/cool8_vga.v`](../rtl/soc/cool8_vga.v)
 - [x] Text mode 0 (80×30), font in EBR, dual-clock line buffer and the
       palette — [`rtl/soc/cool8_text.v`](../rtl/soc/cool8_text.v)
-- [ ] VRAM controller over the two spare SPRAM blocks, and the four-way
-      arbiter — display fetch, sprite fetch, CPU port, blitter
-- [ ] `VRAM_ADDR`/`VRAM_DATA` indirect port, and the `$FEC0-$FEFF` alias
-      that keeps `cool8screen.py` and the loader able to see VRAM
+- [x] VRAM controller over the two spare SPRAM blocks, and the four-way
+      arbiter — [`rtl/soc/cool8_vram.v`](../rtl/soc/cool8_vram.v), in
+      **93 LUT4 and 5 flip-flops** on top of the two blocks
+
+```bash
+python sim/test_vram.py              # all four requesters against a word array
+```
+
+The block is sixteen bits wide rather than eight, because nothing here
+has the core's 8-bit bus to answer to, and the bandwidth budget in
+[04-system.md §5.10](04-system.md) is counted in these accesses. Three
+properties are load-bearing and each has a test:
+
+1. **A grant every cycle, with no turnaround bubble.** `DATAOUT` is
+   registered but SPRAM will take a new address the very next cycle;
+   `cool8_spram` spends that cycle as a wait state only because the
+   core's protocol makes it, and nothing here does. 64 back-to-back
+   reads must take 64 cycles.
+2. **Per-nibble writes.** `MASKWREN` has one bit per nibble and a 4 bpp
+   pixel *is* a nibble, so plotting one is a native masked write with no
+   read-modify-write in the mode most drawing happens in. Each of the
+   four nibbles is written alone and the other three checked untouched.
+3. **Strict priority does not starve the blitter.** Under a load harsher
+   than §5.10's worst case — an 8 bpp display, sprites, *and* a CPU port
+   asking on 8 % of cycles — the blitter measures **51.3 %** of grants.
+   The test asserts 45 %, which is nine sigma below that mean and two
+   orders of magnitude above what a broken arbiter gives.
+
+Only five flip-flops: four `rvalid` and the captured block select. The
+block select is taken on the grant cycle rather than re-read on the data
+cycle, keeping it off the read data path that
+[D26](01-decisions.md#d26--the-system-clock-is-12-mhz-the-pixel-clock-is-decoupled)
+measured as the critical one in the machine.
+
+**Mutation-tested**, as every block since M1 has been: 19 deliberate
+bugs — every one of the four priority terms broken in turn, a requester
+granted without asking, the address mux permuted, the block select taken
+from `addr[14]` or re-read combinationally, the read mux backwards,
+`rvalid` unqualified by write or asserted a cycle early, nibble masks
+forced to `4'hF`, the write-data and mask muxes swapped, `WREN` ungated
+by the grant, the word address shifted, both blocks chip-selected at
+once, and `active` missing the blitter — and **all 19 are caught.**
+
+Two of them were caught only because the scoreboard runs continuously
+rather than per phase: a read that returns another requester's data
+produces a plausible value, not an obviously wrong one, and nothing but
+a reference model notices.
+
+- [x] `VRAM_ADDR`/`VRAM_DATA` indirect port and the `$FEC0-$FEFF` alias —
+      [`rtl/soc/cool8_vport.v`](../rtl/soc/cool8_vport.v), in **170 LUT4
+      and 59 flip-flops**
+
+```bash
+python sim/test_vport.py             # the port against a real cool8_vram
+```
+
+**The prefetch is not an optimisation, it is the only way a read works.**
+The I/O page has one timing shape and cannot negotiate — launch in one
+cycle, answer in the next ([§6.3](03-microarchitecture.md)) — and a VRAM
+read has to win the arbiter and then wait a cycle for `DATAOUT`. So the
+byte at the current address is kept in a register, fetched ahead. A read
+of `VRAM_DATA` hands over the register, advances and re-arms. It is the
+same arrangement every VDP with a data port has used, and the reason
+those chips all want a dummy read after setting the address.
+
+**A prefetch is issued after a read and after an address write, never
+after a write of data.** Writing is the bulk direction — loading a tile
+set, clearing a buffer — and fetching after each one would double the
+port's VRAM traffic to serve a read that is not coming. The cost is one
+stall on the first read after a burst, and `under_contention` is the
+test for it.
+
+`o_stall` covers the rest: the core tolerates arbitrary wait states and
+`sim/cosim.py` already proves it against randomised ones, so a slow
+fetch is correct rather than merely usual.
+
+**One step code follows `VID_STRIDE`** instead of the fixed table of
+awkward row pitches VERA needs, because the register holding the current
+mode's row pitch already exists. The other seven are 0, 1, 2, 4, 8, 16
+and 256, and bit 3 turns any of them round.
+
+**No cached word.** A 16-bit fetch straddles two byte addresses and
+holding it would serve two sequential reads from one access — but the
+blitter writes the same memory, and a cache with no invalidation from
+the other three requesters returns a stale byte after any blit that
+touched it. One fetch per read; the bandwidth is there.
+
+**Mutation-tested: 26 deliberate bugs, 25 caught.** The alias a nibble
+too narrow, too wide, or absent; every step code and the decrement bit;
+an advance dropped on reads or on writes; a register read treated as a
+data access; the write mask fixed, inverted or whole-word; a posted
+write using the advanced address; the prefetch half taken from the wrong
+bit or picked backwards; both stall conditions removed; a stalled read
+not carried across the gap; `ADDR_H` written into the low half.
+
+The one escape was included expecting it to: issuing a prefetch after a
+write as well is functionally identical and merely wasteful, so no test
+at the port can see it. It is a performance mutant, not a missed bug.
+
+**Two of the caught bugs are the hazard this block was rewritten for.**
+A fetch issued against one address, with the address moved before the
+data returned, must not let that byte land as valid — `pf_stale` is what
+stops it, and the window is only a cycle or two wide, so
+`stale_prefetch` walks an address write across it at six offsets, twice,
+once with the memory busy.
+
+**And two testbench faults, both of which read as RTL bugs.** Registering
+`o_stall` and sampling it after `@(posedge clk)` reads the value from one
+edge earlier, because a task resumes before the non-blocking update
+lands — every read appeared to return its predecessor's byte. Moving the
+handshake to the negative edge then broke it the other way: dropping
+`io_rd` at the negedge takes the launch pulse away before the posedge
+samples it, and no read happened at all. The rule is that **the strobe is
+driven from the positive edge and the handshake is read at the
+negative** one, and it is now stated at the top of the testbench.
 - [ ] The fetch engine: all three engines, the stride register, scroll,
       and the memory select off the mode decode. Bitmap 4 bpp first — it
       is the simplest path and it exercises the whole chain

@@ -213,7 +213,7 @@ a straight run of stores with no address recomputation between them.
 | `$FE25` | `CUR_LINES` | R/W | `3:0` first scanline, `7:4` last — an arbitrary slice of the 16-line cell |
 | `$FE26` | `VRAM_ADDR_L` | R/W | VRAM address, low |
 | `$FE27` | `VRAM_ADDR_H` | R/W | high |
-| `$FE28` | `VRAM_STEP` | R/W | `2:0` increment (0, ±1, ±2, ±`VID_STRIDE`, ±256), `3` decrement |
+| `$FE28` | `VRAM_STEP` | R/W | `2:0` amount: 0, 1, 2, 4, 8, 16, 256, `VID_STRIDE`. `3` = decrement. Resets to +1 |
 | `$FE29` | `VRAM_DATA` | R/W | **Auto-increments `VRAM_ADDR`. Read has a side effect.** Also aliased at `$FEC0–$FEFF` — see §5.8 |
 | `$FE2A` | `SPR_IDX` | R/W | Sprite descriptor byte index, 0–255 |
 | `$FE2B` | `SPR_DATA` | R/W | **Auto-increments `SPR_IDX`.** Eight bytes per descriptor (§5.6) |
@@ -697,9 +697,33 @@ sub-byte masking on the blitter's own adders. For 1, 2 and 4 bpp that is
 
 ### 5.8 Reaching VRAM from the CPU, and from the debugger
 
-`VRAM_ADDR`/`VRAM_DATA` with a programmable step (±1, ±2, ±stride,
-±256). One port, not two — the second was traded away in the fit budget;
-bulk copies are the blitter's job anyway.
+`VRAM_ADDR`/`VRAM_DATA` with a programmable step. One port, not two —
+the second was traded away in the fit budget; bulk copies are the
+blitter's job anyway.
+
+**Seven of the eight step codes are powers of two and the eighth follows
+`VID_STRIDE`.** That is why there is no fixed table of awkward row
+pitches: the register holding the current mode's row pitch already
+exists, so `±stride` covers 80, 128, 160, 256 and anything else a mode
+needs. VERA spends a sixteen-entry increment field on the same problem.
+
+**A read of `VRAM_DATA` returns a byte fetched in advance.** The I/O page
+answers in a fixed two cycles and a VRAM read cannot — it has to win the
+arbiter and then wait for `DATAOUT` — so the port keeps the byte at the
+current address in a register and re-arms after every read. This is the
+arrangement every VDP with a data port has used, and the reason those
+chips want a dummy read after the address is set. Here the address
+registers arm it themselves, so the dummy read is not needed.
+
+**A prefetch follows a read and an address write, never a write of
+data.** Writing is the bulk direction and fetching after each write would
+double the port's VRAM traffic for a read that is not coming; the cost is
+one stall on the first read after a burst. When the byte is not ready the
+port holds `mem_ready` low, which the core tolerates and `sim/cosim.py`
+already proves against randomised wait states.
+
+Implemented in [`cool8_vport.v`](../rtl/soc/cool8_vport.v), **170 LUT4
+and 59 flip-flops**.
 
 **`VRAM_DATA` is also aliased across `$FEC0–$FEFF`.** Every address in
 that block hits the same auto-incrementing port, so one loader `READ`

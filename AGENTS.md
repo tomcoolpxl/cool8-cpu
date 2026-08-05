@@ -87,6 +87,8 @@ python sim/test_soc.py               # the I/O page, and the whole machine
 python sim/test_load.py              # the host loader, against the RTL
 python sim/test_video.py             # the raster, the font, a screen as a PNG
                                      #   --refresh updates docs/img/
+python sim/test_vram.py              # video RAM and its four-way arbiter
+python sim/test_vport.py             # the CPU's indirect VRAM port
 python sim/synth.py                  # hygiene, LUT/FF count, gate estimate
 python sim/timing.py                 # measured clocks per encoding
 

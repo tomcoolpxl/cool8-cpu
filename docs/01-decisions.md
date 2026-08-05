@@ -945,7 +945,9 @@ The estimate, using the conversion this project has actually measured —
 
 | | LUT4 |
 |---|---|
-| Fetch engine, pixel shifter, palette, VRAM arbiter, indirect port, raster/IRQ/cursor | 1051 |
+| **VRAM and the four-way arbiter — `cool8_vram.v`** | **93, measured** |
+| **Indirect port and the `$FEC0` alias — `cool8_vport.v`** | **170, measured** |
+| Fetch engine, pixel shifter, palette, raster/IRQ/cursor | ~788 |
 | Sprites — 32 descriptors, 8 per line, 8×8 and 16×16, flip, 4 bpp | 450 |
 | Blitter — rects, transparency, clip, logic ops, pixel port | *included above* |
 | Bresenham line draw | 200 |
@@ -961,10 +963,35 @@ audio, PS/2, timer, SPI   ~450 LC
 
 86 % is the zone where placement rather than logic becomes the risk:
 `nextpnr` moves about 6 % across placer seeds, and 12 MHz still has to
-close. Every number above except the 1994 is a hand-count, and this
-project's hand-counts have been wrong in both directions — the core came
-in at 948 LUT4 against a ~1000 estimate, and at 3080 gate equivalents
-against 2750.
+close. Every number above except the 1994 and the 93 is a hand-count,
+and this project's hand-counts have been wrong in both directions — the
+core came in at 948 LUT4 against a ~1000 estimate, and at 3080 gate
+equivalents against 2750.
+
+**Two blocks are in, and together they overran.** The estimate bundled
+VRAM, the arbiter, the indirect port and the `$FEC0` alias at **130 LUT4
+for all four**. Measured:
+
+| | LUT4 | FF |
+|---|---|---|
+| `cool8_vram.v` — memory, arbiter, write path | 93 | 5 |
+| `cool8_vport.v` — address, step, prefetch, posted write, alias | 170 | 59 |
+| | **263** | |
+
+**Twice the estimate, and the port is where it went.** The line was
+costed as "some address registers and a mux"; what it actually needs is
+a prefetch with an in-flight-and-now-stale case, a posted write, a
+byte-to-word adaptation and a stall path — because the I/O page answers
+in a fixed two cycles and VRAM cannot. None of that is avoidable and
+none of it is waste; the estimate was simply made before anyone had
+thought about how a read gets back in time.
+
+Held against the 1701 LUT4 total, the overrun is 133 — about 8 %, and in
+the same direction and roughly the same proportion as M3's gate-count
+miss (3080 against 2750, 12 % over). **The right conclusion is not to
+cut something now but that the remaining ~788 LUT4 line for the fetch
+engine, shifter, palette and raster logic should be read as optimistic
+by a similar margin.** The gate below is what settles it.
 
 **So the question is not resolved by cutting things now.** It is
 resolved the way [M3](06-roadmap.md#m3--cpu-rtl) resolved the ASIC area

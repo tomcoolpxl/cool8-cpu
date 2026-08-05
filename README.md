@@ -53,7 +53,8 @@ Sizes are measured, not estimated — every one is recorded in
 | `cool8_soc` | Everything above, assembled: the bus, the I/O page, the shared UART | **1636 LUT4 all in** | **On the board** |
 | `cool8_vga` | 640×480 @ 60, both syncs | 51 LUT4, 46 FF | Verified, not wired |
 | `cool8_text` | Text mode 0, CP437 font, palette | 266 LUT4, 9 EBR | Verified, not wired |
-| VRAM + arbiter | 64 KB of dedicated video RAM, four requesters | — | **Next** |
+| `cool8_vram` | 64 KB of video RAM, 16 bits wide, four-way arbiter | 93 LUT4, 5 FF, 2 SPRAM | **Verified, not wired** |
+| `cool8_vport` | The CPU's VRAM window: address, step, prefetch, `$FEC0` alias | 170 LUT4, 59 FF | **Verified, not wired** |
 | video fetch | Text, tile and bitmap over one parameterised engine | — | **Next** |
 | blitter | Rects, transparency, clipping, logic ops, lines | — | Specified (M5) |
 | sprites | 32 descriptors, 8 per scanline, 4 bpp | — | Specified (M5) |
@@ -81,7 +82,7 @@ above and is the one that decides whether the part is full.
 | ASIC pad wrapper | Three-phase bus, verified against latch and SRAM models |
 | **Silicon** | **Hardened.** Fits in two TinyTapeout tiles, clean DRC/LVS |
 | Open design questions | **One.** Whether the video engine as scoped fits the UP5K — a fit question, settled by M5's synthesis gate, not by argument. 31 decisions logged |
-| Next | VRAM, the arbiter and the fetch engine — then measure before building the blitter and sprites (M5) |
+| Next | The fetch engine and the pixel shifter — then measure before building the blitter and sprites (M5) |
 
 The CPU is checked against the reference emulator instruction by
 instruction: every one of the 511 encodings produces the same
@@ -105,6 +106,8 @@ python sim/test_boot.py                      # boot ROM and the overlay
 python sim/test_soc.py                       # the I/O page, and a cold boot
 python sim/test_load.py                      # the host loader
 python sim/test_video.py                     # raster, font, text -> build/*.png
+python sim/test_vram.py                      # video RAM and its arbiter
+python sim/test_vport.py                     # the CPU's indirect VRAM port
 
 python tools/mkbit.py                        # build/cool8.bin
 ```
