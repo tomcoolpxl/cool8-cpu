@@ -32,6 +32,11 @@ is developed. `python sim/test_video.py` regenerates it.*
               cool8_vga ......... the 640x480 raster        ─┐ built and
               cool8_text ........ 80x30 text, font, palette ─┘ verified,
                                                                not yet wired
+
+              video RAM ......... 64 KB over the other 2 x SB_SPRAM256KA,
+                                  its own address space. Text reads main
+                                  RAM; everything else reads this, so the
+                                  blitter never stalls the CPU
 ```
 
 Sizes are measured, not estimated — every one is recorded in
@@ -47,9 +52,11 @@ Sizes are measured, not estimated — every one is recorded in
 | `cool8_loader` | Loads and debugs RAM with the CPU held off | 250 LUT4, 139 FF | **On the board** |
 | `cool8_soc` | Everything above, assembled: the bus, the I/O page, the shared UART | **1636 LUT4 all in** | **On the board** |
 | `cool8_vga` | 640×480 @ 60, both syncs | 51 LUT4, 46 FF | Verified, not wired |
-| `cool8_text` | Text mode 0, CP437 font, 16-colour palette | 266 LUT4, 9 EBR | Verified, not wired |
-| video fetch | 80 cells a row out of main memory | — | Next |
-| arbiter | Video priority over the CPU | — | Next |
+| `cool8_text` | Text mode 0, CP437 font, palette | 266 LUT4, 9 EBR | Verified, not wired |
+| VRAM + arbiter | 64 KB of dedicated video RAM, four requesters | — | **Next** |
+| video fetch | Text, tile and bitmap over one parameterised engine | — | **Next** |
+| blitter | Rects, transparency, clipping, logic ops, lines | — | Specified (M5) |
+| sprites | 32 descriptors, 8 per scanline, 4 bpp | — | Specified (M5) |
 | audio | 3 tone + 1 noise, sigma-delta out | — | Specified (M7) |
 | PS/2 | Keyboard, 16-byte FIFO | — | Specified (M6) |
 | timer, SPI flash | Periodic interrupt; flash as storage | — | Specified (M6) |
@@ -73,8 +80,8 @@ above and is the one that decides whether the part is full.
 | Audio, keyboard | Specified, not built |
 | ASIC pad wrapper | Three-phase bus, verified against latch and SRAM models |
 | **Silicon** | **Hardened.** Fits in two TinyTapeout tiles, clean DRC/LVS |
-| Open design questions | **None.** All 27 decisions logged |
-| Next | The video fetch engine and the memory arbiter (M5) |
+| Open design questions | **One.** Whether the video engine as scoped fits the UP5K — a fit question, settled by M5's synthesis gate, not by argument. 31 decisions logged |
+| Next | VRAM, the arbiter and the fetch engine — then measure before building the blitter and sprites (M5) |
 
 The CPU is checked against the reference emulator instruction by
 instruction: every one of the 511 encodings produces the same

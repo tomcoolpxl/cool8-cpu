@@ -482,78 +482,293 @@ settled. `o_prefetch` fires once a line at the start of the front porch,
 naming the line about to be displayed, so the buffer has the whole
 horizontal blank — 160 pixel clocks, 6.4 µs — to fill.
 
-### 5.2 Modes
+### 5.2 Two memories, one clock
 
-All modes use the 16-entry, 12-bit palette. Logical pixels are doubled
-horizontally and vertically where the resolution is below 640×480.
-
-| Mode | Type | Resolution | Colours | Bytes | Notes |
-|---|---|---|---|---|---|
-| 0 | Text | 80 × 30 chars, 8×16 glyphs | 16 fg / 16 bg per cell | 4800 | Native 640×480, no doubling |
-| 1 | Text | 40 × 25 chars, 8×8 glyphs | 16 fg / 16 bg per cell | 2000 | Doubled to 640×400 |
-| 2 | Bitmap | 320 × 200 | 4 (palette 0–3) | 16000 | Doubled |
-| 3 | Bitmap | 160 × 200 | 16 | 16000 | Doubled ×4 horizontally |
-| 4 | Bitmap | 320 × 200 | 16 | 32000 | Doubled. Eats half of RAM. |
-
-Text modes pack each cell as a 16-bit word — character code in the low
-byte, attribute (`bg[7:4] fg[3:0]`) in the high byte — so one SPRAM
-access fetches a complete cell.
-
-The font is 256 glyphs of 8×16 in EBR (4 KB), on its own port, so glyph
-fetches cost no main-memory bandwidth at all. Mode 1 uses the top or
-bottom half of each glyph cell.
-
-Mode 0 is built: [`rtl/soc/cool8_text.v`](../rtl/soc/cool8_text.v), **266
-LUT4, 212 flip-flops and 9 EBR** — eight of them the font, one the
-dual-clock line buffer that joins the 12 MHz memory to the 25.125 MHz
-raster. The character set is **CP437**, and the font is Spleen 8×16
-(BSD 2-clause), vendored in [`assets/font/`](../assets/font) and
-converted by `tools/mkfont.py`. Codes `$00-$1F` are blank: those are
-CP437's decorative glyphs and Spleen does not carry them.
-
-### 5.3 Bandwidth
-
-The reason there is no banking, no separate video RAM and no display
-list:
-
-Counted per scanline, because that is the unit a scanline buffer works
-in and [D26](01-decisions.md#d26--the-system-clock-is-12-mhz-the-pixel-clock-is-decoupled)
-made the buffer the thing that joins the two clock domains:
+**Text modes read main RAM. Every other mode reads a dedicated 64 KB
+VRAM** built from the two remaining SPRAM blocks. The blitter and the
+sprite pattern fetch operate in VRAM only, so neither can ever stall the
+CPU. Which memory the display fetch reads is decided by the mode decode,
+not by a register — there is no setting that puts a blitter destination
+in main RAM. Full argument in
+[D28](01-decisions.md#d28--video-memory-is-split-the-text-map-in-main-ram-everything-else-in-dedicated-vram).
 
 ```
-mode 4, the worst case:
-  logical pixels per line = 320 at 4 bpp        = 80 SPRAM words
-  vertical doubling: one fetch feeds two lines  = 40 words per line
-  a line is 31.8 us, and at 12 MHz that is        381 memory cycles
-  video share             = 40 / 381            = 10.5 %
-
-mode 0, text:
-  80 cells of one 16-bit word, per 16 scanlines = 5 words per line
-  video share             = 5 / 381             = 1.3 %
+12 MHz                                                     25.125 MHz
+──────────────────────────────────────────────────────    ───────────
+CPU ──┬── arbiter ── SPRAM x2, 64 KB main RAM
+      │                    ▲
+      │                    │ text map only
+      │              ┌─────┴──────┐
+      ├── I/O page ──┤   fetch    ├── line buffer ──▶ palette ──▶ VGA
+      │   $FE10-3F   │   engine   │   (EBR, dual clock)   ▲
+      │              └─────┬──────┘                       │
+      │                    │                        sprite line buffer
+      │                    ▼                              ▲
+      └── VRAM port ── arbiter ── SPRAM x2, 64 KB VRAM ────┘
+                          ▲   ▲
+                 blitter ─┘   └─ sprite engine
 ```
 
-**The video engine steals about one memory cycle in ten**, worst case,
-and one in eighty in text. A round-robin arbiter with video priority is
-sufficient; the CPU sees an occasional `mem_ready` low and does not care.
+The fetch engine, both arbiters, the sprite engine, the blitter and the
+CPU's port all run at **12 MHz**. Only
+[`cool8_vga`](../rtl/soc/cool8_vga.v) and the pixel output stage run at
+25.125. **The dual-clock line buffer is the only clock crossing in the
+machine** — see [D29](01-decisions.md#d29--the-video-subsystem-runs-at-12-mhz-only-the-raster-is-at-25125).
 
-The pixel clock is still 25.125 MHz and unaffected by any of this — it
-has to be, since a monitor is counting. What changed at D26 is that the
-*memory* runs at 12 MHz and the two are decoupled, so the fetch rate is
-set by how much a scanline needs rather than by the pixel rate.
+### 5.3 Modes
 
-### 5.4 Not in v1
+The fetch engine is parameterised by `VID_CTRL`, `VID_BASE`,
+`VID_STRIDE` and the scroll registers. **The modes below are presets
+over that one engine, not separate hardware**; `VID_MODE` loads the
+registers and software may override any of them afterwards.
 
-Sprites, tile layers and raster command lists. The register map leaves
-room and the two spare SPRAM blocks exist for exactly this, but the
-first target is a text prompt on a real monitor.
+All modes use the 256-entry, 12-bit palette. Logical pixels are doubled
+where the resolution is below 640×480.
 
-When sprites do arrive, the plan is deliberate hardware — a scanline
-renderer with a sprite descriptor table, X/Y expansion, priority and
-collision — **not** a reproduction of the VIC-II's internal DMA
-timing. C64-style multiplexing and raster splits work because we
-implement raster interrupts and register writes during active display,
-not because we reproduce someone else's chip bugs. See
+| # | Engine | Memory | Displayed | Format | Bytes | Stride |
+|---|---|---|---|---|---|---|
+| 0 | text | main | 80×30 cells, 8×16 glyphs | char + attr | 8192 | 256 |
+| 1 | text | main | 40×30 cells, 16×16 | char + attr | 8192 | 256 |
+| 2 | tile | VRAM | 40×30 tiles of 8×8 → 320×240 | 2 B/entry, 4 bpp patterns | 4096 + patterns | 128 |
+| 3 | bitmap | VRAM | 640×480, native | 1 bpp | 38,400 | 80 |
+| 4 | bitmap | VRAM | 320×240 → doubled to full screen | 4 bpp | 38,400 | 160 |
+| 5 | bitmap | VRAM | 256×192 → doubled, bordered | 4 bpp | 24,576 | 128 |
+| 6 | bitmap | VRAM | 256×240 → doubled, side borders | 8 bpp | 61,440 | 256 |
+
+**Mode 4 is the general graphics mode** and leaves 25 KB of VRAM for
+patterns, sprites and off-screen work. **Mode 5 is the one that
+double-buffers** — two buffers is 49,152 bytes, leaving 16 KB. Mode 4
+cannot double-buffer; 76,800 bytes does not fit in 64 KB, and the answer
+to wanting it is usually mode 2.
+
+**Mode 2 is what a game should use.** A tile map needs no double
+buffering because nothing is redrawn: scrolling is a register write and
+only the edges of the map are touched. Map 4 KB + 256 tiles 8 KB +
+sprite patterns 8 KB is 20 KB, leaving 44 KB free. This is why the NES
+and the Master System had no framebuffer.
+
+**Mode 6 fills VRAM.** 61,440 of 65,536 leaves 4 KB — about 32 sprite
+patterns and nothing else. It is the mode that coexists with nothing,
+and that is a property of 8 bpp rather than a flaw in the layout.
+
+### 5.4 The character and tile engine
+
+Text and tiles are one engine. A cell is a 16-bit word — index in the
+low byte, attribute in the high byte — so one access fetches a complete
+cell.
+
+| Format | Cell | Attribute byte |
+|---|---|---|
+| Text | 8×16, 1 bpp glyph | `bg[7:4] fg[3:0]`, indices into a 16-entry palette bank |
+| Tile | 8×8, 4 bpp | `[7:6]` V/H flip, `[5:4]` pattern bank, `[3:0]` palette bank |
+
+**The canonical text map is 128×32 cells with 80×30 displayed**, stride
+256. That makes the address of row *r* one add on `XH` and the circular
+scroll wrap an `AND R0,#31`, where a 160-byte stride needs a `MUL` that
+clobbers X — the exact spill pattern
+[D21](01-decisions.md#d21--four-general-registers-is-enough-confirmed-question-closed)
+measured. `VID_STRIDE` is a register, so software that would rather have
+the 4800-byte screen back writes 160 and pays the multiply. Reasoning in
+[D30](01-decisions.md#d30--the-text-map-stride-is-a-register-and-the-canonical-map-is-128x32).
+
+Mode 1 is the same 8×16 glyphs **doubled horizontally only**, giving
+16×16 cells and the same 30 rows. It uses the real character set; there
+is no half-height font.
+
+**Changing the tile set**, in increasing order of speed:
+
+| | Cost |
+|---|---|
+| Write patterns through `VRAM_DATA` | ~70 cycles for one 8×8 4 bpp tile; ~2 ms for 256 |
+| `COPY_RECT` between VRAM regions | ~0.7 ms for an 8 KB set, CPU free |
+| Repoint `PAT_BASE` | **one register write, instant** |
+| `[5:4]` pattern bank in the attribute | four sets live at once, per cell, no writes at all |
+
+Animating eight tiles per frame costs about 800 cycles out of ~200,000.
+Loading a set from SPI flash is `LD R0,[$FE8B] ; ST [$FE29],R0` at
+~6 cycles a byte — an 8 KB set in 4 ms, no DMA engine needed.
+
+**The font is 256 glyphs of 8×16 in EBR (4 KB) on its own port**, so
+glyph fetches in text mode cost no memory bandwidth at all and a boot
+message needs nothing loaded. The character set is **CP437**, the font
+is Spleen 8×16 (BSD 2-clause), vendored in
+[`assets/font/`](../assets/font) and converted by `tools/mkfont.py`.
+Codes `$00-$1F` are blank — CP437's decorative glyphs, which Spleen does
+not carry.
+
+Mode 0 is built: [`rtl/soc/cool8_text.v`](../rtl/soc/cool8_text.v),
+**266 LUT4, 212 flip-flops and 9 EBR** — eight the font, one the
+dual-clock line buffer.
+
+### 5.5 Scrolling
+
+The engine changes where it reads from; nothing moves in memory.
+
+- **Text.** The map is a circular buffer 32 rows tall with 30 displayed.
+  Scrolling a terminal is: increment the origin row, clear the newly
+  exposed row, move the cursor. No bulk copy. `VID_SCRL_Y` gives fine
+  vertical motion within that.
+- **Tile.** `VID_SCRL_X/Y` are 10-bit, covering whole-tile and fine
+  pixel motion in one register pair. The map wraps at its power-of-two
+  width and height, which is what the spare rows and columns are for.
+- **Bitmap.** `VID_BASE` plus `VID_STRIDE`. A framebuffer wider than the
+  viewport scrolls by moving the base, so software redraws only newly
+  exposed rows or columns.
+
+`VID_BASE` is latched at the start of vertical blanking, so a page flip
+never tears.
+
+### 5.6 Sprites
+
+Independent of the background mode — a separate line buffer merged at
+the pixel stage — so sprites work over text, tiles and bitmaps alike.
+
+```
+32 descriptors, 8 bytes each, in dual-port EBR
+8 sprites per scanline
+8x8 and 16x16, 4 bpp: 15 colours plus transparency
+```
+
+The CPU writes descriptors through `SPR_IDX`/`SPR_DATA` on one port
+while the scan engine reads the other, so **descriptor scanning costs no
+VRAM bandwidth at all**.
+
+| Byte | Contents |
+|---|---|
+| 0 | Pattern address `12:5` (32-byte granularity) |
+| 1 | Pattern address `15:13`, enable |
+| 2–3 | X, 10 bits — final VGA coordinates, 0–639 |
+| 4–5 | Y, 9 bits — 0–479 |
+| 6 | H-flip, V-flip, priority (2 bits) |
+| 7 | Size, palette bank (4 bits) |
+
+Positions are in **final raster coordinates**, so a sprite over a
+320×240 background positions twice as finely as the background it sits
+on, and reaches the border without tricks.
+
+**Priority is descriptor order, implemented as first-writer-wins** into
+the line buffer: a pixel is written only if the buffer entry is still
+transparent. That is the cheapest correct scheme and it needs no
+comparator. Pixel value 0 is transparent. Two priority levels place a
+sprite in front of or behind the background.
+
+**Eight per line is a real limit.** Sprite 9 on a line is dropped and
+`SPR_CTRL` bit 1 records that it happened, so software can detect the
+condition rather than wonder. Multiplexing more than eight is done with
+the raster interrupt (§5.9), which is deliberate hardware rather than a
+reproduction of the VIC-II's DMA timing — see
 [00-goals.md](00-goals.md) non-goals.
+
+### 5.7 The blitter
+
+Operates in VRAM only, and therefore **never stalls the CPU**. The
+command block is written through `BLT_IDX`/`BLT_DATA` as a run of
+stores and started by writing `BLT_CTRL`.
+
+| Op | |
+|---|---|
+| `FILL_RECT` | solid colour, in the current bpp |
+| `COPY_RECT` | VRAM→VRAM, reverse-direction bit for overlapping regions |
+| `COPY_RECT_TRANSPARENT` | colour 0 skipped — software sprites, UI icons, glyph blitting |
+| `DRAW_LINE` | Bresenham |
+| `CLEAR` | `FILL_RECT` over the whole destination |
+
+Logic ops: replace, XOR, OR, AND. **XOR is what gives you rubber-band
+selection, non-destructive cursors and sprite masking** without reading
+the background back.
+
+Every operation respects a programmable clipping rectangle. `BLT_STAT`
+bit 1 reports an operation that clipped away entirely, so software need
+not pre-check.
+
+Command block: `SRC`, `DST`, `SRC_STRIDE`, `DST_STRIDE`, `WIDTH`,
+`HEIGHT`, `COLOUR`, `CLIP_X0/X1/Y0/Y1`. `DRAW_LINE` reuses `SRC` and
+`DST` as the two endpoints.
+
+**Measured against the CPU doing the same work:** clearing a 320×240
+4 bpp screen is ~3.4 ms with the CPU untouched, against ~9.6 ms with the
+CPU fully occupied. Line drawing is 10–20× and free.
+
+`PIX_DATA` (§4.2) is the small end of the same machinery: write X, write
+Y, write colour, and the engine does the address arithmetic and the
+sub-byte masking on the blitter's own adders. For 1, 2 and 4 bpp that is
+**faster than direct addressing would have been**, which is why losing
+`ST` access to the framebuffer costs nothing.
+
+### 5.8 Reaching VRAM from the CPU, and from the debugger
+
+`VRAM_ADDR`/`VRAM_DATA` with a programmable step (±1, ±2, ±stride,
+±256). One port, not two — the second was traded away in the fit budget;
+bulk copies are the blitter's job anyway.
+
+**`VRAM_DATA` is also aliased across `$FEC0–$FEFF`.** Every address in
+that block hits the same auto-incrementing port, so one loader `READ`
+frame pulls 64 consecutive VRAM bytes instead of re-reading one
+register. Without it VRAM would be invisible to
+[`tools/cool8screen.py`](../tools/cool8screen.py) and to the loader's
+memory read-back, which are the two tools that made M4 tractable. It
+costs *fewer* gates than decoding the address precisely.
+
+### 5.9 Raster effects
+
+`VID_RASTER`, `VID_RCMP` and `VID_IRQ` (§4.2) give split screens,
+per-region scroll values, mid-frame palette changes, status bars and
+sprite multiplexing. Register writes take effect immediately; there is
+no shadowing and no next-line/next-frame queue — one policy, one bank of
+flip-flops. The exception is `VID_BASE`, latched at vblank so page flips
+do not tear.
+
+### 5.10 Bandwidth
+
+Per scanline, because that is the unit a line buffer works in. A line is
+31.8 µs, and at 12 MHz that is **381 memory accesses**.
+
+**Main RAM**, shared with the CPU:
+
+```
+mode 0, text: 80 cells of one word, per 16 scanlines
+              = 5 accesses per line                    1.3 %
+every other mode                                       0 %
+```
+
+**VRAM**, shared between the display fetch, the sprite engine and the
+blitter — and with nothing the CPU is doing:
+
+| Load | Accesses/line | |
+|---|---|---|
+| mode 3, 1 bpp 640-wide | 40 | 10 % |
+| mode 4, 4 bpp 320-wide | 80 | 21 % |
+| mode 2, tile map + patterns | 85 | 22 % |
+| mode 6, 8 bpp 256-wide | 128 | 34 % |
+| 8 sprites × 16 px at 4 bpp | 32 | 8 % |
+| **worst case: mode 6 + sprites** | **160** | **42 %** |
+| **left for the blitter** | **221** | **58 %** |
+
+That is 211 KB per frame of blitter throughput. Nothing in the mode set
+is bandwidth-starved at 12 MHz, which is why
+[D29](01-decisions.md#d29--the-video-subsystem-runs-at-12-mhz-only-the-raster-is-at-25125)
+did not put VRAM in the pixel domain.
+
+The pixel clock is still 25.125 MHz and unaffected — it has to be, since
+a monitor is counting.
+
+### 5.11 Not in v1
+
+| | Why, and what it would cost |
+|---|---|
+| Second background layer | ~250–400 LUT4 for a duplicate fetch path and a priority mux. Sprites plus a raster split cover most of the same ground |
+| 64 descriptors / 16 sprites per line | Bandwidth-feasible at 12 MHz (128 accesses/line); it is LUT4 that stops it, ~250 more |
+| Sprite ×2 doubling, 32 px sprites, 8 bpp sprites | Descriptor bits are reserved |
+| Sprite-to-sprite collision | Software bounding-box tests are a few instructions per pair and tell you *what* hit |
+| Programmable viewport and calibration mode | Traded away in the fit budget. `VID_BORDER` remains; a calibration screen is a few blitter rectangles |
+| Second indirect VRAM port | Traded away. Costs CPU-driven VRAM copies about half their speed |
+| Palette cycling sequencer | A vblank handler rotating entries is ~20 instructions and more flexible |
+| Command queue, display list, banked CPU window | Not needed at these speeds, and each is a new failure mode |
+
+**And one that will not arrive: sampled audio from VRAM.** VRAM is the
+video engine's, and the audio engine is dividers and an LFSR
+([D12](01-decisions.md#d12--audio-sn76489-style-not-sid-style)) with no
+use for memory.
 
 ---
 

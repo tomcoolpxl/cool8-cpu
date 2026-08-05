@@ -86,13 +86,23 @@ The project is done, for a first pass, when:
 
 ## Resource budget (iCE40UP5K)
 
-| Resource | Available | Rough allocation |
+| Resource | Available | Allocation |
 |---|---|---|
-| LUT4 | 5280 | CPU ~800–1200, video ~800, audio ~300, PS/2 ~150, glue ~500 |
-| EBR (block RAM) | ~120 Kbit (~15 KB) | Boot ROM 4 KB, font 2 KB, line buffers, FIFOs |
-| SPRAM | 4 × 32 KB = 128 KB | 2 blocks = 64 KB CPU RAM; 2 blocks reserved |
-| PLL | 1 | 12 MHz → ~25.125 MHz pixel/system clock |
-| DSP | 8 | Unused in v1 (audio is dividers, not filters) |
+| LUT4 | 5280 | CPU **948**, rest of the SoC **688**, video ~1700, audio ~250, PS/2 ~120 |
+| Logic cells | 5280 | SoC **1994 measured**, video ~2075 estimated, the rest ~450 → **~86 %** |
+| EBR (block RAM) | 30 × 4 Kbit (~15 KB) | Boot ROM **8**, font 8, line buffers 3, palette 1, sprite descriptors 1 → 21 |
+| SPRAM | 4 × 32 KB = 128 KB | 2 blocks = 64 KB CPU RAM; **2 blocks = 64 KB video RAM** ([D28](01-decisions.md)) |
+| PLL | 1 | 12 MHz → ~25.125 MHz, **pixel clock only** ([D26](01-decisions.md)) |
+| DSP | 8 | Unused (audio is dividers, not filters) |
+
+**LUT4 is not the number that decides whether the part is full.** A
+logic cell is a LUT4 with its carry and flip-flop, and the measured
+conversion on this design is **1636 LUT4 placed as 1994 LC, a factor of
+1.22**. Quote LC when asking whether something fits.
+
+The ~86 % figure is the one open question in
+[01-decisions.md](01-decisions.md), and M5 carries a synthesis gate to
+turn it into a measurement before the expensive blocks are written.
 
 **Important:** iCE40 SPRAM cannot be initialised from the bitstream.
 At power-on the 64 KB of main RAM contains garbage. The boot ROM lives

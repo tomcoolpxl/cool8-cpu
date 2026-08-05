@@ -640,13 +640,60 @@ because of it. See [D15](01-decisions.md#d15--the-loader-is-hardware-not-a-rom-m
 bought yet, which changes how this is developed and not what is built —
 see §Working without the display below.
 
+The architecture is settled — [D28](01-decisions.md) through
+[D31](01-decisions.md) and [04-system.md §5](04-system.md). **What is
+not settled is whether all of it fits**, and the order below exists to
+answer that with a synthesis report rather than an estimate.
+
 - [x] VGA timing generator, 640×480@60 —
       [`rtl/soc/cool8_vga.v`](../rtl/soc/cool8_vga.v)
 - [x] Text mode 0 (80×30), font in EBR, dual-clock line buffer and the
       palette — [`rtl/soc/cool8_text.v`](../rtl/soc/cool8_text.v)
-- [ ] The fetch engine: 80 cells a character row, out of main memory
-- [ ] Memory arbiter, video priority
-- [ ] `VID_*` registers wired to the I/O page
+- [ ] VRAM controller over the two spare SPRAM blocks, and the four-way
+      arbiter — display fetch, sprite fetch, CPU port, blitter
+- [ ] `VRAM_ADDR`/`VRAM_DATA` indirect port, and the `$FEC0-$FEFF` alias
+      that keeps `cool8screen.py` and the loader able to see VRAM
+- [ ] The fetch engine: all three engines, the stride register, scroll,
+      and the memory select off the mode decode. Bitmap 4 bpp first — it
+      is the simplest path and it exercises the whole chain
+- [ ] Pixel shifter, 1/2/4/8 bpp, attribute decode
+- [ ] 256-entry palette in EBR behind `PAL_IDX`/`PAL_DATA`
+- [ ] `VID_*` wired to the I/O page
+
+### 🚩 The gate: does it fit?
+
+```bash
+python sim/synth.py                  # LUT4 for the blocks above
+python tools/mkbit.py                # placed LC for the whole machine
+```
+
+**Run this before writing the blitter or the sprite engine.** The
+estimate is ~1051 LUT4 for everything above, and the whole machine at
+~86 % once the blitter, sprites and Bresenham lines are added on top.
+That is the zone where placement rather than logic is the risk, and
+every number in it except the SoC's 1994 LC is a hand-count. The core
+came in at 948 LUT4 against a ~1000 estimate and 3080 gate equivalents
+against 2750 — right in one direction, 12 % out in the other.
+
+This is the same move [M3](#m3--cpu-rtl) made with the LibreLane run:
+measure the thing that could invalidate the plan, years before the
+plan depends on it.
+
+| If the gate says | Then |
+|---|---|
+| at or under ~1051 LUT4 | build the blitter and sprites as scoped, Bresenham included |
+| 10–20 % over | drop Bresenham lines (~200), keep sprites |
+| worse | drop the 8 bpp mode (~60), then sprite descriptors 32 → 16 (~60) |
+
+Not on the table: the memory split, the stride register, the blitter's
+rectangle operations, or sprites entirely.
+
+- [ ] Blitter: `FILL_RECT`, `COPY_RECT`, `COPY_RECT_TRANSPARENT`,
+      clipping, logic ops, and the `PIX_*` pixel port
+- [ ] `DRAW_LINE`, if the gate allowed it
+- [ ] Sprite engine: 32 descriptors in dual-port EBR, 8 per scanline,
+      8×8 and 16×16, flip, priority, and the overrun flag
+- [ ] Raster and vblank interrupts, hardware text cursor
 - [ ] Boot ROM prints a message
 
 ```bash
@@ -773,12 +820,14 @@ computer.**
 
 **Gate:** type at the machine and it answers.
 
-## M7 — Audio and graphics modes
+## M7 — Audio
 
 - [ ] Three tone channels + noise, sigma-delta output, RC filter built
-- [ ] Bitmap modes 2, 3 and 4
-- [ ] Raster and vblank interrupts
 - [ ] A demo that draws something and plays something
+
+The graphics modes, raster interrupts and the drawing engine moved into
+M5 when [D28–D31](01-decisions.md) settled the video architecture; what
+is left here is sound.
 
 At this point the machine is finished as originally scoped.
 
@@ -826,8 +875,9 @@ loader, over a different transport. Keep that layer separable.
 
 ## Deliberately not scheduled
 
-- Sprites and tile layers — the register map and the two spare SPRAM
-  blocks leave room, but they are not in scope until M7 is done
+- A second background layer, 16 sprites per scanline, sprite scaling
+  and collision — the register and descriptor bits are reserved and
+  [04-system.md §5.11](04-system.md) prices each one
 - A filesystem on the SPI flash, and writing to it from the machine
   (see [D16](01-decisions.md#d16--flash-access-is-read-only-in-hardware)
   for the address-floor guard that would make it safe)
