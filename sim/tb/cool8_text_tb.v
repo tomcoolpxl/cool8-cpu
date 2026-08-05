@@ -186,13 +186,17 @@ module cool8_text_tb;
                 screen[(10 + k / 16) * COLS + 3 + (k % 16) * 3] =
                     {8'h0A, k[7:0]};
 
-            // Shades and a colour ramp, to show the palette is 12-bit.
+            // Sixteen colours, each at the four dither levels the font
+            // carries — $B0 $B1 $B2 $DB, a quarter to solid. Both rows
+            // take their colour from the same k[5:2], so a column is one
+            // hue and the two rows together are the palette against the
+            // shades rather than the palette and then some grey.
             for (k = 0; k < 64; k = k + 1) begin
                 screen[27 * COLS + 8 + k] = {4'h0, k[5:2], 8'hDB};
                 screen[28 * COLS + 8 + k] =
-                    {8'h07, (k[1:0] == 0) ? 8'hB0 :
-                            (k[1:0] == 1) ? 8'hB1 :
-                            (k[1:0] == 2) ? 8'hB2 : 8'hDB};
+                    {4'h0, k[5:2], (k[1:0] == 0) ? 8'hB0 :
+                                   (k[1:0] == 1) ? 8'hB1 :
+                                   (k[1:0] == 2) ? 8'hB2 : 8'hDB};
             end
         end
     endtask

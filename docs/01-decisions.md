@@ -228,6 +228,12 @@ controller directly, one access per cycle. **Same core RTL both ways.**
 
 ## D11 — 64 KB unified RAM, video shares it
 
+> **Superseded in part by [D28](#d28--video-memory-is-split-the-text-map-in-main-ram-everything-else-in-dedicated-vram).**
+> The bandwidth argument below still holds and is still the reason text
+> mode reads main RAM. What changed is that graphics modes do not, and
+> the two spare SPRAM blocks became video RAM rather than a banked
+> window.
+
 **Decision:** two SPRAM blocks form one flat 64 KB address space. The
 CPU and the video engine both read it through an arbiter with video
 priority.
@@ -714,6 +720,205 @@ What it costs, stated plainly:
 
 ---
 
+## D28 — Video memory is split: the text map in main RAM, everything else in dedicated VRAM
+
+**Decided at M5, and it supersedes half of [D11](#d11--64-kb-unified-ram-video-shares-it).**
+
+D11 put the framebuffer in main RAM and reasoned that display fetch is
+cheap — 10.5 % of memory cycles in the worst mode, 1.3 % in text. That
+arithmetic is still right and it is still why text mode reads main RAM.
+What D11 could not weigh is a blitter, because there was not going to be
+one.
+
+Two things break when there is.
+
+**A framebuffer in main RAM costs the CPU most of its address space.**
+320×240 at 4 bpp is 38,400 bytes — 60 % of the 64 KB the CPU has.
+256×240 at 8 bpp is 61,440 and leaves no room for the program that draws
+into it. The machine that can do graphics becomes the machine that
+cannot hold the code.
+
+**And a blitter on a single-port memory is not an accelerator.**
+`SB_SPRAM256KA` serves one 16-bit access per cycle. Every cycle the
+blitter takes is a cycle the CPU does not get, so a blit runs fast in
+exact proportion to how hard it stalls the CPU. That is the VIC-II
+badline bargain, and avoiding it is most of the point of building this
+now rather than reproducing 1982.
+
+**Decision:** text modes read main RAM. Every other mode reads a
+dedicated 64 KB VRAM built from the two spare SPRAM blocks. The blitter
+and the sprite pattern fetch operate in VRAM only.
+
+**The address space is selected by the mode decode, not by a register.**
+There is deliberately no `VID_ADDRSPACE` bit: no combination of settings
+can put a blitter destination in main RAM, so the failure mode does not
+exist to be documented. It costs about ten LUT4 of combinational logic
+where a register plus its illegal states would have cost more.
+
+What it buys, stated as cycles the CPU loses to video:
+
+| | CPU cycles stolen |
+|---|---|
+| Text mode display fetch | 1.3 % |
+| Every graphics mode | 0 % |
+| Blitter running flat out | 0 % |
+
+So this is **strictly less** CPU stalling than D11 specified, not a
+compromise against it.
+
+**What it costs.** The CPU reaches VRAM through an indirect port rather
+than with `ST`, which sounds worse than it is: writing a 4 bpp pixel by
+address means computing `y·stride + x/2` and masking a nibble, which is
+why [`sw/gfx.asm`](../sw/gfx.asm) has `pixel_addr` at all and why
+[D20](#d20--addw-xyimm16-added-after-the-m2-gate) exists. A hardware
+pixel port that does that arithmetic on the blitter's own adders is
+*faster* than direct addressing for every sub-byte format. 8 bpp is the
+one mode where `ST [X],R0` would genuinely have won, and at 61,440 bytes
+it could never have lived in main RAM anyway.
+
+**The real cost is to the debugger.** `tools/cool8screen.py` and the
+loader's 64 KB read-back reach main RAM only. Text mode — the thing you
+look at most — is unaffected, but VRAM is dark. The mitigation is to
+**alias the VRAM data port across a 64-byte block of the I/O page**
+(`$FEC0-$FEFF`), so one loader `READ` frame pulls 64 consecutive VRAM
+bytes instead of re-reading one register. 64 KB is then 1024 frames:
+slow, but it exists, and it costs *fewer* gates than decoding the
+address precisely.
+
+**Runner-up: everything in dedicated VRAM, including text.** Cleaner in
+one way — one memory model, one arbiter. Rejected because it would put
+the boot ROM's first printed message behind an indirect port, break
+`cool8screen.py` entirely, and throw away
+[`cool8_text.v`](../rtl/soc/cool8_text.v), which is built and verified
+against main RAM. The split keeps first light cheap and keeps the
+debugging tool that made M4 tractable.
+
+---
+
+## D29 — The video subsystem runs at 12 MHz; only the raster is at 25.125
+
+**Decided at M5.**
+
+[D26](#d26--the-system-clock-is-12-mhz-the-pixel-clock-is-decoupled)
+decoupled the pixel clock and left open which domain the *rest* of the
+video engine lives in. With a dedicated VRAM there is a real choice:
+clocking VRAM at 25.125 MHz would double its bandwidth to 798 accesses
+per line.
+
+**Decision:** clock VRAM, the fetch engine, the sprite engine, the
+blitter and both arbiters at 12 MHz. Only [`cool8_vga`](../rtl/soc/cool8_vga.v)
+and the pixel output stage run at 25.125.
+
+**Why:** the extra bandwidth is not needed and the second domain is not
+free. At 12 MHz a line is 381 VRAM accesses, and the worst realistic
+load is:
+
+```
+8 bpp 256-wide background      128 acc   34 %
+8 sprites x 16 px at 4 bpp      32 acc    8 %
+─────────────────────────────────────────────
+blitter still gets             221 acc   58 %
+```
+
+That is 211 KB per frame of blitter throughput — enough to clear a
+320×240 4 bpp screen in about a fifth of a frame with the CPU untouched.
+Nothing in the mode set is bandwidth-starved at 12 MHz, so the second
+domain would buy headroom nobody spends.
+
+Against that, keeping one domain means **the only clock crossing in the
+whole machine stays the dual-clock line buffer** that
+[`cool8_text.v`](../rtl/soc/cool8_text.v) already implements and that
+`sim/test_video.py` already exercises with the two clocks running at
+incommensurate rates. A 25 MHz video domain would add a crossing on the
+CPU register port, a crossing on the main-RAM fetch path for text mode,
+and a synchroniser on every status bit the CPU polls.
+
+**Recorded so it is not re-derived:** if a future revision wants two
+background layers or 16 sprites per line at 8 bpp, the 25.125 MHz VRAM
+domain is where the bandwidth comes from, and the cost is those three
+crossings.
+
+---
+
+## D30 — The text map stride is a register, and the canonical map is 128×32
+
+**Decided at M5.**
+
+A source conversation proposed a 64-column text mode on the grounds that
+it is more readable than 80. That is not the real argument, and acting
+on the stated one would have cost 20 % of the screen width for nothing.
+
+**The actual property worth having is a power-of-two row stride.** At
+80 columns and two bytes per cell the stride is 160, and the address of
+row *r* is `base + r·160` — a multiply. `MUL` exists
+([D18](#d18--8x8-multiply-landing-in-x)) and costs 12 cycles, but it
+**lands in X**, so a caller holding a pointer has to spill it. That is
+not a hypothetical: [D21](#d21--four-general-registers-is-enough-confirmed-question-closed)
+measured 6 spill instructions in a 277-instruction corpus and **two of
+them are exactly this pattern**. Text row addressing is the most
+frequent address computation a monitor or an editor performs.
+
+**Decision:** `VID_STRIDE` is a full 16-bit register, and the canonical
+text layout is a **128×32-cell map, 8192 bytes, with 80×30 displayed**.
+
+| | Stride 160 | **Stride 256** |
+|---|---|---|
+| Map | 80×30 cells, 4800 B | 128×32 cells, 8192 B |
+| Row address | `MUL`, 12 cycles, clobbers X | `XH = base_page + r`, one add |
+| Circular scroll wrap | compare and subtract | `AND R0,#31` |
+| Spare rows off-screen | none | 2 |
+
+Rounding a map up to a power of two in both dimensions is what tilemap
+hardware has always done, and for this reason; the spare rows and
+columns then turn out to be where smooth scrolling gets its margin.
+
+**Why a register rather than a constant:** the fetch engine needs a
+row-base accumulator either way, so the adder is not new — only the
+operand's width is. That one register then serves three jobs: text map
+stride, tile map width, and bitmap row pitch. Software that wants the
+4800-byte screen back writes 160 and pays the `MUL`.
+
+**64-column text is dropped.** 80×30 with an 8×16 font on 640×480 is
+what every PC did for twenty years and it is readable. The conversation's
+alternative — rendering 512 pixels and stretching to 640 — is a 1.25×
+non-integer scale that duplicates every fourth column and makes glyph
+stems uneven. If a 64-column screen is ever wanted it is a tile map with
+a stride of 128 and needs no dedicated hardware.
+
+**One related correction.** [04-system.md §5](04-system.md) previously
+specified mode 1 as 40×25 with 8×8 glyphs taken from "the top or bottom
+half of each glyph cell", which halves the font to get a second mode.
+Mode 1 is now **40×30 with the same 8×16 glyphs doubled horizontally
+only** — 16×16 cells, the real character set, the same 30 rows as mode
+0, and no second font image.
+
+---
+
+## D31 — The palette is an indexed port, not direct-mapped registers
+
+**Decided at M5, forced by arithmetic.**
+
+[§4.2](04-system.md) mapped 16 palette entries directly at
+`$FE20-$FE3F`, two bytes each. A 256-entry palette is 512 bytes and the
+whole I/O page is 256 ([D7](#d7--memory-mapped-io-256-byte-page-at-ff00)),
+so direct mapping is not available at any price.
+
+**Decision:** `PAL_IDX` and `PAL_DATA`, where `PAL_DATA` auto-increments.
+Two registers instead of thirty-two. Loading a full palette is a
+512-store loop; changing one entry is three stores.
+
+The palette itself moves from flip-flops into one EBR block, which is
+**smaller** than the sixteen registers it replaces as well as sixteen
+times larger.
+
+**Consequence worth stating:** a raster split that changes palette
+entries mid-frame now costs three stores per entry rather than two, and
+the index register is architectural state a raster interrupt handler
+must not corrupt. That is the standard cost of an indexed port and it is
+why `PAL_IDX` is readable.
+
+---
+
 ## Resolved former open questions
 
 Recorded so they are not re-opened without new information.
@@ -727,9 +932,59 @@ Recorded so they are not re-opened without new information.
 
 ## Open questions
 
-**None.**
+**One, and it is a fit question rather than an architectural one.**
 
-The last one lasted about an hour: co-simulation at M3 exposed that the
+### Does the video engine as scoped fit the UP5K, and if not, what comes out?
+
+The architecture above is settled. What is not settled is whether all of
+it fits alongside the CPU, and the answer will come from `nextpnr`
+rather than from arithmetic.
+
+The estimate, using the conversion this project has actually measured —
+**1636 LUT4 placed as 1994 logic cells, a factor of 1.22**:
+
+| | LUT4 |
+|---|---|
+| Fetch engine, pixel shifter, palette, VRAM arbiter, indirect port, raster/IRQ/cursor | 1051 |
+| Sprites — 32 descriptors, 8 per line, 8×8 and 16×16, flip, 4 bpp | 450 |
+| Blitter — rects, transparency, clip, logic ops, pixel port | *included above* |
+| Bresenham line draw | 200 |
+| **Total** | **1701** → ~2075 LC |
+
+```
+video           2075 LC
+existing SoC    1994 LC
+audio, PS/2, timer, SPI   ~450 LC
+──────────────────────────────────
+                4519 LC  =  86 % of 5280
+```
+
+86 % is the zone where placement rather than logic becomes the risk:
+`nextpnr` moves about 6 % across placer seeds, and 12 MHz still has to
+close. Every number above except the 1994 is a hand-count, and this
+project's hand-counts have been wrong in both directions — the core came
+in at 948 LUT4 against a ~1000 estimate, and at 3080 gate equivalents
+against 2750.
+
+**So the question is not resolved by cutting things now.** It is
+resolved the way [M3](06-roadmap.md#m3--cpu-rtl) resolved the ASIC area
+risk: by measuring early, at the point where the largest uncertain block
+first exists. [06-roadmap.md M5](06-roadmap.md#m5--video) now carries
+that gate — synthesise and place after the fetch engine, shifter and
+palette are wired, before the blitter and sprites are written.
+
+**The cut order, if the gate says so**, in the order already chosen:
+programmable viewport and calibration mode (~80), the second indirect
+VRAM port (~40), Bresenham lines (~200), the 8 bpp mode (~60), then
+sprite descriptors from 32 to 16 (~60).
+
+Not on the table: the memory split, the stride register, the blitter's
+rectangle operations, or sprites entirely. Those are what make it a
+video *chip* rather than a framebuffer.
+
+---
+
+The question before this one lasted about an hour: co-simulation at M3 exposed that the
 flag table did not say whether `MOV Rd,<pp>` set `Z` and `N`, and the
 emulator had quietly decided that it did. Closed as
 [D25](#d25--mov-rdpp-sets-no-flags) — it does not.

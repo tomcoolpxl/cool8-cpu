@@ -56,9 +56,16 @@ is what lets the boot code install the interrupt vectors at
 The I/O page punches a 256-byte hole in the ROM image at ROM offset
 `$0E00–$0EFF`. Don't put code there.
 
-There is no banking in v1. The two unused SPRAM blocks (a further 64 KB)
-are reserved for a future banked window carrying tile graphics, sprite
-patterns and sample data.
+There is no banking, and there will not be. The two remaining SPRAM
+blocks are **video RAM** — a separate 64 KB address space reached
+through an indirect port, not through the CPU's map. See
+[D28](01-decisions.md#d28--video-memory-is-split-the-text-map-in-main-ram-everything-else-in-dedicated-vram)
+and §5.2.
+
+That leaves sampled audio with nowhere to live, which is correct: the
+audio engine is dividers and an LFSR
+([D12](01-decisions.md#d12--audio-sn76489-style-not-sid-style)) and has
+no use for memory.
 
 ### 2.1 Vectors
 
@@ -173,17 +180,59 @@ whoever the master is. Two consequences worth knowing:
 
 ### 4.2 Video — `$FE10`
 
+Registers with more than a handful of fields sit behind an **indexed
+port with auto-increment** — palette, sprite descriptors, blitter
+command block, VRAM. That is one idiom, used four times, and it is what
+lets a 256-entry palette and a twelve-register blitter share a 48-byte
+allocation. It is also the fastest shape for an 8-bit CPU: setup becomes
+a straight run of stores with no address recomputation between them.
+
 | Addr | Name | Access | Description |
 |---|---|---|---|
-| `$FE10` | `VID_MODE` | R/W | `2:0` mode number (§5.2). `7` = display enable. |
-| `$FE11` | `VID_BASE` | R/W | High byte of the framebuffer base address. Low byte is always 0, so the base has 256-byte granularity. |
-| `$FE12` | `VID_BORDER` | R/W | `3:0` palette index for the border. |
-| `$FE13` | `VID_SCRL_X` | R/W | Horizontal fine scroll, 0–7 pixels. |
-| `$FE14` | `VID_SCRL_Y` | R/W | Vertical fine scroll, 0–7 lines. |
-| `$FE15` | `VID_RASTER` | R | Current scanline, bits 7:0. |
-| `$FE16` | `VID_RCMP` | R/W | Raster compare value for the raster interrupt. |
-| `$FE17` | `VID_IRQ` | R/W | `0` raster hit (write 1 to clear), `1` vblank. Bits `5:4` are the corresponding enables. |
-| `$FE20–$FE3F` | `PALETTE` | R/W | 16 entries × 2 bytes. Even byte = `0000RRRR`, odd byte = `GGGGBBBB`. Matches the 12-bit VGA PMOD exactly. |
+| `$FE10` | `VID_MODE` | R/W | `3:0` preset number (§5.3) — writing it loads the registers below. `7` = display enable. |
+| `$FE11` | `VID_CTRL` | R/W | `1:0` engine (0 text, 1 tile, 2 bitmap). `3:2` bpp (0=1, 1=2, 2=4, 3=8). `4` horizontal doubling. `5` vertical doubling. |
+| `$FE12` | `VID_BASE_L` | R/W | Display base address, low byte |
+| `$FE13` | `VID_BASE_H` | R/W | high byte |
+| `$FE14` | `VID_STRIDE_L` | R/W | Row pitch in bytes, low. Text map stride, tile map width, or bitmap row pitch — see [D30](01-decisions.md#d30--the-text-map-stride-is-a-register-and-the-canonical-map-is-128x32) |
+| `$FE15` | `VID_STRIDE_H` | R/W | high |
+| `$FE16` | `VID_SCRL_X_L` | R/W | Horizontal scroll, low |
+| `$FE17` | `VID_SCRL_X_H` | R/W | `1:0` high. 0–1023 |
+| `$FE18` | `VID_SCRL_Y_L` | R/W | Vertical scroll, low |
+| `$FE19` | `VID_SCRL_Y_H` | R/W | `1:0` high |
+| `$FE1A` | `VID_BORDER` | R/W | Border colour, a full 8-bit palette index — so the border and the background can be exactly the same colour |
+| `$FE1B` | `VID_RASTER` | R | Current scanline, bits 7:0 |
+| `$FE1C` | `VID_RCMP` | R/W | Raster compare value |
+| `$FE1D` | `VID_IRQ` | R/W | `0` raster hit (write 1 to clear), `1` vblank. `5:4` enables |
+| `$FE1E` | `PAL_IDX` | R/W | Palette byte index, 0–511. Two bytes per entry |
+| `$FE1F` | `PAL_DATA` | R/W | Even byte `0000RRRR`, odd byte `GGGGBBBB`. **Auto-increments `PAL_IDX`.** Matches the 12-bit VGA PMOD exactly |
+| `$FE20` | `PAT_BASE_L` | R/W | Glyph/tile pattern base in VRAM. Repointing this swaps a whole tile set in one write |
+| `$FE21` | `PAT_BASE_H` | R/W | |
+| `$FE22` | `CUR_X` | R/W | Text cursor column |
+| `$FE23` | `CUR_Y` | R/W | Text cursor row |
+| `$FE24` | `CUR_CTRL` | R/W | `0` enable, `2:1` style (block/underline/bar/inverse), `4:3` blink rate. Writing `CUR_X` or `CUR_Y` resets the blink phase |
+| `$FE25` | `CUR_LINES` | R/W | `3:0` first scanline, `7:4` last — an arbitrary slice of the 16-line cell |
+| `$FE26` | `VRAM_ADDR_L` | R/W | VRAM address, low |
+| `$FE27` | `VRAM_ADDR_H` | R/W | high |
+| `$FE28` | `VRAM_STEP` | R/W | `2:0` increment (0, ±1, ±2, ±`VID_STRIDE`, ±256), `3` decrement |
+| `$FE29` | `VRAM_DATA` | R/W | **Auto-increments `VRAM_ADDR`. Read has a side effect.** Also aliased at `$FEC0–$FEFF` — see §5.8 |
+| `$FE2A` | `SPR_IDX` | R/W | Sprite descriptor byte index, 0–255 |
+| `$FE2B` | `SPR_DATA` | R/W | **Auto-increments `SPR_IDX`.** Eight bytes per descriptor (§5.6) |
+| `$FE2C` | `SPR_CTRL` | R/W | `0` sprite engine enable, `1` overrun occurred this frame (write 1 to clear) |
+| `$FE30` | `BLT_IDX` | R/W | Blitter command-block byte index, 0–31 |
+| `$FE31` | `BLT_DATA` | R/W | **Auto-increments `BLT_IDX`.** The command block is §5.7 |
+| `$FE32` | `BLT_CTRL` | W | Writing starts an operation: `2:0` op, `4:3` logic op, `5` transparent, `6` reverse direction |
+| `$FE33` | `BLT_STAT` | R | `0` busy, `1` clipped-away (the operation produced no pixels) |
+| `$FE34` | `PIX_X_L` | R/W | Pixel port X, low |
+| `$FE35` | `PIX_X_H` | R/W | `1:0` high |
+| `$FE36` | `PIX_Y_L` | R/W | Pixel port Y, low |
+| `$FE37` | `PIX_Y_H` | R/W | `0` high |
+| `$FE38` | `PIX_DATA` | R/W | Read or write one pixel at (X, Y) in the current bpp, sub-byte masking done in hardware. **Auto-increments X**, so a horizontal span is one store per pixel |
+
+`$FE39–$FE3F` are spare.
+
+`$FE1F`, `$FE29`, `$FE2B`, `$FE31` and `$FE38` all have read side
+effects, and `$FE1E`, `$FE2A` and `$FE30` are readable so an interrupt
+handler can save and restore the index it interrupted.
 
 ### 4.3 Keyboard — `$FE40`
 
