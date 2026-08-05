@@ -59,18 +59,23 @@ module cool8_top_tb;
 
     cool8_top #(
         .POR_BITS(POR_BITS),
+        .PLL_SIM(1),                       // cells_sim.v gives the PLL no body
         .LED_ACTIVE_LOW(1)
     ) u_top (
         .clk(clk),
         .uart_rx(host_tx), .uart_tx(uart_tx),
-        .led_r(led_r), .led_g(led_g), .led_b(led_b)
+        .led_r(led_r), .led_g(led_g), .led_b(led_b),
+        // The PLL and the raster are the wrapper's now, so this
+        // testbench carries the VGA pins whether it looks at them or
+        // not — cool8_video_tb is where the picture is checked.
+        .vga_r(), .vga_g(), .vga_b(), .vga_hs(), .vga_vs()
     );
 
-    // The UART divider is cool8_soc's default, 103 for 115200 at 12 MHz,
+    // The UART divider is cool8_soc's default, 72 for 115200 at 8.375 MHz,
     // and running the whole test at that rate would be slow for no
     // information. So the first thing the host does is reprogram it —
     // which is also a check that the default is what it claims to be,
-    // since a frame sent at 104 clocks a bit only lands if it is.
+    // since a frame sent at 73 clocks a bit only lands if it is.
     // ------------------------------------------------- the host's UART
 
     task send_bit;
@@ -201,7 +206,7 @@ module cool8_top_tb;
     initial begin
         errors = 0;
         checks = 0;
-        bitclk = 104;                    // cool8_soc's default divider + 1
+        bitclk = 73;                     // cool8_soc's default divider + 1
 
         if ($value$plusargs("vcd=%s", vcdfile)) begin
             $dumpfile(vcdfile);
@@ -300,7 +305,7 @@ module cool8_top_tb;
         // in it, not an empty map — a top wired to the wrong parameters
         // would answer everything above just the same.
         chk_read("SYSCTRL: ROMEN set", 16'hFE00, 8'h01);
-        chk_read("SYSSTAT is the default build id", 16'hFE02, 8'h04);
+        chk_read("SYSSTAT is the default build id", 16'hFE02, 8'h05);
 
         $display("\n  %0d checks, %0d failures", checks, errors);
         if (errors == 0) $display("\nPASS");

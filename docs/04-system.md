@@ -8,12 +8,11 @@ ASIC.
 ## 1. Block diagram
 
 ```
-        12 MHz ──┬──────────────────────▶ everything below
-                 │
-                 └── PLL ──▶ 25.125 MHz ──▶ VGA pixels only (M5),
-                                             across a scanline buffer
+   12 MHz ──▶ PLL ──┬──▶ 25.125 MHz ──▶ VGA pixels, across a line buffer
+    (pin 35)         │
+                     └── ÷3 ──▶ 8.375 MHz ──▶ everything below
    ┌────────────┐
-   │ COOL8 core │            D26: no PLL in the CPU path
+   │ COOL8 core │            D32: both clocks from one PLL
    └─────┬──────┘
          │ 16-bit addr, 8-bit data
    ┌─────▼───────────────────────────────────────┐
@@ -114,7 +113,7 @@ of main RAM is undefined at power-on. The boot ROM lives in EBR, which
 
 **Steps 1, 2 and 4 exist**, in [`sw/boot.asm`](../sw/boot.asm), built
 into the EBR image by `tools/mkrom.py`. Reset to the end of step 4 is
-365,036 clocks — 30 ms at 12 MHz, nearly all of it clearing RAM. Steps 3,
+365,036 clocks — 43.6 ms at 8.375 MHz, nearly all of it clearing RAM. Steps 3,
 5 and 6 need video and a monitor and arrive with them at M5 and M6; until
 then the ROM lights the LED blue and halts, and software arrives through
 the loader.
@@ -174,7 +173,7 @@ whoever the master is. Two consequences worth knowing:
 | Addr | Name | Access | Bits |
 |---|---|---|---|
 | `$FE00` | `SYSCTRL` | R/W | `0`: `ROMEN` (1 = boot ROM overlay on). Reloads from `~BOOTRAM` on every CPU reset, not from a constant — see §4.7. `7:1` read 0. |
-| `$FE01` | `CPUDIV` | — | CPU clock enable divider. **Not implemented**; reads `$FF`. It existed to divide a 25.125 MHz system clock down to something an 8-bit machine plausibly ran at, and [D26](01-decisions.md#d26--the-system-clock-is-12-mhz-the-pixel-clock-is-decoupled) put the core on the raw 12 MHz instead. Nothing needs it until there is a reason to run slower than that. |
+| `$FE01` | `CPUDIV` | — | CPU clock enable divider. **Not implemented**; reads `$FF`. It existed to divide a 25.125 MHz system clock down to something an 8-bit machine plausibly ran at, and [D32](01-decisions.md#d32--the-system-clock-is-8375-mhz-a-third-of-the-pixel-clock) divides it by three in the clock tree instead. Nothing needs it until there is a reason to run slower than that. |
 | `$FE02` | `SYSSTAT` | R | Build identification: a constant carried as a parameter on `cool8_soc`, `$04` at M4. It answers "which bitstream is this board actually running", which is a question that gets asked during bring-up and has no other way to be answered. |
 | `$FE03` | `LED` | R/W | `2:0` = R, G, B on the board LED, active high here. The board's own polarity is [cool8_top](../rtl/soc/) and the `.pcf`'s problem, not software's. |
 
@@ -203,8 +202,8 @@ a straight run of stores with no address recomputation between them.
 | `$FE1B` | `VID_RASTER` | R | Current scanline, bits 7:0 |
 | `$FE1C` | `VID_RCMP` | R/W | Raster compare value |
 | `$FE1D` | `VID_IRQ` | R/W | `0` raster hit (write 1 to clear), `1` vblank. `5:4` enables |
-| `$FE1E` | `PAL_IDX` | R/W | Palette byte index, 0–511. Two bytes per entry |
-| `$FE1F` | `PAL_DATA` | R/W | Even byte `0000RRRR`, odd byte `GGGGBBBB`. **Auto-increments `PAL_IDX`.** Matches the 12-bit VGA PMOD exactly |
+| `$FE1E` | `PAL_IDX` | R/W | Palette **entry** index, 0–255. The half within an entry is implicit and is reset by writing this register |
+| `$FE1F` | `PAL_DATA` | W | First write `0000RRRR`, second `GGGGBBBB`; the pair commits together and **the second advances `PAL_IDX`**. Matches the 12-bit VGA PMOD exactly. Write-only — a read port on the palette is the one the raster uses, and reading back what software wrote is not worth a second block RAM |
 | `$FE20` | `PAT_BASE_L` | R/W | Glyph/tile pattern base in VRAM. Repointing this swaps a whole tile set in one write |
 | `$FE21` | `PAT_BASE_H` | R/W | |
 | `$FE22` | `CUR_X` | R/W | Text cursor column |
@@ -216,23 +215,20 @@ a straight run of stores with no address recomputation between them.
 | `$FE28` | `VRAM_STEP` | R/W | `2:0` amount: 0, 1, 2, 4, 8, 16, 256, `VID_STRIDE`. `3` = decrement. Resets to +1 |
 | `$FE29` | `VRAM_DATA` | R/W | **Auto-increments `VRAM_ADDR`. Read has a side effect.** Also aliased at `$FEC0–$FEFF` — see §5.8 |
 | `$FE2A` | `SPR_IDX` | R/W | Sprite descriptor byte index, 0–255 |
-| `$FE2B` | `SPR_DATA` | R/W | **Auto-increments `SPR_IDX`.** Eight bytes per descriptor (§5.6) |
+| `$FE2B` | `SPR_DATA` | W | **Auto-increments `SPR_IDX`.** Eight bytes per descriptor (§5.6), written as pairs from an even index. Write-only, for the same reason `PAL_DATA` is |
 | `$FE2C` | `SPR_CTRL` | R/W | `0` sprite engine enable, `1` overrun occurred this frame (write 1 to clear) |
-| `$FE30` | `BLT_IDX` | R/W | Blitter command-block byte index, 0–31 |
-| `$FE31` | `BLT_DATA` | R/W | **Auto-increments `BLT_IDX`.** The command block is §5.7 |
-| `$FE32` | `BLT_CTRL` | W | Writing starts an operation: `2:0` op, `4:3` logic op, `5` transparent, `6` reverse direction |
-| `$FE33` | `BLT_STAT` | R | `0` busy, `1` clipped-away (the operation produced no pixels) |
+| `$FE30–$FE33` | — | — | **Reserved for a blitter, which is not built.** Reads `$FF`. See [D34](01-decisions.md#d34--the-video-engine-ships-with-sprites-and-a-pixel-port-and-no-blitter) and §5.11 |
 | `$FE34` | `PIX_X_L` | R/W | Pixel port X, low |
-| `$FE35` | `PIX_X_H` | R/W | `1:0` high |
+| `$FE35` | `PIX_X_H` | R/W | `2:0` high |
 | `$FE36` | `PIX_Y_L` | R/W | Pixel port Y, low |
-| `$FE37` | `PIX_Y_H` | R/W | `0` high |
-| `$FE38` | `PIX_DATA` | R/W | Read or write one pixel at (X, Y) in the current bpp, sub-byte masking done in hardware. **Auto-increments X**, so a horizontal span is one store per pixel |
+| `$FE37` | `PIX_Y_H` | R/W | `2:0` high |
+| `$FE38` | `PIX_DATA` | R/W | Read or write one pixel at (X, Y) of the surface `VID_BASE`/`VID_STRIDE` describes, in the current bpp, with sub-byte masking done in hardware. **Auto-increments X**, so a horizontal span is one store per pixel. **Read has a side effect** and holds the bus until the memory answers |
 
-`$FE39–$FE3F` are spare.
+`$FE39–$FE3F` are spare, as is `$FE2D–$FE2F`.
 
-`$FE1F`, `$FE29`, `$FE2B`, `$FE31` and `$FE38` all have read side
-effects, and `$FE1E`, `$FE2A` and `$FE30` are readable so an interrupt
-handler can save and restore the index it interrupted.
+`$FE29` and `$FE38` have read side effects, and `$FE1E` and `$FE2A` are
+readable so an interrupt handler can save and restore the index it
+interrupted. The three `_DATA` ports are write-only and read `$FF`.
 
 ### 4.3 Keyboard — `$FE40`
 
@@ -267,33 +263,36 @@ to reproduce.
 | `$FE5E` | `NSE_VOL` | Attenuation, bits 3:0 |
 | `$FE5F` | `AUD_MASTER` | `3:0` master attenuation |
 
-**Frequency.** Reference clock is 12 MHz ÷ 32 = 375 kHz.
+**Frequency.** Reference clock is 8.375 MHz ÷ 22 = 380.7 kHz.
 
 ```
-f_out = 375000 / (2 × divider)
+f_out = 380682 / (2 × divider)
 ```
 
 | Divider | Frequency |
 |---|---|
-| 4095 | 45.8 Hz |
-| 852 | 220.1 Hz (A3) |
-| 426 | 440.1 Hz (A4) |
-| 213 | 880.3 Hz (A5) |
-| 4 | 46.9 kHz |
+| 4095 | 46.5 Hz |
+| 865 | 220.0 Hz (A3) |
+| 433 | 439.6 Hz (A4) |
+| 216 | 881.2 Hz (A5) |
+| 4 | 47.6 kHz |
 
-A 12-bit divider at this reference reaches down to 45.8 Hz —
+A 12-bit divider at this reference reaches down to 46.5 Hz —
 considerably better bass than the real SN76489 managed with 10 bits, and
 the same coarsening at high frequencies, which is part of the sound.
 
-The divider off the system clock is ÷32 rather than the ÷64 this section
-carried when the system clock was going to be 25.125 MHz
-([D26](01-decisions.md#d26--the-system-clock-is-12-mhz-the-pixel-clock-is-decoupled)).
-**What was worth preserving was the reference, not the ratio**: the
-table above is a set of notes that have to stay reachable and in tune,
-and 375 kHz lands them within 0.05 % while keeping the bass floor where
-it was. Halving the reference instead would have doubled every divider,
-run out of resolution an octave sooner at the top, and moved the floor
-to 22.9 Hz, which is below hearing and buys nothing.
+**The divider off the system clock has now been changed twice, and each
+time the reference was what was preserved.** It was ÷64 of 25.125 MHz,
+then ÷32 of 12 MHz, and it is ÷22 of 8.375
+([D32](01-decisions.md#d32--the-system-clock-is-8375-mhz-a-third-of-the-pixel-clock)).
+The table above is a set of notes that have to stay reachable and in
+tune, and ~380 kHz lands them within 0.15 % while keeping the bass floor
+where it was. A round ÷32 would give 261.7 kHz, which is in tune too —
+the divider table is recomputed either way — but it is coarser at the
+top, where an 8-bit machine's music actually lives.
+
+An awkward divisor costs a comparator rather than a shift, which is the
+whole of the difference, and this engine is M7 and not built yet.
 
 **Output chain.** Four channels, each a signed ±volume square, summed
 into an 8-bit signed sample, then a first-order sigma-delta modulator
@@ -310,14 +309,14 @@ low-pass and coupling capacitor produce line level. See
 | `$FE62` | `TMR_CTRL` | `0` enable, `1` auto-reload, `4` interrupt enable |
 | `$FE63` | `TMR_STAT` | `0` expired (write 1 to clear) |
 
-Counts down at 12 MHz ÷ 256 = 46.875 kHz — a 21.3 µs tick, and up to
-1.40 s from a 16-bit reload.
+Counts down at 8.375 MHz ÷ 256 = 32.7 kHz — a 30.6 µs tick, and up to
+2.00 s from a 16-bit reload.
 
 Here the ÷256 is kept and the rate simply follows the clock, which is
 the opposite of the choice §4.4 makes. Nothing has to land on a specific
-frequency: a timer needs enough resolution and enough range, and halving
-the rate improves the range and leaves the resolution far finer than any
-8-bit machine can act on.
+frequency: a timer needs enough resolution and enough range, and a
+slower clock improves the range and leaves the resolution far finer than
+any 8-bit machine can act on.
 
 ### 4.6 Serial — `$FE70`
 
@@ -350,9 +349,9 @@ and was not true of the first attempt.
 
 The divider is a register rather than a synthesis constant so the rate
 can be changed without rebuilding the bitstream. `div = round(f_clk /
-baud) − 1`; at the 12 MHz system clock
-([D26](01-decisions.md#d26--the-system-clock-is-12-mhz-the-pixel-clock-is-decoupled))
-115200 baud is `$0067` (103), which lands on 115385 — 0.16 % out, far
+baud) − 1`; at the 8.375 MHz system clock
+([D32](01-decisions.md#d32--the-system-clock-is-8375-mhz-a-third-of-the-pixel-clock))
+115200 baud is `$0048` (72), which lands on 114726 — 0.41 % out, well
 inside the ~2 % a UART tolerates. That is the reset value.
 
 **Changing the divider desynchronises the byte after it**, necessarily:
@@ -476,9 +475,10 @@ frame rate   = 25.125e6 / (800 × 525) = 59.82 Hz
 LUT4 and 46 flip-flops**, and every number in that table is checked
 against a golden model on every pixel clock of two frames by
 `sim/test_video.py`. It runs in the *pixel* domain: the system clock is
-12 MHz and these two are decoupled through a scanline buffer, which is
-what [D26](01-decisions.md#d26--the-system-clock-is-12-mhz-the-pixel-clock-is-decoupled)
-settled. `o_prefetch` fires once a line at the start of the front porch,
+8.375 MHz — a third of this one, because the part's single PLL owns the
+pin the 12 MHz arrives on
+([D32](01-decisions.md#d32--the-system-clock-is-8375-mhz-a-third-of-the-pixel-clock))
+— and the two are decoupled through a line buffer. `o_prefetch` fires once a line at the start of the front porch,
 naming the line about to be displayed, so the buffer has the whole
 horizontal blank — 160 pixel clocks, 6.4 µs — to fill.
 
@@ -493,7 +493,7 @@ in main RAM. Full argument in
 [D28](01-decisions.md#d28--video-memory-is-split-the-text-map-in-main-ram-everything-else-in-dedicated-vram).
 
 ```
-12 MHz                                                     25.125 MHz
+8.375 MHz                                                  25.125 MHz
 ──────────────────────────────────────────────────────    ───────────
 CPU ──┬── arbiter ── SPRAM x2, 64 KB main RAM
       │                    ▲
@@ -504,16 +504,17 @@ CPU ──┬── arbiter ── SPRAM x2, 64 KB main RAM
       │              └─────┬──────┘                       │
       │                    │                        sprite line buffer
       │                    ▼                              ▲
-      └── VRAM port ── arbiter ── SPRAM x2, 64 KB VRAM ────┘
-                          ▲   ▲
-                 blitter ─┘   └─ sprite engine
+      ├── VRAM port ── arbiter ── SPRAM x2, 64 KB VRAM ────┘
+      │                   ▲   ▲
+      └── pixel port ─────┘   └─ sprite engine
 ```
 
-The fetch engine, both arbiters, the sprite engine, the blitter and the
-CPU's port all run at **12 MHz**. Only
+The fetch engine, both arbiters, the sprite engine, the pixel port and
+the CPU's VRAM port all run at **8.375 MHz**. Only
 [`cool8_vga`](../rtl/soc/cool8_vga.v) and the pixel output stage run at
-25.125. **The dual-clock line buffer is the only clock crossing in the
-machine** — see [D29](01-decisions.md#d29--the-video-subsystem-runs-at-12-mhz-only-the-raster-is-at-25125).
+25.125. **The crossings are the line buffer and the palette, and both
+are inside dual-clock block RAMs** — see
+[D29](01-decisions.md#d29--the-video-subsystem-runs-at-12-mhz-only-the-raster-is-at-25125).
 
 ### 5.3 Modes
 
@@ -596,21 +597,36 @@ is Spleen 8×16 (BSD 2-clause), vendored in
 Codes `$00-$1F` are blank — CP437's decorative glyphs, which Spleen does
 not carry.
 
-Mode 0 is built: [`rtl/soc/cool8_text.v`](../rtl/soc/cool8_text.v),
-**266 LUT4, 212 flip-flops and 9 EBR** — eight the font, one the
-dual-clock line buffer.
+All three engines are one block:
+[`cool8_fetch.v`](../rtl/soc/cool8_fetch.v) fills the line buffer and
+[`cool8_pixel.v`](../rtl/soc/cool8_pixel.v) turns it into pixels.
+`cool8_text.v`, the special-purpose mode-0 block that came first, is
+gone — and the proof that nothing was lost with it is that
+`docs/img/text-mode-0.png`, the screen it produced, comes back
+byte-identical from the general engine.
 
 ### 5.5 Scrolling
 
 The engine changes where it reads from; nothing moves in memory.
 
+**`VID_SCRL_X` and `VID_SCRL_Y` are fine scroll**: the low four bits in
+text, the low three in tiles. The coarse part is a move of `VID_BASE` —
+one 16-bit add in software per row or per tile column — because doing it
+in hardware means multiplying the origin by the stride, and the
+alternatives were a DSP block the pixel port has a better claim on or an
+accumulator that has to be re-run whenever the register moves. See
+[D35](01-decisions.md#d35--the-scroll-registers-are-fine-scroll-the-coarse-part-is-a-move-of-vid_base).
+A bitmap gets the full ten bits for nothing, because its whole row is in
+the line buffer already.
+
 - **Text.** The map is a circular buffer 32 rows tall with 30 displayed.
-  Scrolling a terminal is: increment the origin row, clear the newly
-  exposed row, move the cursor. No bulk copy. `VID_SCRL_Y` gives fine
-  vertical motion within that.
-- **Tile.** `VID_SCRL_X/Y` are 10-bit, covering whole-tile and fine
-  pixel motion in one register pair. The map wraps at its power-of-two
-  width and height, which is what the spare rows and columns are for.
+  Scrolling a terminal is: add the stride to `VID_BASE`, clear the newly
+  exposed row, move the cursor. No bulk copy — the row pointer wraps
+  within `stride × 32` in hardware, and that wrap is a mask, so it is
+  correct only for a power-of-two stride. `VID_SCRL_Y` gives fine
+  vertical motion within a character cell.
+- **Tile.** The map row wraps the same way. `VID_SCRL_X/Y` give the
+  pixel motion inside a tile and `VID_BASE` gives the tile motion.
 - **Bitmap.** `VID_BASE` plus `VID_STRIDE`. A framebuffer wider than the
   viewport scrolls by moving the base, so software redraws only newly
   exposed rows or columns.
@@ -633,24 +649,71 @@ The CPU writes descriptors through `SPR_IDX`/`SPR_DATA` on one port
 while the scan engine reads the other, so **descriptor scanning costs no
 VRAM bandwidth at all**.
 
+**The layout is packed for the scan.** A scanline is 266 system clocks
+and all 32 descriptors have to be asked "are you on this line" inside
+it; at four byte-reads each that is 128 clocks before a single pattern
+is fetched. So the descriptor RAM is sixteen bits wide and the whole
+test — enable, size and all nine bits of Y — is in the first word. The
+scan is then one read per descriptor, 33 clocks, and the other three
+words are read only for the eight that matter.
+
 | Byte | Contents |
 |---|---|
-| 0 | Pattern address `12:5` (32-byte granularity) |
-| 1 | Pattern address `15:13`, enable |
-| 2–3 | X, 10 bits — final VGA coordinates, 0–639 |
-| 4–5 | Y, 9 bits — 0–479 |
-| 6 | H-flip, V-flip, priority (2 bits) |
-| 7 | Size, palette bank (4 bits) |
+| 0 | Y `7:0` |
+| 1 | `7` size (0 = 8×8, 1 = 16×16), `6` enable, `0` Y `8` |
+| 2 | X `7:0` |
+| 3 | `1:0` X `9:8` |
+| 4 | Pattern address `12:5` (32-byte granularity) |
+| 5 | `2:0` pattern address `15:13` |
+| 6 | `7` V-flip, `6` H-flip, `5` behind the background |
+| 7 | `3:0` palette bank |
+
+A descriptor is written as byte **pairs** from an even index: the even
+byte is held and the odd byte commits both, because a block RAM in this
+configuration has no byte enables. `PAL_DATA` does the same thing for
+the same reason.
 
 Positions are in **final raster coordinates**, so a sprite over a
 320×240 background positions twice as finely as the background it sits
 on, and reaches the border without tricks.
 
-**Priority is descriptor order, implemented as first-writer-wins** into
-the line buffer: a pixel is written only if the buffer entry is still
-transparent. That is the cheapest correct scheme and it needs no
-comparator. Pixel value 0 is transparent. Two priority levels place a
-sprite in front of or behind the background.
+**Priority is descriptor order, implemented backwards.** First-writer-
+wins would need the line buffer read back before every write, and an
+iCE40 block RAM has one read port and one write port — and the read port
+belongs to the raster. So the eight sprites of a line are rendered in
+reverse, seven first and zero last, and last-writer-wins gives exactly
+the same picture with no reads at all. Pixel value 0 is transparent and
+simply skips its write. Two priority levels place a sprite in front of
+or behind the background; *behind* shows the sprite only where the
+background is itself colour 0.
+
+**Nothing clears the line buffer; every sprite cleans up after itself.**
+Clearing 640 entries would take 640 of the 266 clocks a line has, so
+instead **a sprite is rendered for two lines past its bottom edge,
+writing zeros** over the span it used. Two lines is exactly enough and
+one is not: the banks alternate every line, so a span sits in both of
+them and both have to be wiped.
+
+Those trailing rows go down *before* the real sprites of the line,
+whatever their descriptor index — otherwise a low-numbered sprite's
+clear would land on a high-numbered sprite's pixels, which is the
+opposite of the priority rule. They also occupy slots in the
+eight-per-line budget like anything else, so a sprite that ends exactly
+where eight others begin can leave a ghost, and sets the overrun flag
+while it does.
+
+An entry also carries bit 1 of the line number it was written for, and a
+generation that does not match reads as transparent. **That bit was the
+first attempt at this and does not work on its own** — it distinguishes
+a line from the one two lines earlier and not from the one four lines
+earlier, so a sprite's last row came back four lines under it in a band
+that repeated. It is kept because it is free in an entry that is already
+ten bits wide, and because it covers the lines immediately after reset,
+before any sprite has had the chance to tidy.
+
+This is the one place in the design that depends on block RAM coming up
+zeroed, which it does: EBR is initialised from the bitstream, unlike
+SPRAM.
 
 **Eight per line is a real limit.** Sprite 9 on a line is dropped and
 `SPR_CTRL` bit 1 records that it happened, so software can detect the
@@ -659,47 +722,41 @@ the raster interrupt (§5.9), which is deliberate hardware rather than a
 reproduction of the VIC-II's DMA timing — see
 [00-goals.md](00-goals.md) non-goals.
 
-### 5.7 The blitter
+### 5.7 Reaching a pixel by coordinate
 
-Operates in VRAM only, and therefore **never stalls the CPU**. The
-command block is written through `BLT_IDX`/`BLT_DATA` as a run of
-stores and started by writing `BLT_CTRL`.
+**There is no blitter.** It did not fit — the machine came to 5438 logic
+cells against the 5280 the part has — and the sprite engine was kept
+instead, because §5.3's own argument says a tile map redraws nothing and
+therefore needs no accelerator. The full reasoning, the measurements and
+what it would take to bring one back are in
+[D34](01-decisions.md#d34--the-video-engine-ships-with-sprites-and-a-pixel-port-and-no-blitter)
+and §5.11.
 
-| Op | |
+What is built is the small end of the same machinery, and it is the part
+an 8-bit CPU is genuinely bad at:
+[`cool8_pixport.v`](../rtl/soc/cool8_pixport.v), **199 LUT4 and one
+`SB_MAC16`**.
+
+Write `PIX_X`, write `PIX_Y`, write `PIX_DATA`, and the pixel appears in
+the surface `VID_BASE` and `VID_STRIDE` describe. X then advances on its
+own, so a horizontal span is one store per pixel.
+
+| | |
 |---|---|
-| `FILL_RECT` | solid colour, in the current bpp |
-| `COPY_RECT` | VRAM→VRAM, reverse-direction bit for overlapping regions |
-| `COPY_RECT_TRANSPARENT` | colour 0 skipped — software sprites, UI icons, glyph blitting |
-| `DRAW_LINE` | Bresenham |
-| `CLEAR` | `FILL_RECT` over the whole destination |
+| `y × stride` | one of the eight DSP blocks the design had never used |
+| 4 and 8 bpp | one write, no read — a pixel is a whole number of nibbles and `MASKWREN` writes nibbles |
+| 1 and 2 bpp | read, merge, write |
+| the same pixel by hand through `VRAM_DATA` | a sequenced multiply, an address, a read, a mask and a write — about twenty cycles |
 
-Logic ops: replace, XOR, OR, AND. **XOR is what gives you rubber-band
-selection, non-destructive cursors and sprite masking** without reading
-the background back.
-
-Every operation respects a programmable clipping rectangle. `BLT_STAT`
-bit 1 reports an operation that clipped away entirely, so software need
-not pre-check.
-
-Command block: `SRC`, `DST`, `SRC_STRIDE`, `DST_STRIDE`, `WIDTH`,
-`HEIGHT`, `COLOUR`, `CLIP_X0/X1/Y0/Y1`. `DRAW_LINE` reuses `SRC` and
-`DST` as the two endpoints.
-
-**Measured against the CPU doing the same work:** clearing a 320×240
-4 bpp screen is ~3.4 ms with the CPU untouched, against ~9.6 ms with the
-CPU fully occupied. Line drawing is 10–20× and free.
-
-`PIX_DATA` (§4.2) is the small end of the same machinery: write X, write
-Y, write colour, and the engine does the address arithmetic and the
-sub-byte masking on the blitter's own adders. For 1, 2 and 4 bpp that is
-**faster than direct addressing would have been**, which is why losing
-`ST` access to the framebuffer costs nothing.
+The merge happens in eight bits and the result goes into *both* halves
+of the 16-bit word with `MASKWREN` choosing which lands, the same trick
+`cool8_spram` uses for the CPU's byte port. Doing it in sixteen is what
+made the blitter twice the size it should have been.
 
 ### 5.8 Reaching VRAM from the CPU, and from the debugger
 
 `VRAM_ADDR`/`VRAM_DATA` with a programmable step. One port, not two —
-the second was traded away in the fit budget; bulk copies are the
-blitter's job anyway.
+the second was traded away in the fit budget.
 
 **Seven of the eight step codes are powers of two and the eighth follows
 `VID_STRIDE`.** That is why there is no fixed table of awkward row
@@ -721,6 +778,13 @@ double the port's VRAM traffic for a read that is not coming; the cost is
 one stall on the first read after a burst. When the byte is not ready the
 port holds `mem_ready` low, which the core tolerates and `sim/cosim.py`
 already proves against randomised wait states.
+
+**The stall is not asserted on the launch cycle**, only from the data
+cycle onwards. A read's launch cycle already has `mem_ready` low from the
+memory, so the term would be redundant — and leaving it out keeps the
+I/O address decode off the machine's critical path, which
+[D32](01-decisions.md#d32--the-system-clock-is-8375-mhz-a-third-of-the-pixel-clock)
+measured at 37 levels of logic before anything was added to it.
 
 Implemented in [`cool8_vport.v`](../rtl/soc/cool8_vport.v), **170 LUT4
 and 59 flip-flops**.
@@ -745,33 +809,45 @@ do not tear.
 ### 5.10 Bandwidth
 
 Per scanline, because that is the unit a line buffer works in. A line is
-31.8 µs, and at 12 MHz that is **381 memory accesses**.
+31.8 µs, and at 8.375 MHz that is **266 system cycles**.
 
 **Main RAM**, shared with the CPU:
 
 ```
-mode 0, text: 80 cells of one word, per 16 scanlines
-              = 5 accesses per line                    1.3 %
-every other mode                                       0 %
+mode 0, text: 80 cells of two bytes, two cycles each,
+              per 16 scanlines = 20 cycles per line          7.5 %
+every other mode                                               0 %
 ```
 
+Text costs more than the 1.3 % this section used to claim, and the
+reason is that the display fetch reads main RAM a *byte* at a time
+through the same port the CPU uses — `cool8_spram` presents a byte
+because the core has an 8-bit bus — and a read there is two cycles.
+That is the price of D28's split, and it is still small.
+
 **VRAM**, shared between the display fetch, the sprite engine and the
-blitter — and with nothing the CPU is doing:
+CPU's indirect and pixel ports:
 
-| Load | Accesses/line | |
+| Load | Cycles/line | |
 |---|---|---|
-| mode 3, 1 bpp 640-wide | 40 | 10 % |
-| mode 4, 4 bpp 320-wide | 80 | 21 % |
-| mode 2, tile map + patterns | 85 | 22 % |
-| mode 6, 8 bpp 256-wide | 128 | 34 % |
-| 8 sprites × 16 px at 4 bpp | 32 | 8 % |
-| **worst case: mode 6 + sprites** | **160** | **42 %** |
-| **left for the blitter** | **221** | **58 %** |
+| mode 3, 1 bpp 640-wide | 40 | 15 % |
+| mode 4, 4 bpp 320-wide, lines doubled | 40 | 15 % |
+| mode 5, 4 bpp 256-wide, lines doubled | 32 | 12 % |
+| mode 6, 8 bpp 256-wide, lines doubled | 64 | 24 % |
+| mode 2, tile map and patterns | 123 | 46 % |
+| 8 sprites × 16 px at 4 bpp | 64 | 24 % |
+| **worst case: mode 2 + sprites** | **187** | **70 %** |
+| **left for the CPU's two ports** | **79** | **30 %** |
 
-That is 211 KB per frame of blitter throughput. Nothing in the mode set
-is bandwidth-starved at 12 MHz, which is why
-[D29](01-decisions.md#d29--the-video-subsystem-runs-at-12-mhz-only-the-raster-is-at-25125)
-did not put VRAM in the pixel domain.
+**The tile engine is now the heaviest, not mode 6**, and the reason is
+sequencing rather than data: a tile costs three dependent accesses — the
+map entry, then the two pattern words the entry names — and the fetch
+engine runs them one at a time, so each is two cycles rather than one.
+A bitmap has no dependency and its requests are pipelined, which is why
+mode 6 moves twice the data for half the cycles.
+
+30 % of a line is 79 accesses, and the CPU cannot use more than one per
+store. Nothing in the mode set is bandwidth-starved.
 
 The pixel clock is still 25.125 MHz and unaffected — it has to be, since
 a monitor is counting.
@@ -780,12 +856,15 @@ a monitor is counting.
 
 | | Why, and what it would cost |
 |---|---|
+| **A blitter** | ~500–700 LUT4 written tightly, and the part has about 500 logic cells left. It is the first thing to build if the CPU's fetch path is ever pipelined and the design gets smaller or the clock gets faster — [D34](01-decisions.md#d34--the-video-engine-ships-with-sprites-and-a-pixel-port-and-no-blitter) |
+| `DRAW_LINE`, Bresenham | ~200 LUT4, and it went before the blitter did. About six cycles a pixel through `PIX_DATA` in software |
 | Second background layer | ~250–400 LUT4 for a duplicate fetch path and a priority mux. Sprites plus a raster split cover most of the same ground |
 | 64 descriptors / 16 sprites per line | Bandwidth-feasible at 12 MHz (128 accesses/line); it is LUT4 that stops it, ~250 more |
 | Sprite ×2 doubling, 32 px sprites, 8 bpp sprites | Descriptor bits are reserved |
 | Sprite-to-sprite collision | Software bounding-box tests are a few instructions per pair and tell you *what* hit |
 | Programmable viewport and calibration mode | Traded away in the fit budget. `VID_BORDER` remains; a calibration screen is a few blitter rectangles |
 | Second indirect VRAM port | Traded away. Costs CPU-driven VRAM copies about half their speed |
+| Whole-tile and whole-cell scroll registers | Fine scroll is in hardware; the coarse part is one add on `VID_BASE` ([D35](01-decisions.md#d35--the-scroll-registers-are-fine-scroll-the-coarse-part-is-a-move-of-vid_base)) |
 | Palette cycling sequencer | A vblank handler rotating entries is ~20 instructions and more flexible |
 | Command queue, display list, banked CPU window | Not needed at these speeds, and each is a new failure mode |
 

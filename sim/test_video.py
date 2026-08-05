@@ -3,16 +3,19 @@
 
     python sim/test_video.py
 
-Two things, and the second is the point of the first:
+Three things, and the third is the point of the first two:
 
   1. `cool8_vga_tb` runs a golden raster model beside `cool8_vga` and
      compares every output on every one of 840,000 pixel clocks, then
      checks the tallies docs/04-system.md section 5.1 states — 640x480
      visible in 800x525, 96 pixel clocks of hsync a line, two lines of
      vsync a frame.
-  2. It renders one frame to `build/frame.png`, which is the only way to
-     *look* at what the video engine produces until a VGA PMOD exists,
-     and stays the reference the hardware has to match afterwards.
+  2. `cool8_video_tb` runs the whole subsystem through every mode and
+     compares every visible pixel against arithmetic taken from section
+     5 rather than from the RTL. Thirteen frames, four million checks.
+  3. It renders frames to `build/*.png`, which is the only way to *look*
+     at what the video engine produces until a VGA PMOD exists, and
+     stays the reference the hardware has to match afterwards.
 
 The PNG is written by hand out of zlib rather than by a library: it is
 about twenty lines and it keeps the suite runnable on a checkout with
@@ -40,10 +43,13 @@ import cosim                                    # noqa: E402
 import mkfont                                   # noqa: E402
 
 VGA = os.path.join(ROOT, "rtl", "soc", "cool8_vga.v")
-TEXT = [os.path.join(ROOT, "rtl", "soc", f)
-        for f in ("cool8_vga.v", "cool8_rom.v", "cool8_text.v")]
+VIDEO = [os.path.join(ROOT, "rtl", "soc", f)
+         for f in ("cool8_video.v", "cool8_vga.v", "cool8_vregs.v",
+                   "cool8_pal.v", "cool8_fetch.v", "cool8_pixel.v",
+                   "cool8_rom.v", "cool8_vram.v", "cool8_vport.v",
+                   "cool8_pixport.v", "cool8_sprite.v")]
 TB = os.path.join(HERE, "tb", "cool8_vga_tb.v")
-TEXT_TB = os.path.join(HERE, "tb", "cool8_text_tb.v")
+VIDEO_TB = os.path.join(HERE, "tb", "cool8_video_tb.v")
 BDF = os.path.join(ROOT, "assets", "font", "spleen-8x16.bdf")
 
 H_VIS, V_VIS = 640, 480
@@ -161,16 +167,17 @@ def main():
     print(f"    {present}/256 CP437 glyphs from a {fb[0]}x{fb[1]} box, "
           f"{blank} blank")
 
-    vvp = cosim._build("cool8_text_tb", TEXT_TB, TEXT)
+    vvp = cosim._build("cool8_video_tb", VIDEO_TB,
+                       VIDEO + [cosim.ice40_cells()], gen="2012")
     r = subprocess.run([cosim._tool("vvp"), vvp, "+frame=text.hex"],
                        cwd=BUILD, capture_output=True, text=True)
     out = r.stdout + r.stderr
     good = "\nPASS" in out
-    print(f"  {'text mode 0, through the raster':<44} "
+    print(f"  {'every mode, against a model of section 5':<44} "
           f"{'ok' if good else 'FAIL'}")
     for line in out.splitlines():
-        if line.startswith("FAIL") or "captured" in line:
-            print("    " + line)
+        if line.startswith("FAIL") or "failures" in line:
+            print("    " + line.rstrip())
     ok &= good
 
     if good:
@@ -182,6 +189,20 @@ def main():
             ok = False
         else:
             print(f"  {'a screen, rendered':<44} ok")
+            print(f"    {n} pixels -> {os.path.relpath(png, ROOT)}")
+
+    # The tile engine, as a picture. Not published: the tile data this
+    # testbench uses is every attribute combination against patterns
+    # chosen to be asymmetric, which is what a flip taken from the wrong
+    # bit shows up in and is not what anyone would call a screen.
+    r = subprocess.run([cosim._tool("vvp"), vvp, "+frame=tiles.hex",
+                        "+which=11"],
+                       cwd=BUILD, capture_output=True, text=True)
+    if "\nPASS" in r.stdout + r.stderr:
+        png = os.path.join(BUILD, "tiles.png")
+        n, err = render(os.path.join(BUILD, "tiles.hex"), png)
+        if not err:
+            print(f"  {'the tile engine, rendered':<44} ok")
             print(f"    {n} pixels -> {os.path.relpath(png, ROOT)}")
 
     notes = check_published(args.refresh)

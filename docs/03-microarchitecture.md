@@ -11,7 +11,7 @@ This is the most important structural rule in the project.
 
 ```
                     ┌─────────────────────────────┐
-   rtl/core/        │        cool8_core           │  ← goes to the ASIC
+   rtl/core/        │        cool8_core           │  ← stays portable
                     │  registers, ALU, AGU, FSM   │
                     └──────────────┬──────────────┘
                                    │ cool8 memory interface
@@ -635,10 +635,11 @@ a second timing model.
 
 ### 6.3 The I/O page, and why it costs a wait state
 
-`rtl/soc/cool8_soc.v` assembles the machine — core, memory, UART, loader
-— and decodes `$FE00-$FEFF` on the **bus**, ahead of `cool8_mem` and
-whoever the master is. **1636 LUT4 and 544 flip-flops** for the whole
-SoC, with 8 EBR — all of them the boot ROM — and 2 SPRAM.
+`rtl/soc/cool8_soc.v` assembles the machine — core, memory, UART,
+loader and the video subsystem — and decodes `$FE00-$FEFF` on the
+**bus**, ahead of `cool8_mem` and whoever the master is. **3677 LUT4 and
+1527 flip-flops** for the whole SoC, with 27 EBR, 4 SPRAM and one DSP
+block. It was 1636 LUT4 and 8 EBR before M5.
 
 The 16-byte receive FIFO is deliberately held in flip-flops. yosys will
 otherwise put its 128 bits into an EBR, retiming the I/O read capture
@@ -656,8 +657,34 @@ through the bus that `yosys` reports and that no timing analysis can
 cross. It is a loop the memory could never create, because SPRAM and EBR
 both answer out of a register.
 
-So the I/O page answers the way they do: read on the launch cycle,
-answer on the next. **All three — RAM, boot ROM and I/O — are read on
+M5 added three things to that arrangement, and each of them is a rule
+the first version broke.
+
+**A read's side effect has to happen once, and "the memory launched" is
+no longer enough to say so.** Three things can make the memory launch
+more than once for a single access now: the display fetch stealing a
+cycle, the data cycle of the access it stole, and `cool8_spram`
+relaunching every other cycle while the VRAM port holds `ready` low. So
+"this access has started" is latched rather than re-derived, and cleared
+when the access completes. Without it a stalled read of `UART_DATA` pops
+the FIFO twice and the byte in between is simply gone.
+
+**A write held across a stolen cycle reaches the page twice.** Half the
+registers on the page have side effects — a palette index advanced
+twice, a VRAM address advanced twice — so `io_we` is gated by the
+arbiter's state as well.
+
+**And nothing the core drives may take part in arbitrating the memory.**
+The obvious version let a master's write win, since a write is a single
+cycle and never waits; that put `bus_write` into the grant, `bus_write`
+comes combinationally off the byte the core is fetching, and the arbiter
+was suddenly inside the machine's longest path. It cost about two
+megahertz. The grant is now a function of flip-flops only, and a write
+that loses simply waits a cycle — the master is holding its address
+anyway.
+
+So the I/O page answers the way the memories do: read on the launch
+cycle, answer on the next. **All three — RAM, boot ROM and I/O — are read on
 every launch and the answer is picked afterwards**, from selects
 captured on that cycle, and `mem_ready` has exactly one source. The
 launch itself is `cool8_spram`'s, exported through `cool8_mem`, so there

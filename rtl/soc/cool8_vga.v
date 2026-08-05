@@ -7,7 +7,8 @@
 //
 // **This runs in the pixel domain, not the system domain.** The two are
 // decoupled — [D26] — because 25.125 MHz is a number a monitor is
-// counting and 12 MHz is what the CPU closes at. The join is a scanline
+// counting and 8.375 MHz is what the machine closes at. The join is a
+// scanline
 // buffer written by the system clock and read by this one, which is why
 // `o_prefetch` exists: it fires once per line, in the blanking, naming
 // the line that is *about* to be displayed, so the fetch has a whole

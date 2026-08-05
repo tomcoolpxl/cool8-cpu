@@ -3,7 +3,7 @@
 //
 // cool8_soc_tb runs the SoC fast and with a filled-in ROM, because it is
 // testing a decode. This runs it slow and for real: the boot image
-// tools/mkrom.py built out of sw/boot.asm, the default 12 MHz UART
+// tools/mkrom.py built out of sw/boot.asm, the default 8.375 MHz UART
 // divider, the default build id, and SPRAM left undefined exactly as the
 // part comes up. Nothing is poked, nothing is forced, and the CPU cannot
 // get anywhere at all unless its reset vector really came out of EBR.
@@ -28,12 +28,13 @@
 
 module cool8_soc_boot_tb;
 
-    localparam integer DIV0  = 103;        // 115200 baud at 12 MHz
-    localparam [7:0]   BUILD = 8'h04;      // cool8_soc's own default
+    localparam integer DIV0  = 72;         // 115200 baud at 8.375 MHz
+    localparam [7:0]   BUILD = 8'h05;      // cool8_soc's own default
     localparam [7:0]   ACK = 8'h4B, VERSION = 8'h01;
     localparam [7:0]   C_READ = 8'h02, C_HALT = 8'h04, C_PING = 8'h07;
 
     reg          clk = 1'b0;
+    reg          pclk = 1'b0;
     reg          rst_n = 1'b0;
 
     integer      errors, checks, bitclk, n;
@@ -54,6 +55,11 @@ module cool8_soc_boot_tb;
     reg          rom_fetched;             // a fetch landed in the ROM window
 
     always #5 clk = ~clk;
+    // The raster's clock. Incommensurate with the system's on
+    // purpose: the video subsystem is inside the SoC now and the
+    // only thing these tests want from it is that its clock
+    // crossing does not disturb anything on this side of it.
+    always #2.39 pclk = ~pclk;
 
     // ------------------------------------------------------------ DUT
     //
@@ -62,6 +68,8 @@ module cool8_soc_boot_tb;
 
     cool8_soc u_soc (
         .clk(clk), .rst_n(rst_n),
+        .pclk(pclk), .prst_n(rst_n),
+        .rgb(), .hsync_n(), .vsync_n(),
         .uart_rx(host_tx), .uart_tx(uart_tx),
         .led(led),
         .irq(1'b0), .nmi(1'b0),
@@ -233,8 +241,8 @@ module cool8_soc_boot_tb;
         chk("the boot ROM ran to its HALT", {31'd0, o_halted}, 32'd1);
         chk("it fetched out of the ROM window", {31'd0, rom_fetched}, 32'd1);
         chk("the LED is blue", {29'd0, led}, 32'd1);
-        $display("  reset to HALT: %0d clocks, %0d ms at 12 MHz",
-                 halt_at, halt_at / 12000);
+        $display("  reset to HALT: %0d clocks, %0d ms at 8.375 MHz",
+                 halt_at, halt_at / 8375);
 
         // A halted CPU still grants the bus — which is how software
         // arrives at M4, and the only reason the machine is reachable at
@@ -251,7 +259,7 @@ module cool8_soc_boot_tb;
         chk_read("SYSSTAT is the default build id", 16'hFE02, BUILD);
         chk_read("the LED register agrees with the pins", 16'hFE03, 8'h01);
         chk_read("SYSCTRL: ROMEN is still set",     16'hFE00, 8'h01);
-        chk_read("UART_DIV_L is 103",  16'hFE72, 8'd103);
+        chk_read("UART_DIV_L is 72",   16'hFE72, 8'd72);
         chk_read("UART_DIV_H is 0",    16'hFE73, 8'd0);
 
         // The vectors the boot ROM installed went to RAM underneath its

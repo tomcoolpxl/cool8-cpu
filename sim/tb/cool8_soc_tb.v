@@ -46,6 +46,7 @@ module cool8_soc_tb;
                       C_HALT = 8'h04, C_RESET = 8'h06, C_PING = 8'h07;
 
     reg          clk = 1'b0;
+    reg          pclk = 1'b0;
     reg          rst_n = 1'b0;
 
     integer      errors, checks, bitclk, i, n;
@@ -70,6 +71,11 @@ module cool8_soc_tb;
     integer      ping_seen, want_next;
 
     always #5 clk = ~clk;
+    // The raster's clock. Incommensurate with the system's on
+    // purpose: the video subsystem is inside the SoC now and the
+    // only thing these tests want from it is that its clock
+    // crossing does not disturb anything on this side of it.
+    always #2.39 pclk = ~pclk;
 
     // ------------------------------------------------------------ DUT
 
@@ -80,6 +86,8 @@ module cool8_soc_tb;
         .RX_ABITS(4)
     ) u_soc (
         .clk(clk), .rst_n(rst_n),
+        .pclk(pclk), .prst_n(rst_n),
+        .rgb(), .hsync_n(), .vsync_n(),
         .uart_rx(host_tx), .uart_tx(uart_tx),
         .led(led),
         .irq(1'b0), .nmi(1'b0),
@@ -497,12 +505,47 @@ module cool8_soc_tb;
         // swallows a write; a bus that answered $00 would look like a
         // register holding zero, which is the wrong kind of plausible.
 
+        // $FE0C and $FE3F are chosen because nothing claims them and
+        // nothing is scheduled to: $FE3F is the byte below the sprite
+        // and blitter ports, inside the video block's neighbourhood but
+        // outside its decode, which is where a decode one nibble too
+        // wide would show.
         chk_read("CPUDIV is unimplemented",     16'hFE01, 8'hFF);
-        chk_read("an unused video register",    16'hFE10, 8'hFF);
-        chk_read("the last byte of the page",   16'hFEFF, 8'hFF);
-        bus_write("write to an unused address", 16'hFE10, 8'hA5);
-        chk_read("...and it is still $FF",      16'hFE10, 8'hFF);
+        chk_read("an unused address",           16'hFE0C, 8'hFF);
+        chk_read("below the sprite ports",      16'hFE3F, 8'hFF);
+        bus_write("write to an unused address", 16'hFE0C, 8'hA5);
+        chk_read("...and it is still $FF",      16'hFE0C, 8'hFF);
         chk_read("...and nothing near it moved", 16'hFE03, 8'h02);
+
+        // ---- the video page, $FE10-$FE3F
+        //
+        // The registers themselves are cool8_video_tb's; what is only
+        // testable here is that the SoC's decode reaches them and that
+        // the VRAM data port's alias claims the top quarter of the page.
+        chk_read("VID_MODE out of reset",       16'hFE10, 8'h00);
+        bus_write("VID_MODE := mode 4, on",     16'hFE10, 8'h84);
+        chk_read("...reads back",               16'hFE10, 8'h84);
+        // Writing a preset loads three registers software never wrote.
+        chk_read("...and loaded VID_CTRL",      16'hFE11, 8'h3A);
+        chk_read("...and VID_STRIDE low",       16'hFE14, 8'hA0);
+        chk_read("...and VID_STRIDE high",      16'hFE15, 8'h00);
+        bus_write("VID_BORDER := $5C",          16'hFE1A, 8'h5C);
+        chk_read("...reads back",               16'hFE1A, 8'h5C);
+        bus_write("VRAM_ADDR := $1234 low",     16'hFE26, 8'h34);
+        bus_write("VRAM_ADDR := $1234 high",    16'hFE27, 8'h12);
+        chk_read("VRAM_ADDR_L reads back",      16'hFE26, 8'h34);
+        chk_read("VRAM_ADDR_H reads back",      16'hFE27, 8'h12);
+        bus_write("VRAM_DATA := $9E",           16'hFE29, 8'h9E);
+        chk_read("...the address advanced",     16'hFE26, 8'h35);
+        bus_write("VRAM_DATA := $7D",           16'hFE29, 8'h7D);
+        // The alias: every address in $FEC0-$FEFF is the same
+        // auto-incrementing data port, which is what lets one loader
+        // READ frame walk 64 consecutive bytes of VRAM instead of
+        // re-reading one register 64 times.
+        bus_write("VRAM_ADDR back to $1234",    16'hFE26, 8'h34);
+        bus_write("...high half",               16'hFE27, 8'h12);
+        chk_read("$FEC0 is the data port",      16'hFEC0, 8'h9E);
+        chk_read("...and $FEFF is the same one", 16'hFEFF, 8'h7D);
 
         // ---------------------------------------------------------- 4
         // The page wins. There is RAM under every one of these
@@ -510,12 +553,12 @@ module cool8_soc_tb;
 
         ram_poke(16'hFE00, 8'h11);
         ram_poke(16'hFE03, 8'h22);
-        ram_poke(16'hFE10, 8'h33);
-        ram_poke(16'hFEFF, 8'h44);
+        ram_poke(16'hFE0C, 8'h33);
+        ram_poke(16'hFE3F, 8'h44);
         chk_read("SYSCTRL, not the RAM under it", 16'hFE00, 8'h01);
         chk_read("LED, not the RAM under it",     16'hFE03, 8'h02);
-        chk_read("unused, not the RAM under it",  16'hFE10, 8'hFF);
-        chk_read("$FEFF, not the RAM under it",   16'hFEFF, 8'hFF);
+        chk_read("unused, not the RAM under it",  16'hFE0C, 8'hFF);
+        chk_read("$FE3F, not the RAM under it",   16'hFE3F, 8'hFF);
 
         // ...and a write to the page must not reach the RAM either.
         bus_write("LED := $07", 16'hFE03, 8'h07);

@@ -158,7 +158,16 @@ module cool8_vport (
     // what stops it being taken twice.
     wire we_wait   = dp_we & wr_pend;
 
-    assign o_stall = rd_wait | we_wait;
+    // **The stall is not asserted on the launch cycle**, and not because
+    // it would be wrong to: a read's launch cycle already has mem_ready
+    // low from the memory, so the launch-cycle term is redundant. Leaving
+    // it out is what keeps `io_a` off the ready path — `rd_hold` and
+    // `pf_valid` are both flip-flops, so the read half of this signal is
+    // a function of state and nothing else, and the address decode no
+    // longer reaches the core's control logic through it. That cone is
+    // the machine's critical path (docs/05-board.md section 6) and it is
+    // already thirty levels deep before anything here is added to it.
+    assign o_stall = (rd_hold & ~pf_valid) | we_wait;
 
     // Any access that moves the address invalidates the prefetch.
     wire addr_wr    = io_we & ((io_a == A_ADDR_L) | (io_a == A_ADDR_H));

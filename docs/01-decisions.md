@@ -789,7 +789,7 @@ address precisely.
 one way — one memory model, one arbiter. Rejected because it would put
 the boot ROM's first printed message behind an indirect port, break
 `cool8screen.py` entirely, and throw away
-[`cool8_text.v`](../rtl/soc/cool8_text.v), which is built and verified
+`cool8_text.v`, which was built and verified
 against main RAM. The split keeps first light cheap and keeps the
 debugging tool that made M4 tractable.
 
@@ -827,7 +827,7 @@ domain would buy headroom nobody spends.
 
 Against that, keeping one domain means **the only clock crossing in the
 whole machine stays the dual-clock line buffer** that
-[`cool8_text.v`](../rtl/soc/cool8_text.v) already implements and that
+`cool8_text.v` already implemented and that
 `sim/test_video.py` already exercises with the two clocks running at
 incommensurate rates. A 25 MHz video domain would add a crossing on the
 CPU register port, a crossing on the main-RAM fetch path for text mode,
@@ -930,94 +930,248 @@ Recorded so they are not re-opened without new information.
 | 16-bit counted loops | **Accepted as-is.** `DECW X`/`DECW Y` set `Z` from the full 16-bit result, so `DECW`+`BNE` is a two-instruction 16-bit loop whenever a pointer register is spare. When both pointers are busy, nest the loop or spill the counter. No new instruction. |
 | What gets cut if the ASIC overruns? | **Nothing.** See D19. |
 
-## Open questions
+## D32 — The system clock is 8.375 MHz, a third of the pixel clock
 
-**One, and it is a fit question rather than an architectural one.**
+**Superseded [D26](#d26--the-system-clock-is-12-mhz-the-pixel-clock-is-decoupled),
+and not by choice.** D26 put the CPU on the board's raw 12 MHz with no
+PLL in its path, and said the pixel clock would be made separately. The
+iCE40UP5K cannot do that.
 
-### Does the video engine as scoped fit the UP5K, and if not, what comes out?
-
-The architecture above is settled. What is not settled is whether all of
-it fits alongside the CPU, and the answer will come from `nextpnr`
-rather than from arithmetic.
-
-The estimate, using the conversion this project has actually measured —
-**1636 LUT4 placed as 1994 logic cells, a factor of 1.22**:
-
-| | LUT4 |
-|---|---|
-| **VRAM and the four-way arbiter — `cool8_vram.v`** | **93, measured** |
-| **Indirect port and the `$FEC0` alias — `cool8_vport.v`** | **170, measured** |
-| Fetch engine, pixel shifter, palette, raster/IRQ/cursor | ~788 |
-| Sprites — 32 descriptors, 8 per line, 8×8 and 16×16, flip, 4 bpp | 450 |
-| Blitter — rects, transparency, clip, logic ops, pixel port | *included above* |
-| Bresenham line draw | 200 |
-| **Total** | **1701** → ~2075 LC |
+The part has **one** PLL and its reference is a *pad*, not a fabric net.
+On the SG48 package that pad is pin 35, which is where the iCESugar's
+12 MHz arrives. Asking for both is not a trade-off, it is a placement
+error:
 
 ```
-video           2075 LC
-existing SoC    1994 LC
-audio, PS/2, timer, SPI   ~450 LC
-──────────────────────────────────
-                4519 LC  =  86 % of 5280
+ERROR: PLL bel 'X12/Y31/pll_3' cannot be used as it conflicts
+       with input 'clk$sb_io' on pin '35'
 ```
 
-86 % is the zone where placement rather than logic becomes the risk:
-`nextpnr` moves about 6 % across placer seeds, and 12 MHz still has to
-close. Every number above except the 1994 and the 93 is a hand-count,
-and this project's hand-counts have been wrong in both directions — the
-core came in at 948 LUT4 against a ~1000 estimate, and at 3080 gate
-equivalents against 2750.
+So one of the two clocks has to be derived from the other, and it is not
+the pixel clock that gives: a monitor is counting those, and 25.125 MHz
+is already 0.2 % off nominal ([§5.1](04-system.md)). The system clock is
+therefore a division of 25.125.
 
-**Two blocks are in, and together they overran.** The estimate bundled
-VRAM, the arbiter, the indirect port and the `$FEC0` alias at **130 LUT4
-for all four**. Measured:
+**Half of it — 12.5625 MHz — does not close.** Measured, placed and
+routed with the display engine in and the blitter not:
 
-| | LUT4 | FF |
-|---|---|---|
-| `cool8_vram.v` — memory, arbiter, write path | 93 | 5 |
-| `cool8_vport.v` — address, step, prefetch, posted write, alias | 170 | 59 |
-| | **263** | |
+| placer seed | 1 | 2 | 3 | 4 | 5 | 6 |
+|---|---|---|---|---|---|---|
+| `sclk` Fmax, MHz | 11.56 | 11.43 | 11.01 | 11.53 | 11.40 | 11.34 |
 
-**Twice the estimate, and the port is where it went.** The line was
-costed as "some address registers and a mux"; what it actually needs is
-a prefetch with an in-flight-and-now-stale case, a posted write, a
-byte-to-word adaptation and a stall path — because the I/O page answers
-in a fixed two cycles and VRAM cannot. None of that is avoidable and
-none of it is waste; the estimate was simply made before anyone had
-thought about how a read gets back in time.
+The spread is the placer; the shortfall is the design. The critical path
+is the one D26 named and M4 measured — SPRAM read data, through the
+block and byte selects, the boot ROM's mux and the I/O page's, the
+instruction decode, and into the next state — and it is **37 levels of
+logic and 87 ns** of them. No seed makes that 79.6.
 
-Held against the 1701 LUT4 total, the overrun is 133 — about 8 %, and in
-the same direction and roughly the same proportion as M3's gate-count
-miss (3080 against 2750, 12 % over). **The right conclusion is not to
-cut something now but that the remaining ~788 LUT4 line for the fetch
-engine, shifter, palette and raster logic should be read as optimistic
-by a similar margin.** The gate below is what settles it.
+A third of it is **8.375 MHz**, and the finished machine closes at 10.65
+with 27 % margin. That margin is the reason for choosing it over the
+10.05 MHz a 50.25 MHz output divided by five would have given: at 89 %
+occupancy a clock that only just closes is a clock that has to be
+revisited every time anything is added.
 
-**So the question is not resolved by cutting things now.** It is
-resolved the way [M3](06-roadmap.md#m3--cpu-rtl) resolved the ASIC area
-risk: by measuring early, at the point where the largest uncertain block
-first exists. [06-roadmap.md M5](06-roadmap.md#m5--video) now carries
-that gate — synthesise and place after the fetch engine, shifter and
-palette are wired, before the blitter and sprites are written.
+The divider is registered rather than decoded, so `sclk` comes out of a
+flip-flop and cannot glitch, and it reaches a global net through an
+explicit `SB_GB`. One clock in three is high; nothing in the design is
+level-sensitive and 39.8 ns is far more than any flip-flop's minimum
+pulse width.
 
-**The cut order, if the gate says so**, in the order already chosen:
-programmable viewport and calibration mode (~80), the second indirect
-VRAM port (~40), Bresenham lines (~200), the 8 bpp mode (~60), then
-sprite descriptors from 32 to 16 (~60).
+**What it cost.** 30 % of the CPU's speed against M4, and every constant
+that follows the clock: the UART divider is 72 rather than 103
+([§4.6](04-system.md)), the audio reference and its note table
+([§4.4](04-system.md)), the timer's tick ([§4.5](04-system.md)), the
+boot ROM's 365,036 clocks are 43.6 ms rather than 30, and a scanline is
+266 system cycles rather than 381 — which is what
+[§5.10](04-system.md)'s bandwidth table is counted in.
 
-Not on the table: the memory split, the stride register, the blitter's
-rectangle operations, or sprites entirely. Those are what make it a
-video *chip* rather than a framebuffer.
+**What it did not cost.** The pixel clock, which is exact: 12 × 67 / 32,
+VCO 804 MHz, no rounding anywhere.
+
+The two clocks are now phase-related, which the design does not use and
+must not start using. The crossing in `cool8_video` is a toggle through
+two flip-flops either way; a relationship the tools do not constrain is
+not a relationship to build on, and it costs six flip-flops to ignore.
+
+**This is worth reopening**, and it is the first thing to reopen. The
+87 ns is a decode cone, not a routing problem, and
+[D23](#d23--no-memory-address-register) is where it comes from: the core
+reads the opcode straight off the bus and its address is a combinational
+function of the byte it is fetching. Registering that would cost a cycle
+per access and buy back the clock and more. With
+[D33](#d33--the-asic-path-is-shelved-the-target-is-the-fpga) the cycle
+counts are free to change, and `sim/cosim.py`'s 511 encodings are the
+net that makes the attempt survivable.
 
 ---
 
-The question before this one lasted about an hour: co-simulation at M3 exposed that the
-flag table did not say whether `MOV Rd,<pp>` set `Z` and `N`, and the
-emulator had quietly decided that it did. Closed as
-[D25](#d25--mov-rdpp-sets-no-flags) — it does not.
+## D33 — The ASIC path is shelved; the target is the FPGA
 
-The section below is kept because the reasoning is worth not
-re-deriving.
+**Not cancelled — shelved, and the discipline kept wherever it is free.**
+
+M8 and the TinyTapeout submission are out of the plan. What that changes
+is permission rather than direction: cycle counts may change without a
+tapeout implication, the bus protocol is fair game, and `rtl/core` is no
+longer obliged to be Verilog-2001 with no vendor primitives, no inferred
+RAM and no clock gating ([00-goals.md](00-goals.md) C2).
+
+**It buys less than it looks like it should.** The thing it was invoked
+for — the 87 ns critical path in
+[D32](#d32--the-system-clock-is-8375-mhz-a-third-of-the-pixel-clock) —
+is 37 levels of *logic depth*, and depth is the same whether it is
+headed for sky130 or iCE40. Shelving the ASIC does not make the fix
+cheaper; it makes the fix *allowed*.
+
+So the rule is: keep `rtl/core` clean, because clean costs nothing
+today, and break the rule only where a measurement says it buys speed.
+`sim/synth.py`'s hygiene checks stay and stay passing. A core that is
+still portable is a milestone that can be un-shelved; a core that has
+been casually sprinkled with `SB_` primitives is a rewrite.
+
+What is already banked and does not need redoing: M3's LibreLane run —
+20,960 µm² at 61.2 % utilisation in two tiles, clean DRC, LVS and
+antenna, closing at 50 MHz at every PVT corner. That was the risk the
+ASIC path carried and it was retired years before it was needed.
+
+---
+
+## D34 — The video engine ships with sprites and a pixel port, and no blitter
+
+The M5 gate was built to answer "does it fit". It answered no, twice,
+and this is what came out.
+
+**What the estimates said, and what the silicon said:**
+
+| | estimated LUT4 | measured |
+|---|---|---|
+| VRAM + the four-way arbiter + the indirect port | 130 | 263 |
+| fetch engine, pixel shifter, palette, registers | 1051 | 1386 |
+| blitter — rects, transparency, clip, logic ops | ~350 | 1306 |
+
+**Every estimate for this subsystem came in at about half.** The first
+row was recorded when it happened and the rest of the numbers were
+carried forward anyway, which is the process mistake worth naming: an
+estimate that has already been proven 2× low is evidence about the
+estimator, not about the one block.
+
+The blitter's 1306 is the one that was avoidable. It wrote the pixel
+extract and merge as seven variable shifts on full 16-bit words, and
+each of those is a barrel shifter that shares with nothing. A pixel
+never straddles a byte, so the same arithmetic in eight bits — select
+the byte, merge, and write `{byte, byte}` with `MASKWREN` choosing the
+half, exactly as `cool8_spram` already does for the CPU's byte port —
+is about 200 LUT4. That is what `cool8_pixport.v` is.
+
+**With a blitter the machine does not fit at all**: 5438 logic cells
+against the 5280 that exist, and `nextpnr` failing rather than warning.
+Even rewritten tight, a blitter and a sprite engine together land at
+97–102 %.
+
+**Sprites were kept and the blitter was dropped**, because
+[§5.3](04-system.md) already contains the argument: a tile map needs no
+double buffering because nothing is redrawn, which is why the NES and
+the Master System had no framebuffer. Tiles plus sprites is a machine
+that draws nothing per frame and therefore needs no accelerator at all.
+The blitter serves the bitmap path — which is also the path with the
+worst bandwidth and no double buffer in mode 4.
+
+**`PIX_X`/`PIX_Y`/`PIX_DATA` stayed**, at 199 LUT4 and one of the eight
+`SB_MAC16` blocks the design had never used. It is not a small blitter;
+it is the address arithmetic, which is the part an 8-bit CPU is genuinely
+bad at. `y * stride` in software is a sequenced multiply; here it is a
+DSP block that was idle. Without it, plotting one 4 bpp pixel by hand
+through `VRAM_DATA` is about twenty cycles, and the bitmap modes are a
+curiosity rather than something to draw in.
+
+**Bresenham went first**, under
+[06-roadmap.md](06-roadmap.md)'s own decision table, before any of the
+above. Lines are about six cycles a pixel through `PIX_DATA`.
+
+**Where the machine landed:**
+
+```
+ICESTORM_LC       4877 / 5280   92 %
+ICESTORM_RAM        27 / 30     90 %
+ICESTORM_SPRAM       4 / 4     100 %
+ICESTORM_DSP         1 / 8      12 %
+sclk closes at 10.65 MHz against a constraint of 8.375
+```
+
+The blitter is not deleted from the design, only from the part.
+[§5.11](04-system.md) prices it alongside the second background layer,
+and the day the CPU's fetch path is fixed and the clock comes back is
+the day to price it again.
+
+---
+
+## D35 — The scroll registers are fine scroll; the coarse part is a move of `VID_BASE`
+
+[§5.5](04-system.md) described `VID_SCRL_X`/`VID_SCRL_Y` as ten-bit
+registers covering whole-tile and fine pixel motion in one pair. They
+are implemented as fine scroll only — the low four bits in text, the low
+three in tiles — and a bitmap gets the full range for nothing because
+its whole row is in the line buffer already.
+
+The coarse part is a move of `VID_BASE`: one 16-bit add in software per
+row or per tile column, which is exactly what "increment the origin row"
+meant in that section for the vertical direction anyway. Doing it in
+hardware means a multiply — the row's address is `origin × stride` — and
+the two alternatives are a DSP block the pixel port has a better claim
+on, or an accumulator that has to be re-run whenever the register moves.
+
+What it costs software is one add. What it saves is a multiplier and a
+special case in the fetch engine, in a subsystem that came in at twice
+its estimate three times running
+([D34](#d34--the-video-engine-ships-with-sprites-and-a-pixel-port-and-no-blitter)).
+
+The circular wrap that makes terminal scrolling free is unaffected and
+is still in hardware: the row pointer wraps within `stride × 32`, which
+is [D30](#d30--the-text-map-stride-is-a-register-and-the-canonical-map-is-12832)'s
+32-row map, and it is correct only for a power-of-two stride — which is
+the argument D30 made for a power-of-two stride in the first place.
+
+---
+
+## Open questions
+
+**The fit question is closed.** It was the only one, it was answered by
+`nextpnr` rather than by arithmetic, and the answer cost the blitter and
+three megahertz — see
+[D34](#d34--the-video-engine-ships-with-sprites-and-a-pixel-port-and-no-blitter)
+and [D32](#d32--the-system-clock-is-8375-mhz-a-third-of-the-pixel-clock).
+
+What is left in its place is a question the gate uncovered rather than
+one it was asked:
+
+### Should the core's fetch path be pipelined?
+
+The machine closes at 10.65 MHz and runs at 8.375. The gap is one
+critical path: SPRAM read data, through the block and byte selects, the
+boot ROM's mux and the I/O page's, the instruction decode, and into the
+next state — **37 levels of logic, 87 ns**. It is not congestion; the
+spread across six placer seeds is under 6 %.
+
+It is [D23](#d23--no-memory-address-register) showing up. The core has
+no memory address register and its decoder reads the opcode straight off
+the bus during a fetch, which is what made the RTL a cycle or two faster
+than the provisional table everywhere. The cost is that the byte and the
+decision it drives are in the same cycle.
+
+Registering the opcode would break the cone in two and should roughly
+halve it. It costs a cycle per fetch, so every number in
+[02-isa.md §8](02-isa.md#8-timing-model) changes, and
+`tools/opcodes.py`, the emulator and `sim/timing.py` change with them.
+Whether the machine comes out ahead is arithmetic nobody has done yet:
+a 50 % clock gain against a cycle-count loss that depends on the
+instruction mix, which `sim/test_corpus.py` can measure.
+
+Two things make it worth attempting now rather than never.
+[D33](#d33--the-asic-path-is-shelved-the-target-is-the-fpga) means the
+cycle counts are free to change, and `sim/cosim.py` compares full
+architectural state on all 511 encodings — so the change is verifiable
+by construction rather than by reading.
+
+### `MOV Rd,<pp>` and the flags
 
 <details>
 <summary>The argument, as it stood</summary>

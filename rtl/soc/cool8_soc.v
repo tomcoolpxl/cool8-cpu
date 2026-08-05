@@ -63,14 +63,18 @@
 `default_nettype none
 
 module cool8_soc #(
-    parameter ROM_FILE = "boot.hex",
-    parameter ROM_INIT = 1,
-    // div = round(f_clk / baud) - 1. At 12 MHz, 115200 baud is 103.
-    parameter [15:0] UART_DIV = 16'd103,
+    parameter ROM_FILE  = "boot.hex",
+    parameter ROM_INIT  = 1,
+    parameter FONT_FILE = "font.hex",
+    parameter FONT_INIT = 1,
+    // div = round(f_clk / baud) - 1. At 8.375 MHz, 115200 baud is 72,
+    // which lands on 114726 — 0.41 % out, well inside what a UART
+    // tolerates. The clock is cool8_pll's business and D32's.
+    parameter [15:0] UART_DIV = 16'd72,
     // What $FE02 SYSSTAT reads back. The point of it is to be able to
     // ask a board which bitstream it is actually running, so bump it
     // when that answer would be useful.
-    parameter [7:0]  BUILD_ID = 8'h04,
+    parameter [7:0]  BUILD_ID = 8'h05,
     // Receive FIFO depth, log2. The loader can forward two bytes in
     // consecutive cycles, so one entry is not enough on its own.
     parameter RX_ABITS = 4
@@ -78,8 +82,17 @@ module cool8_soc #(
     input  wire        clk,
     input  wire        rst_n,          // board reset, active low
 
+    // The raster's clock, 25.125 MHz, and its own reset. Decoupled from
+    // everything above by D26; the join is inside two block RAMs.
+    input  wire        pclk,
+    input  wire        prst_n,
+
     input  wire        uart_rx,
     output wire        uart_tx,
+
+    output wire [11:0] rgb,            // 4 bits a channel, straight to pins
+    output wire        hsync_n,
+    output wire        vsync_n,
 
     output wire [2:0]  led,            // R, G, B — active high here
 
@@ -163,21 +176,102 @@ module cool8_soc #(
 
     wire        io_sel = (bus_addr[15:8] == 8'hFE);
     wire [7:0]  io_a   = bus_addr[7:0];
-    // A read's side effect must happen once, and bus_read is high for
-    // both cycles of a read — so it is qualified by the launch, which is
-    // the memory's own definition of when an access starts. A write
-    // takes no wait state anywhere, so bus_write is already one cycle.
-    wire        io_rd  = io_sel & bus_read & mem_launch;
-    wire        io_we  = io_sel & bus_write;
 
-    wire [7:0]  bus_rdata = io_r ? io_rdata_r : mem_rdata;
-    wire        bus_ready = mem_ready;
+    // ------------------------------------------- the video's memory port
+    //
+    // Text maps live in main RAM (D28), so the display fetch has to take
+    // cycles from the CPU. It takes them by stealing the *launch* slot:
+    // when it wants an access and the memory is not already answering
+    // one, the memory sees its address instead and the master is held
+    // off with ready low. A read is two cycles here as it is everywhere,
+    // so the video gets one access every two cycles and never more.
+    //
+    // **Nothing the core drives takes part in that decision.**
+    // `vid_ram_req` comes out of the fetch engine's state and `mem_pend`
+    // is a flip-flop, so the grant is a function of registers alone. The
+    // obvious version — let a master's write win, since a write is a
+    // single cycle and never waits — put `bus_write` into it, and
+    // `bus_write` comes combinationally off the byte the core is
+    // fetching. That closes the arbiter into the machine's longest path
+    // and costs about two megahertz. A write that loses simply waits a
+    // cycle; the master is holding its address anyway.
+    //
+    // The cost is 5 % of main RAM in mode 0 (80 cells of two bytes, two
+    // cycles each, per sixteen scanlines) and nothing at all in any other
+    // mode, which is why this arbiter has no fairness logic in it.
+
+    wire        vid_ram_req, vid_rvalid, vid_gnt;
+    wire [15:0] vid_ram_addr;
+
+    reg         mem_pend;              // the memory is in a read's data cycle
+    reg         vid_own;               // ...and that read is the video's
+
+    wire        vid_start = vid_ram_req & ~mem_pend;
+    wire        vid_dcyc  = mem_pend & vid_own;
+    wire        vid_busy  = vid_start | vid_dcyc;
+
+    wire [15:0] m_addr  = vid_start ? vid_ram_addr : bus_addr;
+    wire        m_read  = vid_start ? 1'b1 : bus_read;
+    wire        m_write = vid_busy  ? 1'b0 : (bus_write & ~io_sel);
+
+    assign vid_gnt    = vid_start & mem_launch;
+    assign vid_rvalid = vid_dcyc;
+
+    // A read's side effect must happen once. Three things can make the
+    // memory launch more than once for a single access — a stolen cycle,
+    // a video data cycle, and the SPRAM relaunching every other cycle
+    // while the video port holds ready low — so "the access started" is
+    // latched rather than taken from the launch each time. Without this
+    // a stalled read of UART_DATA would pop the FIFO twice and the byte
+    // in between would simply be gone.
+    reg  io_rd_seen;
+    reg  dp_r;                         // ...and it was the VRAM data port
+    wire io_launch = io_sel & bus_read & mem_launch & ~vid_start;
+    wire io_rd     = io_launch & ~io_rd_seen;
+    // A write held across a stolen cycle would otherwise reach the page
+    // twice, and half the registers on it have side effects — a palette
+    // index advanced twice, a VRAM address advanced twice.
+    wire io_we     = io_sel & bus_write & ~vid_busy;
+
+    wire        vid_sel, vid_dp_sel, vid_stall, vid_irq;
+    wire [7:0]  vid_rdata, vid_dout;
+
+    // The VRAM data port's byte is not captured on launch: it may not
+    // exist yet on that cycle, which is the whole reason cool8_vport
+    // stalls. Everything else on the page is a register and is captured
+    // exactly as it always was.
+    wire [7:0]  bus_rdata = io_r ? (dp_r ? vid_dout : io_rdata_r)
+                                 : mem_rdata;
+
+    // `mem_ready` is not used here, and the difference is one logic
+    // level on the machine's critical path. The memory's own ready is a
+    // function of `m_read`, which carries `vid_start` in it; this is the
+    // same expression with the video term already accounted for by
+    // `vid_busy`, so it depends on `bus_read` directly and on `mem_pend`,
+    // which is a flip-flop. Writes never wait on the memory at all.
+    wire        ready_m   = ~(bus_read & ~mem_pend);
+    wire        bus_ready = ~vid_busy & ~vid_stall &
+                            (bus_write | ready_m);
 
     always @(posedge clk) begin
-        if (!rst_n) io_r <= 1'b0;
-        else if (mem_launch) begin
-            io_r       <= io_sel;
-            io_rdata_r <= io_rdata;
+        if (!rst_n) begin
+            io_r       <= 1'b0;
+            dp_r       <= 1'b0;
+            mem_pend   <= 1'b0;
+            vid_own    <= 1'b0;
+            io_rd_seen <= 1'b0;
+        end else begin
+            mem_pend <= mem_launch;
+            if (mem_launch) vid_own <= vid_start;
+
+            if (mem_launch & ~vid_start) begin
+                io_r       <= io_sel;
+                io_rdata_r <= io_rdata;
+                dp_r       <= vid_dp_sel;
+            end
+
+            if (bus_ready)  io_rd_seen <= 1'b0;
+            else if (io_rd) io_rd_seen <= 1'b1;
         end
     end
 
@@ -256,10 +350,11 @@ module cool8_soc #(
     // Unlisted addresses read $FF and ignore writes, so a stray access
     // to the page reads as a floating bus would rather than as a
     // plausible zero. $FE01 CPUDIV is among them: D26 put the core on
-    // the raw 12 MHz clock and there is nothing yet for a divider to
+    // the board's own clock and there is nothing yet for a divider to
     // divide.
     always @* begin
-        case (io_a)
+        if (vid_sel) io_rdata = vid_rdata;
+        else case (io_a)
             A_SYSCTRL:  io_rdata = sysctrl_rdata;
             A_SYSSTAT:  io_rdata = BUILD_ID;
             A_LED:      io_rdata = {5'b00000, led_r};
@@ -279,20 +374,21 @@ module cool8_soc #(
         .clk(clk), .rst_n(cpu_rst_n),
         .mem_addr(cpu_addr), .mem_wdata(cpu_wdata), .mem_rdata(bus_rdata),
         .mem_read(cpu_read), .mem_write(cpu_write), .mem_ready(bus_ready),
-        .irq(irq), .nmi(nmi),
+        .irq(irq | vid_irq), .nmi(nmi),
         .busrq(busrq), .busak(busak),
         .o_fetch(), .o_halted(o_halted), .o_iack(), .o_retire()
     );
 
     cool8_mem #(.ROM_FILE(ROM_FILE), .ROM_INIT(ROM_INIT)) u_mem (
         .clk(clk), .rst_n(rst_n), .cpu_rst_n(cpu_rst_n),
-        .addr(bus_addr), .wdata(bus_wdata),
-        // Reads go down unconditionally — the SPRAM is what times the
-        // access and what defines the launch cycle, and reading the
-        // shadowed byte underneath the I/O page has no side effect.
-        // Writes are gated, because those do.
-        .read (bus_read),
-        .write(bus_write & ~io_sel),
+        // The address is the arbiter's, not the bus's: the display fetch
+        // borrows this port. Reads go down unconditionally — the SPRAM is
+        // what times the access and what defines the launch cycle, and
+        // reading the shadowed byte underneath the I/O page has no side
+        // effect. Writes are gated, because those do.
+        .addr(m_addr), .wdata(bus_wdata),
+        .read (m_read),
+        .write(m_write),
         .rdata(mem_rdata), .ready(mem_ready), .o_launch(mem_launch),
         .bootram(bootram),
         .ctrl_we(io_we & (io_a == A_SYSCTRL)),
@@ -306,6 +402,18 @@ module cool8_soc #(
         .rx_pin(uart_rx), .tx_pin(uart_tx),
         .rx_data(rx_data), .rx_valid(rx_valid),
         .tx_data(uart_tx_data), .tx_start(uart_tx_start), .tx_busy(tx_busy)
+    );
+
+    cool8_video #(.FONT_FILE(FONT_FILE), .FONT_INIT(FONT_INIT)) u_vid (
+        .sclk(clk), .srst_n(rst_n),
+        .pclk(pclk), .prst_n(prst_n),
+        .io_a(io_a), .io_rd(io_rd), .io_we(io_we), .io_wdata(bus_wdata),
+        .o_sel(vid_sel), .o_dp_sel(vid_dp_sel), .o_rdata(vid_rdata),
+        .o_dout(vid_dout), .o_stall(vid_stall),
+        .ram_req(vid_ram_req), .ram_addr(vid_ram_addr),
+        .ram_gnt(vid_gnt), .ram_rvalid(vid_rvalid), .ram_rdata(mem_rdata),
+        .rgb(rgb), .hsync_n(hsync_n), .vsync_n(vsync_n),
+        .o_irq(vid_irq)
     );
 
     cool8_loader u_ldr (

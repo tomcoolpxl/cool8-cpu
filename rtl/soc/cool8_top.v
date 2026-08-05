@@ -15,10 +15,12 @@
 `default_nettype none
 
 module cool8_top #(
-    // 2^POR_BITS clocks of reset after configuration: 4096 is 341 us at
-    // 12 MHz, which is far longer than anything needs and costs 12
+    // 2^POR_BITS clocks of reset after the PLL locks: 4096 is 489 us at
+    // 8.375 MHz, which is far longer than anything needs and costs 12
     // flip-flops.
     parameter POR_BITS = 12,
+    // 1 replaces the PLL with a pass-through — see cool8_pll.
+    parameter PLL_SIM = 0,
     // The one fact in this file that has not been checked against the
     // hardware — see docs/05-board.md section 3. The RGB LED on an
     // iCESugar is common anode, so the pin sinks current and a lit
@@ -32,8 +34,27 @@ module cool8_top #(
     output wire uart_tx,         // pin 6
     output wire led_r,           // pin 40
     output wire led_g,           // pin 41
-    output wire led_b            // pin 39
+    output wire led_b,           // pin 39
+
+    // MuseLab PMOD-VGA on PMOD2 + PMOD3 — docs/05-board.md section 3
+    output wire [3:0] vga_r,
+    output wire [3:0] vga_g,
+    output wire [3:0] vga_b,
+    output wire vga_hs,
+    output wire vga_vs
 );
+
+    // ------------------------------------------------------- the clocks
+    //
+    // Both of them come out of the one PLL, because the part cannot give
+    // the fabric pin 35 and run the PLL from it at the same time. The
+    // whole argument, and what it cost, is in cool8_pll.
+
+    wire pclk, sclk, pll_lock;
+
+    cool8_pll #(.SIM(PLL_SIM)) u_pll (
+        .pin(clk), .pclk(pclk), .sclk(sclk), .lock(pll_lock)
+    );
 
     // ------------------------------------------------------------ reset
     //
@@ -42,6 +63,9 @@ module cool8_top #(
     // so a counter that stops at all-ones holds the machine down for
     // 2^POR_BITS clocks and then never moves again — no free-running
     // counter, no second edge, nothing to glitch later.
+    //
+    // It counts from the moment the PLL says it is locked, not from
+    // configuration: before that the clock it is counting is not a clock.
     //
     // No button for it on purpose. `SW[0]` is spoken for as the NMI
     // break button (04-system.md section 6) and the other three are
@@ -53,8 +77,19 @@ module cool8_top #(
     reg [POR_BITS-1:0] por = {POR_BITS{1'b0}};
     wire rst_n = &por;
 
-    always @(posedge clk)
-        if (!rst_n) por <= por + 1'b1;
+    always @(posedge sclk)
+        if (!pll_lock)   por <= {POR_BITS{1'b0}};
+        else if (!rst_n) por <= por + 1'b1;
+
+    // The raster's reset: the system's, brought into the pixel domain
+    // through two flip-flops. Nothing coordinates the two releases and
+    // nothing needs to — the domains only meet inside dual-clock block
+    // RAMs, and a frame of nonsense at power-on is 16 ms nobody sees.
+    reg [1:0] prst_sync;
+    wire prst_n = prst_sync[1];
+
+    always @(posedge pclk)
+        prst_sync <= {prst_sync[0], rst_n};
 
     // -------------------------------------------------------------- LED
     //
@@ -68,13 +103,21 @@ module cool8_top #(
     // ---------------------------------------------------------- machine
     //
     // Every parameter left at its default, which is what
-    // sim/tb/cool8_soc_boot_tb.v simulates. There are no interrupt
-    // sources yet: the timer, video and keyboard arrive at M5 and M7,
-    // and the break button with the monitor it would break into at M6.
+    // sim/tb/cool8_soc_boot_tb.v simulates. `irq` is tied low here and
+    // is not the only source: the video block's raster and vblank
+    // interrupts are ORed in inside cool8_soc. What is still missing is
+    // the timer and the keyboard, at M7 and M6, and the break button
+    // with the monitor it would break into.
+
+    wire [11:0] rgb;
+
+    assign {vga_r, vga_g, vga_b} = rgb;
 
     cool8_soc u_soc (
-        .clk(clk), .rst_n(rst_n),
+        .clk(sclk), .rst_n(rst_n),
+        .pclk(pclk), .prst_n(prst_n),
         .uart_rx(uart_rx), .uart_tx(uart_tx),
+        .rgb(rgb), .hsync_n(vga_hs), .vsync_n(vga_vs),
         .led(led),
         .irq(1'b0), .nmi(1'b0),
         .o_halted()

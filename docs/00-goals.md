@@ -43,9 +43,13 @@ through one synchronous memory interface. Everything else — RAM
 controller, video, audio, keyboard, timers — lives in `rtl/soc/` and is
 FPGA-only.
 
-The same core RTL is what gets submitted to TinyTapeout, wrapped in a
-thin pad/multiplexer shim. If a change to the core would make that
-untrue, it is the wrong change.
+The same core RTL was what would have gone to TinyTapeout, wrapped in a
+thin pad/multiplexer shim. **That path is shelved and the target is the
+FPGA** ([D33](01-decisions.md#d33--the-asic-path-is-shelved-the-target-is-the-fpga)),
+which changes what the rule is *for* without changing the rule: a core
+that stays portable is a milestone that can be un-shelved, and one that
+has been casually sprinkled with `SB_` primitives is a rewrite. Break it
+only where a measurement says it buys speed.
 
 ### C3 — It must actually be a nice machine
 
@@ -86,23 +90,30 @@ The project is done, for a first pass, when:
 
 ## Resource budget (iCE40UP5K)
 
-| Resource | Available | Allocation |
+**Everything below is measured, placed and routed**, not estimated. The
+M5 gate turned this table from a budget into a report, and it cost a
+blitter and three megahertz doing it — see
+[D34](01-decisions.md#d34--the-video-engine-ships-with-sprites-and-a-pixel-port-and-no-blitter).
+
+| Resource | Available | Used |
 |---|---|---|
-| LUT4 | 5280 | CPU **948**, rest of the SoC **688**, video ~1700, audio ~250, PS/2 ~120 |
-| Logic cells | 5280 | SoC **1994 measured**, video ~2075 estimated, the rest ~450 → **~86 %** |
-| EBR (block RAM) | 30 × 4 Kbit (~15 KB) | Boot ROM **8**, font 8, line buffers 3, palette 1, sprite descriptors 1 → 21 |
-| SPRAM | 4 × 32 KB = 128 KB | 2 blocks = 64 KB CPU RAM; **2 blocks = 64 KB video RAM** ([D28](01-decisions.md)) |
-| PLL | 1 | 12 MHz → ~25.125 MHz, **pixel clock only** ([D26](01-decisions.md)) |
-| DSP | 8 | Unused (audio is dividers, not filters) |
+| LUT4 | — | CPU **948**, rest of the SoC **688**, video **2041**, audio and PS/2 still to come |
+| Logic cells | 5280 | **4877 — 92 %** |
+| EBR (block RAM) | 30 × 4 Kbit | Boot ROM 8, font 8, sprite line buffer 7, background line buffer 2, palette 1, sprite descriptors 1 → **27** |
+| SPRAM | 4 × 32 KB = 128 KB | 2 blocks = 64 KB CPU RAM; **2 blocks = 64 KB video RAM** ([D28](01-decisions.md)) — **4 of 4** |
+| DSP | 8 | **1** — `y × stride` for the pixel port |
+| PLL | 1 | **1** — 25.125 MHz for the raster, ÷3 for everything else ([D32](01-decisions.md)) |
+| Timing | — | closes at 8.375 MHz; `sclk` Fmax **10.65** |
 
 **LUT4 is not the number that decides whether the part is full.** A
 logic cell is a LUT4 with its carry and flip-flop, and the measured
-conversion on this design is **1636 LUT4 placed as 1994 LC, a factor of
-1.22**. Quote LC when asking whether something fits.
+conversion on this design is **3677 LUT4 placed as 4877 LC, a factor of
+1.33**. Quote LC when asking whether something fits.
 
-The ~86 % figure is the one open question in
-[01-decisions.md](01-decisions.md), and M5 carries a synthesis gate to
-turn it into a measurement before the expensive blocks are written.
+**What is left is about 400 logic cells and 3 block RAMs**, against an
+audio engine and a PS/2 receiver that were budgeted at ~370 LUT4
+together. It will be close, and this table's history says to believe the
+number only once `nextpnr` has printed it.
 
 **Important:** iCE40 SPRAM cannot be initialised from the bitstream.
 At power-on the 64 KB of main RAM contains garbage. The boot ROM lives

@@ -18,7 +18,10 @@ is developed. `python sim/test_video.py` regenerates it.*
 ## The machine
 
 ```
-   12 MHz ──▶ cool8_top ......... pins, power-on reset, the LED
+   12 MHz ──▶ cool8_pll ......... one PLL: 25.125 MHz for the raster,
+    (pin 35)                        and a third of that, 8.375 MHz,
+                  │                 for everything else
+              cool8_top ......... pins, power-on reset, the LED
                   │
               cool8_soc ......... the bus, and the I/O page at $FE00
                   │               that is decoded ahead of everything
@@ -27,16 +30,20 @@ is developed. `python sim/test_video.py` regenerates it.*
                   │     ├── cool8_spram .... 64 KB over 2 x SB_SPRAM256KA
                   │     └── cool8_rom ...... 4 KB boot ROM in EBR
                   ├── cool8_uart ...... 8N1, divider in a register
-                  └── cool8_loader .... bus master on the end of the wire
+                  ├── cool8_loader .... bus master on the end of the wire
+                  └── cool8_video ..... $FE10-$FE3F, and the VGA pins
+                        ├── cool8_vga ..... the 640x480 raster
+                        ├── cool8_vregs ... the mode, and the presets
+                        ├── cool8_fetch ... text, tile and bitmap, one engine
+                        ├── cool8_pixel ... the shifter, cursor, line buffers
+                        ├── cool8_pal ..... 256 x 12-bit, dual clock
+                        ├── cool8_sprite .. 32 descriptors, 8 to a line
+                        ├── cool8_vram .... 64 KB, four-way arbiter
+                        ├── cool8_vport ... the CPU's window onto it
+                        └── cool8_pixport . plot by coordinate
 
-              cool8_vga ......... the 640x480 raster        ─┐ built and
-              cool8_text ........ 80x30 text, font, palette ─┘ verified,
-                                                               not yet wired
-
-              video RAM ......... 64 KB over the other 2 x SB_SPRAM256KA,
-                                  its own address space. Text reads main
-                                  RAM; everything else reads this, so the
-                                  blitter never stalls the CPU
+              Text reads main RAM; everything else reads video RAM, so
+              nothing the video engine does can stall the CPU.
 ```
 
 Sizes are measured, not estimated — every one is recorded in
@@ -51,20 +58,22 @@ Sizes are measured, not estimated — every one is recorded in
 | `cool8_uart` | Serial, to the iCELink USB bridge | 141 LUT4, 72 FF | **On the board** |
 | `cool8_loader` | Loads and debugs RAM with the CPU held off | 250 LUT4, 139 FF | **On the board** |
 | `cool8_soc` | Everything above, assembled: the bus, the I/O page, the shared UART | **1636 LUT4 all in** | **On the board** |
-| `cool8_vga` | 640×480 @ 60, both syncs | 51 LUT4, 46 FF | Verified, not wired |
-| `cool8_text` | Text mode 0, CP437 font, palette | 266 LUT4, 9 EBR | Verified, not wired |
-| `cool8_vram` | 64 KB of video RAM, 16 bits wide, four-way arbiter | 93 LUT4, 5 FF, 2 SPRAM | **Verified, not wired** |
-| `cool8_vport` | The CPU's VRAM window: address, step, prefetch, `$FEC0` alias | 170 LUT4, 59 FF | **Verified, not wired** |
-| video fetch | Text, tile and bitmap over one parameterised engine | — | **Next** |
-| blitter | Rects, transparency, clipping, logic ops, lines | — | Specified (M5) |
-| sprites | 32 descriptors, 8 per scanline, 4 bpp | — | Specified (M5) |
+| `cool8_pll` | Both clocks out of the one PLL the part has | 1 PLL, 4 LC | **On the board** |
+| `cool8_vga` | 640×480 @ 60, both syncs | 51 LUT4, 46 FF | **On the board** |
+| `cool8_vram` | 64 KB of video RAM, 16 bits wide, four-way arbiter | 93 LUT4, 5 FF, 2 SPRAM | **On the board** |
+| `cool8_vport` | The CPU's VRAM window: address, step, prefetch, `$FEC0` alias | 170 LUT4, 59 FF | **On the board** |
+| `cool8_video` | The whole subsystem: registers, fetch, shifter, palette, cursor | **1386 LUT4 all in** | **On the board** |
+| `cool8_sprite` | 32 descriptors, 8 to a scanline, 8×8 and 16×16, flip | 402 LUT4, 7 EBR | **On the board** |
+| `cool8_pixport` | Plot by coordinate, `y × stride` on a DSP block | 199 LUT4, 1 DSP | **On the board** |
+| blitter | Rects, transparency, clipping, logic ops, lines | — | **Cut — it does not fit.** [D34](docs/01-decisions.md) |
 | audio | 3 tone + 1 noise, sigma-delta out | — | Specified (M7) |
 | PS/2 | Keyboard, 16-byte FIFO | — | Specified (M6) |
 | timer, SPI flash | Periodic interrupt; flash as storage | — | Specified (M6) |
 
-**Placed and routed, the whole bitstream is 1994 of the UP5K's 5280
-logic cells, and it closes at 12 MHz** — CPU, 64 KB of RAM, boot ROM,
-serial and loader, running on real hardware. A logic cell is a LUT4 with
+**Placed and routed, the whole bitstream is 4877 of the UP5K's 5280
+logic cells — 92 % — and it closes at 8.375 MHz** with the raster at
+25.125: CPU, 64 KB of RAM, 64 KB of video RAM, boot ROM, serial, loader,
+seven display modes and 32 sprites. A logic cell is a LUT4 with
 its carry and flip-flop, so that number is larger than the LUT4 count
 above and is the one that decides whether the part is full.
 
@@ -80,9 +89,9 @@ above and is the one that decides whether the part is full.
 | **Video** | Raster verified pixel by pixel; text mode 0 draws a real CP437 font in 16 colours |
 | Audio, keyboard | Specified, not built |
 | ASIC pad wrapper | Three-phase bus, verified against latch and SRAM models |
-| **Silicon** | **Hardened.** Fits in two TinyTapeout tiles, clean DRC/LVS |
+| **Silicon** | **Hardened**, then shelved. Two TinyTapeout tiles, clean DRC/LVS — the target is the FPGA ([D33](docs/01-decisions.md)) |
 | Open design questions | **One.** Whether the video engine as scoped fits the UP5K — a fit question, settled by M5's synthesis gate, not by argument. 31 decisions logged |
-| Next | The fetch engine and the pixel shifter — then measure before building the blitter and sprites (M5) |
+| Next | A keyboard and a monitor program (M6), then audio (M7) |
 
 The CPU is checked against the reference emulator instruction by
 instruction: every one of the 511 encodings produces the same
@@ -177,7 +186,7 @@ loop:   LD   R1,[X]        ; 1
 ## Hardware
 
 **FPGA board:** iCESugar v1.5 — Lattice iCE40UP5K-SG48, 5280 LUT4,
-~120 Kbit EBR, 4 × 256 Kbit SPRAM, 1 PLL, 12 MHz clock. Nothing else is
+~120 Kbit EBR, 4 × 256 Kbit SPRAM, 1 PLL, 8 DSP, 12 MHz clock. Nothing else is
 needed to run what exists today.
 
 | | | |

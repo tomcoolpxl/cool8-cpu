@@ -192,10 +192,17 @@ module cool8_boot_tb;
 
         // RAM is clear. Undefined at power-on and never written except by
         // the ROM, so an x here is a byte the clear loop missed.
+        //
+        // The banner is the exception, and it is skipped rather than
+        // tolerated: the ROM writes its text map row at $8104 after the
+        // clear, so those ten bytes are the one place in 60 KB where a
+        // non-zero byte is the right answer. Everything else, including
+        // the rest of that row, still has to be zero.
         n_bad = 0;
         for (i = 0; i < 16'hF000; i = i + 1) begin
             byte_at = ram_byte(i[15:0]);
-            if (byte_at !== 8'h00) begin
+            if ((byte_at !== 8'h00) &&
+                !(i >= 16'h8104 && i < 16'h8104 + 16'd10)) begin
                 if (n_bad < 4)
                     $display("FAIL $%04h is %02h, not cleared", i[15:0],
                              byte_at);
@@ -203,6 +210,15 @@ module cool8_boot_tb;
             end
         end
         chk("$0000-$EFFF cleared", n_bad, 32'd0);
+
+        // ...and the banner really is there. "COOL8" in light cyan,
+        // character in the even byte and attribute in the odd one, which
+        // is the layout the fetch engine reads a cell in.
+        chk("the banner: C",     {24'd0, ram_byte(16'h8104)}, 32'h43);
+        chk("...its attribute",  {24'd0, ram_byte(16'h8105)}, 32'h0B);
+        chk("the banner: O",     {24'd0, ram_byte(16'h8106)}, 32'h4F);
+        chk("the banner: 8",     {24'd0, ram_byte(16'h810C)}, 32'h38);
+        chk("...and it stopped", {24'd0, ram_byte(16'h810E)}, 32'h00);
 
         // The vectors are in RAM, underneath the ROM window they were
         // written through. This is the overlay's whole reason for being

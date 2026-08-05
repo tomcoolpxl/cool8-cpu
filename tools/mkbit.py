@@ -34,12 +34,17 @@ sys.path.insert(0, os.path.join(ROOT, "sim"))
 
 import cosim                                    # noqa: E402
 import mkrom                                    # noqa: E402
+import mkfont                                   # noqa: E402
 
 SRC = [os.path.join(ROOT, "rtl", "core", f)
        for f in ("cool8_alu.v", "cool8_agu.v", "cool8_core.v")] + \
       [os.path.join(ROOT, "rtl", "soc", f)
        for f in ("cool8_rom.v", "cool8_spram.v", "cool8_mem.v",
-                 "cool8_uart.v", "cool8_loader.v", "cool8_soc.v",
+                 "cool8_uart.v", "cool8_loader.v", "cool8_vga.v",
+                 "cool8_vregs.v", "cool8_pal.v", "cool8_fetch.v",
+                 "cool8_pixel.v", "cool8_vram.v", "cool8_vport.v",
+                 "cool8_pll.v", "cool8_pixport.v", "cool8_sprite.v",
+                 "cool8_video.v", "cool8_soc.v",
                  "cool8_top.v")]
 
 PCF = os.path.join(ROOT, "board", "icesugar.pcf")
@@ -59,11 +64,17 @@ def step(name, argv, cwd=BUILD):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--freq", type=float, default=12.0,
+    ap.add_argument("--freq", type=float, default=8.375,
                     help="the constraint to close against, in MHz")
     args = ap.parse_args()
 
     os.makedirs(BUILD, exist_ok=True)
+
+    font, _, _ = mkfont.build(os.path.join(ROOT, "assets", "font",
+                                           "spleen-8x16.bdf"))
+    with open(os.path.join(BUILD, "font.hex"), "w") as fh:
+        for b in font:
+            fh.write("%02x\n" % b)
 
     base, img, rom = mkrom.build(os.path.join(ROOT, "sw", "boot.asm"))
     with open(os.path.join(BUILD, "boot.hex"), "w") as fh:
@@ -73,7 +84,7 @@ def main():
 
     read = "; ".join(f'read_verilog "{f}"' for f in SRC)
     step("yosys  ", [cosim._tool("yosys"), "-q", "-p",
-                     f"{read}; synth_ice40 -top cool8_top -json cool8.json"])
+                     f"{read}; synth_ice40 -dsp -top cool8_top -json cool8.json"])
 
     pnr = step("nextpnr", [cosim._tool("nextpnr-ice40"),
                            "--up5k", "--package", "sg48",

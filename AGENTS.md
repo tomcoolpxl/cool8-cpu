@@ -52,11 +52,15 @@ Two files are themselves normative, in code rather than prose:
 
 ## The structural rule
 
-`rtl/core/` goes to the ASIC: Verilog-2001 strictly, no vendor
-primitives, no inferred RAM, no tri-state, no clock gating, no
-asynchronous reset. FPGA-only logic lives in `rtl/soc/` and may use
-iCE40 primitives freely; the ASIC pad wrapper is `rtl/pads/`. Stated in
-full in [00-goals.md](docs/00-goals.md) C2 and
+`rtl/core/` is Verilog-2001 strictly: no vendor primitives, no inferred
+RAM, no tri-state, no clock gating, no asynchronous reset. FPGA-only
+logic lives in `rtl/soc/` and may use iCE40 primitives freely.
+
+**The ASIC path is shelved and the rule stays anyway**
+([D33](docs/01-decisions.md)). It costs nothing to keep the core
+portable and it costs a rewrite to get it back, so break the rule only
+where a measurement says it buys speed — not because it is now allowed.
+Stated in full in [00-goals.md](docs/00-goals.md) C2 and
 [03-microarchitecture.md](docs/03-microarchitecture.md) §1.
 
 `python sim/synth.py` enforces it. Run it before calling an RTL change
@@ -85,8 +89,8 @@ python sim/test_spram.py             # SPRAM controller against a byte array
 python sim/test_boot.py              # boot ROM, overlay, a cold boot
 python sim/test_soc.py               # the I/O page, and the whole machine
 python sim/test_load.py              # the host loader, against the RTL
-python sim/test_video.py             # the raster, the font, a screen as a PNG
-                                     #   --refresh updates docs/img/
+python sim/test_video.py             # every mode, every visible pixel, and
+                                     #   pictures. --refresh updates docs/img/
 python sim/test_vram.py              # video RAM and its four-way arbiter
 python sim/test_vport.py             # the CPU's indirect VRAM port
 python sim/synth.py                  # hygiene, LUT/FF count, gate estimate
@@ -151,6 +155,15 @@ Easy to get wrong:
   from `mem_rdata` back to `mem_addr` — the core's decoder reads the
   opcode straight off the bus during a fetch — has to be broken by a
   register. `sim/test_soc.py` greps the transcript for it.
+- **`cell` is a reserved word** at `-g2012`, along with the rest of the
+  SystemVerilog keyword list — the same trap the testbench array called
+  `ref` hit. A function-local `reg cell` in a testbench fails to parse
+  and the error points at the *next* line.
+- **A testbench that models a memory port must grant combinationally**
+  if the design does. A grant registered one cycle late stays asserted
+  after the request has dropped, which hands a request two answers; in
+  `cool8_video_tb` that made every text cell read its own low byte twice
+  and looked exactly like an RTL bug.
 - **cocotb does not run locally on Windows** with this toolchain — the
   suite's bundled Python has no SSL and `vvp` rejects an external
   interpreter. TinyTapeout's CI runs it on Linux; that is where those

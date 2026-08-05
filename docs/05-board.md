@@ -271,21 +271,32 @@ Fully open source, and wrapped in one script:
 python tools/mkbit.py                    # yosys, nextpnr, icepack
 ```
 
-It assembles the boot ROM first — `cool8_rom.v` reads its image at
-elaboration, so `yosys` runs with `build/` as its working directory —
-and constrains the design to 12 MHz, which `nextpnr` enforces rather
+It assembles the boot ROM and converts the font first — both are read
+at elaboration, so `yosys` runs with `build/` as its working directory —
+and constrains the design to 8.375 MHz, which `nextpnr` enforces rather
 than reports.
 
 **Measured, the whole machine placed and routed:**
 
 | | |
 |---|---|
-| Logic cells | 1994 / 5280 — 37 % |
-| EBR | 8 / 30 — the boot ROM |
-| SPRAM | 2 / 4 |
-| I/O | 6 / 39 |
-| Timing | closes at 12 MHz |
+| Logic cells | 4877 / 5280 — 92 % |
+| EBR | 27 / 30 — boot ROM, font, palette, line buffers, sprites |
+| SPRAM | 4 / 4 — 64 KB main RAM and 64 KB video RAM |
+| DSP | 1 / 8 — `y × stride` for the pixel port |
+| PLL | 1 / 1 |
+| I/O | 20 / 39 |
+| Timing | closes at 8.375 MHz, `sclk` Fmax 10.65 |
 | Bitstream | 104 KB |
+
+**The clock is 8.375 MHz and not 12, and the part decided that.** The
+single PLL's reference is a pad, and on the SG48 that pad is pin 35 —
+the one the board's 12 MHz arrives on. `nextpnr` will not place a PLL
+whose pin is also an input, so the system clock has to be a division of
+the 25.125 MHz the raster needs. Half of it does not close: 11.0 to 11.6
+MHz across six placer seeds. A third of it does, with 33 % to spare. The
+whole argument is
+[D32](01-decisions.md#d32--the-system-clock-is-8375-mhz-a-third-of-the-pixel-clock).
 
 The critical path is what
 [D26](01-decisions.md#d26--the-system-clock-is-12-mhz-the-pixel-clock-is-decoupled)
@@ -293,9 +304,16 @@ said it would be: SPRAM read data, through the read mux and the
 instruction decode, to the next state. D26's own 16.9 MHz figure was
 measured on the core and two SPRAM alone; the assembled machine adds the
 boot ROM's block mux and the I/O page's, and `nextpnr`'s result moves by
-about 6 % across placer seeds. This is the first measurement of the
-whole thing, and it is the number the video engine at M5 has to leave
-intact.
+about 6 % across placer seeds.
+
+**M5 did not leave it intact.** With the video engine in it is 37 levels
+of logic and 87 ns, and it is the reason the machine runs at 8.375 rather
+than 12.5625. It is logic depth rather than congestion — the seed spread
+is under 6 % — and it is
+[D23](01-decisions.md#d23--no-memory-address-register) showing up: the
+core reads the opcode straight off the bus, so the byte and the decision
+it drives share a cycle. Pipelining it is the open question in
+[01-decisions.md](01-decisions.md).
 
 Programming is drag-and-drop: the iCELink debugger enumerates as a mass
 storage device, so copying `build/cool8.bin` onto it flashes the board.

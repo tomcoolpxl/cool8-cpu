@@ -648,7 +648,8 @@ answer that with a synthesis report rather than an estimate.
 - [x] VGA timing generator, 640×480@60 —
       [`rtl/soc/cool8_vga.v`](../rtl/soc/cool8_vga.v)
 - [x] Text mode 0 (80×30), font in EBR, dual-clock line buffer and the
-      palette — [`rtl/soc/cool8_text.v`](../rtl/soc/cool8_text.v)
+      palette — `cool8_text.v`, since replaced by the general engine
+      below and deleted
 - [x] VRAM controller over the two spare SPRAM blocks, and the four-way
       arbiter — [`rtl/soc/cool8_vram.v`](../rtl/soc/cool8_vram.v), in
       **93 LUT4 and 5 flip-flops** on top of the two blocks
@@ -764,120 +765,141 @@ handshake to the negative edge then broke it the other way: dropping
 samples it, and no read happened at all. The rule is that **the strobe is
 driven from the positive edge and the handshake is read at the
 negative** one, and it is now stated at the top of the testbench.
-- [ ] The fetch engine: all three engines, the stride register, scroll,
-      and the memory select off the mode decode. Bitmap 4 bpp first — it
-      is the simplest path and it exercises the whole chain
-- [ ] Pixel shifter, 1/2/4/8 bpp, attribute decode
-- [ ] 256-entry palette in EBR behind `PAL_IDX`/`PAL_DATA`
-- [ ] `VID_*` wired to the I/O page
-
-### 🚩 The gate: does it fit?
+- [x] The fetch engine: all three engines, the stride register, scroll,
+      and the memory select off the mode decode —
+      [`cool8_fetch.v`](../rtl/soc/cool8_fetch.v)
+- [x] Pixel shifter, 1/2/4/8 bpp, attribute decode, hardware cursor —
+      [`cool8_pixel.v`](../rtl/soc/cool8_pixel.v)
+- [x] 256-entry palette in EBR behind `PAL_IDX`/`PAL_DATA` —
+      [`cool8_pal.v`](../rtl/soc/cool8_pal.v)
+- [x] `VID_*` wired to the I/O page —
+      [`cool8_vregs.v`](../rtl/soc/cool8_vregs.v),
+      [`cool8_video.v`](../rtl/soc/cool8_video.v)
+- [x] Raster and vblank interrupts, ORed into the core's `irq`
 
 ```bash
-python sim/synth.py                  # LUT4 for the blocks above
-python tools/mkbit.py                # placed LC for the whole machine
+python sim/test_video.py             # every mode, every visible pixel
 ```
 
-**Run this before writing the blitter or the sprite engine.** The
-estimate is ~1051 LUT4 for everything above, and the whole machine at
-~86 % once the blitter, sprites and Bresenham lines are added on top.
-That is the zone where placement rather than logic is the risk, and
-every number in it except the SoC's 1994 LC is a hand-count. The core
-came in at 948 LUT4 against a ~1000 estimate and 3080 gate equivalents
-against 2750 — right in one direction, 12 % out in the other.
+**`cool8_text.v` is gone.** The general engine replaced it, and the
+proof is that `docs/img/text-mode-0.png` — the committed screen the old
+block produced — comes back **byte-identical** from the new one. That is
+the strongest form the check could take: same font, same palette, same
+CP437 screen, a different fetch path and a different shifter.
 
-This is the same move [M3](#m3--cpu-rtl) made with the LibreLane run:
-measure the thing that could invalidate the plan, years before the
-plan depends on it.
+**The testbench carries its own answer.** `golden()` in
+[`cool8_video_tb.v`](../sim/tb/cool8_video_tb.v) computes the colour of
+every visible pixel from the register values, the memory image and the
+font, using the arithmetic [04-system.md §5](04-system.md) states — and
+it is written the long way round on purpose. It multiplies where the RTL
+accumulates, it flips a tile by renumbering its pixels where the RTL
+reverses nibbles and swaps words, and it walks all 32 sprite descriptors
+in order where the RTL renders eight of them backwards. Two derivations
+that agree are evidence; one derivation checked against itself is not.
 
-| If the gate says | Then |
-|---|---|
-| at or under ~1051 LUT4 | build the blitter and sprites as scoped, Bresenham included |
-| 10–20 % over | drop Bresenham lines (~200), keep sprites |
-| worse | drop the 8 bpp mode (~60), then sprite descriptors 32 → 16 (~60) |
+Sixteen frames, **five million pixel comparisons**: all four depths,
+both text widths, tiles with every attribute combination, fine scroll in
+both directions, all three cursor styles, a bordered mode, and main RAM
+made deliberately grudging so the text fetch has to wait for the CPU.
 
-Not on the table: the memory split, the stride register, the blitter's
-rectangle operations, or sprites entirely.
+Three bugs it found that no count would have:
 
-- [ ] Blitter: `FILL_RECT`, `COPY_RECT`, `COPY_RECT_TRANSPARENT`,
-      clipping, logic ops, and the `PIX_*` pixel port
-- [ ] `DRAW_LINE`, if the gate allowed it
-- [ ] Sprite engine: 32 descriptors in dual-port EBR, 8 per scanline,
-      8×8 and 16×16, flip, priority, and the overrun flag
-- [ ] Raster and vblank interrupts, hardware text cursor
+- **The line number arrived one edge late.** `line_y` was captured on
+  the same clock as the pulse that announces it, so every consumer saw
+  the *previous* line's number for the cycle it acted on — and the
+  display changed bank one scanline late. The symptom was that the first
+  line of every character row was drawn from the row above it, and it is
+  invisible in anything but a picture. Capturing the value one edge ahead
+  of the pulse is the fix.
+- **Vertical blanking has to prime two rows, not one.** Without a scroll
+  the first row boundary is line 0 and one primed row is enough; with a
+  fine vertical scroll of five it moves to line 11, and nothing between
+  vblank and line 11 would have fetched the row the raster wants there.
+- **A tile's attribute has to be fetched by "the next pixel is in a
+  different tile", not by "this is pixel seven".** The two are the same
+  everywhere except at the end of a line, and that is the one place it
+  matters — with a fine scroll the first tile of every line was drawn in
+  the palette bank of the last tile of the line before.
+
+### 🚩 The gate: does it fit? — **answered, and it cost the blitter**
+
+```bash
+python sim/test_soc.py               # LUT4 for the whole SoC
+python tools/mkbit.py                # placed LC, and whether it closes
+```
+
+**No, not as scoped.** The gate did its job twice — once on area and
+once on timing — and both answers changed the plan. The reasoning is
+[D34](01-decisions.md#d34--the-video-engine-ships-with-sprites-and-a-pixel-port-and-no-blitter)
+and [D32](01-decisions.md#d32--the-system-clock-is-8375-mhz-a-third-of-the-pixel-clock);
+the numbers are here.
+
+| | estimated LUT4 | measured |
+|---|---|---|
+| VRAM + arbiter + indirect port | 130 | 263 |
+| fetch engine, shifter, palette, registers | 1051 | 1386 |
+| blitter | ~350 | 1306 |
+| sprite engine | 450 | 402 |
+| pixel port | *in the blitter's line* | 199 |
+
+**Every estimate for this subsystem came in at about half**, and the
+first row was recorded when it happened and the rest carried forward
+anyway. That is the process mistake worth naming: an estimate already
+proven 2× low is evidence about the estimator, not about the one block.
+
+With the blitter in, the machine did not fit the part at all — 5438
+logic cells against 5280, `nextpnr` failing rather than warning. The
+blitter came out; the sprite engine stayed, because [§5.3](04-system.md)
+already argues a tile map redraws nothing and needs no accelerator. What
+survived of it is `PIX_X`/`PIX_Y`/`PIX_DATA`, at 199 LUT4 and one of the
+eight DSP blocks the design had never used — the address arithmetic,
+which is the part an 8-bit CPU is actually bad at.
+
+**And the clock.** The part has one PLL and its reference is the pad the
+12 MHz arrives on, so the system clock has to be a division of 25.125.
+Half of it does not close: 11.0–11.6 MHz across six placer seeds against
+the 12.5625 needed. A third of it does, with margin. **8.375 MHz.**
+
+```
+ICESTORM_LC       4877 / 5280   92 %
+ICESTORM_RAM        27 / 30     90 %
+ICESTORM_SPRAM       4 / 4     100 %
+ICESTORM_DSP         1 / 8      12 %
+sclk closes at 10.65 MHz against a constraint of 8.375
+```
+
+- [ ] ~~Blitter: `FILL_RECT`, `COPY_RECT`, `COPY_RECT_TRANSPARENT`,
+      clipping, logic ops~~ — **cut, D34**. The `PIX_*` port is built
+- [ ] ~~`DRAW_LINE`~~ — **cut first**, under this section's own decision
+      table. About six cycles a pixel in software through `PIX_DATA`
+- [x] Sprite engine: 32 descriptors in EBR, 8 per scanline, 8×8 and
+      16×16, flip, priority, and the overrun flag —
+      [`cool8_sprite.v`](../rtl/soc/cool8_sprite.v), **402 LUT4 and 7 EBR**
+
+Two things in it are not what [§5.6](04-system.md) originally described,
+and both are arithmetic rather than preference. **The descriptor is
+packed so the per-line scan reads one 16-bit word instead of four
+bytes** — a scanline is 266 system clocks and 32 descriptors at four
+reads each would be 128 of them before a pattern was fetched. And
+**sprites render in reverse descriptor order**, because first-writer-
+wins needs the line buffer read back and an iCE40 block RAM's read port
+belongs to the raster; last-writer-wins backwards gives the same picture
+with no reads at all.
+
+**Nothing clears the sprite line buffer** — clearing 640 entries would
+take 640 of the 266 clocks a line has — so **every sprite is rendered
+for two lines past its bottom edge, writing zeros** over its own span.
+Two lines because the banks alternate and both have to be wiped, and
+*before* the real sprites of the line, or a low-numbered sprite's clear
+lands on a high-numbered sprite's pixels.
+
+The generation bit that was there first — bit 1 of the line number,
+carried in every entry — is not sufficient on its own, and the testbench
+is what said so: it separates a line from the one two lines earlier and
+not from the one four lines earlier, so every sprite's last row came
+back four lines underneath it in a band that repeated down the screen.
+
 - [ ] Boot ROM prints a message
-
-```bash
-python sim/test_video.py             # every pixel of two frames, and a picture
-```
-
-**51 LUT4 and 46 flip-flops.** The timing generator is small enough that
-there is no reason to sample
-it, so [`cool8_vga_tb`](../sim/tb/cool8_vga_tb.v) runs a golden raster
-model beside it and compares **every output on every one of 840,000
-pixel clocks** — two whole frames, 6.7 million checks, and the tallies
-§5.1 states on top. Everything is registered off the same counters, so
-`x`, `y`, `visible` and the two syncs always describe the same pixel.
-
-`o_prefetch` is the hook the rest hangs off: one pulse per line at the
-start of the front porch, naming the line about to be displayed. That is
-the shape
-[D26](01-decisions.md#d26--the-system-clock-is-12-mhz-the-pixel-clock-is-decoupled)
-chose when it decoupled the two clocks.
-
-### Text mode 0, and the font
-
-**266 LUT4, 212 flip-flops and 9 EBR** — eight of those the font, one the
-line buffer. It draws 80×30 cells of 8×16, one 16-bit word each, through
-a 16-entry 12-bit palette.
-
-**The line buffer is the clock crossing, and the only one.** Memory runs
-at 12 MHz and the raster at 25.125 MHz; `SB_RAM40_4K` has independent
-clocks, so the two domains meet inside a block RAM rather than across an
-arbiter. Two banks of 80 cells: the fetch fills one while the raster
-reads the other, and a character row lasts sixteen scanlines — 509 µs
-against the 13.3 µs that 80 word reads cost, forty times the room it
-needs. `read_bank` is stable for a whole row, which is what makes it
-safe to sample without a handshake.
-
-**Two cycles of lookahead, and no cadence.** A cell read costs a cycle
-and the font read after it another, so rather than a shift register and
-a load strobe the address simply runs two pixels ahead and wraps with
-the line. That puts the glyph byte for cell *x*/8 on the bus exactly at
-*x*. The wrap is the part worth reading twice: at the last two pixels of
-a line the raster still reports the old `y`, so the row index has to
-look ahead as well or column 0 of every character row is drawn from the
-wrong slice of the glyph.
-
-**The font is downloaded, not drawn.** Spleen 8×16, BSD 2-clause,
-vendored in [`assets/font/`](../assets/font) with its licence, converted
-by [`tools/mkfont.py`](../tools/mkfont.py) — which parses the BDF
-bounding boxes rather than assuming them, because most glyphs are
-smaller than the cell and a descender placed a row out is invisible in
-any count and obvious in a picture. The character set is CP437 through
-Python's own codec; Spleen covers 224 of 256, the rest being the
-decorative `$00-$1F` range. Any BDF of the same cell size drops in.
-
-And there is a picture: `sim/test_video.py` renders a whole screen —
-a box in line-drawing characters, all 256 glyphs, all 16 colours — to
-`build/text.png`, off the RGB pins, through the real raster, with the
-two clocks running at incommensurate rates so the crossing is actually
-exercised.
-
-**Which is how the fetch engine's one awkward case got found.** Row *R*
-lives in bank *R*&1 and is filled at the boundary of row *R*−1 — and
-nothing fills row 0, because there is no row before it. The stand-in
-engine in the testbench seeded both banks before reset, so the first
-frame was perfect and the *second* had a blank top line: row 29's
-boundary had refilled bank 0 with a row that does not exist. So:
-
-- **Row 0 must be primed during vertical blanking.** There are 45 blank
-  lines, 1.4 ms, and nothing else to do in them.
-- **Rows past the bottom of the screen must not be fetched at all**, or
-  they overwrite the bank the top of the next frame reads from.
-
-Neither is visible in a count of anything. Both are obvious in a picture
-with a box drawn round the top of it, which is why the box is there.
 
 ### Working without the display
 
@@ -942,47 +964,28 @@ is left here is sound.
 
 At this point the machine is finished as originally scoped.
 
-## M8 — TinyTapeout
+## M8 — TinyTapeout — **shelved**
 
-The deadline milestone. Shuttle windows do not move.
+**The target is the FPGA.** M8 is out of the plan and the reasoning is
+[D33](01-decisions.md#d33--the-asic-path-is-shelved-the-target-is-the-fpga):
+what shelving it buys is permission rather than direction — cycle counts
+may change without a tapeout implication, and the bus protocol is fair
+game — and the thing it was invoked for, the 37-level critical path in
+D32, is logic depth that would be the same on either target.
 
-- [ ] `rtl/pads`: the three-phase bus multiplexer
-- [ ] Verilog model of a 74HC573 pair, the strobe-merge gates and an
-      async SRAM
-- [ ] Bus-grant load path simulated end-to-end: external agent asserts
-      `nBUSRQ`, writes SRAM through the merged strobes, releases, CPU
-      runs it
-- [ ] Full instruction test suite re-run through the multiplexed bus
-- [ ] OpenLane synthesis, real cell count, tile count decided
-- [ ] Timing closure at the target frequency
-- [ ] Submit
+**The discipline stays where it is free.** `rtl/core` remains
+Verilog-2001 with no vendor primitives, no inferred RAM and no clock
+gating, and `sim/synth.py` keeps checking it. A core that is still
+portable is a milestone that can be un-shelved; a core casually
+sprinkled with `SB_` primitives is a rewrite.
 
-**Risk, mostly retired at M3.**
-[03-microarchitecture.md §5.7](03-microarchitecture.md#57-area-estimate)
-now carries synthesised numbers rather than an estimate: 948 LUT4 and
-148 flip-flops on the FPGA, 3080 gate equivalents mapped to two-input
-gates against a 2750 guess. That points at a 2×2 tile project. What is
-still outstanding is the LibreLane run, which is the only thing that
-gives a real placed-and-routed cell count and utilisation — the M3 list
-has it.
-
-The three-phase bus multiplexer was also brought forward to M3, so
-`rtl/pads` and its instruction-level verification against latch and
-SRAM models are already done. What remains here is the bus-*grant* load
-path with an external agent, and timing closure.
-
-**Also required:** a physical test board — TT chip, two 74HC573 latches,
-one SRAM, a 74HC32 and a 74HC00 to merge the bus strobes, and an RP2040
-as loader and debugger. Design it while waiting for silicon.
-
-Put an EEPROM socket and a chip select on it too, even if you never
-populate it. It is the only independent way to run code if `BUSRQ`
-misbehaves in silicon, and there is no patching silicon.
-
-`cool8load.py` should drive it with the same commands as the FPGA
-loader, over a different transport. Keep that layer separable.
-
----
+**The risk this milestone carried is already retired.** M3 hardened the
+core through TinyTapeout's own LibreLane flow on sky130: 20,960 µm² at
+61.2 % utilisation in two tiles, clean DRC, LVS and antenna, closing at
+50 MHz at every PVT corner. `rtl/pads/tt_um_cool8.v` and its
+instruction-level verification against latch and SRAM models exist and
+pass. What was never done is the bus-*grant* load path with an external
+agent, and the physical test board.
 
 ## Deliberately not scheduled
 

@@ -27,3 +27,24 @@ set_io uart_tx    6
 set_io led_r     40
 set_io led_g     41
 set_io led_b     39
+
+# VGA — MuseLab PMOD-VGA on PMOD2 + PMOD3, twelve bits plus two syncs.
+# The full map and the reason PMOD1 can never be a whole PMOD are in
+# docs/05-board.md section 3. Bit 0 of each channel is the assumption to
+# check first if the colours come out inverted or shuffled: the PMOD's
+# silkscreen names its signals R, R1, R2, R3 and this takes 45, 32 and 46
+# to be the least significant of each.
+set_io vga_r[3]  36
+set_io vga_r[2]  38
+set_io vga_r[1]  43
+set_io vga_r[0]  45
+set_io vga_g[3]  23
+set_io vga_g[2]  26
+set_io vga_g[1]  28
+set_io vga_g[0]  32
+set_io vga_b[3]  37
+set_io vga_b[2]  42
+set_io vga_b[1]  44
+set_io vga_b[0]  46
+set_io vga_hs    34
+set_io vga_vs    31

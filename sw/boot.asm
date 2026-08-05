@@ -85,8 +85,68 @@ reset:  LDW  X,#stack
         SUB  R0,#1
         BNE  .vec
 
-; Blue on the board LED: the ROM ran, RAM is clear, vectors are in.
-; The one thing this machine can say out loud at M4.
+; ---------------------------------------------------------------------
+; Step 3: bring up video, and say something.
+;
+; The palette has to go in first. Block RAM comes up zeroed from the
+; bitstream, so every entry is black and a screen brought up without it
+; is a screen with nothing on it -- including the border, which is
+; entry $00. Sixteen entries is all text mode indexes.
+;
+; PAL_IDX counts *entries*; the half within an entry is implicit and
+; advances with each write of PAL_DATA, so the whole table is one loop
+; and one register write to start it.
+; ---------------------------------------------------------------------
+
+        CLR  R0
+        ST   [PAL_IDX],R0
+        LDW  X,#palette
+        MOV  R0,#32
+.pal:   LD   R1,[X+]
+        ST   [PAL_DATA],R1
+        SUB  R0,#1
+        BNE  .pal
+
+; Mode 0 with the display enabled: 80x30 cells of 8x16, the map at
+; $8000 with a stride of 256. Writing VID_MODE loads VID_CTRL, VID_BASE
+; and VID_STRIDE, so this one store is the whole of the setup.
+;
+; The map is already blank -- the clear above ran over $8000 and glyph
+; $00 has no pixels in it -- so nothing has to be filled in first.
+
+        MOV  R0,#$80
+        ST   [VID_MODE],R0
+
+; The banner, cell by cell: character in the even byte, attribute in the
+; odd one. Row 1, column 2, which is $8000 + 1*256 + 2*2.
+
+        LDW  X,#banner
+        LDW  Y,#$8104
+.msg:   LD   R1,[X+]
+        CMP  R1,#0
+        BEQ  .cursor
+        ST   [Y+],R1
+        MOV  R0,#$0B            ; light cyan on black
+        ST   [Y+],R0
+        BRA  .msg
+
+; A cursor on the line below it, blinking, so the screen is visibly
+; *live* rather than a still picture that might have been left there by
+; the last bitstream.
+
+.cursor:
+        MOV  R0,#2
+        ST   [CUR_X],R0
+        MOV  R0,#3
+        ST   [CUR_Y],R0
+        MOV  R0,#$0F            ; rows 0..15 of the cell
+        ST   [CUR_LINES],R0
+        MOV  R0,#$01            ; enabled, block, slowest blink
+        ST   [CUR_CTRL],R0
+
+; Blue on the board LED: the ROM ran, RAM is clear, vectors are in, and
+; there is a picture. The one thing this machine could say out loud
+; before it had a screen.
 
         MOV  R0,#$01
         ST   [LED],R0
@@ -96,7 +156,7 @@ reset:  LDW  X,#stack
 ; which at M4 is exactly how software arrives.
 
         HALT
-        BRA  reset              ; if anything ever wakes it, start over
+        JMP  reset              ; if anything ever wakes it, start over
 
 ; ---------------------------------------------------------------------
 ; The vector table copied into RAM, and the ROM's own copy at the top.
@@ -112,7 +172,38 @@ vectors:
         .word trap              ; IRQ
         .word trap              ; BRK
 
+; The sixteen CGA colours, as the 12-bit VGA PMOD wants them: the first
+; byte of a pair is 0000RRRR and the second GGGGBBBB.
+
+palette:
+        .byte $00,$00           ; 0 black
+        .byte $00,$0A           ; 1 blue
+        .byte $00,$A0           ; 2 green
+        .byte $00,$AA           ; 3 cyan
+        .byte $0A,$00           ; 4 red
+        .byte $0A,$0A           ; 5 magenta
+        .byte $0A,$50           ; 6 brown
+        .byte $0A,$AA           ; 7 light grey
+        .byte $05,$55           ; 8 dark grey
+        .byte $05,$5F           ; 9 light blue
+        .byte $05,$F5           ; A light green
+        .byte $05,$FF           ; B light cyan
+        .byte $0F,$55           ; C light red
+        .byte $0F,$5F           ; D light magenta
+        .byte $0F,$F5           ; E yellow
+        .byte $0F,$FF           ; F white
+
+banner: .ascii "COOL8"
+        .byte 0
+
 LED     = $FE03
+VID_MODE  = $FE10
+PAL_IDX   = $FE1E
+PAL_DATA  = $FE1F
+CUR_X     = $FE22
+CUR_Y     = $FE23
+CUR_CTRL  = $FE24
+CUR_LINES = $FE25
 stack   = $0200
 
 ; The ROM's own vectors. Only RESET is ever fetched from here in

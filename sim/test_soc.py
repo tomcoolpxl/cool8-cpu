@@ -45,10 +45,15 @@ sys.path.insert(0, os.path.join(ROOT, "tools"))
 import cosim                                    # noqa: E402
 import cool8asm                                 # noqa: E402
 import mkrom                                    # noqa: E402
+import mkfont                                   # noqa: E402
 
 SOC = [os.path.join(ROOT, "rtl", "soc", f)
        for f in ("cool8_rom.v", "cool8_spram.v", "cool8_mem.v",
-                 "cool8_uart.v", "cool8_loader.v", "cool8_soc.v",
+                 "cool8_uart.v", "cool8_loader.v", "cool8_vga.v",
+                 "cool8_vregs.v", "cool8_pal.v", "cool8_fetch.v",
+                 "cool8_pixel.v", "cool8_vram.v", "cool8_vport.v",
+                 "cool8_pll.v", "cool8_pixport.v", "cool8_sprite.v",
+                 "cool8_video.v", "cool8_soc.v",
                  "cool8_top.v")]
 CORE = [os.path.join(ROOT, "rtl", "core", f)
         for f in ("cool8_alu.v", "cool8_agu.v", "cool8_core.v")]
@@ -119,7 +124,7 @@ def synth():
     # through the bus is a warning rather than an error — it has to be
     # read out of the transcript or it passes silently and shows up as
     # unroutable much later.
-    rc, out = yosys(f"{read}; synth_ice40 -top cool8_soc -flatten; stat",
+    rc, out = yosys(f"{read}; synth_ice40 -dsp -top cool8_soc -flatten; stat",
                     quiet=False)
     if rc != 0 or "found logic loop" in out:
         print(out[-3000:] if rc != 0 else

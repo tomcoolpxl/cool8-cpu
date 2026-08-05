@@ -53,6 +53,7 @@ module cool8_wire_tb;
     localparam integer IDLE_BITS = 40;
 
     reg          clk = 1'b0;
+    reg          pclk = 1'b0;
     reg          rst_n = 1'b0;
 
     integer      bitclk, i, n, idle, fh, sent, got;
@@ -68,6 +69,11 @@ module cool8_wire_tb;
     integer      outq_wr, want, waited, stalls;
 
     always #5 clk = ~clk;
+    // The raster's clock. Incommensurate with the system's on
+    // purpose: the video subsystem is inside the SoC now and the
+    // only thing these tests want from it is that its clock
+    // crossing does not disturb anything on this side of it.
+    always #2.39 pclk = ~pclk;
 
     cool8_soc #(
         .ROM_INIT(0),
@@ -75,6 +81,8 @@ module cool8_wire_tb;
         .RX_ABITS(4)
     ) u_soc (
         .clk(clk), .rst_n(rst_n),
+        .pclk(pclk), .prst_n(rst_n),
+        .rgb(), .hsync_n(), .vsync_n(),
         .uart_rx(host_tx), .uart_tx(uart_tx),
         .led(led),
         .irq(1'b0), .nmi(1'b0),
