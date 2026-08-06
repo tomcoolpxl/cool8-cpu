@@ -80,9 +80,29 @@ What each display mode claims, and what is left:
    mode leaves room. Sequential access at ~2–3 clocks a byte, so a 16 KB
    source recompiles in about 30 ms.
 3. **Spilled to flash on `RUN`** — when the mode does not leave room.
-   16 KB at ~500 KB/s is 32 ms, read back on return to the editor.
+   **About one second for 16 KB**, read back in tens of milliseconds.
 
 The rule is documented in the OS reference, not left as folklore.
+
+> **Corrected at M11.** This said 32 ms, taken from the flash's *read*
+> rate. Writing is nothing like it: the SPI master sends **one opcode
+> per byte programmed** — `WREN`, a 40-bit page-program, then status
+> polling — and the part's own program time dominates. Measured CPU cost
+> is **114 clocks a byte**; with the SPI transactions and a typical NOR
+> byte-program time that is **50–130 µs a byte**, so 16 KB is about a
+> second.
+>
+> **This reorders the three.** Regime 2 is preferred wherever the mode
+> leaves room — every mode but 6 — and regime 3 is the fallback that
+> always works rather than the general answer. A mode-6 program pays
+> about a second on `RUN`.
+>
+> **The fix is bounded.** A NOR page program accepts up to 256 data
+> bytes in one command with chip select held low; the RTL sends exactly
+> one. Amortising the enable, the address and the program time over a
+> page is roughly **13× faster** — 16 KB in about 75 ms, which is what
+> the original claim assumed. It is a contained change to
+> `cool8_flash.v`'s shifter, and M15 is where it belongs.
 
 ---
 
@@ -396,16 +416,52 @@ reached if native turns out too bulky and it did not. The one-statement
 figures stand if it is ever needed: 37 clocks against 28, 3 bytes against
 20.
 
-### M11 — Filesystem and the PC tool
+### M11 — Filesystem and the PC tool ✅
 
-Volume format, directory, mount, open, read, write, delete, compact.
-`tools/cool8disk.py` alongside it.
+**Gate: the machine and the PC read each other's files. All nine checks
+pass.**
 
-**Gate:** the machine creates a file, the PC tool reads it; the PC tool
-creates one, the machine reads it. Both against `cool8vm`'s flash model,
-with the floor and the bit-clearing behaviour exercised. **Everything
-else waits on this** — the float library and autoboot both need named
-files.
+[`sw/fs.asm`](sw/fs.asm) — mount, find, load, save, delete — and
+[`tools/cool8disk.py`](tools/cool8disk.py) — format, dir, add, get, del,
+compact. **The same filesystem written twice**, once in COOL8 assembly
+and once in Python, neither importing the other's constants;
+[`sim/test_fs.py`](sim/test_fs.py) is what makes them agree.
+
+```
+the PC writes, the machine reads it (520 bytes)      ok
+fs_save reports success                              ok
+the machine writes, the PC reads it back             ok
+and the file that was already there is unharmed      ok
+the second file lands after the first, with nothing
+    stored to say so                                 ok
+the machine deletes, and the PC agrees it is gone    ok
+the bytes are still there -- a delete erases nothing  ok
+compaction keeps the one live file                   ok
+a program below $100000 is refused, and nothing
+    changes                                          ok
+```
+
+**The geometry paid off exactly as §6.1 hoped.** A volume is
+7 × 64 KB, so every base is 64 KB aligned and its low sixteen bits are
+zero; a file starts on a 256-byte page. The address of a file is
+therefore `low = 0`, `mid = page low`, `high = base high + page high` —
+**one add**, no 24-bit multiply. `fs_seekfile` is nine instructions.
+
+**Measured costs**, which the plan did not have before:
+
+| | |
+|---|---|
+| Programming a byte | **114 clocks of CPU**, plus the flash's own time |
+| `fs_mount` | one 4 KB directory scan — ~8 ms on real SPI |
+| `fs_save` fixed cost | two scans, because it re-mounts afterwards rather than incrementing the free pointer |
+
+The re-mount is deliberate: a rescan is always right where an increment
+is right only until something else writes. At 8 ms against a data write
+measured in hundreds, it is not where the time goes.
+
+**And it found the error in §3.4** — the flash write rate, which the
+source-placement plan was resting on, was out by a factor of thirty.
+That correction is recorded there.
 
 ### M12 — The compiler
 
