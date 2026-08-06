@@ -32,6 +32,10 @@ module cool8_top #(
     input  wire clk,             // pin 35, 12 MHz from the iCELink debugger
     input  wire uart_rx,         // pin 4
     output wire uart_tx,         // pin 6
+    // Sound: one pin, 1-bit sigma-delta, into the RC low-pass and
+    // coupling capacitor of docs/05-board.md. P1_3.
+    output wire audio,           // pin 3
+
     output wire led_r,           // pin 40
     output wire led_g,           // pin 41
     output wire led_b,           // pin 39
@@ -150,6 +154,7 @@ module cool8_top #(
         .spi_cs_n(flash_cs), .spi_sck(flash_sck),
         .spi_mosi(flash_mosi), .spi_miso(flash_miso),
         .rgb(rgb), .hsync_n(vga_hs), .vsync_n(vga_vs),
+        .audio(audio),
         .led(led),
         .irq(1'b0), .nmi(1'b0),
         .o_halted()

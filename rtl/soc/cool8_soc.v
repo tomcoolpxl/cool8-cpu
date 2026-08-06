@@ -108,6 +108,9 @@ module cool8_soc #(
     output wire        hsync_n,
     output wire        vsync_n,
 
+    // One pin, 1-bit sigma-delta. An RC low-pass on the board is the DAC.
+    output wire        audio,
+
     output wire [2:0]  led,            // R, G, B — active high here
 
     // Synchronised and debounced outside; there are no sources yet.
@@ -266,6 +269,8 @@ module cool8_soc #(
 
     wire        fls_sel, fls_dp_sel, fls_stall;
     wire [7:0]  fls_rdata, fls_dout;
+
+    wire        snd_sel;
 
     // A write reaches the page exactly once, and the two signals below are
     // what makes that true rather than merely usual.
@@ -500,6 +505,13 @@ module cool8_soc #(
         .io_a(io_a), .io_rd(io_rd), .io_we(io_we), .io_wdata(bus_wdata),
         .o_sel(fls_sel), .o_dp_sel(fls_dp_sel), .o_rdata(fls_rdata),
         .o_dout(fls_dout), .o_stall(fls_stall)
+    );
+
+    cool8_snd u_snd (
+        .clk(clk), .rst_n(rst_n),
+        .io_a(io_a), .io_rd(io_rd), .io_we(io_we), .io_wdata(bus_wdata),
+        .o_sel(snd_sel),
+        .o_pwm(audio)
     );
 
     cool8_loader u_ldr (

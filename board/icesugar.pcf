@@ -62,3 +62,6 @@ set_io flash_cs  16
 set_io flash_sck 15
 set_io flash_mosi 17
 set_io flash_miso 14
+
+# audio — sigma-delta out, P1_3, into the RC low-pass
+set_io audio      3

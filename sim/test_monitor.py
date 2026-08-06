@@ -63,7 +63,7 @@ SOC = [os.path.join(ROOT, "rtl", "soc", f)
                  "cool8_vregs.v", "cool8_pal.v", "cool8_fetch.v",
                  "cool8_pixel.v", "cool8_vram.v", "cool8_vport.v",
                  "cool8_pll.v", "cool8_pixport.v", "cool8_sprite.v",
-                 "cool8_ps2.v", "cool8_flash.v",
+                 "cool8_ps2.v", "cool8_flash.v", "cool8_snd.v",
                  "cool8_video.v", "cool8_soc.v")]
 CORE = [os.path.join(ROOT, "rtl", "core", f)
         for f in ("cool8_alu.v", "cool8_agu.v", "cool8_core.v")]
