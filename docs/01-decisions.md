@@ -255,6 +255,13 @@ banked window for tiles, sprite graphics and sample data later.
 
 ## D12 — Audio: SN76489-style, not SID-style
 
+> **The conclusion stands; the implementation was replaced by
+> [D41](#d41--the-sound-engine-is-one-datapath-walked-eight-times-not-four-dividers).**
+> Squares and an LFSR rather than SID-style filters is still right, and
+> for the reason below. Four parallel dividers is not: shared across one
+> time-multiplexed datapath, a phase accumulator is smaller *and* eight
+> voices cost less than the four budgeted here.
+
 **Decision:** three square-wave tone channels plus one noise channel,
 each with a frequency divider and 4-bit attenuation. Digital mix, 1-bit
 sigma-delta output.
@@ -306,6 +313,11 @@ lives on page 2 as a two-byte form for when the assembler wants it.
 
 ## D15 — The loader is hardware, not a ROM monitor
 
+> **Revisited at M7 by [D40](#d40--the-hardware-loader-is-a-build-option-and-it-is-off):**
+> the argument below was correct and its premises have expired. It is a
+> build option now, off by default, and the 376 logic cells bought the
+> flash write path.
+
 **Decision:** program loading is done by a state machine in `rtl/soc/`
 that owns the bus directly, not by an XMODEM receiver running on the
 CPU.
@@ -333,6 +345,11 @@ the machine's own screen. It just is not the bootstrap path.
 ---
 
 ## D16 — Flash access is read-only in hardware
+
+> **The upgrade path below was built at M7 —
+> [D42](#d42--the-machine-can-write-its-own-flash-above-a-hardware-floor).**
+> The floor is exactly the `$100000` this section names, and it is
+> checked in gates before an opcode is chosen.
 
 **Decision:** the FPGA's SPI master issues flash opcode `$03` (READ) and
 has no write-enable, page-program or erase path in the gates at all.
@@ -1245,7 +1262,217 @@ level down.
 
 ---
 
+## D40 — The hardware loader is a build option, and it is off
+
+**Decided at M7, and it paid for the flash write path.**
+
+[D15](#d15--the-loader-is-hardware-not-a-rom-monitor) built the loader
+because of a chicken-and-egg problem: the boot ROM is part of the
+bitstream, so changing how loading works meant a full rebuild and a
+re-flash — and during M4-M6 there was no working software at all, so
+every software bug became a bitstream rebuild.
+
+**All three of the things that made it necessary now exist.** There is a
+boot ROM, a monitor, and a flash reader. `icesprog -o 0x100000 -w
+prog.bin` followed by `L` at the monitor gets a program in without a
+rebuild, and once the machine can write its own flash (D42) it can put
+one there itself.
+
+So `cool8_soc` and `cool8_top` take a `LOADER` parameter and it defaults
+to **0**. **376 logic cells**, measured, and `sclk` went from 11.02 MHz
+to 11.76 in the same step.
+
+**It is parameterised rather than deleted, and that is the point.**
+`cool8_loader.v` stays in the tree and its tests stay passing;
+`cool8_soc_tb`, `cool8_wire_tb` and `cool8_soc_boot_tb` ask for
+`LOADER(1)` explicitly, the last of those because it checks a cold boot
+by reading RAM back and only a bus master can do that. Build a bring-up
+image with the parameter set, drop something else, and the debugger is
+back in ten minutes.
+
+**What is genuinely given up** is debugging a board whose CPU never
+started — the case D15 was built for. That is a bring-up capability
+rather than a development one, and the replacement for the development
+half of it is the break button below.
+
+### The break button, and what the board taught that simulation could not
+
+`SW[0]` as an NMI is specified in [04-system.md §6](04-system.md) and had
+never been built. It is what replaces the loader's `HALT`: press it and a
+hung program lands in the monitor with its state intact, because an NMI
+pushes `PC` and `F` and changes nothing else.
+
+The first version fired the moment the pin read low and then ignored it
+for 62 ms — the ordinary way to absorb contact bounce. **On the board it
+produced a machine taking interrupts continuously**, and the only symptom
+was the LED flickering far too fast to be anything the software wrote.
+
+Two faults, and both needed fixing:
+
+- **No pull-up in the `.pcf`.** Nothing on the iCESugar holds that pin,
+  and a floating iCE40 input oscillates.
+- **Firing on the first low sample.** For a pin that might be floating
+  that is exactly backwards: every oscillation became an NMI.
+
+It now requires the line **continuously low for 2 ms**. The counter
+resets on any high sample, so noise never accumulates; it saturates, so
+one press gives one NMI however untidily the contact closes; and it
+cannot fire again until the button is released. The pull-up makes an
+unconnected pin read as released, and the counter makes a noisy one
+harmless — both halves are needed.
+
+**No testbench would have caught this.** `cool8_top_tb` ties `sw0` high
+because that is what "not pressed" means, and every simulation of a
+floating pin is a decision about what to drive it with. This is the one
+finding in the project that required silicon.
+
+---
+
+## D41 — The sound engine is one datapath walked eight times, not four dividers
+
+**Decided at M7, and it is smaller than the four voices it replaces.**
+
+[D12](#d12--audio-sn76489-style-not-sid-style) specified three square
+channels and a noise channel, each with its own 12-bit divider and
+attenuator, and budgeted ~250 LUT4. That is the SN76489's shape, and the
+SN76489's shape answers the SN76489's problem: a 4 MHz part with no
+cycles to spare had to make four voices in parallel because it could not
+make them in series.
+
+This part has 8.375 MHz and wants a ~32 kHz sample rate — **256 system
+clocks between samples, and a voice needs four.** So there is one of
+everything, time-multiplexed, and everything else follows:
+
+- **A phase accumulator, not a divider.** Per voice in parallel a divider
+  is smaller, which is what D12 weighed. Shared, it is the other way
+  round: an accumulator is one adder for every voice where a divider
+  needs a reload comparator each. Pitch resolution is 0.5 Hz across the
+  whole range, against a 12-bit divider's 46 Hz at the bottom and 12 kHz
+  steps at the top.
+- **Voice state in one block RAM**, 24 words of 256. As flip-flops it
+  would be 288, which is where the parallel design's area went.
+- **A serial mixer** — one 4-bit add into an accumulator, not a tree.
+- **Two I/O addresses**, `SND_IDX`/`SND_DATA`, not twenty-four decodes.
+
+**Measured: 141 LUT4, 131 flip-flops and one block RAM, for eight
+voices.** Against 250 budgeted for four.
+
+The result worth carrying forward: **once the datapath is shared the
+voice count is nearly free.** One voice to eight costs RAM words and
+clocks out of a budget with 224 spare, not logic. The expensive step is
+the first voice.
+
+**No DSP block**, though seven are idle. A square wave times a 4-bit
+volume is a sign and a mux, not a multiply. The DSP earns its place the
+day a voice reads a wavetable or a sample out of memory — that is the
+upgrade path, and it is a good one — but on squares it would buy nothing.
+
+**No envelopes, sweep, ring modulation or filter.** A vblank handler
+doing envelopes is about twenty instructions and can make shapes no
+hardware ADSR offers.
+
+D12's *conclusion* stands — squares and an LFSR rather than SID-style
+filters, for the same reason — and its *implementation* does not.
+
+---
+
+## D42 — The machine can write its own flash, above a hardware floor
+
+**Decided at M7. It is the difference between a machine that loads and a
+machine that saves.**
+
+[D16](#d16--flash-access-is-read-only-in-hardware) made the SPI master
+read-only and wrote down the upgrade path in the same breath: allow
+writes, but gate them on a hardware comparison against a fixed floor, so
+the bottom 1 MB is unreachable by construction. This is that.
+
+`$FE8E` `FLS_WDATA` and `$FE8F` `FLS_WCTRL` — write 1 to program the byte
+at `FLS_ADDR`, 2 to erase its 4 KB sector, 4 to acknowledge a refusal.
+About 7 MB the machine owns. **277 LUT4** for the whole block, reads
+included.
+
+**The floor is checked on the cycle the request arrives, before an
+opcode has been chosen.** A request below `$100000` sets a flag and does
+nothing else: no write-enable, no command, no chip select. There is no
+path in the gates from a bad request to a shifted opcode, which is what
+makes this safe by construction rather than by review.
+
+`sim/test_flash.py`'s device model **fails the run** on any opcode
+outside the five this master has, on any program or erase below the
+floor, and on either without a preceding write-enable. `sim/mutate.py`
+carries the mutation that removes the floor check, and it is caught —
+23 of 23 flash mutations are.
+
+**What it took to get right**, because both faults are the kind that
+recur:
+
+- **One driver for chip select.** A flash latches its opcode on the
+  *rising* edge of `CS`, so two commands run together are ignored. The
+  first attempt had the shifter and the opening path both driving it and
+  the sequence silently did nothing. It is now a single `assign` and the
+  `W_GAP` states exist purely to produce that edge.
+- **The write phases go last in the testbench.** An erase clears 4 KB and
+  the device model aliases every address into 64 KB, so an erase placed
+  mid-file wipes bytes a later read phase checks. That produced failures
+  that looked like read bugs and were not.
+
+**Untested on hardware.** The floor is proven in simulation and every
+mutation of it is caught, but a page program on real silicon is not a
+Verilog model. Back the bitstream up and try a high address first.
+
+---
+
+## D43 — The sprite engine renders eight 16x16 sprites, and did not before
+
+**Found by measurement at M7, after the specification had claimed it for
+two milestones.**
+
+[04-system.md §5.6](04-system.md) says eight sprites per scanline. A
+harness that counts clocks says otherwise:
+
+| 16x16 sprites on one line | clocks | 266 available |
+|---|---|---|
+| 5 | 258 | fits, 8 to spare |
+| 6 | 296 | **overruns** |
+| 8 | 372 | **overruns by 40 %** |
+
+Perfectly linear: 68 clocks of fixed cost and 38 a sprite. **The real
+limit was five**, and the failure was silent — a new line aborts whatever
+is running, and `SPR_CTRL`'s overrun flag only ever fired for a *ninth
+descriptor*, never for a render that was cut off.
+
+Three changes, and the engine now finishes eight in **237 clocks with 29
+to spare**:
+
+- **The pattern fetch is pipelined.** Word *w+1* is requested while word
+  *w*'s four pixels go out, where before it was request, wait, push,
+  request again — three clocks in every seven.
+- **The generation tag went from four bits to five and the sweep halved
+  to 32 entries.** That is free: the line-buffer entry is 2048 deep and
+  an iCE40 block RAM that deep is two bits wide, so nine bits and ten
+  bits both cost five blocks. A five-bit tag separates 32 fills where
+  four separated 16, and the sweep only has to outrun the tag. It buys 32
+  clocks of a 266-clock line back, because `S_TALLY` waits for the sweep.
+- **The first request is issued from `S_D3`**, off the descriptor bus
+  rather than the register, and `S_FW` takes its word straight off the
+  VRAM bus instead of parking it.
+
+25 clocks a sprite, down from 38, for **+28 LUT4 and +18 flip-flops** and
+no extra block RAM.
+
+**`overrun` now also fires when a render is aborted**, so this can never
+be silent again. `sim/tb/cool8_video_tb.v` gained a full house of large
+sprites, and the 4,915,200-pixel comparison covers it.
+
+**The process point.** This was arithmetic in a comment for two
+milestones and nobody counted. `sim/test_video.py`'s "ten on a line"
+phase used a *mix* of sizes and passed throughout. A limit that is
+asserted rather than measured is a limit nobody knows.
+
+---
+
 ## Open questions
+
 
 **The fit question is closed.** It was the only one, it was answered by
 `nextpnr` rather than by arithmetic, and the answer cost the blitter and
@@ -1293,8 +1520,11 @@ cheaper thing to try, and it is untried.
 
 ### Should the core's fetch path be pipelined?
 
-The machine closes at 10.81 MHz and runs at 8.375. The gap is one
-critical path: SPRAM read data, through the block and byte selects, the
+The machine closes at 11.2 MHz and runs at 8.375 — it was 10.81 before
+M7, and [D38](#d38--the-fetch-path-next-state-is-decoded-flat-and-it-bought-area-rather-than-speed)
+and the loader coming out account for the difference. **The next rung is
+12.5625 MHz, half the pixel clock**, and it is 1.4 MHz away rather than
+1.75. The gap is one critical path: SPRAM read data, through the block and byte selects, the
 boot ROM's mux and the I/O page's, the instruction decode, and into the
 next state — **37 levels of logic, 87 ns**. It is not congestion; the
 spread across six placer seeds is under 6 %.

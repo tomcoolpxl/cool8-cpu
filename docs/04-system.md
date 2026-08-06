@@ -28,8 +28,8 @@ ASIC.
                                                    │
         ┌──────────┬──────────┬───────────────┼──────────┐
      ┌──▼───┐  ┌───▼────┐ ┌───▼─────┐   ┌─────▼───┐  ┌───▼───┐
-     │ PS/2 │  │ SPI    │ │  audio  │   │   VGA   │  │ UART  │
-     │ kbd  │  │ flash  │ │  (M7)   │   └─────────┘  └───────┘
+     │ PS/2 │  │ SPI    │ │  sound  │   │   VGA   │  │ UART  │
+     │ kbd  │  │ flash  │ │ 8 voice │   └─────────┘  └───────┘
      └──────┘  └────────┘ └─────────┘
 ```
 
@@ -63,9 +63,9 @@ through an indirect port, not through the CPU's map. See
 and §5.2.
 
 That leaves sampled audio with nowhere to live, which is correct: the
-audio engine is dividers and an LFSR
-([D12](01-decisions.md#d12--audio-sn76489-style-not-sid-style)) and has
-no use for memory.
+sound engine is phase accumulators and an LFSR
+([D41](01-decisions.md#d41--the-sound-engine-is-one-datapath-walked-eight-times-not-four-dividers))
+and its voice state fits in one block RAM.
 
 ### 2.1 Vectors
 
@@ -134,6 +134,10 @@ the ROM went away.
 
 ### 3.1 …or not, if the loader says otherwise
 
+**The loader is a build option now and the shipping image does not carry
+it** ([D40](01-decisions.md#d40--the-hardware-loader-is-a-build-option-and-it-is-off)).
+What follows describes a bitstream built with `LOADER(1)`.
+
 The hardware loader (§4.7) can bypass all of that. It holds the CPU off
 the bus, writes a program and a reset vector directly into RAM, sets
 `BOOTRAM` so the ROM overlay stays out of the way, and pulses CPU reset.
@@ -147,9 +151,10 @@ what you want at M4 when there isn't any.
 
 | Source | When | Notes |
 |---|---|---|
-| Hardware loader over USB serial | Development, always | No bitstream rebuild, no working ROM required |
-| SPI flash (§4.8) | Finished programs | 7.9 MB free above the bitstream, ~125 ms to load 64 KB. The monitor's `L` command |
-| Baked into the boot ROM image | Bring-up only | The ROM is 4 KB and the monitor is 3028 bytes of it |
+| SPI flash (§4.8) | **The usual way.** `icesprog -o 0x100000 -w prog.bin`, then the monitor's `L` | 7.9 MB above the bitstream, ~125 ms to load 64 KB |
+| The machine's own flash writes (§4.8) | Anything it made itself | `FLS_WDATA`/`FLS_WCTRL`, above the `$100000` floor |
+| Hardware loader over USB serial | Only in a `LOADER(1)` build | No bitstream rebuild, no working ROM required |
+| Baked into the boot ROM image | Bring-up only | The ROM is 4 KB and the monitor is 3029 bytes of it |
 
 ---
 
@@ -199,7 +204,7 @@ a straight run of stores with no address recomputation between them.
 | `$FE11` | `VID_CTRL` | R/W | `1:0` engine (0 text, 1 tile, 2 bitmap). `3:2` bpp (0=1, 1=2, 2=4, 3=8). `4` horizontal doubling. `5` vertical doubling. |
 | `$FE12` | `VID_BASE_L` | R/W | Display base address, low byte |
 | `$FE13` | `VID_BASE_H` | R/W | high byte |
-| `$FE14` | `VID_STRIDE_L` | R/W | Row pitch in bytes, low. Text map stride, tile map width, or bitmap row pitch — see [D30](01-decisions.md#d30--the-text-map-stride-is-a-register-and-the-canonical-map-is-128x32) |
+| `$FE14` | `VID_STRIDE_L` | R/W | Row pitch in bytes, low. Text map stride, tile map width, or bitmap row pitch — see [D30](01-decisions.md#d30--the-text-map-stride-is-a-register-and-the-canonical-map-is-12832) |
 | `$FE15` | `VID_STRIDE_H` | R/W | high |
 | `$FE16` | `VID_SCRL_X_L` | R/W | Horizontal scroll, low |
 | `$FE17` | `VID_SCRL_X_H` | R/W | `1:0` high. 0–1023 |
@@ -281,60 +286,67 @@ follows.
 FIFO depth 16 bytes. The overflow is the *newest* byte, so a burst that
 outruns software loses the end of it and not the beginning.
 
-### 4.4 Audio — `$FE50`
+### 4.4 Sound — `$FE50`
 
-Four channels: three tone, one noise. Registers are direct-mapped — the
-SN76489's latch/data protocol is a bus-width artefact we have no reason
-to reproduce.
+**Eight voices, one datapath.** Square waves and noise, 4-bit volume
+each, mixed into a 1-bit sigma-delta output on one pin. 141 LUT4, 131
+flip-flops and one block RAM — see
+[D41](01-decisions.md#d41--the-sound-engine-is-one-datapath-walked-eight-times-not-four-dividers)
+for why that is smaller than the four dividers it replaced.
 
-| Addr | Name | Description |
-|---|---|---|
-| `$FE50` | `CH0_FREQ_L` | Divider bits 7:0 |
-| `$FE51` | `CH0_FREQ_H` | Divider bits 11:8 (bits 3:0) |
-| `$FE52` | `CH0_VOL` | Attenuation, bits 3:0. `$0` = loudest, `$F` = silent |
-| `$FE53` | `CH0_CTRL` | `0` enable, `2:1` duty (00 = 50 %) |
-| `$FE54–$FE57` | `CH1_*` | Same layout |
-| `$FE58–$FE5B` | `CH2_*` | Same layout |
-| `$FE5C` | `NSE_CTRL` | `1:0` shift rate, `2` 0 = white / 1 = periodic, `3` track CH2 frequency, `4` enable |
-| `$FE5E` | `NSE_VOL` | Attenuation, bits 3:0 |
-| `$FE5F` | `AUD_MASTER` | `3:0` master attenuation |
+| Addr | Name | Access | Description |
+|---|---|---|---|
+| `$FE50` | `SND_IDX` | W | Which byte of the voice array. Auto-increments on every write of `SND_DATA` |
+| `$FE51` | `SND_DATA` | W | ...and it |
 
-**Frequency.** Reference clock is 8.375 MHz ÷ 22 = 380.7 kHz.
+Two addresses rather than twenty-four, the idiom `PAL_IDX`/`PAL_DATA` and
+`SPR_IDX`/`SPR_DATA` already use. Both are write-only: the array's read
+port belongs to the engine.
 
-```
-f_out = 380682 / (2 × divider)
-```
+**Six bytes to a voice**, and a 16-bit word commits on its odd byte
+because this configuration of block RAM has no byte enables — the same
+arrangement `PAL_DATA` uses.
 
-| Divider | Frequency |
+| Byte | Contents |
 |---|---|
-| 4095 | 46.5 Hz |
-| 865 | 220.0 Hz (A3) |
-| 433 | 439.6 Hz (A4) |
-| 216 | 881.2 Hz (A5) |
-| 4 | 47.6 kHz |
+| 8v+0, 8v+1 | Phase increment `[15:0]` — the pitch |
+| 8v+2, 8v+3 | The engine's phase accumulator. Software leaves it alone |
+| 8v+4 | `3:0` volume |
+| 8v+5 | `7` noise, `6` enable |
 
-A 12-bit divider at this reference reaches down to 46.5 Hz —
-considerably better bass than the real SN76489 managed with 10 bits, and
-the same coarsening at high frequencies, which is part of the sound.
+**Frequency.** The phase accumulator is 16 bits and a sample is taken
+every 256 system clocks:
 
-**The divider off the system clock has now been changed twice, and each
-time the reference was what was preserved.** It was ÷64 of 25.125 MHz,
-then ÷32 of 12 MHz, and it is ÷22 of 8.375
-([D32](01-decisions.md#d32--the-system-clock-is-8375-mhz-a-third-of-the-pixel-clock)).
-The table above is a set of notes that have to stay reachable and in
-tune, and ~380 kHz lands them within 0.15 % while keeping the bass floor
-where it was. A round ÷32 would give 261.7 kHz, which is in tune too —
-the divider table is recomputed either way — but it is coarser at the
-top, where an 8-bit machine's music actually lives.
+```
+f_out = increment × 8375000 / 256 / 65536 = increment × 0.4993 Hz
+```
 
-An awkward divisor costs a comparator rather than a shift, which is the
-whole of the difference, and this engine is M7 and not built yet.
+| Increment | Frequency |
+|---|---|
+| 1 | 0.5 Hz |
+| 441 | 220.2 Hz (A3) |
+| 881 | 439.9 Hz (A4) |
+| 1763 | 880.3 Hz (A5) |
 
-**Output chain.** Four channels, each a signed ±volume square, summed
-into an 8-bit signed sample, then a first-order sigma-delta modulator
-running at the full 12 MHz system clock drives one FPGA pin. External RC
-low-pass and coupling capacitor produce line level. See
-[05-board.md](05-board.md).
+**0.5 Hz resolution everywhere**, where the 12-bit divider this replaced
+gave 46 Hz at the bottom of its range and 12 kHz steps at the top. Twelve
+bits of divider could not reach both ends; sixteen bits of increment
+reach the whole range at one resolution.
+
+**Noise** is a 16-bit LFSR shared by every voice that asks for it,
+advanced when that voice's phase wraps — so a noise voice's pitch
+register sets the noise rate exactly as it sets a square's frequency,
+rather than choosing between three fixed rates.
+
+**Output.** The eight voices sum into a signed 8-bit sample, and a
+first-order sigma-delta modulator running at the full 8.375 MHz drives
+one pin. 256 carries per sample is eight bits of resolution, which is all
+an eight-bit machine's music needs. **An external RC low-pass and a
+coupling capacitor are the DAC** — see [05-board.md](05-board.md).
+
+**No envelopes, no sweep, no filter.** A vblank handler doing envelopes
+is about twenty instructions and can make shapes no hardware ADSR offers.
+A voice is silenced by clearing its enable bit or its volume.
 
 ### 4.5 Timer — `$FE60`
 
@@ -404,6 +416,13 @@ works.
 
 ### 4.7 Loader — `$FE80`
 
+**This block is a build option and the shipping bitstream does not have
+it** — `cool8_soc #(.LOADER(0))`, which is the default. Both addresses
+read `$FF` without it, as an address nobody claims does. See
+[D40](01-decisions.md#d40--the-hardware-loader-is-a-build-option-and-it-is-off)
+for what it cost and what replaced it; build with `LOADER(1)` when a
+board will not boot and you need the bus-master read-back.
+
 The hardware loader is a bus master that can write RAM while the CPU is
 held off the bus. It is what makes software iteration a one-second
 `cat` rather than a bitstream rebuild — see
@@ -444,7 +463,9 @@ slot and its disk.
 | `$FE8A` | `FLS_ADDR_H` | R/W | bits 23:16 |
 | `$FE8B` | `FLS_DATA` | R | Read one byte and advance the address. **Read has a side effect.** |
 | `$FE8C` | `FLS_CTRL` | R/W | `0` stream open — write 1 to issue a read at `FLS_ADDR` and hold chip-select low; write 0 to close |
-| `$FE8D` | `FLS_STAT` | R | `0` busy, `1` stream open |
+| `$FE8D` | `FLS_STAT` | R | `0` busy, `1` stream open, `2` a write is running |
+| `$FE8E` | `FLS_WDATA` | W | The byte a program will write |
+| `$FE8F` | `FLS_WCTRL` | R/W | Write `1` to program `FLS_WDATA` at `FLS_ADDR`, `2` to erase its 4 KB sector, `4` to acknowledge a refusal. Reads `0` write running, `2` the last request was refused |
 
 **A read of `FLS_DATA` stalls until the byte is there.** A byte off the
 wire is sixteen system clocks and the CPU can ask for one in two, so
@@ -488,14 +509,35 @@ Opcode `$03` is specified to 50 MHz on these parts, so the limit here is
 the system clock and not the flash; a double-rate shifter would buy
 back the factor of two and nothing in the plan is waiting on it.
 
-**Reads only.** The SPI master issues opcode `$03` (READ) and nothing
-else. It has no write-enable, page-program or erase path *in hardware*,
-so no amount of software error can corrupt the bitstream living at
-offset 0. See
-[D16](01-decisions.md#d16--flash-access-is-read-only-in-hardware).
-`sim/test_flash.py` checks that promise against a device model that
-**fails the run** if it is ever sent an opcode other than `$03`, rather
-than against a comment.
+**Writes, above a floor that is checked in gates.** The machine can
+program a byte and erase a 4 KB sector, which is what makes it a computer
+that can save rather than only load — see
+[D42](01-decisions.md#d42--the-machine-can-write-its-own-flash-above-a-hardware-floor).
+
+**Nothing below `$100000` can be touched.** The comparison happens on the
+cycle the request arrives, *before an opcode has been chosen*: a request
+below the floor sets `FLS_WCTRL` bit 2 and does nothing else — no
+write-enable, no command, no chip select. There is no path in the gates
+from a bad request to a shifted opcode, so the bitstream at offset 0 is
+unreachable by construction rather than by discipline. The bitstream is
+about 104 KB against a 1 MB floor: an order of magnitude of margin.
+
+The master has five opcodes and no others — `$03` READ, `$06` WREN,
+`$02` PP, `$20` SE, `$05` RDSR. `sim/test_flash.py`'s device model
+**fails the run** on any opcode outside that set, on any program or erase
+below the floor, and on either without a preceding write-enable.
+`sim/mutate.py` carries the mutation that deletes the floor check and it
+is caught, which is what turns the promise into a test rather than a
+comment.
+
+A program or an erase is three SPI transactions — enable, command, then
+poll the status register until the part reports it has finished — and the
+poll is in gates because software would otherwise have to name the RDSR
+opcode, which is precisely what it must not be able to do. `FLS_STAT`
+bit 2 and `FLS_WCTRL` bit 0 say when it is running.
+
+**The upgrade is untested on hardware.** Back up the bitstream and try a
+high address first.
 
 Writing the flash is a host-side operation:
 
@@ -637,7 +679,7 @@ clobbers X — the exact spill pattern
 [D21](01-decisions.md#d21--four-general-registers-is-enough-confirmed-question-closed)
 measured. `VID_STRIDE` is a register, so software that would rather have
 the 4800-byte screen back writes 160 and pays the multiply. Reasoning in
-[D30](01-decisions.md#d30--the-text-map-stride-is-a-register-and-the-canonical-map-is-128x32).
+[D30](01-decisions.md#d30--the-text-map-stride-is-a-register-and-the-canonical-map-is-12832).
 
 Mode 1 is the same 8×16 glyphs **doubled horizontally only**, giving
 16×16 cells and the same 30 rows. It uses the real character set; there
@@ -819,9 +861,18 @@ This is the one place in the design that depends on block RAM coming up
 zeroed, which it does: EBR is initialised from the bitstream, unlike
 SPRAM.
 
-**Eight per line is a real limit.** Sprite 9 on a line is dropped and
-`SPR_CTRL` bit 1 records that it happened, so software can detect the
-condition rather than wonder. Multiplexing more than eight is done with
+**Eight per line is a real limit, and it is now a real eight.** It was
+five: a 16x16 sprite cost 38 of the 266 system clocks a scanline has, so
+the sixth onwards were cut off by the next line and vanished without
+saying anything. Pipelining the pattern fetch and halving the buffer
+sweep took a sprite to 25 clocks, and eight of them to 237 with 29 to
+spare —
+[D43](01-decisions.md#d43--the-sprite-engine-renders-eight-16x16-sprites-and-did-not-before)
+has the measurements.
+
+Sprite 9 on a line is dropped and `SPR_CTRL` bit 1 records that it
+happened, **and so is a render the next line aborts** — that used to be
+silent and is the reason the limit went unnoticed for two milestones. Multiplexing more than eight is done with
 the raster interrupt (§5.9), which is deliberate hardware rather than a
 reproduction of the VIC-II's DMA timing — see
 [00-goals.md](00-goals.md) non-goals.
@@ -1068,9 +1119,18 @@ auto-repeat work with no effort at all.
 
 `SW[0]` is wired to `NMI` as a **break button**: press it and a hung
 program lands in the monitor with all of its state intact, since an NMI
-pushes `PC` and `F` and changes nothing else. It is the escape hatch
-that makes a machine with no other input device debuggable, and it costs
-a debounce counter and an edge detector.
+pushes `PC` and `F` and changes nothing else. It is the escape hatch that
+makes a machine with no other input device debuggable, and it matters
+more since [D40](01-decisions.md#d40--the-hardware-loader-is-a-build-option-and-it-is-off)
+made the loader's `HALT` a build option.
+
+**It needs the line low for two continuous milliseconds, and the pin
+needs a pull-up** — both, and for the same reason. Nothing on the board
+holds pin 18, a floating iCE40 input oscillates, and a button that fires
+on the first low sample turns that into a continuous NMI. The counter
+resets on any high sample so noise never accumulates, and saturates so
+one press gives one interrupt. This was found on the board and could not
+have been found anywhere else.
 
 All IRQ sources OR together into the core's single `irq` input. The
 handler reads the per-peripheral status registers to find the cause.

@@ -8,8 +8,8 @@ Two things, in this order:
    sheet. Small enough to tape out, pleasant enough to write assembly
    for, regular enough that a C compiler is not a nightmare.
 2. **The Cool8 machine** — a complete retro home computer around that
-   CPU: RAM, VGA graphics, 4-channel audio, PS/2 keyboard. Nothing
-   else. No joystick ports, no cartridge slot, no disk.
+   CPU: RAM, VGA graphics, sound, PS/2 keyboard. Nothing else. No
+   joystick ports, no cartridge slot, no disk.
 
 The FPGA implementation is the working machine. The ASIC is the CPU
 core alone.
@@ -68,8 +68,10 @@ the area — within reason, and we write down why.
   reproduce someone else's DMA quirks.
 - **Pipelining, caches, superscalar anything.** Multicycle, non-pipelined.
 - **USB host.** PS/2 keyboard only.
-- **Storage.** No SD card, no disk, no filesystem in v1. Programs are
-  loaded over the on-board USB serial port.
+- **Storage.** No SD card and no disk. The 8 MB configuration flash is
+  the machine's storage and it can now be written as well as read
+  ([D42](01-decisions.md)); a filesystem on top of it is software and is
+  not built.
 - **An operating system.** A monitor/loader in ROM, that's it.
 
 ## Success criteria
@@ -97,18 +99,22 @@ blitter and three megahertz doing it — see
 
 | Resource | Available | Used |
 |---|---|---|
-| LUT4 | — | CPU **902**, rest of the SoC **688**, video **2041**, keyboard **160**, flash **180**, audio still to come |
-| Logic cells | 5280 | **5030 — 95 %** |
-| EBR (block RAM) | 30 × 4 Kbit | Boot ROM 8, font 8, sprite line buffer 5, background line buffer 2, palette 1, sprite descriptors 1, UART FIFO 1, keyboard FIFO 1 → **27** |
+| LUT4 | — | CPU **695**, video **1972**, flash **277**, keyboard **162**, UART **141**, sound **141**, the rest **249** |
+| Logic cells | 5280 | **5022 — 95 %** |
+| EBR (block RAM) | 30 × 4 Kbit | Boot ROM 8, font 8, sprite line buffer 5, background line buffer 2, palette 1, sprite descriptors 1, sound voices 1, UART FIFO 1, keyboard FIFO 1 → **28** |
 | SPRAM | 4 × 32 KB = 128 KB | 2 blocks = 64 KB CPU RAM; **2 blocks = 64 KB video RAM** ([D28](01-decisions.md)) — **4 of 4** |
 | DSP | 8 | **1** — `y × stride` for the pixel port |
 | PLL | 1 | **1** — 25.125 MHz for the raster, ÷3 for everything else ([D32](01-decisions.md)) |
-| Timing | — | closes at 8.375 MHz; `sclk` Fmax **10.81** |
+| Timing | — | closes at 8.375 MHz; `sclk` Fmax **11.2**, and 11.0-11.5 across placer seeds |
+
+The CPU is 695 LUT4 *in context*; on its own it is **902**, which is the
+number [03-microarchitecture.md §5.7](03-microarchitecture.md) quotes and
+the one to hold against other cores.
 
 **LUT4 is not the number that decides whether the part is full.** A
 logic cell is a LUT4 with its carry and flip-flop, and the measured
-conversion on this design is **3927 LUT4 placed as 5030 LC, a factor of
-1.28**. Quote LC when asking whether something fits.
+conversion on this design is about **1.28 LC per LUT4**. Quote LC when
+asking whether something fits.
 
 **EBR and logic cells are not interchangeable.** That is the sentence
 M6 turned into a decision: the boot ROM holds 3028 bytes in eight block
@@ -117,17 +123,29 @@ spend spare block RAM is on storage that would otherwise be flip-flops.
 [D37](01-decisions.md#d37--the-uart-receive-fifo-moves-into-block-ram-reversing-m4s-call)
 does exactly that and it is what made M6 fit.
 
-**What is left is 250 logic cells and three block RAMs**, against an
-audio engine budgeted at ~250 LUT4 — by a process this table's own
-history says to distrust, since every estimate in the video subsystem
-came in at about half. Believe the number when `nextpnr` has printed it
-and not before.
+**What is left is 258 logic cells and two block RAMs**, and the machine
+is complete against its original scope: CPU, memory, video, sprites,
+keyboard, serial, storage it can write, and sound.
 
-It was 204 cells and one block RAM until
-[D39](01-decisions.md), which found the sprite line buffer's palette
-bank worth two blocks and `PIX_DATA`'s read path worth about 39 LUT4 —
-and found two other "obvious" savings to be negative when they were
-actually built.
+Getting there cost the hardware loader, which is a build option now
+rather than a fixture ([D40](01-decisions.md)) — 376 logic cells that
+paid for the flash write path, without which the machine could load and
+could not save.
+
+Two lessons about estimates are worth keeping and they point opposite
+ways. Audio was budgeted at ~250 LUT4 for four voices and came in at
+**141 for eight** ([D41](01-decisions.md)), because the shape was wrong
+rather than the arithmetic. And two of the five "obvious" area savings in
+[D39](01-decisions.md) measured *negative* once they were built — a
+removal probe measures the ceiling, not the change. Believe the number
+when `nextpnr` has printed it, in either direction.
+
+**The machine has now run on real silicon.** It boots, clears RAM, brings
+up the monitor and answers over the serial console: `D F000` returns the
+boot ROM's first bytes, `2F 60 00 02`, which is the `LDW X,#$0200` the
+reset vector points at. Simulation said all of that first and was right —
+but the board is where the missing pull-up on `SW[0]` turned up, and no
+testbench was ever going to find it ([D40](01-decisions.md)).
 
 **Important:** iCE40 SPRAM cannot be initialised from the bitstream.
 At power-on the 64 KB of main RAM contains garbage. The boot ROM lives

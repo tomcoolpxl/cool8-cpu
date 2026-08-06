@@ -67,4 +67,9 @@ set_io flash_miso 14
 set_io audio      3
 
 # SW[0] — the break button, NMI. P4_4
-set_io sw0        18
+#
+# **The pull-up is not optional.** Nothing on the board holds this pin,
+# and an iCE40 input left floating oscillates — which is an NMI storm,
+# not a quiet nothing. cool8_top's counter is the second half of the
+# same defence.
+set_io -pullup yes sw0 18

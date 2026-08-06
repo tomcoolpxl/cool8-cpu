@@ -54,7 +54,8 @@ The design must not drive them during configuration; `nextpnr` and
 ### Trap 2 — PMOD4 is the four tactile switches
 
 `P4_1…P4_4` are pins 21, 20, 19, 18, which are `SW[3]…SW[0]`. Fine as
-buttons, unavailable as a PMOD.
+buttons, unavailable as a PMOD. **`SW[0]` is spoken for** as the NMI
+break button, and it needs `set_io -pullup yes` — see above.
 
 ### The result
 
@@ -65,9 +66,18 @@ signals. What's left is exactly enough, and no more:
 |---|---|---|
 | `PS2_CLK` | 27 | `P3_3` |
 | `PS2_DAT` | 25 | `P3_4` |
-| `AUDIO_L` | 3 | `P1_3` |
-| `AUDIO_R` | 48 | `P1_4` |
-| spare | 47, 2 | `P1_9`, `P1_10` |
+| `audio` | 3 | `P1_3` — one pin, mono, 1-bit sigma-delta |
+| spare | 48, 47, 2 | `P1_4`, `P1_9`, `P1_10` |
+
+**Sound is one pin, not two.** [D41](01-decisions.md#d41--the-sound-engine-is-one-datapath-walked-eight-times-not-four-dividers)'s
+engine mixes its eight voices to a single signed sample, so a stereo pair
+would mean two mixers rather than two pins. `P1_4` is free again.
+
+**`SW[0]` is an input now, with a pull-up.** Pin 18, `P4_4`, the break
+button of [§6](04-system.md). The pull-up is in the `.pcf` and is not
+optional — nothing on the board holds that pin, a floating iCE40 input
+oscillates, and the first version of this produced a machine taking NMIs
+continuously. See [D40](01-decisions.md#d40--the-hardware-loader-is-a-build-option-and-it-is-off).
 
 ---
 
@@ -104,9 +114,11 @@ set_io vga_vs     31     # P3_2
 set_io ps2_clk    27     # P3_3
 set_io ps2_dat    25     # P3_4
 
-# audio — sigma-delta, via RC filter
-set_io audio_l     3     # P1_3
-set_io audio_r    48     # P1_4
+# audio — one pin, mono, sigma-delta via the RC filter of section 4.2
+set_io audio       3     # P1_3
+
+# SW[0] — the break button, NMI. The pull-up is not optional; see 4.3
+set_io -pullup yes sw0 18
 
 # iCELink USB serial console — also carries the hardware loader
 set_io uart_rx     4
@@ -119,10 +131,8 @@ set_io flash_mosi 17
 set_io flash_miso 14
 
 # buttons and LED
-set_io sw[0]      18     # NMI break button — debounced, edge-triggered
-set_io sw[1]      19
-set_io sw[2]      20
-set_io sw[3]      21
+# SW[1..3] are unassigned; cool8_top has no port for them and nextpnr
+# rejects a constraint for a port that does not exist.
 set_io led_r      40
 set_io led_g      41
 set_io led_b      39
@@ -218,27 +228,46 @@ PS/2 mini-DIN female, looking into the socket:
 | 5 | CLK |
 | 6 | *(not connected)* |
 
-### 4.2 Audio output filter
+### 4.2 Audio output filter — and it is the whole DAC
 
-One-bit sigma-delta straight off an FPGA pin, per channel:
+**There is no DAC on the board and none to buy.** The FPGA pin does what
+every FPGA pin does: 0 V or 3.3 V, nothing between. `cool8_snd`'s
+first-order sigma-delta modulator runs at the full 8.375 MHz and puts the
+carry of an 8-bit accumulator on the pin, so the *average* of that pin
+over any short window is the sample. The resistors and capacitors below
+take that average. **They are the digital-to-analogue conversion**, and
+until they are built the pin is a square wave carrying no audible signal.
+
+One pin, mono — the engine mixes its eight voices to a single signed
+sample, so a second channel would be a second mixer rather than a second
+pin ([D41](01-decisions.md#d41--the-sound-engine-is-one-datapath-walked-eight-times-not-four-dividers)).
+`P1_4` is free.
 
 ```
-   FPGA ──┬── 1k ──┬── 1k ──┬── 10µF ──┬──── tip (line out)
-          │        │        │           │
-          │      10nF     10nF        10k
-          │        │        │           │
-         GND      GND      GND         GND
+   P1_3 ──┬── 1k ──┬── 1k ──┬── 10µF ──┬──── tip (line out)
+          │        │        │          │
+        10nF     10nF      ---        10k
+          │        │                   │
+         GND      GND                 GND
 ```
 
-Two RC stages at 1 kΩ / 10 nF (`fc = 1/(2πRC) ≈ 15.9 kHz` each), then a
-coupling capacitor to strip the DC bias and a 10 kΩ drain resistor. The
-sigma-delta noise sits up at 25 MHz, so this is more filtering than
-strictly necessary and it keeps the treble.
+Two RC stages at 1 kΩ / 10 nF — `fc = 1/(2πRC) ≈ 16 kHz` each — which is
+above anything the machine can play and two and a half decades below the
+switching rate, so the carrier is gone and the treble is not.
 
-Duplicate for the second channel. **Do not** connect headphones or a
-speaker directly to an FPGA pin. For a speaker, feed this into a
-PAM8302 (mono) or PAM8403 (stereo) module with its own supply and
-decoupling.
+**The coupling capacitor is not optional.** The modulator cannot emit a
+negative voltage, so the sample is offset to the middle of the range and
+**silence sits at 1.65 V**, not at zero. The series capacitor is what
+turns that into 0 V at the far end, which is what a line input expects.
+The 10 kΩ drains it when nothing is plugged in.
+
+**Do not** connect headphones or a speaker directly to an FPGA pin —
+that is a short across an output driver. For a speaker, feed the filter
+into a PAM8302 module with its own supply and decoupling.
+
+If it sounds thin, raise the capacitors to 22 nF and lose a little top
+end for more carrier rejection. If it hisses, the corner is too high or
+the ground return is poor.
 
 ---
 
@@ -252,13 +281,13 @@ decoupling.
 | — | PS/2 keyboard | 1 | Have it |
 | Q1, Q2 | BSS138 (or a 2-channel BSS138 level-shifter breakout) | 2 | |
 | R1–R4 | 10 kΩ | 4 | Level shifter pull-ups |
-| R5–R8 | 1 kΩ | 4 | Audio filter, 2 per channel |
-| R9, R10 | 10 kΩ | 2 | Audio bias drain |
-| C1–C4 | 10 nF ceramic | 4 | Audio filter |
-| C5, C6 | 10 µF electrolytic | 2 | Audio coupling — watch polarity |
+| R5, R6 | 1 kΩ | 2 | Audio filter — **this is the DAC**, see §4.2 |
+| R7 | 10 kΩ | 1 | Audio bias drain |
+| C1, C2 | 10 nF ceramic | 2 | Audio filter |
+| C3 | 10 µF electrolytic | 1 | Audio coupling — watch polarity |
 | J1 | PS/2 mini-DIN 6 socket | 1 | |
-| J2 | 3.5 mm stereo jack | 1 | |
-| — | PAM8302 or PAM8403 module | 1 | Optional, for a speaker |
+| J2 | 3.5 mm jack | 1 | Mono; the engine has one channel |
+| — | PAM8302 module | 1 | Optional, for a speaker |
 
 Everything except the VGA PMOD is a few euro of passives.
 
@@ -281,13 +310,13 @@ than reports.
 
 | | |
 |---|---|
-| Logic cells | 5076 / 5280 — 96 % |
-| EBR | 29 / 30 — boot ROM, font, palette, line buffers, sprites, two FIFOs |
+| Logic cells | 5022 / 5280 — 95 % |
+| EBR | 28 / 30 — boot ROM, font, palette, line buffers, sprites, sound, two FIFOs |
 | SPRAM | 4 / 4 — 64 KB main RAM and 64 KB video RAM |
 | DSP | 1 / 8 — `y × stride` for the pixel port |
 | PLL | 1 / 1 |
-| I/O | 26 / 39 |
-| Timing | closes at 8.375 MHz, `sclk` Fmax 10.81 |
+| I/O | 28 / 39 — `audio` and `sw0` are the two M7 added |
+| Timing | closes at 8.375 MHz, `sclk` Fmax 11.2 |
 | Bitstream | 104 KB |
 
 **The clock is 8.375 MHz and not 12, and the part decided that.** The

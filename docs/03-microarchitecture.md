@@ -642,8 +642,13 @@ a second timing model.
 `rtl/soc/cool8_soc.v` assembles the machine — core, memory, UART,
 loader, keyboard, flash and the video subsystem — and decodes
 `$FE00-$FEFF` on the **bus**, ahead of `cool8_mem` and whoever the
-master is. **3927 LUT4 and 1582 flip-flops** for the whole SoC, with 27
-EBR, 4 SPRAM and one DSP block. It was 1636 LUT4 and 8 EBR before M5.
+master is. **3754 LUT4 and 1577 flip-flops** for the whole SoC, with 28
+EBR, 4 SPRAM and one DSP block — **5022 logic cells of the 5280 the part
+has**, closing at 11.2 MHz. It was 1636 LUT4 and 8 EBR before M5.
+
+That is with the hardware loader out
+([D40](01-decisions.md#d40--the-hardware-loader-is-a-build-option-and-it-is-off))
+and the sound engine and the flash write path in.
 
 The 16-byte receive FIFO is a block RAM, and it was flip-flops until M6.
 Refusing the inference cost a measured 109 LUT4 and 123 flip-flops and

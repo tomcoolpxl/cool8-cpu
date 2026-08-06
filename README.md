@@ -22,9 +22,9 @@ the real font ROM; `python sim/test_video.py` regenerates it.*
 | **CPU** | COOL8 — 8-bit, 16-bit address space, 511 encodings, four general registers and two 16-bit pointers. 902 LUT4 |
 | **Memory** | 64 KB RAM, plus a separate 64 KB of video RAM |
 | **Video** | 640×480 VGA. Text, tiles and bitmaps from one engine; 32 sprites, 8 per scanline; 256-colour palette from 4096 |
-| **Sound** | Planned |
+| **Sound** | 8 voices — squares and noise, 4-bit volume, 1-bit sigma-delta out |
 | **Input** | PS/2 keyboard, and a serial console that works as its peer |
-| **Storage** | 8 MB SPI flash, read-only today |
+| **Storage** | 8 MB SPI flash, read and write, with the bitstream protected in hardware |
 | **Board** | iCESugar v1.5 — Lattice iCE40UP5K, 5280 logic cells |
 
 It boots to a monitor in ROM: examine and change memory, disassemble, run
@@ -59,18 +59,37 @@ board.
 
 ## Load a program
 
+Write it into the flash from your PC, then load it from the monitor:
+
+```bash
+icesprog -o 0x100000 -w myprog.bin
+```
+```
+*L 0200 2000
+*G 0200
+```
+
+Or talk to the monitor directly over the serial console at 115200 —
+`D` to dump, `E` to enter bytes, `U` to unassemble, `?` for the list.
+
+<details>
+<summary>The hardware loader, which is a build option</summary>
+
+There is also a bus master in the gates that can write RAM with the CPU
+held in reset — it works with no software on the machine at all, and can
+read 64 KB back while a program runs without that program noticing.
+
+It costs 376 logic cells and **is not in the default build**. Its
+justification expired once the ROM, the monitor and the flash reader
+existed, and the cells paid for the flash write path instead. Build with
+`cool8_top #(.LOADER(1))` when a board will not boot and you need it.
+
 ```bash
 python tools/cool8load.py --port COM3 --go 0x0200 myprog.bin
+python tools/cool8screen.py --port COM3   # the machine's screen, on your PC
 ```
 
-The loader is a state machine in the FPGA rather than a program in ROM,
-so it works with no software on the machine and with the CPU halted. A
-bus grant leaves all architectural state untouched, so it can also read
-all 64 KB back while a program runs.
-
-```bash
-python tools/cool8screen.py --port COM3   # the machine's text screen, on your PC
-```
+</details>
 
 ---
 
@@ -89,9 +108,10 @@ python tools/cool8screen.py --port COM3   # the machine's text screen, on your P
                   │     ├── cool8_spram .... 64 KB over 2 x SB_SPRAM256KA
                   │     └── cool8_rom ...... 4 KB boot ROM in EBR
                   ├── cool8_uart ...... 8N1, divider in a register
-                  ├── cool8_loader .... bus master on the end of the wire
+                  ├── cool8_snd ....... 8 voices, one datapath
                   ├── cool8_ps2 ....... keyboard, raw Set 2 scancodes
-                  ├── cool8_flash ..... the config flash as mass storage
+                  ├── cool8_flash ..... the config flash, read and write
+                  ├── cool8_loader .... optional: a bus master, LOADER(1)
                   └── cool8_video ..... $FE10-$FE3F, and the VGA pins
                         ├── cool8_vga ..... the 640x480 raster
                         ├── cool8_vregs ... the mode, and the presets
@@ -110,11 +130,11 @@ python tools/cool8screen.py --port COM3   # the machine's text screen, on your P
 **What the part holds**, placed and routed:
 
 ```
-ICESTORM_LC      5030 / 5280   95 %
-ICESTORM_RAM       27 / 30     90 %
+ICESTORM_LC      5022 / 5280   95 %
+ICESTORM_RAM       28 / 30     93 %
 ICESTORM_SPRAM      4 / 4     100 %
 ICESTORM_DSP        1 / 8      12 %
-sclk closes at 11.0-11.5 MHz against a constraint of 8.375
+sclk closes at 11.2 MHz against a constraint of 8.375
 ```
 
 ## The CPU
@@ -167,7 +187,10 @@ they differ only in what an item is and where it is read from.
 
 Sprites use a separate line buffer merged at the pixel stage, so they are
 independent of the background mode and work over text as readily as over
-a bitmap. 32 descriptors, 8 per scanline, 8×8 and 16×16, 4 bpp.
+a bitmap. 32 descriptors, 8 per scanline, 8×8 and 16×16, 4 bpp — and
+eight 16×16 sprites really do fit in a scanline, which took a harness
+that counts clocks to establish and a pipelined pattern fetch to make
+true.
 
 Scrolling moves the origin rather than the memory. The text map is 32
 rows with 30 displayed and the row pointer wraps in hardware, so
@@ -178,7 +201,31 @@ computed in one of the FPGA's multipliers.
 
 ## Sound
 
-Planned. Nothing is built yet.
+Eight voices: square waves and noise, 4-bit volume each, mixed to a 1-bit
+sigma-delta output on one pin with an RC low-pass as the DAC.
+
+It is one datapath walked eight times rather than eight of anything. A
+sample is taken every 256 system clocks and a voice needs four of them,
+so there is one phase accumulator, one adder and one mixer, and the voice
+state lives in a single block RAM. **141 LUT4 for eight voices**, where
+four parallel dividers were budgeted at 250.
+
+Pitch is a 16-bit phase increment — 0.5 Hz resolution across the whole
+range, rather than a divider's coarse steps at the top. Envelopes are
+software; a vblank handler does them in about twenty instructions and can
+make shapes no hardware ADSR offers.
+
+## Storage
+
+The 8 MB configuration flash is the machine's disk, and it can be written
+as well as read — so a program running on COOL8 can save what it makes.
+
+**The bitstream cannot be reached.** Every program and erase is compared
+against `$100000` in gates, on the cycle the request arrives and before
+an opcode has been chosen, so a request below the floor sets a flag and
+issues nothing at all. The SPI master has five opcodes and no others, and
+the test suite's device model fails the run if it is ever sent something
+outside that set or a write below the floor.
 
 ---
 
@@ -234,15 +281,23 @@ specification.
 | Programming | Drag and drop onto the iCELink drive |
 
 The 8 MB configuration flash doubles as mass storage — the FPGA releases
-its pins to user logic once configured. The SPI master issues read
-opcodes only, so software cannot corrupt the bitstream it boots from.
+its pins to user logic once configured.
 
 ## Status
 
-The machine boots, puts text on screen, accepts typing, loads from flash
-and runs the monitor. Audio is not built. The VGA and PS/2 connectors are
-still to be made, so the image above is rendered from simulation rather
-than captured from a screen.
+**It runs on real hardware.** It boots, clears RAM, brings up the monitor
+and answers on the serial console — `D F000` returns the boot ROM's first
+bytes.
+
+The parts still to be built are external: the VGA PMOD, the PS/2 level
+shifter, and the RC filter on the audio pin. So video, keyboard and sound
+are verified against pixel-exact and cycle-exact models rather than
+against a screen and a speaker, and the image above is rendered from
+simulation.
+
+```
+ICESTORM_LC   5022 / 5280   258 logic cells and 2 block RAMs left
+```
 
 ## Licence
 

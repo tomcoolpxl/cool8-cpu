@@ -1049,6 +1049,8 @@ ICESTORM_SPRAM       4 / 4     100 %
 sclk closes at 10.81 MHz against a constraint of 8.375
 ```
 
+*(That is the M6 figure. M7 changed it — see below.)*
+
 **204 logic cells and one block RAM are left**, and M7's audio was
 budgeted at ~250 LUT4 by a process this project has now watched come in
 at twice its estimate four times. That is the next thing the gate will
@@ -1058,50 +1060,68 @@ parameter, and `PIX_*` is 199 LUT4 that
 [D34](01-decisions.md#d34--the-video-engine-ships-with-sprites-and-a-pixel-port-and-no-blitter)
 already argued is optional.
 
-## M7 — Audio
+## M7 — Sound, storage, and the board ✅
 
-- [ ] Three tone channels + noise, sigma-delta output, RC filter built
+- [x] Eight voices, squares and noise, sigma-delta output —
+      [`rtl/soc/cool8_snd.v`](../rtl/soc/cool8_snd.v), **141 LUT4, 131
+      flip-flops and 1 EBR**
+      ([D41](01-decisions.md#d41--the-sound-engine-is-one-datapath-walked-eight-times-not-four-dividers))
+- [x] The machine can write its own flash, above a hardware floor at
+      `$100000` ([D42](01-decisions.md#d42--the-machine-can-write-its-own-flash-above-a-hardware-floor))
+- [x] The `SW[0]` break button, with the pull-up the board turned out to
+      need ([D40](01-decisions.md#d40--the-hardware-loader-is-a-build-option-and-it-is-off))
+- [x] Eight 16x16 sprites on a line, which had never actually worked
+      ([D43](01-decisions.md#d43--the-sprite-engine-renders-eight-16x16-sprites-and-did-not-before))
+- [ ] The timer at `$FE60`, still the last unbuilt register block
 - [ ] A demo that draws something and plays something
-- [ ] The timer at `$FE60`, which is the last unbuilt register block
+- [ ] RC low-pass and coupling capacitor on `P1_3`, and the VGA and PS/2
+      connectors — hardware, and the last thing between this and a
+      machine on a desk
 
-The graphics modes, raster interrupts and the drawing engine moved into
-M5 when [D28–D31](01-decisions.md) settled the video architecture; what
-is left here is sound.
+### 🚩 The fit gate, and how it was answered
 
-### 🚩 The gate this one has to pass first: does it still fit?
+**It did not fit.** The sound engine took the design to 5320 logic cells
+against 5280, and then to 5301 after the obvious trims — the first time
+in the project `nextpnr` refused outright.
 
-**250 logic cells and three block RAMs**, after
-[D39](01-decisions.md). Audio was budgeted at ~250 LUT4, and this
-project has now watched an estimate come in at about half four times
-running — the video subsystem three times
-([D34](01-decisions.md#d34--the-video-engine-ships-with-sprites-and-a-pixel-port-and-no-blitter)),
-and M6's two blocks at 340 LUT4 against ~220. Assume it does not fit and
-plan what to spend, in this order:
+What paid for it was **the hardware loader, 376 cells**
+([D40](01-decisions.md#d40--the-hardware-loader-is-a-build-option-and-it-is-off)),
+which is a build option now rather than a fixture. Its justification had
+expired: it existed because at M4 there was no ROM, no monitor and no
+flash reader, and all three exist.
 
-1. **The boot ROM.** 3029 bytes in eight EBR. Shrinking the monitor to
-   2 KB frees four blocks — but block RAM is not logic cells
-   ([D37](01-decisions.md#d37--the-uart-receive-fifo-moves-into-block-ram-reversing-m4s-call)),
-   so this only helps if there is more flip-flop storage to move into
-   it. There is: the loader's state and the video registers.
-2. **Sprites *per line*, not the descriptor count.** Eight to four is a
-   measured **−46 LUT4 and −44 flip-flops**. Cutting descriptors 32 → 16
-   was the lever this list used to name and it is **+4 LUT4** — it saves
-   nothing, because the cost is the per-line machinery and the line
-   buffer rather than the descriptors.
-3. **`PIX_*`.** Measured at **218 LUT4** and one DSP if removed
-   outright, and D34 already argues it is the optional part of what
-   survived the blitter.
-4. **The hardware loader**, which is the big one nobody had priced:
-   **416 logic cells**, 8 % of the part. What it costs to give up is
-   debugging a machine whose CPU is wedged
-   ([D15](01-decisions.md#d15--the-loader-is-hardware-not-a-rom-monitor)),
-   and the monitor plus the `SW[0]` NMI break button cover most of the
-   rest.
+The other lever the M6 list named — sprite descriptors 32 → 16 — **saves
+nothing**, measured at +4 LUT4. The cost is the per-line machinery and
+the line buffer, not the descriptor count. Sprites *per line* is the one
+that pays, and it was not needed.
 
-Write the audio engine, measure it, and then choose — the same order M5
-and M6 used, and the reason both of them landed.
+**Where it landed:**
 
-At this point the machine is finished as originally scoped.
+```
+ICESTORM_LC     5022 / 5280   95 %
+ICESTORM_RAM      28 / 30     93 %
+ICESTORM_SPRAM     4 / 4     100 %
+ICESTORM_DSP       1 / 8      12 %
+sclk closes at 11.20 MHz against a constraint of 8.375
+```
+
+258 cells and two block RAMs left.
+
+### The machine ran
+
+**It boots on real silicon.** Power-on reset, PLL lock, 60 KB of SPRAM
+cleared, the monitor answering on the serial console: `?` lists the
+commands and `D F000` returns `2F 60 00 02`, the `LDW X,#$0200` the reset
+vector points at.
+
+Everything simulation predicted was right, and the board still found one
+thing no testbench could have: `SW[0]` had no pull-up, floated,
+oscillated, and produced a machine taking NMIs continuously. Every
+simulation of a floating pin is a decision about what to drive it with.
+
+Not yet exercised on hardware: video (no VGA PMOD), the keyboard (no
+level shifter), sound (no RC filter), and the flash write path — which
+should be tried at a high address with the bitstream backed up.
 
 ## M8 — TinyTapeout — **shelved**
 

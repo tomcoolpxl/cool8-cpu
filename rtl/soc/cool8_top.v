@@ -123,34 +123,45 @@ module cool8_top #(
 
     // ------------------------------------------------------ break button
     //
-    // Fire once on a press and then ignore the switch for 62 ms, which is
-    // longer than any contact bounces for. That is cheaper than a
-    // stability counter and it is the behaviour a break button wants
-    // anyway: one NMI per press, however untidily the contact closes.
+    // **Stability, not a hold-off.** The first version of this fired the
+    // moment the pin read low and then ignored it for 62 ms, which is the
+    // usual way to absorb contact bounce — and it is the wrong way round
+    // for a pin that might not be connected to anything. An iCE40 input
+    // with nothing holding it floats, a floating input oscillates, and
+    // that version fired an NMI on every oscillation it caught. On a real
+    // board it produced a machine taking interrupts continuously.
     //
-    // The core's NMI input is edge sensitive already, so a single-cycle
-    // pulse is the whole interface.
+    // So the line has to be **continuously low for two milliseconds**
+    // before it counts as a press. The counter resets on any high sample,
+    // so noise never accumulates; it saturates at the top, so one press
+    // gives exactly one NMI however untidily the contact closes; and it
+    // cannot fire again until the button is released.
     //
-    // **The polarity is the one thing here not checked against hardware.**
-    // The iCESugar's tactile switches pull to ground, so a press is a low
-    // — the same assumption, and the same caveat, as LED_ACTIVE_LOW.
+    // The pin also carries a pull-up now — see board/icesugar.pcf. Both
+    // are needed: the pull-up makes an unconnected pin read as released,
+    // and the counter makes a noisy one harmless.
+    //
+    // docs/04-system.md section 6: press it and a hung program lands in
+    // the monitor with all of its state intact, because an NMI pushes PC
+    // and F and changes nothing else.
 
     reg [1:0]  sw_sync;
-    reg [18:0] brk_hold;         // 2^19 / 8.375 MHz = 62 ms
+    reg [13:0] sw_low;           // 2^14 / 8.375 MHz = 1.96 ms
     reg        brk_nmi;
 
     always @(posedge sclk) begin
         if (!rst_n) begin
-            sw_sync  <= 2'b11;
-            brk_hold <= 19'd0;
-            brk_nmi  <= 1'b0;
+            sw_sync <= 2'b11;
+            sw_low  <= 14'd0;
+            brk_nmi <= 1'b0;
         end else begin
             sw_sync <= {sw_sync[0], sw0};
             brk_nmi <= 1'b0;
-            if (|brk_hold)         brk_hold <= brk_hold - 1'b1;
-            else if (!sw_sync[1]) begin
-                brk_nmi  <= 1'b1;
-                brk_hold <= {19{1'b1}};
+            if (sw_sync[1]) begin
+                sw_low <= 14'd0;                   // released, or noise
+            end else if (~&sw_low) begin
+                sw_low  <= sw_low + 1'b1;
+                brk_nmi <= (sw_low == {{13{1'b1}}, 1'b0});
             end
         end
     end
