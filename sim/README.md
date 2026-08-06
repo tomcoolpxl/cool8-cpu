@@ -56,6 +56,7 @@ python sim/test_flash.py     # the SPI flash reader
 python sim/test_monitor.py   # type at the machine and it answers
 python sim/test_snd.py       # the sound engine, on a meter and a scope
 python sim/test_vm.py        # the emulator against the RTL's own frames
+python sim/bench_lang.py     # M10: native codegen against stack bytecode
 python sim/mutate.py         # 42 deliberate bugs; 41 have to be caught
 python sim/synth.py
 python sim/timing.py
@@ -73,6 +74,13 @@ once in Python, deliberately. Sharing it would turn the comparison into
 a test of the renderer against itself; writing it twice means a
 misunderstanding of what a register means has to be made identically in
 two languages to go unnoticed.
+
+`bench_lang.py` runs no Verilog either. It is a measurement rather than
+a test: six benchmarks emitted by two code generators and counted on
+`cool8emu`, which is what OS_PLAN's M10 gate is. It exits non-zero if
+native code stops being 3x the bytecode model, so a change to the
+instruction set that quietly undermined the language decision would be
+noticed.
 
 `test_soc.py` assembles `asm/soc_*.asm` into `build/` on every run and
 `cool8_soc_tb` loads them over the wire, so the program the CPU executes
