@@ -71,6 +71,12 @@ module cool8_soc_boot_tb;
         .pclk(pclk), .prst_n(rst_n),
         .rgb(), .hsync_n(), .vsync_n(),
         .uart_rx(host_tx), .uart_tx(uart_tx),
+        // Idle high, which is what the pull-ups give when nothing is
+        // plugged in. Left floating they are x, and x on the PS/2
+        // clock reaches the filter and then the whole block.
+        .ps2_clk_i(1'b1), .ps2_dat_i(1'b1),
+        .ps2_clk_oe(), .ps2_dat_oe(),
+        .spi_cs_n(), .spi_sck(), .spi_mosi(), .spi_miso(1'b1),
         .led(led),
         .irq(1'b0), .nmi(1'b0),
         .o_halted(o_halted)
@@ -231,25 +237,40 @@ module cool8_soc_boot_tb;
         repeat (4) @(posedge clk);
         rst_n = 1'b1;
 
+        // **The boot ROM no longer halts.** Until M6 its last act was a
+        // HALT, because there was nothing to go to; now it falls into
+        // the monitor, which runs in the ROM window where it stands
+        // (D36). So the event that says "the boot sequence finished" is
+        // the monitor's prompt arriving on the wire, and that is a
+        // stronger claim than the old one: reaching it means the ROM
+        // ran, the console came up, and the CPU is executing ROM code
+        // out of the overlay rather than stopped in it.
         n = 0;
-        while (!o_halted && n < 2000000) begin
+        got8 = 8'h00;
+        while (got8 !== 8'h2A && n < 4000000) begin      // '*'
+            if (rxq_rd != rxq_wr) begin
+                got8 = rxq[rxq_rd];
+                rxq_rd = rxq_rd + 1;
+            end
             @(posedge clk);
             n = n + 1;
         end
         halt_at = n;
 
-        chk("the boot ROM ran to its HALT", {31'd0, o_halted}, 32'd1);
+        chk("the monitor prompted", {24'd0, got8}, {24'd0, 8'h2A});
         chk("it fetched out of the ROM window", {31'd0, rom_fetched}, 32'd1);
         chk("the LED is blue", {29'd0, led}, 32'd1);
-        $display("  reset to HALT: %0d clocks, %0d ms at 8.375 MHz",
+        $display("  reset to the monitor prompt: %0d clocks, %0d ms at 8.375 MHz",
                  halt_at, halt_at / 8375);
 
-        // A halted CPU still grants the bus — which is how software
-        // arrives at M4, and the only reason the machine is reachable at
-        // all with a boot ROM this small.
+        // The CPU is *running* now, spinning on UART_STAT waiting for a
+        // key. A PING answered from here is D27 holding against the
+        // busiest reader of the serial port the machine has — the old
+        // version of this check ran against a halted CPU, which is the
+        // easy case.
         send_cmd(C_PING, 16'd0, 16'd0);
         get_reply(rxbyte);
-        chk("PING at 115200 on the default divider",
+        chk("PING while the monitor is running",
             {24'd0, rxbyte}, {24'd0, VERSION});
 
         send_cmd(C_HALT, 16'd0, 16'd0);

@@ -32,6 +32,7 @@ module cool8_boot_tb;
     integer      errors, checks, i, cycle, n_bad;
     reg          verbose;
     reg [1023:0] vcdfile, romfile;
+    reg [15:0]   stopat;            // where the boot hands over, +stopat=
     reg [7:0]    byte_at;
 
     reg          bootram;
@@ -134,6 +135,46 @@ module cool8_boot_tb;
         end
     endtask
 
+    // The boot ROM used to end on a HALT, because there was nothing to
+    // go to. Since M6 it falls into the monitor, and the monitor cannot
+    // run here: this testbench is a core and a memory with **no I/O
+    // page**, so $FE70 is uninitialised SPRAM and the console reads
+    // whatever the part happened to come up with. Letting it run does
+    // not fail cleanly either — it scrolls the screen on garbage input
+    // and the banner this test checks for goes with it.
+    //
+    // So the stopping point is the handover itself, which is a better
+    // event than the HALT ever was: everything asserted below is true at
+    // exactly the instant the boot sequence finishes, and not one
+    // instruction later. The address comes in as a plusarg because the
+    // symbol belongs to the assembler, not to this file.
+    task wait_pc;
+        input [511:0] name;
+        input [15:0]  target;
+        input integer limit;
+        integer k;
+        begin
+            k = 0;
+            while ((u_cpu.pc !== target) && k < limit) begin
+                @(posedge clk);
+                k = k + 1;
+            end
+            checks = checks + 1;
+            if (u_cpu.pc !== target) begin
+                errors = errors + 1;
+                $display("FAIL %0s: never reached $%04h in %0d clocks (PC=%04h)",
+                         name, target, limit, u_cpu.pc);
+            end else begin
+                $display("  %0s after %0d clocks", name, k);
+                // Nothing below consumes simulation time, but freezing
+                // the CPU here makes that a property of the testbench
+                // rather than of the order somebody happens to add a
+                // check in.
+                hold_cpu <= 1'b1;
+            end
+        end
+    endtask
+
     task poke;                       // write one byte with the CPU held off
         input [15:0] a;
         input [7:0]  d;
@@ -156,6 +197,11 @@ module cool8_boot_tb;
             $finish;
         end
         $readmemh(romfile, u_mem.u_rom.rom);
+
+        if (!$value$plusargs("stopat=%h", stopat)) begin
+            $display("FAIL: no +stopat= given");
+            $finish;
+        end
 
         if ($value$plusargs("vcd=%s", vcdfile)) begin
             $dumpfile(vcdfile);
@@ -184,9 +230,10 @@ module cool8_boot_tb;
         // Clearing 60 KB of RAM is nearly all of this, and the clock
         // count is worth printing rather than just bounding: it is the
         // machine's power-on latency, 365k clocks or 30 ms at 12 MHz.
-        wait_halt("the boot ROM ran to its HALT", 2_000_000);
+        wait_pc("the boot ROM handed over to the monitor", stopat,
+                2_000_000);
 
-        chk("it halted inside the ROM", {16'd0, u_cpu.pc & 16'hF000},
+        chk("and did it from inside the ROM", {16'd0, stopat & 16'hF000},
             32'h0000_F000);
         chk("the ROM was fetched from", {31'd0, rom_fetched}, 32'd1);
 
@@ -201,7 +248,13 @@ module cool8_boot_tb;
         n_bad = 0;
         for (i = 0; i < 16'hF000; i = i + 1) begin
             byte_at = ram_byte(i[15:0]);
+            // $EF43 is the monitor's cursor row, which the boot code
+            // sets to 3 on its way out so the console starts below the
+            // banner rather than on top of it. Like the banner itself,
+            // it is written after the clear and a zero there would mean
+            // the handover never happened.
             if ((byte_at !== 8'h00) &&
+                (i !== 16'hEF43) &&
                 !(i >= 16'h8104 && i < 16'h8104 + 16'd10)) begin
                 if (n_bad < 4)
                     $display("FAIL $%04h is %02h, not cleared", i[15:0],

@@ -324,8 +324,12 @@ Four tests, ordered so a failure localises:
 3. **The machine booting**, from power-on, with SPRAM undefined exactly
    as the part is — so the CPU cannot get anywhere at all unless its
    reset vector really came out of the ROM. It clears 60 KB, installs the
-   vectors *through* its own read window, and halts. Reset to HALT is
-   **365,036 clocks, 30 ms at 12 MHz**.
+   vectors *through* its own read window, and hands over. At M4 it ended
+   on a HALT there, because there was nothing to hand over to; since M6
+   the stopping point is the jump into the monitor, which this testbench
+   cannot run — it has no I/O page, so the console reads uninitialised
+   SPRAM. Reset to the handover is **366,091 clocks, 43.7 ms at
+   8.375 MHz**.
 4. The loader's path: BOOTRAM set, a program and a vector poked into RAM,
    CPU reset pulsed, and a check that not one byte was fetched from the
    ROM window.
@@ -861,11 +865,11 @@ Half of it does not close: 11.0–11.6 MHz across six placer seeds against
 the 12.5625 needed. A third of it does, with margin. **8.375 MHz.**
 
 ```
-ICESTORM_LC       4877 / 5280   92 %
-ICESTORM_RAM        27 / 30     90 %
+ICESTORM_LC       5076 / 5280   96 %
+ICESTORM_RAM        29 / 30     96 %
 ICESTORM_SPRAM       4 / 4     100 %
 ICESTORM_DSP         1 / 8      12 %
-sclk closes at 10.65 MHz against a constraint of 8.375
+sclk closes at 10.81 MHz against a constraint of 8.375
 ```
 
 - [ ] ~~Blitter: `FILL_RECT`, `COPY_RECT`, `COPY_RECT_TRANSPARENT`,
@@ -909,7 +913,10 @@ because it looks like it should.
 **The keyboard was never the problem.** Keystrokes typed at a terminal
 go down the USB serial that already exists, through the sniffer, into
 `UART_DATA`. PS/2 is a *second* input path, added when the level shifter
-is built; the monitor reads `UART_DATA` today and `KBD_DATA` later.
+is built. M6 built both, and the monitor reads them as peers — so the
+level shifter is a convenience now rather than a dependency, and
+`sim/test_monitor.py` drives the PS/2 side from a device model rather
+than waiting for one.
 
 **The video engine is verified by looking at it.** `sim/test_video.py`
 renders a frame to `build/frame.png` — a real 640×480 image with a
@@ -943,24 +950,145 @@ colours and proves the timing.
 **A real monitor showing real text is the moment this becomes a
 computer.**
 
-## M6 — Keyboard and monitor program
+## M6 — Keyboard and monitor program ✅
 
-- [ ] PS/2 receiver, FIFO, level shifter built
-- [ ] SPI flash reader, read-only in hardware (`$FE88`)
-- [ ] Monitor in ROM: memory examine/modify, disassemble, go, load a
-      program from flash
-- [ ] Scancode → ASCII translation in software
+- [x] PS/2 receiver, FIFO, transmit path —
+      [`rtl/soc/cool8_ps2.v`](../rtl/soc/cool8_ps2.v), **160 LUT4,
+      91 flip-flops and 1 EBR**
+- [x] SPI flash reader, read-only in hardware (`$FE88`) —
+      [`rtl/soc/cool8_flash.v`](../rtl/soc/cool8_flash.v), **180 LUT4
+      and 79 flip-flops**
+- [x] Monitor in ROM: memory examine/modify, disassemble, go, load a
+      program from flash — [`sw/monitor.asm`](../sw/monitor.asm) and
+      [`sw/disasm.asm`](../sw/disasm.asm)
+- [x] Scancode → ASCII translation in software
+- [ ] Level shifter built — hardware, and the last thing between this
+      and a keyboard on the desk. [05-board.md §4.1](05-board.md)
 
-**Gate:** type at the machine and it answers.
+```bash
+python sim/test_ps2.py               # the keyboard port, against a keyboard
+python sim/test_flash.py             # the SPI reader, against a flash
+python sim/test_monitor.py           # the gate
+python sim/mutate.py                 # both blocks, broken on purpose
+```
+
+**Gate: type at the machine and it answers — and it does.**
+`sim/test_monitor.py` boots the whole SoC cold on the parameters the
+bitstream carries, with SPRAM undefined and nothing poked, and then
+talks to it: over the serial line, and by clocking Set 2 scancodes in on
+an open-drain PS/2 wire. Every phase names a string the monitor has to
+produce.
+
+A keystroke in that test takes the path it takes on the bench — eleven
+bits on the wire, the parity check, the FIFO, the CPU's own load through
+the I/O page, the translation table in ROM, the echo, the shared
+transmitter. Pressing `A` gives `a`, and `A` with shift held, which
+covers make and break and the prefix handling as well as the table.
+
+### The two blocks, and what testing them found
+
+**Both are mutation-tested**, as every block since M1 has been, and this
+milestone has a harness for it rather than a procedure:
+[`sim/mutate.py`](../sim/mutate.py). **41 of 42 deliberate bugs are
+caught** — data sampled on the wrong clock edge, no line filtering,
+parity accepted when even, the watchdog disabled, a full FIFO written
+anyway, the read register never settled, transmit parity even, the most
+significant bit sent first, no inhibit before the request to send, a
+missing acknowledge ignored, a device that never answers waited on for
+ever; and on the flash, a different opcode, the address byte-swapped, a
+seven-bit shift, MISO never sampled, the address not advancing, chip
+select not held, reads that never stall.
+
+The one survivor is **equivalent, not missed**, and the harness carries
+the argument: `rx_n` is cleared on both paths out of a transmission
+anyway, once by `T_ACK` and once by the watchdog. `mutate.py` fails if a
+mutation listed as equivalent is ever caught, so the argument cannot go
+stale quietly.
+
+Four of the mutations survived the first run and every one was a real
+gap. **Three of them share a shape**: the test polled a status bit
+before reading, and the poll is what hid the bug. The sharpest was the
+FIFO's read register — the block RAM answers a cycle late, and *every*
+test in the file checked `KBD_STAT` first, which is exactly the wait
+that makes the staleness invisible. The phase that catches it now takes
+one blind read and sweeps it across the window the byte arrives in,
+asserting not what the read returned but that **the byte was neither
+lost nor duplicated**. A stale read is the failure that matters because
+it pops as well as lies.
+
+**The flash's device model found a real bug before any mutation did.**
+It decodes the opcode off the wire and only knows `$03` — which is how
+[D16](01-decisions.md#d16--flash-access-is-read-only-in-hardware)'s
+promise gets checked rather than asserted — and it refused an `$EA`.
+Closing the stream shared a cycle with a shift in progress, and the
+shifter's assignments to `sr`, `n` and `spi_sck` sit further down the
+same `always` block, so half the close was overwritten and the next open
+built its command out of the wreckage. Closing is its own branch now.
+
+### What it cost, and what paid for it
+
+**340 LUT4 for the two blocks, against 403 logic cells free after M5.**
+That would not have fitted. The PS/2 receiver was the only one of the
+two this project had ever put a number against — ~120 LUT4 in
+[00-goals.md](00-goals.md) — and it came in at 160, which is 1.3× rather
+than the 2× the video subsystem managed three times. The flash reader
+had no estimate at all.
+
+What paid for the gap was the boot ROM's own waste, spent the only way
+it can be:
+[D37](01-decisions.md#d37--the-uart-receive-fifo-moves-into-block-ram-reversing-m4s-call)
+moved the UART's sixteen-byte receive FIFO out of flip-flops and into a
+block RAM, which is **109 LUT4 and 123 flip-flops back for one EBR** —
+reversing a decision M4 made correctly on premises that have both since
+inverted.
+
+```
+ICESTORM_LC       5076 / 5280   96 %
+ICESTORM_RAM        29 / 30     96 %
+ICESTORM_SPRAM       4 / 4     100 %
+sclk closes at 10.81 MHz against a constraint of 8.375
+```
+
+**204 logic cells and one block RAM are left**, and M7's audio was
+budgeted at ~250 LUT4 by a process this project has now watched come in
+at twice its estimate four times. That is the next thing the gate will
+be about, and the levers are known: the boot ROM is still holding 3028
+bytes in eight EBR, the sprite engine's descriptor count is a
+parameter, and `PIX_*` is 199 LUT4 that
+[D34](01-decisions.md#d34--the-video-engine-ships-with-sprites-and-a-pixel-port-and-no-blitter)
+already argued is optional.
 
 ## M7 — Audio
 
 - [ ] Three tone channels + noise, sigma-delta output, RC filter built
 - [ ] A demo that draws something and plays something
+- [ ] The timer at `$FE60`, which is the last unbuilt register block
 
 The graphics modes, raster interrupts and the drawing engine moved into
 M5 when [D28–D31](01-decisions.md) settled the video architecture; what
 is left here is sound.
+
+### 🚩 The gate this one has to pass first: does it still fit?
+
+**204 logic cells and one block RAM.** Audio was budgeted at ~250 LUT4,
+and this project has now watched an estimate come in at about half four
+times running — the video subsystem three times
+([D34](01-decisions.md#d34--the-video-engine-ships-with-sprites-and-a-pixel-port-and-no-blitter)),
+and M6's two blocks at 340 LUT4 against ~220. Assume it does not fit and
+plan what to spend, in this order:
+
+1. **The boot ROM.** 3028 bytes in eight EBR. Shrinking the monitor to
+   2 KB frees four blocks — but block RAM is not logic cells
+   ([D37](01-decisions.md#d37--the-uart-receive-fifo-moves-into-block-ram-reversing-m4s-call)),
+   so this only helps if there is more flip-flop storage to move into
+   it. There is: the loader's state and the video registers.
+2. **The sprite descriptor count.** 32 is a parameter and 16 is a real
+   machine.
+3. **`PIX_*`.** 199 LUT4 and D34 already argues it is the optional part
+   of what survived the blitter.
+
+Write the audio engine, measure it, and then choose — the same order M5
+and M6 used, and the reason both of them landed.
 
 At this point the machine is finished as originally scoped.
 

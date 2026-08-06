@@ -66,14 +66,16 @@ Sizes are measured, not estimated — every one is recorded in
 | `cool8_sprite` | 32 descriptors, 8 to a scanline, 8×8 and 16×16, flip | 402 LUT4, 7 EBR | **On the board** |
 | `cool8_pixport` | Plot by coordinate, `y × stride` on a DSP block | 199 LUT4, 1 DSP | **On the board** |
 | blitter | Rects, transparency, clipping, logic ops, lines | — | **Cut — it does not fit.** [D34](docs/01-decisions.md) |
+| `cool8_ps2` | Keyboard: Set 2 in, 16-byte FIFO in EBR, commands out | 160 LUT4, 91 FF, 1 EBR | **On the board** |
+| `cool8_flash` | The config flash as storage, read-only in hardware | 180 LUT4, 79 FF | **On the board** |
+| monitor | Dump, enter, unassemble, go, load from flash | 3028 bytes of ROM | **On the board** |
 | audio | 3 tone + 1 noise, sigma-delta out | — | Specified (M7) |
-| PS/2 | Keyboard, 16-byte FIFO | — | Specified (M6) |
-| timer, SPI flash | Periodic interrupt; flash as storage | — | Specified (M6) |
+| timer | Periodic interrupt | — | Specified (M7) |
 
-**Placed and routed, the whole bitstream is 4877 of the UP5K's 5280
-logic cells — 92 % — and it closes at 8.375 MHz** with the raster at
+**Placed and routed, the whole bitstream is 5076 of the UP5K's 5280
+logic cells — 96 % — and it closes at 8.375 MHz** with the raster at
 25.125: CPU, 64 KB of RAM, 64 KB of video RAM, boot ROM, serial, loader,
-seven display modes and 32 sprites. A logic cell is a LUT4 with
+seven display modes, 32 sprites, a keyboard and a monitor. A logic cell is a LUT4 with
 its carry and flip-flop, so that number is larger than the LUT4 count
 above and is the one that decides whether the part is full.
 
@@ -86,12 +88,14 @@ above and is the one that decides whether the part is full.
 | Assembler, corpus | **Working.** Macros, listings; 26 routines verified |
 | **CPU RTL** | **Working.** 511/511 encodings co-simulated against the emulator |
 | **SoC** | **Running on real hardware.** Boots cold, answers, runs loaded programs, echoes serial |
-| **Video** | Raster verified pixel by pixel; text mode 0 draws a real CP437 font in 16 colours |
-| Audio, keyboard | Specified, not built |
+| **Video** | Every visible pixel of sixteen frames checked against a model written from the spec |
+| **Keyboard, flash** | **Working.** Set 2 scancodes on an open-drain wire; the config flash as storage |
+| **Monitor** | **Working.** Dump, enter, unassemble, go, load from flash, over serial and the screen together |
+| Audio | Specified, not built |
 | ASIC pad wrapper | Three-phase bus, verified against latch and SRAM models |
 | **Silicon** | **Hardened**, then shelved. Two TinyTapeout tiles, clean DRC/LVS — the target is the FPGA ([D33](docs/01-decisions.md)) |
-| Open design questions | **One.** Whether the video engine as scoped fits the UP5K — a fit question, settled by M5's synthesis gate, not by argument. 31 decisions logged |
-| Next | A keyboard and a monitor program (M6), then audio (M7) |
+| Open design questions | **One.** Whether to pipeline the core's fetch — 37 levels of logic between the machine's 8.375 MHz and its 10.81. 37 decisions logged |
+| Next | Audio (M7), on the 204 logic cells that are left |
 
 The CPU is checked against the reference emulator instruction by
 instruction: every one of the 511 encodings produces the same
@@ -132,7 +136,7 @@ on `PATH`, or `OSS_CAD_SUITE` pointing at its root.
 | [docs/01-decisions.md](docs/01-decisions.md) | Decision log — every architectural call and why |
 | [docs/02-isa.md](docs/02-isa.md) | Instruction set architecture, complete opcode map |
 | [docs/03-microarchitecture.md](docs/03-microarchitecture.md) | Datapath, bus protocol, TinyTapeout pin profile |
-| [docs/04-system.md](docs/04-system.md) | Memory map, video, audio, keyboard, boot |
+| [docs/04-system.md](docs/04-system.md) | Memory map, video, audio, keyboard, flash, boot, the monitor |
 | [docs/05-board.md](docs/05-board.md) | iCESugar v1.5 pinout, PMODs, external circuits, BOM |
 | [docs/06-roadmap.md](docs/06-roadmap.md) | Milestones |
 | [docs/07-loader.md](docs/07-loader.md) | Loader wire protocol |
@@ -193,9 +197,9 @@ needed to run what exists today.
 |---|---|---|
 | **Loading** | Hardware loader over the board's own USB serial — `cat` a binary at the machine, no bitstream rebuild | **Working** |
 | **Video** | MuseLab PMOD-VGA (12-bit 4:4:4) → VGA monitor | Not bought. The engine is developed and verified without it — see below |
-| **Keyboard** | PS/2, level-shifted to 3.3 V | Not built. Typing at the serial port already reaches the machine |
+| **Keyboard** | PS/2, level-shifted to 3.3 V | The receiver works and is tested against a keyboard model; the **shifter** is the part still to build. Typing at the serial port already reaches the monitor |
 | **Audio** | 3 tone + 1 noise, 1-bit sigma-delta through an RC filter | Not built (M7) |
-| **Storage** | The board's own 8 MB SPI flash, read-only in hardware | Not built (M6) |
+| **Storage** | The board's own 8 MB SPI flash, read-only in hardware | **Working.** No wiring needed — the pins are released to user logic after configuration |
 
 ### Working without the display
 

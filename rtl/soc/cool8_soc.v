@@ -1,4 +1,5 @@
-// cool8_soc — the machine: core, memory, I/O page, UART and loader.
+// cool8_soc — the machine: core, memory, I/O page, video, UART, loader,
+// keyboard and the flash.
 //
 // Everything above this is pins and a clock (cool8_top.v); everything
 // below it has been simulated on its own. This block is the wiring and
@@ -90,6 +91,19 @@ module cool8_soc #(
     input  wire        uart_rx,
     output wire        uart_tx,
 
+    // PS/2, split into level and enable so the open drain lives on the
+    // pad in cool8_top: `*_oe` high pulls the line down.
+    input  wire        ps2_clk_i,
+    input  wire        ps2_dat_i,
+    output wire        ps2_clk_oe,
+    output wire        ps2_dat_oe,
+
+    // The configuration flash, released to user logic after CDONE
+    output wire        spi_cs_n,
+    output wire        spi_sck,
+    output wire        spi_mosi,
+    input  wire        spi_miso,
+
     output wire [11:0] rgb,            // 4 bits a channel, straight to pins
     output wire        hsync_n,
     output wire        vsync_n,
@@ -120,18 +134,32 @@ module cool8_soc #(
     reg  [2:0]  led_r;
     reg  [15:0] uart_div;
 
-    // Flip-flops, not a block RAM. Left alone yosys puts these 128 bits
-    // into a 4 Kbit EBR, retiming the read capture below into the
-    // block's own output register. That is a legitimate inference and it
-    // costs 89 LUT4 and 123 flip-flops to refuse — but it would put the
-    // read data path inside a transform that only a netlist-level run
-    // could confirm, and the one that exists (sim/test_boot.py, for the
-    // ROM image) does not reach in here. Given the choice between
-    // verifying an inference and not making one, on 3 % occupancy of a
-    // block the font wants at M5, not making it is the cheaper answer.
-    (* ram_style = "logic" *)
+    // A block RAM, and it was flip-flops until M6.
+    //
+    // The original reasoning was sound and its premises have both
+    // reversed. Refusing the inference cost a measured **109 LUT4 and
+    // 123 flip-flops** and saved one EBR, which was the right way round
+    // when the font was about to claim eight blocks and the design sat
+    // at 37 % of the logic. After M5 the part is 92 % full of logic with
+    // three block RAMs spare, and the boot ROM is holding 174 bytes in
+    // eight of them. The scarce resource is the other one now.
+    //
+    // Inference is still not what happens here. Left alone yosys would
+    // retime the read capture into the block's own output register — a
+    // legitimate transform that no test in this project reaches. So the
+    // read register is written out, and the contract that makes a
+    // block RAM's one-cycle read invisible is stated instead of assumed:
+    // **`rx_head` is correct whenever `rx_avail` is set.** Anything that
+    // can move either pointer raises `rx_settle` for the cycle after,
+    // and `rx_avail` is suppressed while it is high. A push into a
+    // non-empty FIFO does not move `rx_rd`, so the re-read returns the
+    // same byte; a push into an empty one does, and nothing was
+    // available to read anyway. cool8_ps2 carries the same arrangement.
+    (* ram_style = "block" *)
     reg  [7:0]  rxq [0:RX_DEPTH-1];
     reg  [RX_ABITS:0] rx_wr, rx_rd;    // one extra bit tells full from empty
+    reg  [7:0]  rx_head;
+    reg         rx_settle;
     reg         rx_over;
 
     reg  [7:0]  cpu_tx_data;
@@ -225,7 +253,8 @@ module cool8_soc #(
     // a stalled read of UART_DATA would pop the FIFO twice and the byte
     // in between would simply be gone.
     reg  io_rd_seen;
-    reg  dp_r;                         // ...and it was the VRAM data port
+    reg  dp_r;                         // ...and it was a late-answering port
+    reg  dpf_r;                        // ...specifically the flash's
     wire io_launch = io_sel & bus_read & mem_launch & ~vid_start;
     wire io_rd     = io_launch & ~io_rd_seen;
     // A write held across a stolen cycle would otherwise reach the page
@@ -236,11 +265,21 @@ module cool8_soc #(
     wire        vid_sel, vid_dp_sel, vid_stall, vid_irq;
     wire [7:0]  vid_rdata, vid_dout;
 
-    // The VRAM data port's byte is not captured on launch: it may not
-    // exist yet on that cycle, which is the whole reason cool8_vport
-    // stalls. Everything else on the page is a register and is captured
-    // exactly as it always was.
-    wire [7:0]  bus_rdata = io_r ? (dp_r ? vid_dout : io_rdata_r)
+    wire        ps2_sel, ps2_irq;
+    wire [7:0]  ps2_rdata;
+
+    wire        fls_sel, fls_dp_sel, fls_stall;
+    wire [7:0]  fls_rdata, fls_dout;
+
+    // Two registers on the page answer late rather than on the launch
+    // cycle — VRAM_DATA and FLS_DATA — because neither byte is
+    // necessarily there yet, which is the whole reason both blocks
+    // stall. Everything else is a flip-flop and is captured exactly as
+    // it always was.
+    wire        dp_sel  = vid_dp_sel | fls_dp_sel;
+    wire [7:0]  dp_dout = dpf_r ? fls_dout : vid_dout;
+
+    wire [7:0]  bus_rdata = io_r ? (dp_r ? dp_dout : io_rdata_r)
                                  : mem_rdata;
 
     // `mem_ready` is not used here, and the difference is one logic
@@ -250,13 +289,14 @@ module cool8_soc #(
     // `vid_busy`, so it depends on `bus_read` directly and on `mem_pend`,
     // which is a flip-flop. Writes never wait on the memory at all.
     wire        ready_m   = ~(bus_read & ~mem_pend);
-    wire        bus_ready = ~vid_busy & ~vid_stall &
+    wire        bus_ready = ~vid_busy & ~vid_stall & ~fls_stall &
                             (bus_write | ready_m);
 
     always @(posedge clk) begin
         if (!rst_n) begin
             io_r       <= 1'b0;
             dp_r       <= 1'b0;
+            dpf_r      <= 1'b0;
             mem_pend   <= 1'b0;
             vid_own    <= 1'b0;
             io_rd_seen <= 1'b0;
@@ -267,7 +307,8 @@ module cool8_soc #(
             if (mem_launch & ~vid_start) begin
                 io_r       <= io_sel;
                 io_rdata_r <= io_rdata;
-                dp_r       <= vid_dp_sel;
+                dp_r       <= dp_sel;
+                dpf_r      <= fls_dp_sel;
             end
 
             if (bus_ready)  io_rd_seen <= 1'b0;
@@ -279,30 +320,33 @@ module cool8_soc #(
 
     // --------------------------------------------------- receive FIFO
 
-    wire rx_avail = (rx_wr != rx_rd);
+    wire rx_avail = (rx_wr != rx_rd) & ~rx_settle;
     wire rx_full  = (rx_wr[RX_ABITS-1:0] == rx_rd[RX_ABITS-1:0]) &&
                     (rx_wr[RX_ABITS]     != rx_rd[RX_ABITS]);
     wire rx_pop   = io_rd & (io_a == A_UARTDATA) & rx_avail;
     wire rx_room  = ~rx_full | rx_pop;      // a pop this cycle frees a slot
-    wire [7:0] rx_head = rxq[rx_rd[RX_ABITS-1:0]];
+    wire rx_push  = fwd_valid & rx_room;
 
     always @(posedge clk) begin
         if (!rst_n) begin
-            rx_wr   <= {(RX_ABITS+1){1'b0}};
-            rx_rd   <= {(RX_ABITS+1){1'b0}};
-            rx_over <= 1'b0;
+            rx_wr     <= {(RX_ABITS+1){1'b0}};
+            rx_rd     <= {(RX_ABITS+1){1'b0}};
+            rx_over   <= 1'b0;
+            rx_head   <= 8'h00;
+            rx_settle <= 1'b0;
         end else begin
+            rx_head   <= rxq[rx_rd[RX_ABITS-1:0]];
+            rx_settle <= rx_pop | rx_push;
+
             if (rx_pop) rx_rd <= rx_rd + 1'b1;
             // Write 1 to bit 2 of UART_STAT to acknowledge an overrun,
             // the same shape as VID_IRQ and TMR_STAT. Ordered before the
             // push so a byte lost in this very cycle is still reported.
             if (io_we && io_a == A_UARTSTAT && bus_wdata[2]) rx_over <= 1'b0;
-            if (fwd_valid) begin
-                if (rx_room) begin
-                    rxq[rx_wr[RX_ABITS-1:0]] <= fwd_data;
-                    rx_wr <= rx_wr + 1'b1;
-                end else rx_over <= 1'b1;
-            end
+            if (rx_push) begin
+                rxq[rx_wr[RX_ABITS-1:0]] <= fwd_data;
+                rx_wr <= rx_wr + 1'b1;
+            end else if (fwd_valid) rx_over <= 1'b1;
         end
     end
 
@@ -353,7 +397,9 @@ module cool8_soc #(
     // the board's own clock and there is nothing yet for a divider to
     // divide.
     always @* begin
-        if (vid_sel) io_rdata = vid_rdata;
+        if (vid_sel)      io_rdata = vid_rdata;
+        else if (ps2_sel) io_rdata = ps2_rdata;
+        else if (fls_sel) io_rdata = fls_rdata;
         else case (io_a)
             A_SYSCTRL:  io_rdata = sysctrl_rdata;
             A_SYSSTAT:  io_rdata = BUILD_ID;
@@ -374,7 +420,7 @@ module cool8_soc #(
         .clk(clk), .rst_n(cpu_rst_n),
         .mem_addr(cpu_addr), .mem_wdata(cpu_wdata), .mem_rdata(bus_rdata),
         .mem_read(cpu_read), .mem_write(cpu_write), .mem_ready(bus_ready),
-        .irq(irq | vid_irq), .nmi(nmi),
+        .irq(irq | vid_irq | ps2_irq), .nmi(nmi),
         .busrq(busrq), .busak(busak),
         .o_fetch(), .o_halted(o_halted), .o_iack(), .o_retire()
     );
@@ -414,6 +460,23 @@ module cool8_soc #(
         .ram_gnt(vid_gnt), .ram_rvalid(vid_rvalid), .ram_rdata(mem_rdata),
         .rgb(rgb), .hsync_n(hsync_n), .vsync_n(vsync_n),
         .o_irq(vid_irq)
+    );
+
+    cool8_ps2 u_ps2 (
+        .clk(clk), .rst_n(rst_n),
+        .ps2_clk_i(ps2_clk_i), .ps2_dat_i(ps2_dat_i),
+        .ps2_clk_oe(ps2_clk_oe), .ps2_dat_oe(ps2_dat_oe),
+        .io_a(io_a), .io_rd(io_rd), .io_we(io_we), .io_wdata(bus_wdata),
+        .o_sel(ps2_sel), .o_rdata(ps2_rdata), .o_irq(ps2_irq)
+    );
+
+    cool8_flash u_fls (
+        .clk(clk), .rst_n(rst_n),
+        .spi_cs_n(spi_cs_n), .spi_sck(spi_sck),
+        .spi_mosi(spi_mosi), .spi_miso(spi_miso),
+        .io_a(io_a), .io_rd(io_rd), .io_we(io_we), .io_wdata(bus_wdata),
+        .o_sel(fls_sel), .o_dp_sel(fls_dp_sel), .o_rdata(fls_rdata),
+        .o_dout(fls_dout), .o_stall(fls_stall)
     );
 
     cool8_loader u_ldr (

@@ -19,6 +19,10 @@ the whole 64 KB address space at the end of the run.
 | `test_soc.py` | The I/O page, the machine booting cold, and the SoC's area |
 | `test_load.py` | `tools/cool8load.py`: its wire format against the RTL, its command loops against a fake board |
 | `test_video.py` | The raster, the font, text mode 0 — and the frames README.md shows |
+| `test_ps2.py` | The keyboard port, against a device model on an open-drain wire |
+| `test_flash.py` | The SPI reader, against a flash that refuses any opcode but `$03` |
+| `test_monitor.py` | M6's gate: boot cold, then type at the machine and check what it says |
+| `mutate.py` | Break the RTL on purpose, one edit at a time, and require the suite to fail |
 | `asm/` | Test programs the CPU runs in `cool8_soc_tb`, assembled on every run |
 | `tb/cool8_tb.v` | Core against a byte-wide memory with programmable wait states |
 | `tb/cool8_bus_tb.v` | The ASIC path: pad wrapper, two 74HC573 latches, one SRAM |
@@ -34,6 +38,9 @@ the whole 64 KB address space at the end of the run.
 | `tb/cool8_wire_tb.v` | The serial port as a pipe, so the host tool can be tested against the machine |
 | `tb/cool8_vga_tb.v` | The raster against a golden model of a raster, output for output |
 | `tb/cool8_video_tb.v` | Every mode, every visible pixel, against a model written from the documents; and screens off the RGB pins with the two clocks running apart |
+| `tb/cool8_ps2_tb.v` | A keyboard: it owns the clock, drives open drain, and samples on the opposite level in each direction |
+| `tb/cool8_flash_tb.v` | A behavioural W25Q that decodes the opcode off the wire and only knows one |
+| `tb/cool8_mon_tb.v` | The whole machine, cold, talked to over the serial line and the PS/2 clock |
 
 ```bash
 python sim/cosim.py all      # directed, random, interrupts, ASIC bus, SPRAM
@@ -44,6 +51,10 @@ python sim/test_boot.py      # boot ROM, overlay, cold boot
 python sim/test_soc.py       # the I/O page, and the machine as a whole
 python sim/test_load.py      # the host loader
 python sim/test_video.py     # the raster, and build/frame.png
+python sim/test_ps2.py       # the keyboard port
+python sim/test_flash.py     # the SPI flash reader
+python sim/test_monitor.py   # type at the machine and it answers
+python sim/mutate.py         # 42 deliberate bugs; 41 have to be caught
 python sim/synth.py
 python sim/timing.py
 ```

@@ -75,10 +75,10 @@ signals. What's left is exactly enough, and no more:
 
 The live constraint file is [`board/icesugar.pcf`](../board/icesugar.pcf)
 and it carries only the pins `cool8_top` currently has a port for —
-`nextpnr` rejects a constraint for a port that does not exist, so VGA,
-PS/2, audio and the buttons are added to it as their milestones arrive.
-What follows is the whole map, which is the thing to check against when
-adding one.
+`nextpnr` rejects a constraint for a port that does not exist, so audio
+and the buttons are added to it as their milestones arrive. Everything
+else below is now in it. What follows is the whole map, which is the
+thing to check against when adding one.
 
 ```
 # clock
@@ -147,7 +147,8 @@ if the ramp is scrambled, reverse the order.
   was written to it whichever way the pins go, so the only instrument
   that can settle it is an eye on the board.
 
-  The test is free, because the boot ROM ends by writing `$01`:
+  The test is free, because the boot code writes `$01` on its way into
+  the monitor:
 
   | What you see after a reset | Verdict |
   |---|---|
@@ -280,13 +281,13 @@ than reports.
 
 | | |
 |---|---|
-| Logic cells | 4877 / 5280 — 92 % |
-| EBR | 27 / 30 — boot ROM, font, palette, line buffers, sprites |
+| Logic cells | 5076 / 5280 — 96 % |
+| EBR | 29 / 30 — boot ROM, font, palette, line buffers, sprites, two FIFOs |
 | SPRAM | 4 / 4 — 64 KB main RAM and 64 KB video RAM |
 | DSP | 1 / 8 — `y × stride` for the pixel port |
 | PLL | 1 / 1 |
-| I/O | 20 / 39 |
-| Timing | closes at 8.375 MHz, `sclk` Fmax 10.65 |
+| I/O | 26 / 39 |
+| Timing | closes at 8.375 MHz, `sclk` Fmax 10.81 |
 | Bitstream | 104 KB |
 
 **The clock is 8.375 MHz and not 12, and the part decided that.** The

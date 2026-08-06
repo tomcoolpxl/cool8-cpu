@@ -26,10 +26,11 @@ ASIC.
  └────▲────┘                                      │
       └──────────── arbiter, video priority ──────┘
                                                    │
-                    ┌──────────────┬───────────────┼──────────┐
-                 ┌──▼───┐     ┌────▼────┐    ┌─────▼───┐  ┌───▼───┐
-                 │ PS/2 │     │  audio  │    │   VGA   │  │ UART  │
-                 └──────┘     └─────────┘    └─────────┘  └───────┘
+        ┌──────────┬──────────┬───────────────┼──────────┐
+     ┌──▼───┐  ┌───▼────┐ ┌───▼─────┐   ┌─────▼───┐  ┌───▼───┐
+     │ PS/2 │  │ SPI    │ │  audio  │   │   VGA   │  │ UART  │
+     │ kbd  │  │ flash  │ │  (M7)   │   └─────────┘  └───────┘
+     └──────┘  └────────┘ └─────────┘
 ```
 
 ---
@@ -101,22 +102,28 @@ of main RAM is undefined at power-on. The boot ROM lives in EBR, which
       Write RESET/NMI/IRQ/BRK vectors to $FFF8-$FFFF.
       These land in RAM (writes bypass the overlay).
 
-5.  ROM: copy the monitor
-      Copy the monitor/loader image from EBR into RAM.
+5.  ROM: jump to the monitor
+      It is in the ROM alongside this and runs where it stands.
+      ROMEN stays set.
 
-6.  ROM: ROMEN ← 0
-      $F000-$FFFF is now RAM. Jump to the monitor.
-
-7.  Monitor
+6.  Monitor
       Prompt on screen and on the USB serial port.
 ```
 
-**Steps 1, 2 and 4 exist**, in [`sw/boot.asm`](../sw/boot.asm), built
-into the EBR image by `tools/mkrom.py`. Reset to the end of step 4 is
-365,036 clocks — 43.6 ms at 8.375 MHz, nearly all of it clearing RAM. Steps 3,
-5 and 6 need video and a monitor and arrive with them at M5 and M6; until
-then the ROM lights the LED blue and halts, and software arrives through
-the loader.
+**All of it exists**, in [`sw/boot.asm`](../sw/boot.asm) and the
+[`monitor.asm`](../sw/monitor.asm) and [`disasm.asm`](../sw/disasm.asm)
+it includes, built into the EBR image by `tools/mkrom.py`. Reset to the
+handover at step 5 is **366,091 clocks — 43.7 ms at 8.375 MHz**, nearly
+all of it clearing RAM; the monitor's first prompt reaches the far end
+of the serial line at **387,675 clocks, 46 ms**, the difference being
+the banner going out a byte at a time at 115200.
+
+**Step 5 used to be two steps**: copy the monitor into RAM, then drop
+the overlay and jump. It does neither, and
+[D36](01-decisions.md#d36--the-monitor-runs-in-place-from-rom-the-overlay-is-not-dropped)
+is the argument — a monitor in RAM is overwritten by exactly the program
+you most want to examine. The monitor's variables live at `$EF00`, just
+below the window and inside the region step 2 has already cleared.
 
 Step 4 is the one worth looking at twice: the vectors live at
 `$FFF8-$FFFF`, which is inside the ROM's own read window. The write goes
@@ -141,8 +148,8 @@ what you want at M4 when there isn't any.
 | Source | When | Notes |
 |---|---|---|
 | Hardware loader over USB serial | Development, always | No bitstream rebuild, no working ROM required |
-| SPI flash (§4.8) | Finished programs | 7.9 MB free above the bitstream, ~40 ms to load 64 KB |
-| Baked into the boot ROM image | Bring-up only | EBR is ~15 KB and the font and ROM already claim 8 |
+| SPI flash (§4.8) | Finished programs | 7.9 MB free above the bitstream, ~125 ms to load 64 KB. The monitor's `L` command |
+| Baked into the boot ROM image | Bring-up only | The ROM is 4 KB and the monitor is 3028 bytes of it |
 
 ---
 
@@ -234,16 +241,45 @@ interrupted. The three `_DATA` ports are write-only and read `$FF`.
 
 | Addr | Name | Access | Description |
 |---|---|---|---|
-| `$FE40` | `KBD_STAT` | R | `0` data available, `1` FIFO overflow, `2` parity error, `3` transmit busy |
+| `$FE40` | `KBD_STAT` | R | `0` data available, `1` FIFO overflow, `2` parity error, `3` transmit busy, `4` transmit failed |
 | `$FE41` | `KBD_DATA` | R | Pop one raw scancode byte from the FIFO. **Read has a side effect.** |
 | `$FE42` | `KBD_CTRL` | R/W | `0` FIFO clear, `4` interrupt enable |
 | `$FE43` | `KBD_TX` | W | Byte to send to the keyboard (LED/typematic commands) |
 
+Bits 1, 2 and 4 of `KBD_STAT` are sticky and are cleared by writing a 1
+to the bit's own position, the same shape `UART_STAT` and `VID_IRQ` use.
+
+Bit 4 is not in the original register map and was added with the
+hardware. **A transmission the device never acknowledges has to end**,
+or a monitor setting the caps-lock LED hangs for ever on a socket with
+nothing plugged into it. The receiver gives up after the 15 ms the
+protocol allows a device to start clocking, and after a byte the device
+clocked in but did not acknowledge, and says which happened only in the
+sense that both raise this bit.
+
 The hardware delivers **raw Set 2 scancodes**, including `$E0` prefixes
 and `$F0` break codes. Translation to ASCII is software's job — it
-belongs in the monitor, not in gates.
+belongs in the monitor, not in gates, and
+[`sw/monitor.asm`](../sw/monitor.asm) does it in a 128-byte table plus a
+21-entry list of the keys shift does something to that is not a case
+change.
 
-FIFO depth 16 bytes.
+**Read `KBD_STAT` bit 0 before `KBD_DATA`.** The FIFO is a block RAM and
+its read register is a cycle behind, so a read taken in the cycle a byte
+lands in an empty FIFO would see the previous one. Availability is
+suppressed for that cycle instead — which makes "bit 0 is set" the
+condition under which the data register is meaningful, and a read taken
+without checking is not. `sim/test_ps2.py` sweeps a blind read across
+the whole arrival window to prove nothing is ever lost or duplicated by
+one that does not check.
+
+A parity or framing error **drops the byte** rather than queueing it and
+raising a flag beside it. A scancode nobody can trust is worse than a
+missing one, because it desynchronises the make/break pairing that
+follows.
+
+FIFO depth 16 bytes. The overflow is the *newest* byte, so a burst that
+outruns software loses the end of it and not the beginning.
 
 ### 4.4 Audio — `$FE50`
 
@@ -410,6 +446,21 @@ slot and its disk.
 | `$FE8C` | `FLS_CTRL` | R/W | `0` stream open — write 1 to issue a read at `FLS_ADDR` and hold chip-select low; write 0 to close |
 | `$FE8D` | `FLS_STAT` | R | `0` busy, `1` stream open |
 
+**A read of `FLS_DATA` stalls until the byte is there.** A byte off the
+wire is sixteen system clocks and the CPU can ask for one in two, so
+something has to give, and it is the same choice `VRAM_DATA` makes for
+the same reason ([§5.8](#58-reaching-vram-from-the-cpu-and-from-the-debugger)):
+the copy loop below has no status poll in it because it does not need
+one. `FLS_STAT` is still worth having — it is how a program asks whether
+the stream is open without touching a register that has a side effect,
+and reading it never stalls.
+
+`FLS_ADDR` follows the stream as it advances, so it always says where
+the next byte will come from. **Writes to it are ignored while the
+stream is open**: the flash is counting on its own and only a close and
+a re-open moves it, so a write that appeared to work and did not would
+be worse than one that visibly does nothing.
+
 Typical use — copy 8 KB from flash offset `$100000` to `$4000`:
 
 ```asm
@@ -429,13 +480,22 @@ Typical use — copy 8 KB from flash offset `$100000` to `$4000`:
         ST   [$FE8C],R0        ; close
 ```
 
-At a 12.5 MHz SPI clock that is roughly 1.5 MB/s — 64 KB in about 40 ms.
+SPI mode 0, and the clock is the system clock divided by two — **4.19 MHz
+at [D32](01-decisions.md#d32--the-system-clock-is-8375-mhz-a-third-of-the-pixel-clock)'s
+8.375**, which is about 500 KB/s and 64 KB in 125 ms. This section used
+to say 12.5 MHz and 40 ms, from before the system clock was known.
+Opcode `$03` is specified to 50 MHz on these parts, so the limit here is
+the system clock and not the flash; a double-rate shifter would buy
+back the factor of two and nothing in the plan is waiting on it.
 
 **Reads only.** The SPI master issues opcode `$03` (READ) and nothing
 else. It has no write-enable, page-program or erase path *in hardware*,
 so no amount of software error can corrupt the bitstream living at
 offset 0. See
 [D16](01-decisions.md#d16--flash-access-is-read-only-in-hardware).
+`sim/test_flash.py` checks that promise against a device model that
+**fails the run** if it is ever sent an opcode other than `$03`, rather
+than against a comment.
 
 Writing the flash is a host-side operation:
 
@@ -872,6 +932,73 @@ a monitor is counting.
 video engine's, and the audio engine is dividers and an LFSR
 ([D12](01-decisions.md#d12--audio-sn76489-style-not-sid-style)) with no
 use for memory.
+
+---
+
+## 7. The monitor
+
+[`sw/monitor.asm`](../sw/monitor.asm) and the disassembler it includes,
+[`sw/disasm.asm`](../sw/disasm.asm). It is in the ROM image, it runs
+where it stands ([D36](01-decisions.md#d36--the-monitor-runs-in-place-from-rom-the-overlay-is-not-dropped)),
+and the machine is in it whenever nothing else is running.
+
+**Both consoles are peers.** Input is taken from the serial port and the
+PS/2 keyboard, whichever has a byte; output goes to the serial port and
+the screen together. That is what makes the machine usable over a wire
+before the keyboard is built and after it is, and it is why the M6 gate
+can drive it from a testbench.
+
+| Command | |
+|---|---|
+| `D [addr]` | Dump. Eight lines of sixteen bytes, hex and text. Carries on from the last dump if no address is given |
+| `E addr bb bb ...` | Enter bytes |
+| `U [addr]` | Unassemble sixteen instructions |
+| `G addr` | Go. There is no coming back |
+| `L dest len [flsH]` | Copy `len` bytes from the SPI flash to `dest`. `flsH` is the top sixteen bits of the flash address and defaults to `$1000`, which is offset `$100000` |
+| `?` | The list |
+
+Numbers are hexadecimal and unprefixed. A command letter is folded to
+upper case; a blank line is not an error.
+
+**`D` over `$FE00-$FEFF` really reads the I/O page**, and half of it has
+side effects — a dump across `UART_DATA` pops the receive FIFO, one
+across `PAL_DATA` advances the palette index. That is not a bug to fix.
+It is the thing a monitor is for, and it is worth knowing before you
+type the address.
+
+### 7.1 The disassembler
+
+There is **no 256-entry opcode table** in it and there must not be: the
+primary page is `1 ooo dd ss` and `01 gg t dd b` all the way down, so
+reading the fields costs a few hundred bytes where indexing every opcode
+would cost more ROM than exists. The only tables are the mnemonics.
+
+They are NUL-terminated strings rather than fixed-width slots, because
+`PUSHW` is five characters and `MOV` is three and a slot wide enough for
+the first wastes it on all the others. Where a whole operand is a
+constant — `JMP [X]`, `MOVW SP,Y` — it lives in the string too and the
+decode for that case disappears.
+
+A branch prints its **target**, not its displacement. The displacement
+is the one thing you can always work out for yourself and never want to.
+
+It does not check that an encoding is legal. Page 2 has 22 reserved
+second bytes which trap on the real machine; here they print as `???`
+with the byte. A disassembler that refused to show you the byte you are
+looking at would be worse than one that guessed, because the reason you
+are looking is usually that something has already gone wrong.
+
+### 7.2 Scancodes
+
+Set 2 arrives raw — `$E0` prefixes, `$F0` break codes and all — because
+that is what §4.3's hardware promised and because a table in ROM is
+cheaper than a state machine in gates. The translation is a 128-byte
+map indexed by the make code, plus a 21-entry list of the keys shift
+does something to that is not a case change. Letters are handled by
+clearing bit 5, which is 42 bytes saved against a second full map.
+
+Break codes are swallowed except for the two shifts, which is what makes
+auto-repeat work with no effort at all.
 
 ---
 

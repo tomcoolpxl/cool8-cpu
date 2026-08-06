@@ -97,6 +97,13 @@ def main():
     print(f"  boot.asm: {len(img)} bytes at ${base:04X}, "
           f"{sum(1 for b in rom if b)} non-zero of {len(rom)}")
 
+    # Where the boot sequence hands over. cool8_boot_tb has no I/O page
+    # in it, so the monitor cannot run there and the test stops at the
+    # handover instead of at the HALT the ROM used to end on. The address
+    # is the assembler's to know, not the testbench's.
+    import cool8asm                              # noqa: E402
+    monitor_at = cool8asm.assemble(BOOT_ASM).syms["monitor"]
+
     cells = cosim.ice40_cells()
     ok = True
 
@@ -121,7 +128,7 @@ def main():
 
     vvp = cosim._build("cool8_boot_tb", os.path.join(TB, "cool8_boot_tb.v"),
                        SOC + CORE + [cells], gen="2012")
-    good, out = run(vvp, [f"+rom={ROM_HEX}"])
+    good, out = run(vvp, [f"+rom={ROM_HEX}", f"+stopat={monitor_at:04x}"])
     ok &= report("booting, cold and through BOOTRAM", good, out,
                  ["checks,", "after", "clocks"])
 

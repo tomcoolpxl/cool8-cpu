@@ -28,7 +28,7 @@ is the bug.
 | [01-decisions.md](docs/01-decisions.md) | Every architectural decision and why, plus what was rejected. Open questions |
 | [02-isa.md](docs/02-isa.md) | The instruction set. **§1.2's flag table is normative** and wins over prose anywhere they conflict. §8 is measured cycle counts |
 | [03-microarchitecture.md](docs/03-microarchitecture.md) | Datapath, control FSM, bus protocol, the TinyTapeout pin profile, and the synthesis, area and timing results |
-| [04-system.md](docs/04-system.md) | Memory map, video, audio, keyboard, boot sequence |
+| [04-system.md](docs/04-system.md) | Memory map, video, audio, keyboard, flash, boot sequence, and the monitor |
 | [05-board.md](docs/05-board.md) | iCESugar pinout, PMODs, external circuits, BOM |
 | [06-roadmap.md](docs/06-roadmap.md) | Milestones, what each one delivers, and its gate |
 | [07-loader.md](docs/07-loader.md) | Loader wire protocol |
@@ -71,8 +71,29 @@ done.
 Everything needs [OSS CAD Suite](https://github.com/YosysHQ/oss-cad-suite-build)
 on `PATH`, or `OSS_CAD_SUITE` pointing at its root.
 
-On Windows, export the POSIX form of the path (`/c/Users/...`, not
-`C:/Users/...`) and add both `bin` and `lib`.
+**On this machine it is installed at `C:\Users\thraa\eda\oss-cad-suite`
+and nothing sets the variable at login.** Every shell has to set it
+itself. In PowerShell, which is where these commands are known to work:
+
+```powershell
+$env:OSS_CAD_SUITE = "C:\Users\thraa\eda\oss-cad-suite"
+$env:PATH = "$env:OSS_CAD_SUITE\bin;$env:OSS_CAD_SUITE\lib;$env:PATH"
+```
+
+`yosys`, `nextpnr-ice40`, `icepack` and `iverilog` all live in `bin`;
+`lib` carries the DLLs they load, so both go on the path.
+
+There is a second, unrelated copy at
+`C:\Users\thraa\.icestudio\apio\packages\tools-oss-cad-suite`. It belongs
+to Icestudio, it is a different version, and pointing the build at it
+means the `SB_` primitive models no longer match the yosys that maps the
+design — which is the failure mode `sim/test_boot.py` exists to catch.
+Use the `eda\` one.
+
+**Run the suites from PowerShell, not from the Bash tool.** Under Bash,
+`yosys.exe` exits 0 having printed nothing and every downstream script
+then fails on empty output, which reads like a broken script rather than
+a broken shell.
 
 ## Commands
 
@@ -93,6 +114,10 @@ python sim/test_video.py             # every mode, every visible pixel, and
                                      #   pictures. --refresh updates docs/img/
 python sim/test_vram.py              # video RAM and its four-way arbiter
 python sim/test_vport.py             # the CPU's indirect VRAM port
+python sim/test_ps2.py               # the keyboard port, against a keyboard
+python sim/test_flash.py             # the SPI reader, against a flash
+python sim/test_monitor.py           # M6's gate: type at it and it answers
+python sim/mutate.py                 # break the RTL on purpose; require a fail
 python sim/synth.py                  # hygiene, LUT/FF count, gate estimate
 python sim/timing.py                 # measured clocks per encoding
 
@@ -168,6 +193,24 @@ Easy to get wrong:
   suite's bundled Python has no SSL and `vvp` rejects an external
   interpreter. TinyTapeout's CI runs it on Linux; that is where those
   tests get validated.
+- **`expect` is a reserved word** at `-g2012`, the same trap `cell` and
+  `ref` hit. A testbench task called `expect` parses as a SystemVerilog
+  property statement and the errors point at the *end of the module*,
+  tens of lines past the real one.
+- **`~` on a reduction is not `!`.** `~(^data)` in an expression whose
+  width comes from a 32-bit task port inverts all thirty-two bits and
+  compares 1 against `$FFFFFFFF`. Inside a concatenation it is
+  self-determined and correct, which is why the same expression is right
+  in `cool8_ps2.v` and wrong in its testbench. Use `!` where the width
+  is not obviously one.
+- **The COOL8 assembler splits operands on commas before it recognises
+  character literals**, so `MOV R0,#','` is three operands and no
+  encoding matches. Write `#$2C`.
+- **A conditional branch reaches ±127 bytes** and a dispatcher at the
+  top of a large file does not. `sw/disasm.asm` defines `jlo`/`jhs`/`jeq`
+  macros that invert the test and let a `JMP` carry the distance; the
+  assembler's error names the overshoot, so this is caught rather than
+  guessed at.
 
 ## When timing changes
 

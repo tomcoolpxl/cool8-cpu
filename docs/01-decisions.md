@@ -965,7 +965,7 @@ block and byte selects, the boot ROM's mux and the I/O page's, the
 instruction decode, and into the next state — and it is **37 levels of
 logic and 87 ns** of them. No seed makes that 79.6.
 
-A third of it is **8.375 MHz**, and the finished machine closes at 10.65
+A third of it is **8.375 MHz**, and the finished machine closes at 10.81
 with 27 % margin. That margin is the reason for choosing it over the
 10.05 MHz a 50.25 MHz output divided by five would have given: at 89 %
 occupancy a clock that only just closes is a clock that has to be
@@ -1090,11 +1090,11 @@ above. Lines are about six cycles a pixel through `PIX_DATA`.
 **Where the machine landed:**
 
 ```
-ICESTORM_LC       4877 / 5280   92 %
-ICESTORM_RAM        27 / 30     90 %
+ICESTORM_LC       5076 / 5280   96 %
+ICESTORM_RAM        29 / 30     96 %
 ICESTORM_SPRAM       4 / 4     100 %
 ICESTORM_DSP         1 / 8      12 %
-sclk closes at 10.65 MHz against a constraint of 8.375
+sclk closes at 10.81 MHz against a constraint of 8.375
 ```
 
 The blitter is not deleted from the design, only from the part.
@@ -1132,6 +1132,76 @@ the argument D30 made for a power-of-two stride in the first place.
 
 ---
 
+## D36 — The monitor runs in place from ROM; the overlay is not dropped
+
+[§3](04-system.md#3-boot-sequence) described a boot sequence whose last
+two steps were *"copy the monitor image from EBR into RAM"* and *"`ROMEN
+← 0`; jump to the monitor"*. Neither happens. The boot code sets up
+video, installs the vectors and jumps straight into the monitor, which
+executes out of the ROM window where it stands, and `ROMEN` stays set.
+
+**A monitor in RAM is a monitor that a loaded program overwrites**, and
+it is overwritten at exactly the moment it is wanted: something has just
+gone wrong with the program that ran off the end of its buffer, and the
+tool for looking at the wreckage was in the wreckage. Leaving it in ROM
+makes it un-clobberable by construction rather than by convention, which
+is the same argument
+[D15](#d15--the-loader-is-hardware-not-a-rom-monitor) makes for the
+loader being hardware.
+
+What it costs is 4 KB of address space, in a map with 60 KB free below
+it and a machine whose largest program so far is 3 KB. A program that
+genuinely wants the top of memory clears `ROMEN` itself with one store
+to `SYSCTRL` — the mechanism already exists, it is already tested, and
+the program that needs it is the program that knows it needs it.
+
+It also deletes the step that would have been hardest to get right. The
+copy runs *through* the ROM's own read window into the RAM underneath,
+which works — that is how the vectors get installed — but it means the
+machine spends a few hundred microseconds with two copies of the monitor
+and one of them half written, and the jump has to land after the overlay
+moves. None of that has to be reasoned about now.
+
+The monitor's variables still live in RAM, at `$EF00`, immediately below
+the window and inside the region the boot code has already cleared.
+
+## D37 — The UART receive FIFO moves into block RAM, reversing M4's call
+
+`cool8_soc.v` carried an explicit `(* ram_style = "logic" *)` on the
+sixteen-byte receive FIFO, with a comment giving the price of refusing
+the inference and an argument for paying it. Both halves of that
+argument have since inverted, and the measurement is:
+
+| | LUT4 | flip-flops | EBR |
+|---|---|---|---|
+| flip-flops (M4's choice) | 3710 | 1527 | 27 |
+| block RAM | 3601 | 1404 | 28 |
+| | **−109** | **−123** | **+1** |
+
+At M4 the design was at 37 % of the logic and the font was about to
+claim eight block RAMs, so spending logic to save EBR was right. After
+M5 the part is 92 % full of logic with three block RAMs spare — and the
+boot ROM is holding 174 bytes in eight of them. **EBR and logic cells
+are not interchangeable on this part**, so the ROM's waste cannot be
+spent on anything except more block RAM; what it *can* do is pay for
+storage that would otherwise be built out of flip-flops, and that is
+what this does. M6's two blocks needed 340 LUT4 and this gave back a
+third of it.
+
+The inference itself is still not what happens. Left alone, yosys
+retimes the read capture into the block's own output register, and no
+test in this project reaches a netlist except `sim/test_boot.py` for the
+ROM image. So the read register is written out and the contract is
+stated instead of assumed: **the head byte is correct whenever the
+"data available" bit is set**, enforced by a `settle` flag that
+suppresses availability for one cycle after anything moves either
+pointer. `cool8_ps2.v`'s FIFO is built the same way, and
+`sim/test_ps2.py` sweeps a blind read across the arrival window to prove
+it — a phase that was added because the mutation that removes `settle`
+survived every other test in the file.
+
+---
+
 ## Open questions
 
 **The fit question is closed.** It was the only one, it was answered by
@@ -1145,7 +1215,7 @@ one it was asked:
 
 ### Should the core's fetch path be pipelined?
 
-The machine closes at 10.65 MHz and runs at 8.375. The gap is one
+The machine closes at 10.81 MHz and runs at 8.375. The gap is one
 critical path: SPRAM read data, through the block and byte selects, the
 boot ROM's mux and the I/O page's, the instruction decode, and into the
 next state — **37 levels of logic, 87 ns**. It is not congestion; the

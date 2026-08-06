@@ -41,7 +41,21 @@ module cool8_top #(
     output wire [3:0] vga_g,
     output wire [3:0] vga_b,
     output wire vga_hs,
-    output wire vga_vs
+    output wire vga_vs,
+
+    // PS/2 keyboard through the level shifter of docs/05-board.md
+    // section 4.1. Open drain both ways: the machine only ever pulls a
+    // line down, and the pull-up on the shifter provides the high.
+    inout  wire ps2_clk,         // pin 27
+    inout  wire ps2_dat,         // pin 25
+
+    // The configuration flash, pins 14-17. The iCE40 hands these to user
+    // logic once CDONE goes high, so nothing here drives them while the
+    // bitstream is still loading — see docs/05-board.md section 2.
+    output wire flash_cs,
+    output wire flash_sck,
+    output wire flash_mosi,
+    input  wire flash_miso
 );
 
     // ------------------------------------------------------- the clocks
@@ -105,18 +119,36 @@ module cool8_top #(
     // Every parameter left at its default, which is what
     // sim/tb/cool8_soc_boot_tb.v simulates. `irq` is tied low here and
     // is not the only source: the video block's raster and vblank
-    // interrupts are ORed in inside cool8_soc. What is still missing is
-    // the timer and the keyboard, at M7 and M6, and the break button
-    // with the monitor it would break into.
+    // interrupts and the keyboard's are ORed in inside cool8_soc. What
+    // is still missing is the timer, at M7, and the break button.
 
     wire [11:0] rgb;
 
     assign {vga_r, vga_g, vga_b} = rgb;
 
+    // ----------------------------------------------------- the PS/2 pads
+    //
+    // The only tri-state in the design, and it is here rather than in
+    // cool8_ps2 so that block stays a testable pair of levels and
+    // enables. A PS/2 line is never driven high by anybody: the device
+    // and the host both pull down and let go, and the pull-up does the
+    // rest. Driving one high would put two outputs in opposition the
+    // moment both ends spoke at once, which is exactly what the
+    // request-to-send handshake arranges.
+
+    wire ps2_clk_oe, ps2_dat_oe;
+
+    assign ps2_clk = ps2_clk_oe ? 1'b0 : 1'bz;
+    assign ps2_dat = ps2_dat_oe ? 1'b0 : 1'bz;
+
     cool8_soc u_soc (
         .clk(sclk), .rst_n(rst_n),
         .pclk(pclk), .prst_n(prst_n),
         .uart_rx(uart_rx), .uart_tx(uart_tx),
+        .ps2_clk_i(ps2_clk), .ps2_dat_i(ps2_dat),
+        .ps2_clk_oe(ps2_clk_oe), .ps2_dat_oe(ps2_dat_oe),
+        .spi_cs_n(flash_cs), .spi_sck(flash_sck),
+        .spi_mosi(flash_mosi), .spi_miso(flash_miso),
         .rgb(rgb), .hsync_n(vga_hs), .vsync_n(vga_vs),
         .led(led),
         .irq(1'b0), .nmi(1'b0),

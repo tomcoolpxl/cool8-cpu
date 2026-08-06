@@ -46,6 +46,15 @@ module cool8_top_tb;
     wire         uart_tx;
     wire         led_r, led_g, led_b;
 
+    // The PS/2 lines are open drain with a pull-up on the shifter, so
+    // they are modelled as exactly that: nobody drives them high, and
+    // with no keyboard plugged in the pull-up is the only thing on them.
+    // Tying them to 1'b1 instead would fight the wrapper's own driver
+    // the moment it pulled one down, and resolve to x.
+    wire         ps2_clk, ps2_dat;
+    pullup (ps2_clk);
+    pullup (ps2_dat);
+
     reg [7:0]    rxq [0:255];
     integer      rxq_wr, rxq_rd;
     reg [7:0]    rxbyte, rxcsum, got8;
@@ -68,7 +77,9 @@ module cool8_top_tb;
         // The PLL and the raster are the wrapper's now, so this
         // testbench carries the VGA pins whether it looks at them or
         // not — cool8_video_tb is where the picture is checked.
-        .vga_r(), .vga_g(), .vga_b(), .vga_hs(), .vga_vs()
+        .vga_r(), .vga_g(), .vga_b(), .vga_hs(), .vga_vs(),
+        .ps2_clk(ps2_clk), .ps2_dat(ps2_dat),
+        .flash_cs(), .flash_sck(), .flash_mosi(), .flash_miso(1'b1)
     );
 
     // The UART divider is cool8_soc's default, 72 for 115200 at 8.375 MHz,

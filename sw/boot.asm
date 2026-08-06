@@ -151,12 +151,19 @@ reset:  LDW  X,#stack
         MOV  R0,#$01
         ST   [LED],R0
 
-; Stop. There is no monitor to jump to yet. A halted CPU still grants the
-; bus, so the loader can take memory and start a program from here --
-; which at M4 is exactly how software arrives.
+; Step 5: into the monitor, which is in the ROM alongside this and runs
+; where it stands. It is not copied into RAM and the overlay is not
+; dropped -- see D36. The monitor never returns; the way out of it is G,
+; or the loader, or a reset.
+;
+; The cursor is left where the monitor's console will start writing,
+; which is the row below the banner.
 
-        HALT
-        JMP  reset              ; if anything ever wakes it, start over
+        MOV  R0,#0
+        ST   [mon_cx],R0
+        MOV  R0,#3
+        ST   [mon_cy],R0
+        JMP  monitor
 
 ; ---------------------------------------------------------------------
 ; The vector table copied into RAM, and the ROM's own copy at the top.
@@ -205,6 +212,20 @@ CUR_Y     = $FE23
 CUR_CTRL  = $FE24
 CUR_LINES = $FE25
 stack   = $0200
+
+; The monitor's cursor, so the boot code can leave it below the banner
+; rather than have the monitor's first line overwrite it.
+mon_cx  = $EF42
+mon_cy  = $EF43
+
+; ---------------------------------------------------------------------
+; The monitor, and the disassembler it uses. Same ROM image: there is
+; only one, and 4 KB of EBR was already spent on it whether or not
+; anything was in it.
+; ---------------------------------------------------------------------
+
+        .include "monitor.asm"
+        .include "disasm.asm"
 
 ; The ROM's own vectors. Only RESET is ever fetched from here in
 ; practice -- the code above copies all four into RAM, and after the

@@ -89,6 +89,12 @@ module cool8_soc_tb;
         .pclk(pclk), .prst_n(rst_n),
         .rgb(), .hsync_n(), .vsync_n(),
         .uart_rx(host_tx), .uart_tx(uart_tx),
+        // Idle high, which is what the pull-ups give when nothing is
+        // plugged in. Left floating they are x, and x on the PS/2
+        // clock reaches the filter and then the whole block.
+        .ps2_clk_i(1'b1), .ps2_dat_i(1'b1),
+        .ps2_clk_oe(), .ps2_dat_oe(),
+        .spi_cs_n(), .spi_sck(), .spi_mosi(), .spi_miso(1'b1),
         .led(led),
         .irq(1'b0), .nmi(1'b0),
         .o_halted(o_halted)

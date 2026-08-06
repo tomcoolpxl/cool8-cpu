@@ -636,16 +636,28 @@ a second timing model.
 ### 6.3 The I/O page, and why it costs a wait state
 
 `rtl/soc/cool8_soc.v` assembles the machine — core, memory, UART,
-loader and the video subsystem — and decodes `$FE00-$FEFF` on the
-**bus**, ahead of `cool8_mem` and whoever the master is. **3677 LUT4 and
-1527 flip-flops** for the whole SoC, with 27 EBR, 4 SPRAM and one DSP
-block. It was 1636 LUT4 and 8 EBR before M5.
+loader, keyboard, flash and the video subsystem — and decodes
+`$FE00-$FEFF` on the **bus**, ahead of `cool8_mem` and whoever the
+master is. **3910 LUT4 and 1589 flip-flops** for the whole SoC, with 29
+EBR, 4 SPRAM and one DSP block. It was 1636 LUT4 and 8 EBR before M5.
 
-The 16-byte receive FIFO is deliberately held in flip-flops. yosys will
-otherwise put its 128 bits into an EBR, retiming the I/O read capture
-into the block's own output register; that costs 89 LUT4 and 123
-flip-flops to refuse, and it buys not having a read data path inside a
-transform no netlist-level test here reaches.
+The 16-byte receive FIFO is a block RAM, and it was flip-flops until M6.
+Refusing the inference cost a measured 109 LUT4 and 123 flip-flops and
+saved one EBR, which was right when the design was at 37 % of the logic
+and the font was about to claim eight blocks; after M5 it is the wrong
+way round, and
+[D37](01-decisions.md#d37--the-uart-receive-fifo-moves-into-block-ram-reversing-m4s-call)
+has the measurement.
+
+The inference itself is still not what happens. Left alone yosys retimes
+the read capture into the block's own output register, and no test here
+reaches a netlist. So the read register is written out and the contract
+is stated: **the head byte is correct whenever `rx_avail` is set**,
+enforced by a `settle` flag that suppresses availability for the one
+cycle after either pointer moves. `cool8_ps2.v` carries the same
+arrangement, and `sim/test_ps2.py` sweeps a blind read across the
+arrival window to prove it — a phase added because the mutation that
+deletes `settle` survived everything else in that file.
 
 The first version answered an I/O read in the cycle it was addressed,
 since there is nothing to wait for: the registers are flip-flops and the
