@@ -26,6 +26,7 @@ Set OSS_CAD_SUITE to the toolchain root if the tools are not on PATH.
 
 import os
 import argparse
+import re
 import struct
 import subprocess
 import sys
@@ -53,6 +54,10 @@ VIDEO_TB = os.path.join(HERE, "tb", "cool8_video_tb.v")
 BDF = os.path.join(ROOT, "assets", "font", "spleen-8x16.bdf")
 
 H_VIS, V_VIS = 640, 480
+
+# cool8_video_tb's phases, and the two that also dump a frame.
+N_PHASES = 16
+FRAME_DUMPS = {0: "text.hex", 11: "tiles.hex"}
 
 
 def write_png(path, width, height, rgb):
@@ -169,15 +174,56 @@ def main():
 
     vvp = cosim._build("cool8_video_tb", VIDEO_TB,
                        VIDEO + [cosim.ice40_cells()], gen="2012")
-    r = subprocess.run([cosim._tool("vvp"), vvp, "+frame=text.hex"],
-                       cwd=BUILD, capture_output=True, text=True)
-    out = r.stdout + r.stderr
-    good = "\nPASS" in out
+
+    # One process per phase, all at once.
+    #
+    # The phases are independent pictures and each costs three frames of
+    # raster — two to settle a mode change and one to compare. Run
+    # end to end that is twenty million pixel-clock edges in an
+    # interpreted simulator and it took the best part of half an hour.
+    # `+from`/`+to` now skip the *frames* of a phase nobody is looking at,
+    # not just the comparison, so a single phase costs one phase.
+    #
+    # The set-up still runs for every phase in every process, because
+    # later phases build on registers and memory earlier ones wrote. It is
+    # a few thousand register writes and it does not show.
+    #
+    # Phases 0 and 11 also dump their frame, which is where text.png and
+    # tiles.png come from — so the pictures cost nothing extra now, where
+    # tiles.png used to need a second full sweep of all sixteen.
+    jobs = []
+    for ph in range(N_PHASES):
+        argv = [cosim._tool("vvp"), vvp, f"+from={ph}", f"+to={ph}"]
+        if ph in FRAME_DUMPS:
+            argv += [f"+frame={FRAME_DUMPS[ph]}", f"+which={ph}"]
+        jobs.append((ph, subprocess.Popen(argv, cwd=BUILD,
+                                          stdout=subprocess.PIPE,
+                                          stderr=subprocess.STDOUT,
+                                          text=True)))
+
+    good, lines, checks, fails = True, [], 0, 0
+    for ph, proc in jobs:
+        out = proc.communicate()[0]
+        if "\nPASS" not in out:
+            good = False
+        for line in out.splitlines():
+            line = line.rstrip()
+            # Each process prints its own running total; sum them rather
+            # than printing sixteen of them.
+            tot = re.match(r"\s+(\d+) checks, (\d+) failures", line)
+            if tot:
+                checks += int(tot.group(1))
+                fails += int(tot.group(2))
+            elif line.startswith("FAIL"):
+                lines.append(line)
+            elif "pixels," in line:
+                lines.append(line)
+
     print(f"  {'every mode, against a model of section 5':<44} "
           f"{'ok' if good else 'FAIL'}")
-    for line in out.splitlines():
-        if line.startswith("FAIL") or "failures" in line:
-            print("    " + line.rstrip())
+    for line in lines:
+        print("    " + line)
+    print(f"      {checks} checks, {fails} failures")
     ok &= good
 
     if good:
@@ -195,10 +241,10 @@ def main():
     # testbench uses is every attribute combination against patterns
     # chosen to be asymmetric, which is what a flip taken from the wrong
     # bit shows up in and is not what anyone would call a screen.
-    r = subprocess.run([cosim._tool("vvp"), vvp, "+frame=tiles.hex",
-                        "+which=11"],
-                       cwd=BUILD, capture_output=True, text=True)
-    if "\nPASS" in r.stdout + r.stderr:
+    #
+    # Phase 11 dumped it during the sweep above. This used to be a second
+    # run of all sixteen phases to reach one of them.
+    if good:
         png = os.path.join(BUILD, "tiles.png")
         n, err = render(os.path.join(BUILD, "tiles.hex"), png)
         if not err:

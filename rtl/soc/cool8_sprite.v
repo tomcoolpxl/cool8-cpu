@@ -141,7 +141,7 @@ module cool8_sprite (
     // ---- the sprite line buffer's write side, in cool8_pixel
     output wire        sb_we,
     output wire [10:0] sb_addr,        // {bank, x[9:0]}
-    output wire [8:0]  sb_data,        // {tag[3:0], behind, pix[3:0]}
+    output wire [9:0]  sb_data,        // {tag[4:0], behind, pix[3:0]}
 
     // The palette bank every sprite shares — see the header.
     output wire [3:0]  o_bank
@@ -183,18 +183,35 @@ module cool8_sprite (
     reg [3:0]  yy;
     reg        hflip, vflip, behind, big;
     reg [2:0]  w;                      // which pattern word
-    reg [15:0] pw;                     // ...and the four pixels in it
-    reg [1:0]  n;                      // which of them is going out
+    reg [2:0]  wreq;                   // which word has been asked for
+    reg [15:0] pw;                     // the four pixels being pushed
+    reg [15:0] nxw;                    // the next word, fetched already
+    reg        nxv;                    // ...and whether it is really there
+    reg [1:0]  n;                      // which pixel is going out
 
     reg        req_r;
+    reg        infl;                   // a fetch is granted, data due
     reg [15:0] preq;
 
-    // The sweep. Its base walks the bank 64 entries at a time, one step
-    // per fill of that bank, so ten fills cover all 640.
+    wire [2:0] wmax = big ? 3'd4 : 3'd2;
+
+    // The sweep. Its base walks the bank 32 entries at a time, one step
+    // per fill of that bank, so twenty fills cover all 640.
+    //
+    // It was 64, and halving it is free: the entry is `{tag, behind, pix}`
+    // and an iCE40 block RAM 2048 deep is two bits wide, so nine bits and
+    // ten bits both cost five blocks. A five-bit tag separates thirty-two
+    // fills of a bank where four bits separated sixteen, and the sweep
+    // only has to outrun the tag. Twenty fills against thirty-two is the
+    // same margin ten against sixteen was.
+    //
+    // What it buys is 32 clocks of a 266-clock line back for rendering,
+    // because S_TALLY waits for the sweep — they share the line buffer's
+    // write port.
     reg [9:0]  swp_base [0:1];
-    reg [6:0]  swp_cnt;                // bit 6 set means idle
-    wire       swp_busy = ~swp_cnt[6];
-    wire [9:0] swp_x    = swp_base[ln[0]] + {4'd0, swp_cnt[5:0]};
+    reg [5:0]  swp_cnt;                // bit 5 set means idle
+    wire       swp_busy = ~swp_cnt[5];
+    wire [9:0] swp_x    = swp_base[ln[0]] + {5'd0, swp_cnt[4:0]};
 
     assign vr_req  = req_r;
     assign vr_addr = preq[15:1];
@@ -240,6 +257,17 @@ module cool8_sprite (
     // ---- the row inside the sprite, flipped if it has to be
     wire [3:0] row_e = vflip ? ((big ? 4'd15 : 4'd7) - yy) : yy;
 
+    // ...and the same thing one state early. The first pattern request is
+    // issued from S_D3, where the V-flip bit is on the bus rather than in
+    // its register, because waiting for S_FW spends a clock per sprite and
+    // eight sprites only have thirty each.
+    wire [3:0] row_d3 = dq[7] ? ((big ? 4'd15 : 4'd7) - yy) : yy;
+    wire [3:0] row_q  = (st == S_D3) ? row_d3 : row_e;
+
+    // S_FW is waiting for exactly this word, so it takes it off the bus
+    // rather than out of `nxw` one clock later.
+    wire fw_take = (st == S_FW) && !trail && !nxv && vr_rvalid;
+
     // ---- the pixel going out
     wire [15:0] ps   = {pw[7:0], pw[15:8]};
     wire [3:0]  pix  = ps >> ({2'b00, ~n} << 2);
@@ -254,7 +282,7 @@ module cool8_sprite (
 
     assign sb_we   = swp_busy ? 1'b1 : render_we;
     assign sb_addr = swp_busy ? {ln[0], swp_x} : {ln[0], px};
-    assign sb_data = swp_busy ? 9'd0 : {ln[4:1], behind, pix};
+    assign sb_data = swp_busy ? 10'd0 : {ln[5:1], behind, pix};
 
     // ---------------------------------------------------------- the run
 
@@ -274,10 +302,11 @@ module cool8_sprite (
             nhit <= 4'd0; k <= 4'd0; scan_v <= 1'b0; st <= S_IDLE;
             sx <= 10'd0; pat <= 16'd0; yy <= 4'd0;
             hflip <= 1'b0; vflip <= 1'b0; behind <= 1'b0; big <= 1'b0;
-            w <= 3'd0; pw <= 16'd0; n <= 2'd0;
+            w <= 3'd0; wreq <= 3'd0; pw <= 16'd0; n <= 2'd0;
+            nxw <= 16'd0; nxv <= 1'b0; infl <= 1'b0;
             pass <= 1'b0; trail <= 1'b0;
             req_r <= 1'b0; preq <= 16'd0;
-            swp_cnt <= 7'h40;
+            swp_cnt <= 6'h20;
             swp_base[0] <= 10'd0;
             swp_base[1] <= 10'd0;
             for (i = 0; i < 8; i = i + 1) begin
@@ -285,7 +314,37 @@ module cool8_sprite (
                 hit_y[i] <= 6'd0;
             end
         end else begin
-            if (req_r & vr_gnt) req_r <= 1'b0;
+            // ---- the pattern fetch, running ahead of the pixel push
+            //
+            // Word w+1 is asked for while word w's four pixels are going
+            // out. Serialising them — request, wait, push, request again —
+            // cost three clocks in every seven, and measured, eight 16x16
+            // sprites then needed **372 clocks of a 266-clock line**: the
+            // last three simply vanished when the next line aborted the
+            // render. One word is in flight and one is waiting, which is
+            // exactly enough to keep the push fed, and no more.
+            //
+            // `nxv` gates the next request, so a word can never be
+            // overwritten before it is consumed, and nothing is in flight
+            // on the cycle a word is taken — which is what makes the
+            // handover free of a race rather than merely usually right.
+            if (req_r & vr_gnt) begin req_r <= 1'b0; infl <= 1'b1; end
+            if (vr_rvalid) begin
+                infl <= 1'b0;
+                // S_FW takes the word straight off the bus when it is the
+                // one being waited for; parking it in `nxw` first would
+                // cost a clock a sprite for nothing.
+                if (!fw_take) begin nxw <= vr_rdata; nxv <= 1'b1; end
+            end
+            if (!trail && !req_r && !infl && !nxv && (wreq < wmax) &&
+                ((st == S_D3) || (st == S_FW) || (st == S_PUSH))) begin
+                req_r <= 1'b1;
+                preq  <= pat +
+                         (big ? {8'd0, row_q, 3'b000}
+                              : {9'd0, row_q[2:0], 2'b00}) +
+                         {13'd0, wreq[1:0], 1'b0};
+                wreq  <= wreq + 3'd1;
+            end
 
             if (wr) begin
                 case (io_a)
@@ -311,21 +370,29 @@ module cool8_sprite (
             // only the line buffer's write port, which the render cannot
             // reach until S_TALLY has waited for it.
             if (swp_busy) begin
-                swp_cnt <= swp_cnt + 7'd1;
-                if (swp_cnt[5:0] == 6'd63)
-                    swp_base[ln[0]] <= (swp_base[ln[0]] >= 10'd576)
+                swp_cnt <= swp_cnt + 6'd1;
+                if (swp_cnt[4:0] == 5'd31)
+                    swp_base[ln[0]] <= (swp_base[ln[0]] >= 10'd608)
                                        ? 10'd0
-                                       : (swp_base[ln[0]] + 10'd64);
+                                       : (swp_base[ln[0]] + 10'd32);
             end
 
             if (start) begin
-                swp_cnt <= 7'd0;
+                // A render still running when the next line begins is a
+                // line that lost sprites, and it used to say nothing at
+                // all: `overrun` only ever fired for a ninth descriptor.
+                // Placed after the acknowledge above, so a fault raised in
+                // the very cycle a handler clears the flag survives it.
+                if (st != S_IDLE) overrun <= 1'b1;
+                swp_cnt <= 6'd0;
                 ln     <= frame_start ? 10'd0 : next_line;
                 s      <= 5'd0;
                 s_q    <= 5'd0;
                 nhit   <= 4'd0;
                 scan_v <= 1'b0;
                 req_r  <= 1'b0;
+                infl   <= 1'b0;
+                nxv    <= 1'b0;
                 st     <= S_SCAN;
             end else begin
                 case (st)
@@ -389,6 +456,13 @@ module cool8_sprite (
                     // yet. Naming it costs one cycle a sprite and removes
                     // every off-by-one from the three that follow.
                     S_D0: begin
+                        // The fetch counters are armed here rather than in
+                        // S_D3, because S_D3 is where the first request now
+                        // goes out and the two would fight over `wreq`.
+                        w     <= 3'd0;
+                        wreq  <= 3'd0;
+                        nxv   <= 1'b0;
+                        infl  <= 1'b0;
                         daddr <= {daddr[6:2], 2'b10};
                         st    <= S_D1;
                     end
@@ -421,10 +495,11 @@ module cool8_sprite (
                         vflip  <= dq[7];
                         hflip  <= dq[6];
                         behind <= dq[5];
-                        w      <= 3'd0;
                         st     <= S_FW;
                     end
 
+                    // Only entered for the first word of a sprite, and
+                    // afterwards only if the fetch fell behind the push.
                     S_FW: begin
                         // A trailing row has no pattern to read: it is
                         // sixteen zeros wide and the point of it is that
@@ -433,27 +508,34 @@ module cool8_sprite (
                             pw <= 16'd0;
                             n  <= 2'd0;
                             st <= S_PUSH;
-                        end else if (!req_r) begin
-                            req_r <= 1'b1;
-                            preq  <= pat +
-                                     (big ? {8'd0, row_e, 3'b000}
-                                          : {9'd0, row_e[2:0], 2'b00}) +
-                                     {13'd0, w[1:0], 1'b0};
-                        end
-                        if (vr_rvalid) begin
-                            pw <= vr_rdata;
-                            n  <= 2'd0;
-                            st <= S_PUSH;
+                        end else if (nxv) begin
+                            pw  <= nxw;
+                            nxv <= 1'b0;
+                            n   <= 2'd0;
+                            st  <= S_PUSH;
+                        end else if (vr_rvalid) begin
+                            pw  <= vr_rdata;      // straight off the bus
+                            n   <= 2'd0;
+                            st  <= S_PUSH;
                         end
                     end
 
                     // ---- four pixels out, one a cycle
+                    //
+                    // The next word is taken here rather than by going
+                    // back through S_FW, which is what makes a word cost
+                    // four clocks instead of five.
                     S_PUSH: begin
                         n <= n + 2'd1;
                         if (n == 2'd3) begin
-                            w  <= w + 3'd1;
-                            st <= ((w + 3'd1) < (big ? 3'd4 : 3'd2))
-                                  ? S_FW : S_SEL;
+                            w <= w + 3'd1;
+                            if ((w + 3'd1) == wmax) st <= S_SEL;
+                            else if (trail)         n  <= 2'd0;
+                            else if (nxv) begin
+                                pw  <= nxw;
+                                nxv <= 1'b0;
+                                n   <= 2'd0;
+                            end else st <= S_FW;
                         end
                     end
 

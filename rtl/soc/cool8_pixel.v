@@ -97,7 +97,7 @@ module cool8_pixel #(
     // ---- system domain: the sprite line buffer's write side
     input  wire        sb_we,
     input  wire [10:0] sb_addr,
-    input  wire [8:0]  sb_data,
+    input  wire [9:0]  sb_data,
     input  wire [3:0]  spr_bank,        // shared by every sprite
 
     // ---- system domain: the mode. Quasi-static; see the header.
@@ -184,7 +184,7 @@ module cool8_pixel #(
     // RAM on this part, so the entry width *is* the block count. The
     // palette bank came out to pay for that; cool8_sprite's header has
     // the argument and why it stops at nine and not eight.
-    reg [8:0] sb [0:2047];
+    reg [9:0] sb [0:2047];
 
     always @(posedge sclk)
         if (sb_we) sb[sb_addr] <= sb_data;
@@ -291,8 +291,8 @@ module cool8_pixel #(
     reg        d1_last, d2_last;
     reg [7:0]  d1_cell, d2_cell;
     reg [4:0]  d1_trow, d2_trow;
-    reg [8:0]  sb_q, sb_d;
-    reg [3:0]  d1_tag, d2_tag;
+    reg [9:0]  sb_q, sb_d;
+    reg [4:0]  d1_tag, d2_tag;
 
     // For a bitmap the sub-index is the pixel inside the word; for a
     // tile it is the pixel inside the pattern word, which is 4 bpp, so
@@ -318,8 +318,8 @@ module cool8_pixel #(
             d1_last   <= 1'b0;  d2_last  <= 1'b0;
             d1_cell   <= 8'd0;  d2_cell  <= 8'd0;
             d1_trow   <= 5'd0;  d2_trow  <= 5'd0;
-            sb_q      <= 9'd0;  sb_d     <= 9'd0;
-            d1_tag    <= 4'd0;  d2_tag   <= 4'd0;
+            sb_q      <= 10'd0; sb_d     <= 10'd0;
+            d1_tag    <= 5'd0;  d2_tag   <= 5'd0;
         end else begin
             lb_q     <= lb[{rb, raddr}];
 
@@ -328,7 +328,7 @@ module cool8_pixel #(
             // lookahead and needs no arithmetic at all.
             sb_q     <= sb[{ya[0], xa1[9:0]}];
             sb_d     <= sb_q;
-            d1_tag   <= ya[4:1];
+            d1_tag   <= ya[5:1];
             d2_tag   <= d1_tag;
 
             d1_grow  <= grow;      d2_grow  <= d1_grow;
@@ -398,7 +398,7 @@ module cool8_pixel #(
     // if it is not colour zero, which is the transparent one. `behind`
     // puts it under the background wherever the background is not itself
     // colour zero.
-    wire spr_here   = (sb_d[8:5] == d2_tag) && (sb_d[3:0] != 4'd0);
+    wire spr_here   = (sb_d[9:5] == d2_tag) && (sb_d[3:0] != 4'd0);
     wire spr_wins   = spr_here && (!sb_d[4] || (bg_index == 8'h00));
 
     assign pal_index = d2_blank ? c_bord :

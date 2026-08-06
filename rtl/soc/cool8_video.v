@@ -190,7 +190,7 @@ module cool8_video #(
     wire [7:0]  sprite_rdata;
     wire        sb_we;
     wire [10:0] sb_addr;
-    wire [8:0]  sb_data;
+    wire [9:0]  sb_data;
     wire [3:0]  spr_bank;
 
     wire        blt_req, blt_gnt, blt_rvalid, blt_we;

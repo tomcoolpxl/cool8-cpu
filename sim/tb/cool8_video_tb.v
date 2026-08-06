@@ -89,7 +89,7 @@ module cool8_video_tb;
     reg  [3:0]   g_sbank;              // SPR_CTRL[7:4], shared by all
 
     integer      i, j, k, fh, pixels, checks, fails, phase, dump_which;
-    integer      from_phase;
+    integer      from_phase, to_phase;
     reg          dumping, armed, slow, spr_on;
     reg  [1023:0] vcdfile, framefile;
     reg  [15:0]  screen [0:COLS*ROWS-1];
@@ -418,27 +418,46 @@ module cool8_video_tb;
 
     // --------------------------------------------------------- checking
 
+    // `+from=N` and `+to=M` select a range of phases, and a phase outside
+    // it costs **nothing**: its set-up still runs, because later phases
+    // build on the registers and memory earlier ones wrote, but the three
+    // frames of raster do not.
+    //
+    // That is where the minutes were. Every phase is three frames — two to
+    // let a mode change settle and one to compare — and at 420,000 pixel
+    // clocks a frame in an interpreted simulator, sixteen phases is twenty
+    // million edges whether anyone is looking at them or not. `+from`
+    // used to skip only the per-pixel comparison and simulate the frames
+    // regardless, so selecting one phase saved almost nothing.
+    //
+    // With the frames skipped as well, a single phase runs in about the
+    // time one phase deserves, and sim/test_video.py runs all sixteen as
+    // separate processes at once.
     task run_frame;
         input [8*24-1:0] name;
         input integer    id;
         integer          n;
         begin
             phase = id;
-            // Two frame boundaries: the first lets a mode change settle,
-            // the second is the one that gets looked at.
-            @(posedge u_vid.u_vga.o_vblank_start);
-            @(posedge u_vid.u_vga.o_vblank_start);
-            pixels = 0;
-            // `+from=N` checks only phases N and above. The set-up still
-            // runs and the frames still go past; what is skipped is the
-            // per-pixel model, which is where the minutes are.
-            armed  = (id >= from_phase);
-            n = fails;
-            if (armed) while (pixels < H_VIS * V_VIS) @(posedge pclk);
-            else       @(posedge u_vid.u_vga.o_vblank_start);
-            armed = 1'b0;
-            $display("  %0s: %0d pixels, %0d failures", name,
-                     pixels, fails - n);
+            if ((id < from_phase) || (id > to_phase)) begin
+                $display("  %0s: skipped", name);
+            end else begin
+                // Two frame boundaries: the first lets a mode change
+                // settle, the second is the one that gets looked at.
+                // **`armed` goes up after them, not before** — arming
+                // early compares the settling frames as well, which is
+                // 307,200 extra checks against a picture that is still
+                // half the previous mode.
+                @(posedge u_vid.u_vga.o_vblank_start);
+                @(posedge u_vid.u_vga.o_vblank_start);
+                pixels = 0;
+                armed  = 1'b1;
+                n = fails;
+                while (pixels < H_VIS * V_VIS) @(posedge pclk);
+                armed = 1'b0;
+                $display("  %0s: %0d pixels, %0d failures", name,
+                         pixels, fails - n);
+            end
         end
     endtask
 
@@ -568,6 +587,7 @@ module cool8_video_tb;
         dumping = $value$plusargs("frame=%s", framefile);
         if (!$value$plusargs("which=%d", dump_which)) dump_which = 0;
         if (!$value$plusargs("from=%d", from_phase)) from_phase = 0;
+        if (!$value$plusargs("to=%d", to_phase))     to_phase = 999;
         if ($value$plusargs("vcd=%s", vcdfile)) begin
             $dumpfile(vcdfile);
             $dumpvars(0, cool8_video_tb);
