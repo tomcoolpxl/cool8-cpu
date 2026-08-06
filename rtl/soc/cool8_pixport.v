@@ -40,6 +40,24 @@
 //     sb  = (x << bpp_log) & 7     the pixel's offset inside its byte
 //     hi  = {addr[0], ~sb}         its top bit inside the word, as wiring
 //
+// ## PIX_DATA is write-only
+//
+// It was readable, and reading it cost two more variable shifters — one
+// to bring the pixel down out of its byte and one to mask it — plus a
+// stall path, a state and a holding register, because the byte has to be
+// fetched before the answer exists.
+//
+// Nothing wanted it. The port is an *output* device: the thing an 8-bit
+// CPU is bad at is working out where a pixel lives, and once the address
+// arithmetic is in hardware the only remaining reason to read a pixel
+// back is collision detection, which section 5.11 already answers with
+// software bounding-box tests. Software that genuinely needs to read a
+// surface has VRAM_ADDR/VRAM_DATA, which reads bytes and does not stall
+// on arithmetic it did not need.
+//
+// So a read of $FE38 returns $FF, the same answer the page gives for an
+// address nobody claims, and this block never holds the bus at all.
+//
 // FPGA-only. None of this goes to the ASIC.
 
 `default_nettype none
@@ -55,7 +73,6 @@ module cool8_pixport (
     input  wire [7:0]  io_wdata,
     output wire        o_sel,
     output reg  [7:0]  o_rdata,
-    output wire        o_stall,
 
     // ---- the surface: the display's own base and pitch
     input  wire [1:0]  bpp_log,
@@ -80,11 +97,10 @@ module cool8_pixport (
                      S_WR   = 3'd3, S_END = 3'd4;
 
     reg [10:0] pix_x, pix_y;
-    reg [7:0]  wdat, rdat;
-    reg        is_wr, go, hold;
+    reg [7:0]  wdat;
+    reg        go;
     reg [2:0]  st;
 
-    reg [15:0] row;                    // base + y * stride
     reg [15:0] a_byte;
     reg [7:0]  old_b;
     reg        req_r, we_r;
@@ -98,7 +114,6 @@ module cool8_pixport (
     assign vr_mask  = mask_r;
 
     assign o_sel   = (io_a >= A_PXL) && (io_a <= A_PDAT);
-    assign o_stall = hold;
 
     wire wr = io_we & o_sel;
 
@@ -106,7 +121,6 @@ module cool8_pixport (
 
     wire [1:0]  pshift = 2'd3 - bpp_log;
     wire [3:0]  bpp    = 4'd1 << bpp_log;
-    wire [7:0]  pmask  = (8'd1 << bpp) - 8'd1;
 
     // The multiply is a whole SB_MAC16 that would otherwise sit idle, and
     // it is the difference between a pixel port and a novelty.
@@ -126,7 +140,6 @@ module cool8_pixport (
                        (bpp_log == 2'd2) ? 8'hF0 : 8'hFF;
 
     wire [7:0] new_b = (old_b & ~(tmask >> sb)) | (top >> sb);
-    wire [7:0] got_b = (old_b << sb) >> (4'd8 - bpp);
 
     // At 4 and 8 bpp the field is whole nibbles, so the mask covers it
     // exactly and nothing has to be read first.
@@ -145,9 +158,9 @@ module cool8_pixport (
     always @(posedge clk) begin
         if (!rst_n) begin
             pix_x <= 11'd0; pix_y <= 11'd0;
-            wdat <= 8'd0; rdat <= 8'hFF;
-            is_wr <= 1'b0; go <= 1'b0; hold <= 1'b0;
-            st <= S_IDLE; row <= 16'd0; a_byte <= 16'd0; old_b <= 8'd0;
+            wdat <= 8'd0;
+            go <= 1'b0;
+            st <= S_IDLE; a_byte <= 16'd0; old_b <= 8'd0;
             req_r <= 1'b0; we_r <= 1'b0; addr_r <= 16'd0;
             wdata_r <= 16'd0; mask_r <= 4'd0;
         end else begin
@@ -161,21 +174,10 @@ module cool8_pixport (
                     A_PYH: pix_y[10:8] <= io_wdata[2:0];
                     A_PDAT: begin
                         wdat  <= io_wdata;
-                        is_wr <= 1'b1;
                         go    <= 1'b1;
                     end
                     default: ;
                 endcase
-            end
-
-            // A read has to wait for the memory, and the wait is
-            // qualified by a flip-flop rather than by the address, so the
-            // I/O decode stays off the machine's critical path — the same
-            // reasoning as cool8_vport's.
-            if (io_rd && io_a == A_PDAT) begin
-                is_wr <= 1'b0;
-                go    <= 1'b1;
-                hold  <= 1'b1;
             end
 
             case (st)
@@ -185,12 +187,14 @@ module cool8_pixport (
                 end
 
                 S_MUL: begin
-                    row    <= base + mul_r[15:0];
                     a_byte <= base + mul_r[15:0] +
                               ({5'd0, pix_x} >> pshift);
-                    st     <= (is_wr && native) ? S_WR : S_RD;
+                    st     <= native ? S_WR : S_RD;
                 end
 
+                // 1 and 2 bpp only: the field is narrower than a nibble,
+                // so MASKWREN cannot cover it exactly and the byte around
+                // it has to be read first. 4 and 8 bpp skip this entirely.
                 S_RD: begin
                     if (!req_r) begin
                         req_r  <= 1'b1;
@@ -199,7 +203,7 @@ module cool8_pixport (
                     end
                     if (vr_rvalid) begin
                         old_b <= a_byte[0] ? vr_rdata[15:8] : vr_rdata[7:0];
-                        st    <= is_wr ? S_WR : S_END;
+                        st    <= S_WR;
                     end
                 end
 
@@ -217,8 +221,6 @@ module cool8_pixport (
                 end
 
                 S_END: begin
-                    if (!is_wr) rdat <= got_b & pmask;
-                    hold  <= 1'b0;
                     pix_x <= pix_x + 11'd1;
                     st    <= S_IDLE;
                 end
@@ -234,12 +236,12 @@ module cool8_pixport (
             A_PXH:   o_rdata = {5'b00000, pix_x[10:8]};
             A_PYL:   o_rdata = pix_y[7:0];
             A_PYH:   o_rdata = {5'b00000, pix_y[10:8]};
-            A_PDAT:  o_rdata = rdat;
+            // PIX_DATA is write-only — see the header.
             default: o_rdata = 8'hFF;
         endcase
     end
 
-    wire _unused = &{1'b0, row, mul_r[31:16], 1'b0};
+    wire _unused = &{1'b0, mul_r[31:16], io_rd, 1'b0};
 
 endmodule
 

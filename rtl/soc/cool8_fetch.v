@@ -191,6 +191,14 @@ module cool8_fetch (
     wire [7:0] n_tile = hdouble ? 8'd41 : 8'd81;
     // The row pitch is the row: `stride/2` words hold exactly the pixels
     // the pitch describes, which is why there is no width register.
+    //
+    // **A bitmap row is at most 255 words, so `VID_STRIDE` above 510
+    // silently clamps.** That is the line buffer's bank size — 256 words —
+    // and not an arbitrary limit, but nothing else says so, and a mode
+    // built by hand with a longer pitch loses the end of every row rather
+    // than failing. docs/04-system.md section 5.3 records it; the widest
+    // mode in the set is mode 6 at 256 bytes, so there is a factor of two
+    // of headroom before anyone meets it.
     wire [7:0] n_bmp  = (|stride[15:9]) ? 8'd255 : stride[8:1];
 
     wire [7:0] n_next = is_text ? n_text : is_tile ? n_tile : n_bmp;
@@ -280,7 +288,13 @@ module cool8_fetch (
             // address path.
             wrap_mask <= (stride << 5) - 16'd1;
 
-            if (line_start & vin & row_edge) o_read_bank <= disp_bank;
+            // Qualified by `disp_en` for the same reason `start_row` is:
+            // with the display off nothing is being filled, so nothing
+            // should be swapping either. It made no visible difference —
+            // the picture is blanked — but a bank that walks while the
+            // fetch engine is idle is a thing to have to reason about.
+            if (line_start & vin & row_edge & disp_en)
+                o_read_bank <= disp_bank;
 
             // The first active line of a frame has both primed rows
             // waiting for it, so it consumes the flag and fetches

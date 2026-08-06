@@ -181,7 +181,7 @@ whoever the master is. Two consequences worth knowing:
 |---|---|---|---|
 | `$FE00` | `SYSCTRL` | R/W | `0`: `ROMEN` (1 = boot ROM overlay on). Reloads from `~BOOTRAM` on every CPU reset, not from a constant — see §4.7. `7:1` read 0. |
 | `$FE01` | `CPUDIV` | — | CPU clock enable divider. **Not implemented**; reads `$FF`. It existed to divide a 25.125 MHz system clock down to something an 8-bit machine plausibly ran at, and [D32](01-decisions.md#d32--the-system-clock-is-8375-mhz-a-third-of-the-pixel-clock) divides it by three in the clock tree instead. Nothing needs it until there is a reason to run slower than that. |
-| `$FE02` | `SYSSTAT` | R | Build identification: a constant carried as a parameter on `cool8_soc`, `$04` at M4. It answers "which bitstream is this board actually running", which is a question that gets asked during bring-up and has no other way to be answered. |
+| `$FE02` | `SYSSTAT` | R | Build identification: a constant carried as a parameter on `cool8_soc`, `$05` at M6. It answers "which bitstream is this board actually running", which is a question that gets asked during bring-up and has no other way to be answered. |
 | `$FE03` | `LED` | R/W | `2:0` = R, G, B on the board LED, active high here. The board's own polarity is [cool8_top](../rtl/soc/) and the `.pcf`'s problem, not software's. |
 
 ### 4.2 Video — `$FE10`
@@ -223,13 +223,13 @@ a straight run of stores with no address recomputation between them.
 | `$FE29` | `VRAM_DATA` | R/W | **Auto-increments `VRAM_ADDR`. Read has a side effect.** Also aliased at `$FEC0–$FEFF` — see §5.8 |
 | `$FE2A` | `SPR_IDX` | R/W | Sprite descriptor byte index, 0–255 |
 | `$FE2B` | `SPR_DATA` | W | **Auto-increments `SPR_IDX`.** Eight bytes per descriptor (§5.6), written as pairs from an even index. Write-only, for the same reason `PAL_DATA` is |
-| `$FE2C` | `SPR_CTRL` | R/W | `0` sprite engine enable, `1` overrun occurred this frame (write 1 to clear) |
+| `$FE2C` | `SPR_CTRL` | R/W | `0` sprite engine enable, `1` overrun occurred this frame (write 1 to clear), `7:4` the palette bank **every** sprite uses — see §5.6 |
 | `$FE30–$FE33` | — | — | **Reserved for a blitter, which is not built.** Reads `$FF`. See [D34](01-decisions.md#d34--the-video-engine-ships-with-sprites-and-a-pixel-port-and-no-blitter) and §5.11 |
 | `$FE34` | `PIX_X_L` | R/W | Pixel port X, low |
 | `$FE35` | `PIX_X_H` | R/W | `2:0` high |
 | `$FE36` | `PIX_Y_L` | R/W | Pixel port Y, low |
 | `$FE37` | `PIX_Y_H` | R/W | `2:0` high |
-| `$FE38` | `PIX_DATA` | R/W | Read or write one pixel at (X, Y) of the surface `VID_BASE`/`VID_STRIDE` describes, in the current bpp, with sub-byte masking done in hardware. **Auto-increments X**, so a horizontal span is one store per pixel. **Read has a side effect** and holds the bus until the memory answers |
+| `$FE38` | `PIX_DATA` | W | Write one pixel at (X, Y) of the surface `VID_BASE`/`VID_STRIDE` describes, in the current bpp, with sub-byte masking done in hardware. **Auto-increments X**, so a horizontal span is one store per pixel. **Write-only** — reads `$FF`; see §5.7 |
 
 `$FE39–$FE3F` are spare, as is `$FE2D–$FE2F`.
 
@@ -596,6 +596,13 @@ where the resolution is below 640×480.
 | 5 | bitmap | VRAM | 256×192 → doubled, bordered | 4 bpp | 24,576 | 128 |
 | 6 | bitmap | VRAM | 256×240 → doubled, side borders | 8 bpp | 61,440 | 256 |
 
+**A bitmap row is at most 255 words**, so `VID_STRIDE` above 510 in a
+bitmap mode silently loses the end of every row. That is the line
+buffer's bank — 256 words — rather than an arbitrary limit, and the
+widest mode in the set is mode 6 at 256 bytes, so there is a factor of
+two of headroom before anyone meets it. It matters only to software
+building a mode by hand.
+
 **Mode 4 is the general graphics mode** and leaves 25 KB of VRAM for
 patterns, sprites and off-screen work. **Mode 5 is the one that
 double-buffers** — two buffers is 49,152 bytes, leaving 16 KB. Mode 4
@@ -685,6 +692,23 @@ the line buffer already.
   within `stride × 32` in hardware, and that wrap is a mask, so it is
   correct only for a power-of-two stride. `VID_SCRL_Y` gives fine
   vertical motion within a character cell.
+
+  > **Software must wrap `VID_BASE` itself**, and this is the part that
+  > was missing for a milestone. The hardware wraps *its own row pointer*,
+  > inside `base & ~(stride × 32 − 1)` — so the base decides where the
+  > window is and the mask only decides how the pointer moves inside it.
+  > A base allowed to walk past the end of the map takes the whole window
+  > with it and the map appears to relocate. The idiom is
+  > `base = MAP | ((base + stride) & (stride×32 − 1))`, which is one extra
+  > `AND` per scroll, and `sw/monitor.asm`'s `scroll` is the worked
+  > example. `VID_BASE` must also stay a whole number of rows: it is not
+  > masked in hardware, and a base off a row boundary shifts every row on
+  > the screen by the remainder.
+  >
+  > [`sw/monitor.asm`](../sw/monitor.asm) copied 4640 bytes per scrolled
+  > line — about 46,000 cycles, 5.5 ms — until this was written down, and
+  > `sim/test_monitor.py` now checks the origin moved rather than trusting
+  > that it did.
 - **Tile.** The map row wraps the same way. `VID_SCRL_X/Y` give the
   pixel motion inside a tile and `VID_BASE` gives the tile motion.
 - **Bitmap.** `VID_BASE` plus `VID_STRIDE`. A framebuffer wider than the
@@ -726,7 +750,27 @@ words are read only for the eight that matter.
 | 4 | Pattern address `12:5` (32-byte granularity) |
 | 5 | `2:0` pattern address `15:13` |
 | 6 | `7` V-flip, `6` H-flip, `5` behind the background |
-| 7 | `3:0` palette bank |
+| 7 | `3:0` palette bank — **ignored**, see below |
+
+**All sprites share one palette bank**, `SPR_CTRL[7:4]`. Byte 7's
+per-sprite field is still in the layout and is not read by the hardware.
+
+The reason is the line buffer, and it is the largest single claim on
+block RAM in the machine. It is 2048 entries, and an iCE40 block RAM
+2048 deep is **two bits wide**, so it costs `ceil(bits/2)` blocks and
+nothing else about it matters. Carrying a 4-bit bank on every pixel made
+the entry fourteen bits and the buffer seven blocks; without it the entry
+is `{tag[3:0], behind, pix[3:0]}` — nine bits, **five blocks**.
+
+The generation tag lost a bit with it, and that needed checking rather
+than assuming: an *n*-bit tag separates 2ⁿ⁻¹ fills of one bank, because
+the banks alternate every line, and the sweep bounds how long an entry
+can survive at ten fills. Four bits separate sixteen, which is enough.
+Three would separate eight, which is not — and that is why this stops at
+nine bits and not eight, even though eight would have saved another
+block. Getting there needs the sweep to cover a bank in five passes of
+128 instead of ten of 64, and the sweep blocks rendering, which would
+take the practical limit from about six sprites a line to about four.
 
 A descriptor is written as byte **pairs** from an even index: the even
 byte is held and the odd byte commits both, because a block RAM in this
@@ -794,12 +838,21 @@ and §5.11.
 
 What is built is the small end of the same machinery, and it is the part
 an 8-bit CPU is genuinely bad at:
-[`cool8_pixport.v`](../rtl/soc/cool8_pixport.v), **199 LUT4 and one
-`SB_MAC16`**.
+[`cool8_pixport.v`](../rtl/soc/cool8_pixport.v) and one `SB_MAC16`.
 
 Write `PIX_X`, write `PIX_Y`, write `PIX_DATA`, and the pixel appears in
 the surface `VID_BASE` and `VID_STRIDE` describe. X then advances on its
 own, so a horizontal span is one store per pixel.
+
+**`PIX_DATA` is write-only.** It was readable, and reading it cost two
+more variable shifters — one to bring the pixel down out of its byte and
+one to mask it — plus a stall path, a state and a holding register,
+because the byte has to be fetched before the answer exists. Nothing
+wanted it: this is an output device, and the one use for reading a pixel
+back is collision detection, which §5.11 already answers with software
+bounding-box tests. Software that genuinely needs to read a surface has
+`VRAM_ADDR`/`VRAM_DATA`. A read of `$FE38` returns `$FF`, and the pixel
+port no longer holds the bus at all.
 
 | | |
 |---|---|

@@ -71,6 +71,11 @@ module cool8_vport (
     input  wire [7:0]  io_a,
     input  wire        io_rd,
     input  wire        io_we,
+    // The write before the page's own stalls qualify it. `o_stall` is
+    // derived from this and the capture from `io_we`, because a stall
+    // derived from the qualified strobe would be a stall that switches
+    // itself off — see cool8_soc.
+    input  wire        io_wreq,
     input  wire [7:0]  io_wdata,
 
     output wire        o_sel,           // this block claims io_a
@@ -107,8 +112,9 @@ module cool8_vport (
     assign o_sel    = reg_sel | alias_sel;
     assign o_dp_sel = (io_a == A_DATA) | alias_sel;
 
-    wire dp_rd = io_rd & o_dp_sel;
-    wire dp_we = io_we & o_dp_sel;
+    wire dp_rd  = io_rd   & o_dp_sel;
+    wire dp_we  = io_we   & o_dp_sel;   // accepted: this one has effects
+    wire dp_req = io_wreq & o_dp_sel;   // asked for: this one decides the stall
 
     // ---------------------------------------------------------- state
 
@@ -153,10 +159,11 @@ module cool8_vport (
     wire rd_wait   = rd_active & ~pf_valid;
 
     // A second write while the first is still queued has to wait. The
-    // core holds `io_we` asserted across the stall, so this resolves
-    // itself the cycle the queue empties, and the `~wr_pend` guard is
-    // what stops it being taken twice.
-    wire we_wait   = dp_we & wr_pend;
+    // core holds its write asserted across the stall, so this resolves
+    // itself the cycle the queue empties. It is derived from the
+    // *request* rather than from the accepted strobe: the accepted one is
+    // this signal's own inverse, and the two together would oscillate.
+    wire we_wait   = dp_req & wr_pend;
 
     // **The stall is not asserted on the launch cycle**, and not because
     // it would be wrong to: a read's launch cycle already has mem_ready

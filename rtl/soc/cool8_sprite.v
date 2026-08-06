@@ -76,6 +76,40 @@
 // design like this looks like when it is subtly wrong: a hole inside a
 // sprite showing that sprite's own colour from four rows higher up.
 //
+// ## One palette bank for all sprites, and why the entry is nine bits
+//
+// The line buffer is 2048 entries, and an iCE40 block RAM 2048 deep is
+// 2 bits wide — so it costs **ceil(bits/2) block RAMs** and nothing else
+// about it matters. At fourteen bits that was seven of the thirty in the
+// machine, the largest single claim on block RAM anywhere in the design.
+//
+// Four of those bits were a per-sprite palette bank, carried on every
+// pixel so the merge in cool8_pixel could apply it. They are now one
+// register, `SPR_CTRL[7:4]`, shared by every sprite — and the entry is
+// `{tag[3:0], behind, pix[3:0]}`, nine bits, **five block RAMs**.
+//
+// The tag lost a bit with them, and that is the part that needed
+// checking rather than assuming. A tag of *n* bits separates 2^(n-1)
+// fills of one bank, because the banks alternate every line; the sweep
+// bounds how long an entry can survive at ten fills. Five bits separated
+// thirty-two, four separate sixteen, and sixteen is still comfortably
+// more than ten. Three would not be — eight is fewer than ten — and that
+// is the whole reason this stops at nine bits and not eight.
+//
+// **Eight was available and was not taken.** It needs the sweep to cover
+// a bank in five fills of 128 instead of ten of 64, and the sweep blocks
+// rendering: `S_TALLY` waits for it because they share the line buffer's
+// write port. A scanline is 266 system clocks and a 16x16 sprite costs
+// about 33 of them, so doubling the sweep to 128 would take the practical
+// limit from about six sprites a line to about four, and would put even a
+// full house of 8x8 sprites over the line. One block RAM is not worth
+// half the sprite budget.
+//
+// What it costs software: all sprites share sixteen colours instead of
+// choosing a bank each. Descriptor byte 7's palette field is therefore
+// ignored, and is left in the layout because the bits are free and a
+// future revision with block RAM to spare may want them back.
+//
 // FPGA-only. None of this goes to the ASIC.
 
 `default_nettype none
@@ -107,7 +141,10 @@ module cool8_sprite (
     // ---- the sprite line buffer's write side, in cool8_pixel
     output wire        sb_we,
     output wire [10:0] sb_addr,        // {bank, x[9:0]}
-    output wire [13:0] sb_data         // {tag[4:0], behind, bank, pix}
+    output wire [8:0]  sb_data,        // {tag[3:0], behind, pix[3:0]}
+
+    // The palette bank every sprite shares — see the header.
+    output wire [3:0]  o_bank
 );
 
     localparam [7:0] A_IDX = 8'h2A, A_DATA = 8'h2B, A_CTRL = 8'h2C;
@@ -121,7 +158,10 @@ module cool8_sprite (
 
     reg [7:0]  idx;
     reg        spr_en, overrun;
+    reg [3:0]  bank_r;                 // SPR_CTRL[7:4], shared by all sprites
     reg [7:0]  hold;                   // the even byte, waiting for its pair
+
+    assign o_bank = bank_r;
 
     assign o_sel = (io_a >= A_IDX) && (io_a <= A_CTRL);
     wire wr = io_we & o_sel;
@@ -140,7 +180,7 @@ module cool8_sprite (
 
     reg [9:0]  sx;
     reg [15:0] pat;
-    reg [3:0]  pbank, yy;
+    reg [3:0]  yy;
     reg        hflip, vflip, behind, big;
     reg [2:0]  w;                      // which pattern word
     reg [15:0] pw;                     // ...and the four pixels in it
@@ -214,7 +254,7 @@ module cool8_sprite (
 
     assign sb_we   = swp_busy ? 1'b1 : render_we;
     assign sb_addr = swp_busy ? {ln[0], swp_x} : {ln[0], px};
-    assign sb_data = swp_busy ? 14'd0 : {ln[5:1], behind, pbank, pix};
+    assign sb_data = swp_busy ? 9'd0 : {ln[4:1], behind, pix};
 
     // ---------------------------------------------------------- the run
 
@@ -229,9 +269,10 @@ module cool8_sprite (
     always @(posedge clk) begin
         if (!rst_n) begin
             idx <= 8'd0; spr_en <= 1'b0; overrun <= 1'b0; hold <= 8'd0;
+            bank_r <= 4'd0;
             daddr <= 7'd0; ln <= 10'd0; s <= 5'd0; s_q <= 5'd0;
             nhit <= 4'd0; k <= 4'd0; scan_v <= 1'b0; st <= S_IDLE;
-            sx <= 10'd0; pat <= 16'd0; pbank <= 4'd0; yy <= 4'd0;
+            sx <= 10'd0; pat <= 16'd0; yy <= 4'd0;
             hflip <= 1'b0; vflip <= 1'b0; behind <= 1'b0; big <= 1'b0;
             w <= 3'd0; pw <= 16'd0; n <= 2'd0;
             pass <= 1'b0; trail <= 1'b0;
@@ -255,6 +296,7 @@ module cool8_sprite (
                     end
                     A_CTRL: begin
                         spr_en <= io_wdata[0];
+                        bank_r <= io_wdata[7:4];
                         if (io_wdata[1]) overrun <= 1'b0;
                     end
                     default: ;
@@ -373,10 +415,12 @@ module cool8_sprite (
                         // palette bank's bits as its flips and a bank of
                         // zero — which looks like the background's own
                         // colours coming out of the sprite engine.
+                        // dq[11:8] is the descriptor's palette bank and is
+                        // ignored: every sprite uses SPR_CTRL[7:4]. See
+                        // the header for what that bought.
                         vflip  <= dq[7];
                         hflip  <= dq[6];
                         behind <= dq[5];
-                        pbank  <= dq[11:8];
                         w      <= 3'd0;
                         st     <= S_FW;
                     end
@@ -424,14 +468,14 @@ module cool8_sprite (
     always @* begin
         case (io_a)
             A_IDX:  o_rdata = idx;
-            A_CTRL: o_rdata = {6'b000000, overrun, spr_en};
+            A_CTRL: o_rdata = {bank_r, 2'b00, overrun, spr_en};
             // SPR_DATA is write-only, as PAL_DATA is: the descriptors'
             // read port is the one the scan uses.
             default: o_rdata = 8'hFF;
         endcase
     end
 
-    wire _unused = &{1'b0, io_rd, dq[12:11], 1'b0};
+    wire _unused = &{1'b0, io_rd, dq[12:8], 1'b0};
 
 endmodule
 

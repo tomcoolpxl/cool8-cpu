@@ -81,7 +81,12 @@ module cool8_video_tb;
     reg  [9:0]   sp_x   [0:31];
     reg  [9:0]   sp_y   [0:31];
     reg  [15:0]  sp_pat [0:31];
+    // Still written into descriptor byte 7 and deliberately *not* read by
+    // the model: every sprite takes its palette bank from SPR_CTRL[7:4]
+    // now, and leaving the per-sprite field in the stimulus is what
+    // proves the hardware ignores it.
     reg  [3:0]   sp_bank[0:31];
+    reg  [3:0]   g_sbank;              // SPR_CTRL[7:4], shared by all
 
     integer      i, j, k, fh, pixels, checks, fails, phase, dump_which;
     integer      from_phase;
@@ -97,7 +102,10 @@ module cool8_video_tb;
     cool8_video #(.FONT_FILE("font.hex")) u_vid (
         .sclk(sclk), .srst_n(rst_n),
         .pclk(pclk), .prst_n(rst_n),
-        .io_a(io_a), .io_rd(io_rd), .io_we(io_we), .io_wdata(io_wdata),
+        // Asked for, and accepted — see cool8_soc for why a write needs
+        // both and cool8_vport for what goes wrong with one.
+        .io_a(io_a), .io_rd(io_rd),
+        .io_wreq(io_we), .io_we(io_we & ~vid_stall), .io_wdata(io_wdata),
         .o_sel(vid_sel), .o_dp_sel(vid_dp_sel), .o_rdata(vid_rdata),
         .o_dout(vid_dout), .o_stall(vid_stall),
         .ram_req(ram_req), .ram_addr(ram_addr),
@@ -269,7 +277,8 @@ module cool8_video_tb;
                 put_spr(q[4:0], 1'b0, 1'b0, 1'b0, 1'b0, 1'b0,
                         10'd0, 10'd0, 16'd0, 4'd0);
             io_wr(8'h2C, 8'h00);
-            spr_on = 1'b0;
+            spr_on  = 1'b0;
+            g_sbank = 4'd0;
         end
     endtask
 
@@ -394,7 +403,7 @@ module cool8_video_tb;
                                    16'h000F;
                             if (spx != 16'd0) begin
                                 sfnd = 1'b1;
-                                sidx = {sp_bank[si], spx[3:0]};
+                                sidx = {g_sbank, spx[3:0]};
                                 sbh  = sp_bh[si];
                             end
                         end
@@ -547,7 +556,7 @@ module cool8_video_tb;
         lfsr = 32'hACE1_2345;
         g_scrx = 0; g_scry = 0; g_border = 8'h00; g_pat = 16'h0000;
         g_curon = 1'b0; g_curx = 0; g_cury = 0; g_cstyle = 0;
-        g_clines = 8'hF0; spr_on = 1'b0;
+        g_clines = 8'hF0; spr_on = 1'b0; g_sbank = 4'd0;
         for (k = 0; k < 32; k = k + 1) begin
             sp_en[k]=1'b0; sp_big[k]=1'b0; sp_hf[k]=1'b0;
             sp_vf[k]=1'b0; sp_bh[k]=1'b0;
@@ -681,8 +690,12 @@ module cool8_video_tb;
         // the row — which is out of spec for a bitmap (section 5.5) and
         // has nothing to do with sprites.
         set_scroll(10'd0, 10'd0);
-        io_wr(8'h2C, 8'h01);
-        spr_on = 1'b1;
+        // Bank $5 rather than $0, so the shared bank is actually carried
+        // rather than passing by being zero. Every descriptor below still
+        // sets a *different* per-sprite bank, and none of them shows.
+        io_wr(8'h2C, {4'h5, 4'h1});
+        spr_on  = 1'b1;
+        g_sbank = 4'h5;
 
         // Eight on a line, overlapping in pairs so priority shows, both
         // sizes, every flip, and two behind the background.

@@ -9,7 +9,10 @@
 //   div = round(f_clk / baud) - 1
 //
 // At the 8.375 MHz system clock, 115200 baud is div = 72, which lands on
-// 115385 baud — 0.16 % out, far inside the ~2 % a UART tolerates.
+// 8375000 / 73 = 114726 baud — 0.41 % out, far inside the ~2 % a UART
+// tolerates. (This line used to say 115385 and 0.16 %, which is the
+// arithmetic for a 15 MHz clock and survived a clock change that
+// docs/04-system.md section 4.6 did not miss.)
 //
 // FPGA-only. None of this goes to the ASIC.
 

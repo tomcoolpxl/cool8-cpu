@@ -42,6 +42,7 @@ FLS_ADDR_M = $FE89
 FLS_ADDR_H = $FE8A
 FLS_DATA  = $FE8B
 FLS_CTRL  = $FE8C
+VID_BASE_H = $FE13              ; the display origin, high byte
 
 SCREEN    = $8000               ; mode 0's map, stride 256
 COLS      = 80
@@ -63,6 +64,7 @@ cy      = MVARS+67
 kshift  = MVARS+68
 kbrk    = MVARS+69
 kext    = MVARS+70
+vtop    = MVARS+71              ; which map row is at the top of the screen
 dumpad  = MVARS+72              ; word -- where D and U carry on from
 ldest   = MVARS+74              ; word
 llen    = MVARS+76              ; word
@@ -379,16 +381,26 @@ putc:   PUSHW Y
         POPW Y
         RET
 
-; scraddr -- Y = the cell at (cx, cy). A stride of 256 is what makes
-; this two moves instead of a multiply.
+; scraddr -- Y = the cell at (cx, cy). A stride of 256 is what makes this
+; a few moves instead of a multiply.
+;
+; Screen row `cy` is map row `(vtop + cy) & 31`, because scrolling moves
+; the window rather than the text -- see `scroll`. The mask is the whole
+; of the difference and it is one instruction, which is the argument D30
+; made for a power-of-two stride in the first place.
 scraddr:
         PUSH R0
+        PUSH R1
         LD   R0,[cy]
+        LD   R1,[vtop]
+        ADD  R0,R1
+        AND  R0,#31
         ADD  R0,#>SCREEN
         MOV  YH,R0
         LD   R0,[cx]
         SHL  R0
         MOV  YL,R0
+        POP  R1
         POP  R0
         RET
 
@@ -401,28 +413,47 @@ curpos: PUSH R0
         POP  R0
         RET
 
-; scroll -- everything up one row, and blank the last.
-scroll: PUSHW X
-        PUSHW Y
+; scroll -- move the window down one row, and blank the row that appears.
+;
+; **Nothing moves in memory.** The map is 32 rows and 30 are displayed
+; (D30), and the fetch engine wraps its row pointer within `stride * 32`,
+; so scrolling a terminal is: advance the display origin by one row, and
+; clear the row that has just come into view at the bottom.
+;
+; This used to copy 29 rows of 160 bytes a byte at a time -- about 46,000
+; cycles, 5.5 ms a line at 8.375 MHz, with the machine doing nothing else.
+; It is now about thirty cycles. The hardware for it was built at M5 and
+; had never been used.
+;
+; **Software has to wrap the origin itself**, and that is the part the
+; documentation was missing. The hardware wraps its row pointer inside
+; `base & ~(stride*32 - 1)`, so a base allowed to walk past $9FFF takes
+; the whole window with it and the map appears to relocate. Keeping
+; `vtop` masked to 0..31 is what keeps the base inside $8000-$9F00.
+;
+; VID_BASE is latched at vblank, so the move takes effect at the start of
+; the next frame and the picture cannot tear.
+scroll: PUSHW Y
         PUSH R0
         PUSH R1
-        PUSH R2
-        LDW  X,#SCREEN+256
-        LDW  Y,#SCREEN
-        MOV  R2,#ROWS-1
-.row:   MOV  R0,#COLS*2
-.mv:    LD   R1,[X]
-        ST   [Y],R1
-        INCW X
-        INCW Y
-        SUB  R0,#1
-        BNE  .mv
-        ADDW X,#256-COLS*2      ; on to the start of the next row
-        ADDW Y,#256-COLS*2
-        SUB  R2,#1
-        BNE  .row
 
-        LDW  Y,#SCREEN+256*(ROWS-1)
+        LD   R0,[vtop]
+        ADD  R0,#1
+        AND  R0,#31
+        ST   [vtop],R0
+
+        MOV  R1,R0
+        ADD  R1,#>SCREEN
+        ST   [VID_BASE_H],R1    ; VID_BASE_L is 0 and stays 0
+
+        ; The row the window just uncovered is the bottom one on screen.
+        ADD  R0,#ROWS-1
+        AND  R0,#31
+        ADD  R0,#>SCREEN
+        MOV  YH,R0
+        CLR  R0
+        MOV  YL,R0
+
         MOV  R0,#COLS
 .clr:   CLR  R1
         ST   [Y],R1
@@ -433,11 +464,9 @@ scroll: PUSHW X
         SUB  R0,#1
         BNE  .clr
 
-        POP  R2
         POP  R1
         POP  R0
         POPW Y
-        POPW X
         RET
 
 ; newline -- CRLF on the wire, one row on the screen.

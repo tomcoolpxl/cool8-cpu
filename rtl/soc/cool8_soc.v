@@ -257,10 +257,6 @@ module cool8_soc #(
     reg  dpf_r;                        // ...specifically the flash's
     wire io_launch = io_sel & bus_read & mem_launch & ~vid_start;
     wire io_rd     = io_launch & ~io_rd_seen;
-    // A write held across a stolen cycle would otherwise reach the page
-    // twice, and half the registers on it have side effects — a palette
-    // index advanced twice, a VRAM address advanced twice.
-    wire io_we     = io_sel & bus_write & ~vid_busy;
 
     wire        vid_sel, vid_dp_sel, vid_stall, vid_irq;
     wire [7:0]  vid_rdata, vid_dout;
@@ -270,6 +266,32 @@ module cool8_soc #(
 
     wire        fls_sel, fls_dp_sel, fls_stall;
     wire [7:0]  fls_rdata, fls_dout;
+
+    // A write reaches the page exactly once, and the two signals below are
+    // what makes that true rather than merely usual.
+    //
+    // `io_wreq` is what the master is *asking* for. It is suppressed on a
+    // stolen cycle, because a write held across one would otherwise be
+    // presented twice — a palette index advanced twice, a VRAM address
+    // advanced twice.
+    //
+    // `io_we` is what the page may *act* on, and it is the same signal
+    // qualified by everything else that can hold the transfer up. Without
+    // that qualification the strobe stays high through a stall the page
+    // itself asked for, and every side-effecting register on it fires
+    // again. Nothing reachable does that today: the only block that stalls
+    // a write is cool8_vport, and its own `~wr_pend` guard covers its own
+    // register. That is coverage, not construction, and the audio engine
+    // and the timer are both still to come.
+    //
+    // The two are separate because collapsing them closes a loop.
+    // `vid_stall` carries cool8_vport's write-side stall, which is a
+    // function of the write being offered; feeding the qualified signal
+    // back in would make `io_we` depend on itself. So the port that
+    // decides whether to stall sees `io_wreq`, and the ports that have
+    // side effects see `io_we`.
+    wire io_wreq   = io_sel & bus_write & ~vid_busy;
+    wire io_we     = io_wreq & ~vid_stall & ~fls_stall;
 
     // Two registers on the page answer late rather than on the launch
     // cycle — VRAM_DATA and FLS_DATA — because neither byte is
@@ -453,7 +475,8 @@ module cool8_soc #(
     cool8_video #(.FONT_FILE(FONT_FILE), .FONT_INIT(FONT_INIT)) u_vid (
         .sclk(clk), .srst_n(rst_n),
         .pclk(pclk), .prst_n(prst_n),
-        .io_a(io_a), .io_rd(io_rd), .io_we(io_we), .io_wdata(bus_wdata),
+        .io_a(io_a), .io_rd(io_rd), .io_we(io_we), .io_wreq(io_wreq),
+        .io_wdata(bus_wdata),
         .o_sel(vid_sel), .o_dp_sel(vid_dp_sel), .o_rdata(vid_rdata),
         .o_dout(vid_dout), .o_stall(vid_stall),
         .ram_req(vid_ram_req), .ram_addr(vid_ram_addr),

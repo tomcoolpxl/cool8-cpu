@@ -97,9 +97,9 @@ blitter and three megahertz doing it — see
 
 | Resource | Available | Used |
 |---|---|---|
-| LUT4 | — | CPU **948**, rest of the SoC **688**, video **2041**, keyboard **160**, flash **180**, audio still to come |
-| Logic cells | 5280 | **5076 — 96 %** |
-| EBR (block RAM) | 30 × 4 Kbit | Boot ROM 8, font 8, sprite line buffer 7, background line buffer 2, palette 1, sprite descriptors 1, UART FIFO 1, keyboard FIFO 1 → **29** |
+| LUT4 | — | CPU **902**, rest of the SoC **688**, video **2041**, keyboard **160**, flash **180**, audio still to come |
+| Logic cells | 5280 | **5030 — 95 %** |
+| EBR (block RAM) | 30 × 4 Kbit | Boot ROM 8, font 8, sprite line buffer 5, background line buffer 2, palette 1, sprite descriptors 1, UART FIFO 1, keyboard FIFO 1 → **27** |
 | SPRAM | 4 × 32 KB = 128 KB | 2 blocks = 64 KB CPU RAM; **2 blocks = 64 KB video RAM** ([D28](01-decisions.md)) — **4 of 4** |
 | DSP | 8 | **1** — `y × stride` for the pixel port |
 | PLL | 1 | **1** — 25.125 MHz for the raster, ÷3 for everything else ([D32](01-decisions.md)) |
@@ -107,8 +107,8 @@ blitter and three megahertz doing it — see
 
 **LUT4 is not the number that decides whether the part is full.** A
 logic cell is a LUT4 with its carry and flip-flop, and the measured
-conversion on this design is **3910 LUT4 placed as 5076 LC, a factor of
-1.30**. Quote LC when asking whether something fits.
+conversion on this design is **3927 LUT4 placed as 5030 LC, a factor of
+1.28**. Quote LC when asking whether something fits.
 
 **EBR and logic cells are not interchangeable.** That is the sentence
 M6 turned into a decision: the boot ROM holds 3028 bytes in eight block
@@ -117,11 +117,17 @@ spend spare block RAM is on storage that would otherwise be flip-flops.
 [D37](01-decisions.md#d37--the-uart-receive-fifo-moves-into-block-ram-reversing-m4s-call)
 does exactly that and it is what made M6 fit.
 
-**What is left is 204 logic cells and one block RAM**, against an audio
-engine budgeted at ~250 LUT4 — by a process this table's own history
-says to distrust, since every estimate in the video subsystem came in at
-about half. Believe the number when `nextpnr` has printed it and not
-before.
+**What is left is 250 logic cells and three block RAMs**, against an
+audio engine budgeted at ~250 LUT4 — by a process this table's own
+history says to distrust, since every estimate in the video subsystem
+came in at about half. Believe the number when `nextpnr` has printed it
+and not before.
+
+It was 204 cells and one block RAM until
+[D39](01-decisions.md), which found the sprite line buffer's palette
+bank worth two blocks and `PIX_DATA`'s read path worth about 39 LUT4 —
+and found two other "obvious" savings to be negative when they were
+actually built.
 
 **Important:** iCE40 SPRAM cannot be initialised from the bitstream.
 At power-on the 64 KB of main RAM contains garbage. The boot ROM lives

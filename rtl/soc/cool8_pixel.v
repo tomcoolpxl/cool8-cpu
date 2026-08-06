@@ -97,7 +97,8 @@ module cool8_pixel #(
     // ---- system domain: the sprite line buffer's write side
     input  wire        sb_we,
     input  wire [10:0] sb_addr,
-    input  wire [13:0] sb_data,
+    input  wire [8:0]  sb_data,
+    input  wire [3:0]  spr_bank,        // shared by every sprite
 
     // ---- system domain: the mode. Quasi-static; see the header.
     input  wire        disp_en,
@@ -136,6 +137,7 @@ module cool8_pixel #(
     reg [1:0]  c_cstyle;
     reg        c_curon;
     reg [7:0]  c_clines;
+    reg [3:0]  c_sbank;
 
     always @(posedge pclk) begin
         rb_meta  <= read_bank;
@@ -157,6 +159,7 @@ module cool8_pixel #(
         c_cstyle <= cur_style;
         c_curon  <= cur_on;
         c_clines <= cur_lines;
+        c_sbank  <= spr_bank;
     end
 
     // ------------------------------------------------------ line buffer
@@ -177,7 +180,11 @@ module cool8_pixel #(
     // lines of the first frame show background rather than whatever was
     // in the array. SPRAM has no such initialisation, which is why the
     // two memories are treated so differently everywhere else.
-    reg [13:0] sb [0:2047];
+    // Nine bits, not fourteen: 2048 entries deep is 2 bits wide per block
+    // RAM on this part, so the entry width *is* the block count. The
+    // palette bank came out to pay for that; cool8_sprite's header has
+    // the argument and why it stops at nine and not eight.
+    reg [8:0] sb [0:2047];
 
     always @(posedge sclk)
         if (sb_we) sb[sb_addr] <= sb_data;
@@ -188,6 +195,15 @@ module cool8_pixel #(
     // counter's width, so the words for column 0 are read during the back
     // porch and the colour is on the pins at pixel 0. `xa2` is one
     // further still and is used only to name the next tile.
+    //
+    // **The second chain looks like duplication and is cheaper than not
+    // duplicating it.** Deriving `sx2` by incrementing `sx1` — the
+    // increment being `xa1[0]` under hdouble, and the next line's first
+    // tile at the wrap, which is a constant per mode — was built and
+    // measured at **+23 LUT4**. Everything below shares structure with
+    // the first chain and the mapper exploits it; the derived version
+    // adds a separate constant-path adder and a register that share with
+    // nothing. Do not "optimise" this again without measuring it.
 
     wire [10:0] ah1 = {1'b0, x} + 11'd3;
     wire [10:0] ah2 = {1'b0, x} + 11'd4;
@@ -275,8 +291,8 @@ module cool8_pixel #(
     reg        d1_last, d2_last;
     reg [7:0]  d1_cell, d2_cell;
     reg [4:0]  d1_trow, d2_trow;
-    reg [13:0] sb_q, sb_d;
-    reg [4:0]  d1_tag, d2_tag;
+    reg [8:0]  sb_q, sb_d;
+    reg [3:0]  d1_tag, d2_tag;
 
     // For a bitmap the sub-index is the pixel inside the word; for a
     // tile it is the pixel inside the pattern word, which is 4 bpp, so
@@ -302,8 +318,8 @@ module cool8_pixel #(
             d1_last   <= 1'b0;  d2_last  <= 1'b0;
             d1_cell   <= 8'd0;  d2_cell  <= 8'd0;
             d1_trow   <= 5'd0;  d2_trow  <= 5'd0;
-            sb_q      <= 14'd0; sb_d     <= 14'd0;
-            d1_tag    <= 5'd0;  d2_tag   <= 5'd0;
+            sb_q      <= 9'd0;  sb_d     <= 9'd0;
+            d1_tag    <= 4'd0;  d2_tag   <= 4'd0;
         end else begin
             lb_q     <= lb[{rb, raddr}];
 
@@ -312,7 +328,7 @@ module cool8_pixel #(
             // lookahead and needs no arithmetic at all.
             sb_q     <= sb[{ya[0], xa1[9:0]}];
             sb_d     <= sb_q;
-            d1_tag   <= ya[5:1];
+            d1_tag   <= ya[4:1];
             d2_tag   <= d1_tag;
 
             d1_grow  <= grow;      d2_grow  <= d1_grow;
@@ -382,11 +398,11 @@ module cool8_pixel #(
     // if it is not colour zero, which is the transparent one. `behind`
     // puts it under the background wherever the background is not itself
     // colour zero.
-    wire spr_here   = (sb_d[13:9] == d2_tag) && (sb_d[3:0] != 4'd0);
-    wire spr_wins   = spr_here && (!sb_d[8] || (bg_index == 8'h00));
+    wire spr_here   = (sb_d[8:5] == d2_tag) && (sb_d[3:0] != 4'd0);
+    wire spr_wins   = spr_here && (!sb_d[4] || (bg_index == 8'h00));
 
     assign pal_index = d2_blank ? c_bord :
-                       spr_wins ? {sb_d[7:4], sb_d[3:0]} : bg_index;
+                       spr_wins ? {c_sbank, sb_d[3:0]} : bg_index;
 
     // Blanking is black on the pins, not the border colour: outside the
     // display window a monitor is not looking, and a sync separator that

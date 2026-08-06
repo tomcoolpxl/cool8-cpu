@@ -1070,22 +1070,33 @@ is left here is sound.
 
 ### 🚩 The gate this one has to pass first: does it still fit?
 
-**204 logic cells and one block RAM.** Audio was budgeted at ~250 LUT4,
-and this project has now watched an estimate come in at about half four
-times running — the video subsystem three times
+**250 logic cells and three block RAMs**, after
+[D39](01-decisions.md). Audio was budgeted at ~250 LUT4, and this
+project has now watched an estimate come in at about half four times
+running — the video subsystem three times
 ([D34](01-decisions.md#d34--the-video-engine-ships-with-sprites-and-a-pixel-port-and-no-blitter)),
 and M6's two blocks at 340 LUT4 against ~220. Assume it does not fit and
 plan what to spend, in this order:
 
-1. **The boot ROM.** 3028 bytes in eight EBR. Shrinking the monitor to
+1. **The boot ROM.** 3029 bytes in eight EBR. Shrinking the monitor to
    2 KB frees four blocks — but block RAM is not logic cells
    ([D37](01-decisions.md#d37--the-uart-receive-fifo-moves-into-block-ram-reversing-m4s-call)),
    so this only helps if there is more flip-flop storage to move into
    it. There is: the loader's state and the video registers.
-2. **The sprite descriptor count.** 32 is a parameter and 16 is a real
-   machine.
-3. **`PIX_*`.** 199 LUT4 and D34 already argues it is the optional part
-   of what survived the blitter.
+2. **Sprites *per line*, not the descriptor count.** Eight to four is a
+   measured **−46 LUT4 and −44 flip-flops**. Cutting descriptors 32 → 16
+   was the lever this list used to name and it is **+4 LUT4** — it saves
+   nothing, because the cost is the per-line machinery and the line
+   buffer rather than the descriptors.
+3. **`PIX_*`.** Measured at **218 LUT4** and one DSP if removed
+   outright, and D34 already argues it is the optional part of what
+   survived the blitter.
+4. **The hardware loader**, which is the big one nobody had priced:
+   **416 logic cells**, 8 % of the part. What it costs to give up is
+   debugging a machine whose CPU is wedged
+   ([D15](01-decisions.md#d15--the-loader-is-hardware-not-a-rom-monitor)),
+   and the monitor plus the `SW[0]` NMI break button cover most of the
+   rest.
 
 Write the audio engine, measure it, and then choose — the same order M5
 and M6 used, and the reason both of them landed.

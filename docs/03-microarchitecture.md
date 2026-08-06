@@ -456,11 +456,15 @@ wrapper.
 
 | Measure | Result |
 |---|---|
-| iCE40UP5K, `cool8_core` | **948 LUT4, 148 FF, 24 carry** |
+| iCE40UP5K, `cool8_core` | **902 LUT4, 140 FF, 24 carry** |
 | — of which `cool8_alu` | 78 LUT4 |
 | — of which `cool8_agu` | 128 LUT4 |
-| Mapped to two-input gates | 2192 combinational + 148 FF |
-| Gate equivalents at 6 GE per flip-flop | **3080** |
+| Mapped to two-input gates | 2080 combinational + 140 FF |
+| Gate equivalents at 6 GE per flip-flop | **2920** |
+
+It was 948 LUT4 and 148 FF until [D38](01-decisions.md) gave `S_FETCH`
+its own flat next-state decode, which was attempted as a speed fix and
+kept as an area one.
 
 Measured on yosys 0.67. It was 969 LUT4 and 3084 GE when this was
 first written, on an older yosys; the RTL has not changed and the
@@ -638,7 +642,7 @@ a second timing model.
 `rtl/soc/cool8_soc.v` assembles the machine — core, memory, UART,
 loader, keyboard, flash and the video subsystem — and decodes
 `$FE00-$FEFF` on the **bus**, ahead of `cool8_mem` and whoever the
-master is. **3910 LUT4 and 1589 flip-flops** for the whole SoC, with 29
+master is. **3927 LUT4 and 1582 flip-flops** for the whole SoC, with 27
 EBR, 4 SPRAM and one DSP block. It was 1636 LUT4 and 8 EBR before M5.
 
 The 16-byte receive FIFO is a block RAM, and it was flip-flops until M6.
@@ -685,6 +689,23 @@ the FIFO twice and the byte in between is simply gone.
 registers on the page have side effects — a palette index advanced
 twice, a VRAM address advanced twice — so `io_we` is gated by the
 arbiter's state as well.
+
+That gate is necessary and it was not sufficient. A stolen cycle is not
+the only thing that can hold a write up: a block *on the page* can stall
+one too, and then the strobe stays high through a stall the page itself
+asked for. Only one such block exists — `cool8_vport`, when a second
+`VRAM_DATA` write arrives while one is posted — and its own `~wr_pend`
+guard happened to cover its own register, so nothing was ever observed to
+break. That is coverage, not construction, and the audio engine and the
+timer are both still to come.
+
+So the write is now two signals. **`io_wreq` is what the master is asking
+for**; the port that decides whether to stall sees that one. **`io_we` is
+what the page may act on**, which is `io_wreq` qualified by every stall,
+and every register with a side effect sees that one. They cannot be the
+same signal: `cool8_vport`'s write stall is a function of the write being
+offered, so feeding the qualified strobe back into it would make `io_we`
+depend on itself.
 
 **And nothing the core drives may take part in arbitrating the memory.**
 The obvious version let a master's write win, since a write is a single

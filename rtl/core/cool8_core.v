@@ -257,6 +257,46 @@ module cool8_core (
         end
     end
 
+    // --- the next state out of a fetch, as a flat function of the opcode
+    //
+    // This is `nopnd` and `exec_state` again, restricted to the primary
+    // page and written as one case rather than derived from the group
+    // wires above. That is duplication on purpose.
+    //
+    // Those group wires are shared with S_MEM and S_EXEC, which have
+    // enormous timing slack, and with S_FETCH, which has none: the cone
+    // from the byte arriving on `mem_rdata` to the state register is the
+    // 37 levels and 87 ns that docs/01-decisions.md's open question is
+    // about, and it is why the system clock is a third of the pixel clock
+    // rather than a half. Factoring that a slack path wants is factoring
+    // the tight path pays for. Here the eight opcode bits reach four
+    // output bits directly and the mapper can flatten them.
+    //
+    // In S_FETCH `d_ir` is `mem_rdata` and `d_p2` is 0, so this must agree
+    // with the general path for every primary opcode — and sim/cosim.py
+    // walks all 511 encodings, which is what makes duplicating it safe.
+    reg [3:0] f_nxt;
+    always @* begin
+        case (mem_rdata[7:4])
+            4'h0, 4'h1: f_nxt = S_OPND;                    // ALU Rd,#imm8
+            4'h2: case (mem_rdata[3:0])
+                      4'h2, 4'h3:       f_nxt = S_POP;     // RET, RETI
+                      4'h8, 4'h9:       f_nxt = S_OPND;    // JMP/CALL abs16
+                      4'hC, 4'hD, 4'hE: f_nxt = S_PUSH;    // CALL [X|Y], BRK
+                      4'hF:             f_nxt = S_FETCH2;  // the escape
+                      default:          f_nxt = S_EXEC;
+                  endcase
+            // $30-$37 PUSH/POP Rd, $38-$3B INCW/DECW, $3C-$3D PUSHW,
+            // $3E-$3F POPW
+            4'h3: f_nxt = !mem_rdata[3] ? S_MEM  :
+                          !mem_rdata[2] ? S_EXEC :
+                           mem_rdata[1] ? S_POP  : S_PUSH;
+            4'h4: f_nxt = S_MEM;                           // LD/ST [X|Y]
+            4'h5, 4'h6, 4'h7: f_nxt = S_OPND;
+            default: f_nxt = S_EXEC;                       // $80-$FF
+        endcase
+    end
+
     // ================================================================
     // Interrupts and bus arbitration
     // ================================================================
@@ -431,13 +471,16 @@ module cool8_core (
             pc_we_agu = 1'b1;
             ir_we = 1'b1;
 
-            if (mem_rdata == 8'h2F)      nxt = S_FETCH2;
-            else if (nopnd != 2'd0)      nxt = S_OPND;
-            else if (g_ctrl && lo4 == 4'hE) begin       // BRK
-                nxt = S_PUSH; set_int = 1'b1;
+            nxt = f_nxt;
+
+            // BRK's state is already S_PUSH above; what it needs on top is
+            // the vector and the in-interrupt flag. Those are single bits
+            // out of a much shallower cone than the state, so they stay on
+            // the shared decode.
+            if (g_ctrl && lo4 == 4'hE) begin
+                set_int = 1'b1;
                 vec_we = 1'b1; nxt_vec = V_BRK;
             end
-            else                         nxt = exec_state;
         end
 
         S_FETCH2: begin

@@ -1202,6 +1202,49 @@ survived every other test in the file.
 
 ---
 
+## D39 — three area optimisations were measured; two of them were negative
+
+Recorded because each looked obviously right, and re-deriving them costs
+a day each.
+
+**The sprite line buffer went from fourteen bits to nine, and that
+worked.** It is 2048 entries, and an iCE40 block RAM 2048 deep is two
+bits wide, so the entry width *is* the block count. Dropping the
+per-sprite palette bank in favour of `SPR_CTRL[7:4]` took it from seven
+blocks to five. Eight bits and four blocks was available and refused:
+it needs a three-bit generation tag, which needs the sweep to cover a
+bank in five passes instead of ten, and the sweep blocks rendering — the
+cost is about two sprites a line. See [§5.6](04-system.md).
+
+**`PIX_DATA` became write-only, and that worked** — about 39 LUT4 and a
+stall path. [§5.7](04-system.md) has the argument.
+
+**Making `hstart`/`hactive`/`vstart` written registers did not.**
+Removing the compare, subtract and shift that derives them measures −48
+LUT4 *if the capability goes with it*; keeping bordered modes means
+preset-loading the three values and decoding six write addresses, and
+that costs more than the divider. Measured **+44** with full-width preset
+fields and **+35** with a four-bit preset and write-only registers.
+Reverted. The derivation is cheaper than the registers that would
+replace it.
+
+**Deriving the pixel stage's second lookahead from the first did not
+either.** `sx2 = sx1 + inc`, with a registered per-mode constant for the
+line wrap, measures **+23 LUT4**. Everything in the first chain shares
+structure with the second and the mapper exploits it; the derived form
+adds a constant-path adder and a register that share with nothing.
+Reverted, with a comment in `cool8_pixel.v` so it is not retried.
+
+**The process point.** All four were sized first by deleting the feature
+and re-synthesising, and three of those probes over-reported because
+deleting a feature also deletes the decode and the read-back that a real
+implementation has to keep. **A removal probe measures the ceiling, not
+the change.** [D34](#d34--the-video-engine-ships-with-sprites-and-a-pixel-port-and-no-blitter)
+named the estimator as the thing to distrust; this is the same lesson one
+level down.
+
+---
+
 ## Open questions
 
 **The fit question is closed.** It was the only one, it was answered by
@@ -1212,6 +1255,41 @@ and [D32](#d32--the-system-clock-is-8375-mhz-a-third-of-the-pixel-clock).
 
 What is left in its place is a question the gate uncovered rather than
 one it was asked:
+
+### D38 — the fetch-path next state is decoded flat, and it bought area rather than speed
+
+**Attempted as a speed fix, kept as an area one.**
+
+`nxt` out of `S_FETCH` used to be derived through the `g_*`/`p_*` group
+wires, `nopnd` and `exec_state` — all shared with `S_MEM` and `S_EXEC`,
+which have enormous slack. It is now its own flat `case` on the eight
+opcode bits. The reasoning was that factoring a slack path wants is
+factoring the tight path pays for.
+
+**Measured across four placer seeds:**
+
+| | seed 1 | 2 | 3 | 4 | mean | best |
+|---|---|---|---|---|---|---|
+| before | 11.46 | 11.34 | 11.05 | 10.65 | **11.12** | 11.46 |
+| after | 11.23 | 11.24 | 11.09 | 11.45 | **11.25** | 11.45 |
+
+**+0.13 MHz on the mean, against a seed spread of 0.8.** That is not a
+result. It is kept because it is smaller: `cool8_core` went from 948 LUT4
+and 148 flip-flops to **902 and 140**, and the duplication pays for
+itself.
+
+**The single-run comparison that motivated it said 10.81 → 11.90**, which
+is two draws from opposite ends of that distribution. D32 ran six seeds
+for exactly this reason and the lesson had to be learned twice.
+
+**What the timing report says instead.** The `sclk` critical path now
+starts at `cool8_spram`'s `blk_r`, and its first hop is **4.25 ns of
+routing** — (21,10) to (24,1), most of the way across the die — before it
+reaches a single LUT, on its way to the boot ROM's read mux. Collapsing
+the chained read muxes into one one-hot select, which was the other
+proposal, attacks logic depth on a path whose first term is a wire.
+Replicating `blk_r` and `byte_r` so each consumer has a local copy is the
+cheaper thing to try, and it is untried.
 
 ### Should the core's fetch path be pipelined?
 

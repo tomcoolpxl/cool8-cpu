@@ -56,6 +56,10 @@ module cool8_video #(
     input  wire [7:0]  io_a,
     input  wire        io_rd,
     input  wire        io_we,
+    // The write as *asked for*, before the page's own stalls qualify it.
+    // Only cool8_vport takes it, and only to decide whether to stall —
+    // see cool8_soc for why the two cannot be the same signal.
+    input  wire        io_wreq,
     input  wire [7:0]  io_wdata,
     output wire        o_sel,
     output wire        o_dp_sel,       // ...and it is the VRAM data port
@@ -186,13 +190,14 @@ module cool8_video #(
     wire [7:0]  sprite_rdata;
     wire        sb_we;
     wire [10:0] sb_addr;
-    wire [13:0] sb_data;
+    wire [8:0]  sb_data;
+    wire [3:0]  spr_bank;
 
     wire        blt_req, blt_gnt, blt_rvalid, blt_we;
     wire [15:1] blt_addr;
     wire [15:0] blt_wdata;
     wire [3:0]  blt_mask;
-    wire        pxp_sel, pxp_stall;
+    wire        pxp_sel;
     wire [7:0]  pxp_rdata;
 
     cool8_vram u_vram (
@@ -218,13 +223,14 @@ module cool8_video #(
         .frame_start(frame_start),
         .vr_req(spr_req), .vr_addr(spr_addr), .vr_gnt(spr_gnt),
         .vr_rvalid(spr_rvalid), .vr_rdata(vram_rdata),
-        .sb_we(sb_we), .sb_addr(sb_addr), .sb_data(sb_data)
+        .sb_we(sb_we), .sb_addr(sb_addr), .sb_data(sb_data),
+        .o_bank(spr_bank)
     );
 
     cool8_pixport u_pxp (
         .clk(sclk), .rst_n(srst_n),
         .io_a(io_a), .io_rd(io_rd), .io_we(io_we), .io_wdata(io_wdata),
-        .o_sel(pxp_sel), .o_rdata(pxp_rdata), .o_stall(pxp_stall),
+        .o_sel(pxp_sel), .o_rdata(pxp_rdata),
         .bpp_log(bpp_log), .base(base), .stride(stride),
         .vr_req(blt_req), .vr_addr(blt_addr), .vr_wdata(blt_wdata),
         .vr_we(blt_we), .vr_mask(blt_mask),
@@ -234,15 +240,16 @@ module cool8_video #(
     wire       vport_sel, vport_stall;
     wire [7:0] vport_rdata;
 
-    // Two blocks on this page can hold the bus: the VRAM data port while
-    // its prefetch is out, and the pixel port while its access is. They
-    // never claim the same address, so the OR cannot hide one behind the
-    // other.
-    assign o_stall = vport_stall | pxp_stall;
+    // One block on this page can hold the bus: the VRAM data port, while
+    // its prefetch is still out. The pixel port used to be the other one
+    // and is not any more — PIX_DATA is write-only and a write never
+    // waits, so there is nothing left for it to stall for.
+    assign o_stall = vport_stall;
 
     cool8_vport u_vport (
         .clk(sclk), .rst_n(srst_n),
-        .io_a(io_a), .io_rd(io_rd), .io_we(io_we), .io_wdata(io_wdata),
+        .io_a(io_a), .io_rd(io_rd), .io_we(io_we), .io_wreq(io_wreq),
+        .io_wdata(io_wdata),
         .o_sel(vport_sel), .o_dp_sel(o_dp_sel), .o_rdata(vport_rdata),
         .o_dout(o_dout), .o_stall(vport_stall),
         .stride(stride),
@@ -294,6 +301,7 @@ module cool8_video #(
         .lb_we(lb_we), .lb_bank(lb_bank), .lb_addr(lb_addr),
         .lb_data(lb_data), .read_bank(read_bank),
         .sb_we(sb_we), .sb_addr(sb_addr), .sb_data(sb_data),
+        .spr_bank(spr_bank),
         .disp_en(disp_en), .engine(engine), .bpp_log(bpp_log),
         .hdouble(hdouble), .vdouble(vdouble), .border(border),
         .hactive(hactive), .hstart(hstart),

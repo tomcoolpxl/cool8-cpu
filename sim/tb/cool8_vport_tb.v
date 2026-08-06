@@ -79,7 +79,13 @@ module cool8_vport_tb;
 
     cool8_vport u_port (
         .clk(clk), .rst_n(rst_n),
-        .io_a(io_a), .io_rd(io_rd), .io_we(io_we), .io_wdata(io_wdata),
+        // The bus splits a write into what is asked for and what is
+        // accepted, and cool8_soc is where the split is explained: the
+        // port's own write stall is a function of the request, so the
+        // accepted strobe has to be the request qualified by it. Driving
+        // both from one reg here would model a bus that does not exist.
+        .io_a(io_a), .io_rd(io_rd),
+        .io_wreq(io_we), .io_we(io_we & ~o_stall), .io_wdata(io_wdata),
         .o_sel(o_sel), .o_dp_sel(o_dp_sel),
         .o_rdata(o_rdata), .o_dout(o_dout), .o_stall(o_stall),
         .stride(stride),

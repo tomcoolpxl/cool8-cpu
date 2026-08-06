@@ -384,6 +384,43 @@ module cool8_mon_tb;
         put_pat("A");
         expect_str("and shift held gives the capital");
 
+        // ---- the scroll moved the window, not the text
+        //
+        // Everything above has printed far more than thirty lines, so
+        // `scroll` has run many times. It works by advancing VID_BASE
+        // rather than copying 4640 bytes (D30, D35), and the two things
+        // that have to stay true while it does are exactly the two the
+        // hardware's circular wrap depends on:
+        //
+        //   the origin stays inside the 32-row map, because the fetch
+        //   engine wraps within `base & ~(stride*32 - 1)` and a base
+        //   allowed to walk past $9FFF takes the window with it;
+        //
+        //   the origin stays a whole number of rows, because the wrap is
+        //   a mask and a base off a row boundary shifts every row on the
+        //   screen by the remainder.
+        //
+        // Neither is visible in the serial output, which is why this is a
+        // peek rather than an `expect_str`. The monitor scrolled by
+        // copying until M7 and this check is what stops it regressing to
+        // that quietly — a bulk copy leaves VID_BASE at $8000 and passes
+        // every other phase in this file.
+        checks = checks + 1;
+        if (u_soc.u_vid.u_vregs.base_r == 16'h8000) begin
+            errors = errors + 1;
+            $display("FAIL VID_BASE never moved — scroll is copying again");
+        end else if (u_soc.u_vid.u_vregs.base_r[7:0] != 8'h00) begin
+            errors = errors + 1;
+            $display("FAIL VID_BASE $%04h is not on a row boundary",
+                     u_soc.u_vid.u_vregs.base_r);
+        end else if (u_soc.u_vid.u_vregs.base_r[15:13] != 3'b100) begin
+            errors = errors + 1;
+            $display("FAIL VID_BASE $%04h has left the 32-row map",
+                     u_soc.u_vid.u_vregs.base_r);
+        end else if (verbose)
+            $display("\n  ok  VID_BASE $%04h — scrolled in hardware",
+                     u_soc.u_vid.u_vregs.base_r);
+
         type_ch(8'h0D);                  // finish that line
 
         $display("\n\n  %0d checks, %0d failures", checks, errors);
