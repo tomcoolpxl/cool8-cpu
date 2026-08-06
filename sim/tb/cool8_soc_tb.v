@@ -79,7 +79,10 @@ module cool8_soc_tb;
 
     // ------------------------------------------------------------ DUT
 
+    // LOADER(1): it is a build option now and off by default, but
+    // the I/O page includes $FE80-$FE81, which are the loader.
     cool8_soc #(
+        .LOADER(1),
         .ROM_INIT(0),                      // filled below, not from an image
         .UART_DIV(DIV0),
         .BUILD_ID(BUILD),

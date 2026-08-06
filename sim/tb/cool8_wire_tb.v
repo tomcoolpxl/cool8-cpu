@@ -75,7 +75,10 @@ module cool8_wire_tb;
     // crossing does not disturb anything on this side of it.
     always #2.39 pclk = ~pclk;
 
+    // LOADER(1): it is a build option now and off by default, but
+    // this file is the loader, over a bit-banged wire.
     cool8_soc #(
+        .LOADER(1),
         .ROM_INIT(0),
         .UART_DIV(DIV0),
         .RX_ABITS(4)

@@ -69,9 +69,15 @@ module cool8_top_tb;
     cool8_top #(
         .POR_BITS(POR_BITS),
         .PLL_SIM(1),                       // cells_sim.v gives the PLL no body
-        .LED_ACTIVE_LOW(1)
+        .LED_ACTIVE_LOW(1),
+        // The loader is a build option and the shipping image does not
+        // carry it; this phase is about the board wrapper reaching it, so
+        // it asks for the bring-up configuration.
+        .LOADER(1)
     ) u_top (
-        .clk(clk),
+        // The break button is not pressed. Left dangling it would be X,
+        // and an X on NMI is an interrupt at a random instant.
+        .clk(clk), .sw0(1'b1),
         .uart_rx(host_tx), .uart_tx(uart_tx),
         .led_r(led_r), .led_g(led_g), .led_b(led_b),
         // The PLL and the raster are the wrapper's now, so this

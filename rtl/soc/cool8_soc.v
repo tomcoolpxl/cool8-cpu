@@ -78,7 +78,25 @@ module cool8_soc #(
     parameter [7:0]  BUILD_ID = 8'h05,
     // Receive FIFO depth, log2. The loader can forward two bytes in
     // consecutive cycles, so one entry is not enough on its own.
-    parameter RX_ABITS = 4
+    parameter RX_ABITS = 4,
+    // **The hardware loader is a build option, and it is off.**
+    //
+    // It cost 416 logic cells — 8 % of the part — and D15 built it to
+    // solve a problem that no longer exists: at M4 there was no working
+    // ROM, no monitor and no flash reader, so every software change was a
+    // bitstream rebuild. All three exist now, and `icesprog` plus the
+    // monitor's `L` command get a program in without it.
+    //
+    // What it uniquely gave up is debugging a board whose CPU never
+    // started, which is a bring-up capability rather than a development
+    // one. So it is parameterised rather than deleted: build with
+    // `LOADER(1)` and drop something else, and the bus-master read-back
+    // is back in ten minutes. `cool8_loader.v` stays in the tree and its
+    // tests stay passing.
+    //
+    // The cells bought writing to the SPI flash, which is the thing the
+    // machine could not do at all: it could load and it could not save.
+    parameter LOADER = 0
 ) (
     input  wire        clk,
     input  wire        rst_n,          // board reset, active low
@@ -514,20 +532,52 @@ module cool8_soc #(
         .o_pwm(audio)
     );
 
-    cool8_loader u_ldr (
-        .clk(clk), .rst_n(rst_n),
-        .rx_data(rx_data), .rx_valid(rx_valid),
-        .tx_data(ldr_tx_data), .tx_start(ldr_tx_start),
-        .tx_want(ldr_tx_want), .tx_busy(tx_busy),
-        .fwd_data(fwd_data), .fwd_valid(fwd_valid),
-        .busrq(busrq), .busak(busak),
-        .mem_addr(ldr_addr), .mem_wdata(ldr_wdata), .mem_rdata(bus_rdata),
-        .mem_read(ldr_read), .mem_write(ldr_write), .mem_ready(bus_ready),
-        .cpu_rst_n(ldr_cpu_rst_n), .bootram(bootram), .halt_req(),
-        .ctrl_we(io_we & (io_a == A_LDRCTRL)),
-        .ctrl_wdata(bus_wdata),
-        .ctrl_rdata(ldr_ctrl_rdata), .stat_rdata(ldr_stat_rdata)
-    );
+    generate
+    if (LOADER) begin : g_loader
+        cool8_loader u_ldr (
+            .clk(clk), .rst_n(rst_n),
+            .rx_data(rx_data), .rx_valid(rx_valid),
+            .tx_data(ldr_tx_data), .tx_start(ldr_tx_start),
+            .tx_want(ldr_tx_want), .tx_busy(tx_busy),
+            .fwd_data(fwd_data), .fwd_valid(fwd_valid),
+            .busrq(busrq), .busak(busak),
+            .mem_addr(ldr_addr), .mem_wdata(ldr_wdata),
+            .mem_rdata(bus_rdata),
+            .mem_read(ldr_read), .mem_write(ldr_write),
+            .mem_ready(bus_ready),
+            .cpu_rst_n(ldr_cpu_rst_n), .bootram(bootram), .halt_req(),
+            .ctrl_we(io_we & (io_a == A_LDRCTRL)),
+            .ctrl_wdata(bus_wdata),
+            .ctrl_rdata(ldr_ctrl_rdata), .stat_rdata(ldr_stat_rdata)
+        );
+    end else begin : g_no_loader
+        // **The receiver passes straight through.** Every byte went into
+        // the loader and arrived at the CPU only if the sniffer decided it
+        // was not part of a frame; with no sniffer there is nothing to
+        // decide and the wire is the CPU's alone.
+        assign fwd_data      = rx_data;
+        assign fwd_valid     = rx_valid;
+        // Nothing else asks for the bus, so the core keeps it. The mux on
+        // `bus_addr` folds away with `busak` stuck low.
+        assign busrq         = 1'b0;
+        assign ldr_addr      = 16'h0000;
+        assign ldr_wdata     = 8'h00;
+        assign ldr_read      = 1'b0;
+        assign ldr_write     = 1'b0;
+        // The transmitter has one talker now, so the priority arrangement
+        // D27 needed collapses to "the CPU sends when the wire is idle".
+        assign ldr_tx_data   = 8'h00;
+        assign ldr_tx_start  = 1'b0;
+        assign ldr_tx_want   = 1'b0;
+        assign ldr_cpu_rst_n = 1'b1;
+        // ROMEN reloads from ~bootram on every CPU reset; with no loader
+        // to set it, the machine always wakes into the boot ROM.
+        assign bootram       = 1'b0;
+        // $FE80 and $FE81 read as an address nobody claims.
+        assign ldr_ctrl_rdata = 8'hFF;
+        assign ldr_stat_rdata = 8'hFF;
+    end
+    endgenerate
 
 endmodule
 

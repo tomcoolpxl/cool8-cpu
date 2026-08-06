@@ -65,3 +65,6 @@ set_io flash_miso 14
 
 # audio — sigma-delta out, P1_3, into the RC low-pass
 set_io audio      3
+
+# SW[0] — the break button, NMI. P4_4
+set_io sw0        18

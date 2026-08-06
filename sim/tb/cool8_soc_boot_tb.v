@@ -66,7 +66,12 @@ module cool8_soc_boot_tb;
     // Every parameter left at its default. That is the point: this is
     // the configuration cool8_top.v will instantiate.
 
-    cool8_soc u_soc (
+    // LOADER(1): this file checks a cold boot by *reading memory back*
+    // after it, and the loader's bus grant is what makes that possible
+    // without disturbing the machine. The shipping image does not carry
+    // it — see cool8_soc — but a test that cannot look at RAM cannot
+    // check that the boot code cleared it.
+    cool8_soc #(.LOADER(1)) u_soc (
         .clk(clk), .rst_n(rst_n),
         .pclk(pclk), .prst_n(rst_n),
         .rgb(), .hsync_n(), .vsync_n(),

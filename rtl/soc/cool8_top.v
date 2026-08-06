@@ -27,9 +27,21 @@ module cool8_top #(
     // channel is a *low* pin. If the board comes up bright and goes dark
     // when the boot ROM finishes, this is backwards and it is a one-line
     // change and a rebuild.
-    parameter LED_ACTIVE_LOW = 1
+    parameter LED_ACTIVE_LOW = 1,
+    // The hardware loader, off by default — see cool8_soc. Build a
+    // bring-up image with LOADER(1) and drop something else when a board
+    // will not boot and you need the bus-master read-back.
+    parameter LOADER = 0
 ) (
     input  wire clk,             // pin 35, 12 MHz from the iCELink debugger
+
+    // SW[0], the break button. docs/04-system.md section 6: press it and
+    // a hung program lands in the monitor with all of its state intact,
+    // because an NMI pushes PC and F and changes nothing else. It is the
+    // escape hatch that makes a machine with no other input device
+    // debuggable, and it is what replaced the loader's HALT when the
+    // loader became a build option.
+    input  wire sw0,             // pin 18, P4_4
     input  wire uart_rx,         // pin 4
     output wire uart_tx,         // pin 6
     // Sound: one pin, 1-bit sigma-delta, into the RC low-pass and
@@ -109,6 +121,40 @@ module cool8_top #(
     always @(posedge pclk)
         prst_sync <= {prst_sync[0], rst_n};
 
+    // ------------------------------------------------------ break button
+    //
+    // Fire once on a press and then ignore the switch for 62 ms, which is
+    // longer than any contact bounces for. That is cheaper than a
+    // stability counter and it is the behaviour a break button wants
+    // anyway: one NMI per press, however untidily the contact closes.
+    //
+    // The core's NMI input is edge sensitive already, so a single-cycle
+    // pulse is the whole interface.
+    //
+    // **The polarity is the one thing here not checked against hardware.**
+    // The iCESugar's tactile switches pull to ground, so a press is a low
+    // — the same assumption, and the same caveat, as LED_ACTIVE_LOW.
+
+    reg [1:0]  sw_sync;
+    reg [18:0] brk_hold;         // 2^19 / 8.375 MHz = 62 ms
+    reg        brk_nmi;
+
+    always @(posedge sclk) begin
+        if (!rst_n) begin
+            sw_sync  <= 2'b11;
+            brk_hold <= 19'd0;
+            brk_nmi  <= 1'b0;
+        end else begin
+            sw_sync <= {sw_sync[0], sw0};
+            brk_nmi <= 1'b0;
+            if (|brk_hold)         brk_hold <= brk_hold - 1'b1;
+            else if (!sw_sync[1]) begin
+                brk_nmi  <= 1'b1;
+                brk_hold <= {19{1'b1}};
+            end
+        end
+    end
+
     // -------------------------------------------------------------- LED
     //
     // led[2:0] is R, G, B — the order $FE03 uses, so the boot ROM's $01
@@ -145,7 +191,7 @@ module cool8_top #(
     assign ps2_clk = ps2_clk_oe ? 1'b0 : 1'bz;
     assign ps2_dat = ps2_dat_oe ? 1'b0 : 1'bz;
 
-    cool8_soc u_soc (
+    cool8_soc #(.LOADER(LOADER)) u_soc (
         .clk(sclk), .rst_n(rst_n),
         .pclk(pclk), .prst_n(prst_n),
         .uart_rx(uart_rx), .uart_tx(uart_tx),
@@ -156,7 +202,7 @@ module cool8_top #(
         .rgb(rgb), .hsync_n(vga_hs), .vsync_n(vga_vs),
         .audio(audio),
         .led(led),
-        .irq(1'b0), .nmi(1'b0),
+        .irq(1'b0), .nmi(brk_nmi),
         .o_halted()
     );
 
