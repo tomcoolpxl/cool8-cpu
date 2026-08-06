@@ -96,10 +96,10 @@ PS2 = [
 
 FLASH = [
     ("a different opcode is issued",
-     [("sr       <= {8'h03, addr};", "sr       <= {8'h02, addr};")]),
+     [("sr       <= {OP_READ, addr};", "sr       <= {8'h0B, addr};")]),
     ("the address goes out least significant byte first",
-     [("sr       <= {8'h03, addr};",
-       "sr       <= {8'h03, addr[7:0], addr[15:8], addr[23:16]};")]),
+     [("sr       <= {OP_READ, addr};",
+       "sr       <= {OP_READ, addr[7:0], addr[15:8], addr[23:16]};")]),
     ("the command is 24 bits, not 32",
      [("n        <= 6'd32;", "n        <= 6'd24;")]),
     ("a data shift is seven bits",
@@ -121,26 +121,38 @@ FLASH = [
     ("reads never stall",
      [("assign o_stall = rd_hold & ~pf_valid;", "assign o_stall = 1'b0;")]),
     ("chip select is not taken low to open",
-     [("                spi_cs_n <= 1'b0;\n                sr       <= {8'h03, addr};",
-       "                spi_cs_n <= 1'b1;\n                sr       <= {8'h03, addr};")]),
-    ("closing does not raise chip select",
-     [("            spi_cs_n <= 1'b1;\n            spi_sck  <= 1'b0;\n            busy     <= 1'b0;\n            cmd      <= 1'b0;",
-       "            spi_cs_n <= 1'b0;\n            spi_sck  <= 1'b0;\n            busy     <= 1'b0;\n            cmd      <= 1'b0;")]),
+     [("assign spi_cs_n = ~(open_r | w_run);",
+       "assign spi_cs_n = ~w_run;")]),
+    ("closing does not shut the stream",
+     [("            open_r   <= 1'b0;\n            spi_sck  <= 1'b0;\n"
+       "            busy     <= 1'b0;\n            cmd      <= 1'b0;\n"
+       "            n        <= 6'd0;",
+       "            open_r   <= open_r;\n            spi_sck  <= 1'b0;\n"
+       "            busy     <= 1'b0;\n            cmd      <= 1'b0;\n"
+       "            n        <= 6'd0;")]),
     ("the address can be written while the stream is open",
      [("if (io_we && !open_r) begin", "if (io_we) begin")]),
     ("the data port is decoded as the control register",
      [("assign o_dp_sel = (io_a == A_DATA);",
        "assign o_dp_sel = (io_a == A_CTRL);")]),
     ("the decode claims two addresses too many",
-     [("& (io_a[2:0] <= 3'd5)", "& (io_a[2:0] <= 3'd7)")]),
+     [("& (io_a[2:0] <= 3'd7)", "& (io_a[2:0] <= 3'd6)")]),
     ("SCK never rises",
      [("                    spi_sck <= 1'b1;\n                    phase   <= 1'b1;",
        "                    spi_sck <= 1'b0;\n                    phase   <= 1'b1;")]),
     ("a read completes whether the byte is there or not",
      [("wire rd_ok     = pf_valid | ~open_r;", "wire rd_ok     = 1'b1;")]),
     ("the status bits are the other way round",
-     [("A_STAT:   o_rdata = {6'b000000, open_r, busy};",
-       "A_STAT:   o_rdata = {6'b000000, busy, open_r};")]),
+     [("A_STAT:   o_rdata = {5'b00000, w_busy, open_r, busy};",
+       "A_STAT:   o_rdata = {5'b00000, w_busy, busy, open_r};")]),
+    # the one that matters
+    ("the floor does not stop a write",
+     [("                    if (below) begin", "                    if (1'b0) begin")]),
+    ("an erase is issued without the write enable first",
+     [("                        wst    <= W_WREN;", "                        wst    <= W_GAP;")]),
+    ("chip select never rises between commands",
+     [("assign spi_cs_n = ~(open_r | w_run);",
+       "assign spi_cs_n = ~(open_r | w_busy);")]),
 ]
 
 BLOCKS = {

@@ -34,6 +34,8 @@ module cool8_flash_tb;
                      A_ADDR_H = 8'h8A,
                      A_DATA   = 8'h8B,
                      A_CTRL   = 8'h8C,
+                     A_WDATA  = 8'h8E,
+                     A_WCTRL  = 8'h8F,
                      A_STAT   = 8'h8D;
 
     reg          clk = 1'b0;
@@ -61,6 +63,9 @@ module cool8_flash_tb;
     integer      d_bit;                  // bits seen since chip select fell
     reg          d_miso;
     reg          d_bad;                  // an opcode this part does not have
+    reg          d_floor;                // ...or a write inside the bitstream
+    reg          d_wel;                  // write-enable latch
+    integer      ei;
 
     wire         spi_miso = d_miso;
 
@@ -96,17 +101,55 @@ module cool8_flash_tb;
         case (d_bit)
             8: begin
                 d_op = d_sr;
-                if (d_op !== 8'h03) begin
+                // Five opcodes and no others. A sixth means a master that
+                // has learned to say something it must not be able to say.
+                if (d_op !== 8'h03 && d_op !== 8'h06 && d_op !== 8'h02 &&
+                    d_op !== 8'h20 && d_op !== 8'h05) begin
                     d_bad = 1'b1;
-                    $display("FAIL opcode %02h, this part only has $03 (t=%0t)", d_op, $time);
+                    $display("FAIL opcode %02h is not one this part has (t=%0t)",
+                             d_op, $time);
                 end
+                if (d_op === 8'h06) d_wel = 1'b1;
             end
             16: d_a[23:16] = d_sr;
             24: d_a[15:8]  = d_sr;
             32: begin
                 d_a[7:0] = d_sr;
                 d_out    = flash[d_a[15:0]];
+                // **The guarantee, tested rather than commented.** An
+                // erase below $100000 is inside the bitstream, and no
+                // sequence of register writes may be able to produce one.
+                if (d_op === 8'h20) begin
+                    if (d_a < 24'h100000) begin
+                        d_floor = 1'b1;
+                        $display("FAIL erase at $%06h is below the floor (t=%0t)",
+                                 d_a, $time);
+                    end
+                    if (!d_wel) begin
+                        d_bad = 1'b1;
+                        $display("FAIL erase with no write enable (t=%0t)", $time);
+                    end
+                    for (ei = 0; ei < 4096; ei = ei + 1)
+                        flash[(d_a[15:0] & 16'hF000) + ei[15:0]] = 8'hFF;
+                    d_wel = 1'b0;
+                end
             end
+            40: if (d_op === 8'h02) begin
+                    if (d_a < 24'h100000) begin
+                        d_floor = 1'b1;
+                        $display("FAIL program at $%06h is below the floor (t=%0t)",
+                                 d_a, $time);
+                    end
+                    if (!d_wel) begin
+                        d_bad = 1'b1;
+                        $display("FAIL program with no write enable (t=%0t)", $time);
+                    end
+                    // A flash can only clear bits; the erase above is what
+                    // sets them. Modelling that is what makes the erase
+                    // test mean something.
+                    flash[d_a[15:0]] = flash[d_a[15:0]] & d_sr;
+                    d_wel = 1'b0;
+                end
             default: ;
         endcase
     end
@@ -115,7 +158,12 @@ module cool8_flash_tb;
     // on the line for the very next rising one — which is the falling
     // edge of the last address bit, before the master has asked for
     // anything.
-    always @(negedge spi_sck) if (!spi_cs_n && d_bit >= 32) begin
+    // RDSR answers from bit 8 onwards, and this model is never busy, so
+    // the status is zero and one poll is always enough.
+    always @(negedge spi_sck) if (!spi_cs_n && d_op === 8'h05 && d_bit >= 8)
+        d_miso = 1'b0;
+
+    always @(negedge spi_sck) if (!spi_cs_n && d_op === 8'h03 && d_bit >= 32) begin
         d_miso = d_out[7];
         d_out  = {d_out[6:0], 1'b0};
         if (((d_bit - 32) % 8) == 7) begin
@@ -149,6 +197,19 @@ module cool8_flash_tb;
                 $display("FAIL %0s: got %02h want %02h  (t=%0t)",
                          what, a, b, $time);
             end else if (verbose) $display("  ok  %0s = %02h", what, a);
+        end
+    endtask
+
+    // A program or an erase is three transactions and a poll; the model
+    // is never busy, so it settles in a few hundred clocks.
+    task wait_write;
+        integer w;
+        begin
+            w = 0;
+            while (w < 40000 && (dut.wst != 3'd0 || w < 8)) begin
+                @(posedge clk);
+                w = w + 1;
+            end
         end
     endtask
 
@@ -203,7 +264,8 @@ module cool8_flash_tb;
         errors = 0; checks = 0; stalls = 0;
         io_a = 8'h00; io_wdata = 8'h00; io_rd = 1'b0; io_we = 1'b0;
         d_bit = 0; d_sr = 8'h00; d_out = 8'h00; d_miso = 1'b1;
-        d_op = 8'h00; d_bad = 1'b0; d_a = 24'h000000;
+        d_op = 8'h00; d_bad = 1'b0; d_floor = 1'b0; d_wel = 1'b0;
+        d_a = 24'h000000;
         cap = 8'h00; got = 8'h00;
 
         for (i = 0; i < 65536; i = i + 1)
@@ -225,7 +287,9 @@ module cool8_flash_tb;
         io_a = 8'h8B; #1; check(o_dp_sel, "$FE8B is the data port");
         io_a = 8'h8C; #1; check(!o_dp_sel, "$FE8C is not");
         io_a = 8'h87; #1; check(!o_sel, "$FE87 is somebody else's");
-        io_a = 8'h8E; #1; check(!o_sel, "$FE8E is nobody's");
+        io_a = 8'h8E; #1; check(o_sel, "$FE8E is the write data");
+        io_a = 8'h8F; #1; check(o_sel, "$FE8F is the write control");
+        io_a = 8'h90; #1; check(!o_sel, "$FE90 is somebody else's");
 
         check(spi_cs_n, "chip select is high at reset");
 
@@ -329,6 +393,59 @@ module cool8_flash_tb;
         io_rd = 1'b0;
         repeat (200) @(negedge clk);
         check(!o_stall, "a read with no stream open does not hang");
+
+        // ================================================================
+        // Writing, and the floor that makes it safe
+        // ================================================================
+        //
+        // Last in the file on purpose. An erase clears a whole 4 KB
+        // sector, and the device model aliases every address into its
+        // 64 KB array, so an erase placed earlier wipes bytes a later read
+        // phase checks — which is exactly what happened the first time.
+
+        // ---- a program above the floor lands
+        io_write(A_ADDR_L, 8'h00);
+        io_write(A_ADDR_M, 8'h50);
+        io_write(A_ADDR_H, 8'h10);          // $105000
+        io_write(A_WDATA,  8'h5A);
+        flash[16'h5000] = 8'hFF;            // erased, so the AND shows
+        io_write(A_WCTRL, 8'h01);
+        wait_write;
+        check(flash[16'h5000] == 8'h5A, "a byte above the floor programmed");
+
+        // ---- an erase above the floor clears its sector
+        flash[16'h6010] = 8'h00;
+        io_write(A_ADDR_L, 8'h10);
+        io_write(A_ADDR_M, 8'h60);
+        io_write(A_ADDR_H, 8'h10);          // $106010
+        io_write(A_WCTRL, 8'h02);
+        wait_write;
+        check(flash[16'h6010] == 8'hFF, "the sector above the floor erased");
+
+        // ---- **and neither does anything below it**
+        flash[16'h0100] = 8'h77;
+        io_write(A_ADDR_L, 8'h00);
+        io_write(A_ADDR_M, 8'h01);
+        io_write(A_ADDR_H, 8'h00);          // $000100 — inside the bitstream
+        io_write(A_WDATA,  8'h00);
+        io_write(A_WCTRL, 8'h01);
+        repeat (600) @(posedge clk);
+        check(flash[16'h0100] == 8'h77, "a program below the floor did nothing");
+        io_read(A_WCTRL);
+        check(cap[2], "...and the refusal is visible");
+
+        io_write(A_WCTRL, 8'h02);
+        repeat (600) @(posedge clk);
+        check(flash[16'h0100] == 8'h77, "an erase below the floor did nothing");
+        check(spi_cs_n, "and chip select never went low for either");
+
+        io_write(A_WCTRL, 8'h04);
+        io_read(A_WCTRL);
+        check(!cap[2], "the refusal clears by writing its own bit");
+
+        check(!d_bad, "and only opcodes this part has were issued");
+        check(!d_floor, "and nothing was ever written below $100000");
+
 
         $display("\n  %0d checks, %0d failures, %0d stalled cycles",
                  checks, errors, stalls);

@@ -58,7 +58,7 @@ module cool8_flash (
     input  wire        rst_n,
 
     // ---- the pads
-    output reg         spi_cs_n,
+    output wire        spi_cs_n,
     output reg         spi_sck,
     output wire        spi_mosi,
     input  wire        spi_miso,
@@ -81,9 +81,27 @@ module cool8_flash (
                      A_ADDR_H = 8'h8A,
                      A_DATA   = 8'h8B,
                      A_CTRL   = 8'h8C,
-                     A_STAT   = 8'h8D;
+                     A_STAT   = 8'h8D,
+                     A_WDATA  = 8'h8E,
+                     A_WCTRL  = 8'h8F;
 
-    assign o_sel    = (io_a[7:3] == 5'b10001) & (io_a[2:0] <= 3'd5);
+    // The five opcodes this master has, and there are no others in the
+    // gates. A sixth would have to be added here to exist at all.
+    localparam [7:0] OP_READ = 8'h03,
+                     OP_WREN = 8'h06,    // write enable, before any change
+                     OP_PP   = 8'h02,    // page program
+                     OP_SE   = 8'h20,    // sector erase, 4 KB
+                     OP_RDSR = 8'h05;    // read status, for the busy bit
+
+    // **The floor.** Every program and every erase is compared against
+    // this, in gates, on the cycle the request arrives — and one below it
+    // is refused before an opcode has been chosen, so there is no path
+    // from a bad request to a shifted command. The bitstream lives at
+    // offset 0 and the part loads it on every power-on; no discipline in
+    // software makes reaching it impossible, and a comparator does.
+    localparam [23:0] FLOOR = 24'h100000;
+
+    assign o_sel    = (io_a[7:3] == 5'b10001) & (io_a[2:0] <= 3'd7);
     assign o_dp_sel = (io_a == A_DATA);
 
     // ---------------------------------------------------------- state
@@ -101,6 +119,37 @@ module cool8_flash (
     reg        pf_valid;
     reg        pf_want;
     reg        rd_hold;
+
+    // ---- writing
+    //
+    // A program is three SPI transactions, not one: enable, command, then
+    // poll the status register until the part says it has finished. Each
+    // is its own chip select, because a flash latches an opcode on the
+    // *rising* edge of CS and will simply ignore two commands run
+    // together. `W_GAP` states are that rising edge, and they are the
+    // whole reason this is a state machine rather than a sequence.
+    //
+    // The poll is in gates rather than in software because software would
+    // have to name the RDSR opcode to do it, and the point of this block
+    // is that software cannot name an opcode at all.
+    localparam [2:0] W_IDLE = 3'd0, W_WREN = 3'd1, W_GAP  = 3'd2,
+                     W_CMD  = 3'd3, W_GAP2 = 3'd4, W_POLL = 3'd5,
+                     W_PGAP = 3'd6;
+
+    reg [2:0]  wst;
+    reg        w_run;                  // a command is shifting: CS is low
+    reg        w_prog;                 // program, rather than erase
+    reg        w_denied;               // the last request was below the floor
+    reg [7:0]  status;                 // what RDSR last returned
+    reg [7:0]  wbuf;                   // the byte being programmed
+
+    wire       w_busy = (wst != W_IDLE);
+
+    // **The only driver of chip select in this file.** A read stream holds
+    // it low for as long as it is open; a write holds it low for exactly
+    // one command. Two drivers is what the first attempt at this had, and
+    // the commands ran together with no edge between them.
+    assign spi_cs_n = ~(open_r | w_run);
 
     assign spi_mosi = sr[31];
 
@@ -126,6 +175,15 @@ module cool8_flash (
 
     assign o_dout  = pf;
 
+    // $FE8F FLS_WCTRL: 1 programs the byte in FLS_WDATA at FLS_ADDR,
+    // 2 erases the 4 KB sector it is in, 4 acknowledges a refusal. Both
+    // are ignored while a read stream is open, because the address means
+    // something different then, and while a write is already running.
+    wire wctrl_we  = io_we & (io_a == A_WCTRL) & ~open_r & ~w_busy;
+    wire ask_prog  = wctrl_we & io_wdata[0];
+    wire ask_erase = wctrl_we & io_wdata[1] & ~io_wdata[0];
+    wire below     = (addr < FLOOR);
+
     wire ctrl_we = io_we & (io_a == A_CTRL);
     wire opening = ctrl_we &  io_wdata[0] & ~open_r;
     wire closing = ctrl_we & ~io_wdata[0];
@@ -134,7 +192,6 @@ module cool8_flash (
         if (!rst_n) begin
             addr     <= 24'h000000;
             open_r   <= 1'b0;
-            spi_cs_n <= 1'b1;
             spi_sck  <= 1'b0;
             sr       <= 32'd0;
             n        <= 6'd0;
@@ -145,6 +202,12 @@ module cool8_flash (
             pf_valid <= 1'b0;
             pf_want  <= 1'b0;
             rd_hold  <= 1'b0;
+            wst      <= W_IDLE;
+            w_run    <= 1'b0;
+            w_prog   <= 1'b0;
+            w_denied <= 1'b0;
+            status   <= 8'h00;
+            wbuf     <= 8'h00;
         // Closing is written as its own branch rather than as one more
         // `if` in the sequence below, and that is not tidiness. A shift
         // in progress assigns `sr`, `n` and `spi_sck` from further down
@@ -156,7 +219,6 @@ module cool8_flash (
         // model refused to answer.
         end else if (closing) begin
             open_r   <= 1'b0;
-            spi_cs_n <= 1'b1;
             spi_sck  <= 1'b0;
             busy     <= 1'b0;
             cmd      <= 1'b0;
@@ -165,8 +227,18 @@ module cool8_flash (
             pf_valid <= 1'b0;
             pf_want  <= 1'b0;
             rd_hold  <= 1'b0;
+            wst      <= W_IDLE;
+            w_run    <= 1'b0;
         end else begin
             rd_hold <= rd_wait;
+
+            // ---- the write registers
+            if (io_we && io_a == A_WDATA) wbuf <= io_wdata;
+            // Write 1 to bit 2 to acknowledge a refusal, the shape
+            // UART_STAT and VID_IRQ already use. Ahead of the machine
+            // below, so a refusal raised this cycle survives being
+            // acknowledged in it.
+            if (io_we && io_a == A_WCTRL && io_wdata[2]) w_denied <= 1'b0;
 
             // ---- the address register. Writing it while the stream is
             //      open does nothing to the stream: the flash is already
@@ -185,8 +257,7 @@ module cool8_flash (
             // ---- open
             if (opening) begin
                 open_r   <= 1'b1;
-                spi_cs_n <= 1'b0;
-                sr       <= {8'h03, addr};
+                sr       <= {OP_READ, addr};
                 n        <= 6'd32;
                 phase    <= 1'b0;
                 busy     <= 1'b1;
@@ -230,6 +301,10 @@ module cool8_flash (
                             pf_valid <= 1'b1;
                             pf_want  <= 1'b0;
                         end
+                        // Only RDSR's answer is ever looked at, and only
+                        // in W_PGAP, so capturing it for every write
+                        // command costs nothing and needs no condition.
+                        if (w_run) status <= {sr[6:0], spi_miso};
                     end
                 end
             end else if (open_r && pf_want && !pf_valid) begin
@@ -238,6 +313,83 @@ module cool8_flash (
                 phase <= 1'b0;
                 cmd   <= 1'b0;
             end
+
+            // A page program is 40 bits and the shifter is 32, so the
+            // data byte is dropped into the top as the address leaves it:
+            // when nine bits remain, the next eight are the byte. This
+            // must land *after* the shift above, which is why it is here
+            // and not inside it.
+            if (w_run && busy && phase && w_prog && (n == 6'd9))
+                sr[31:24] <= wbuf;
+
+            // ---- the write machine
+            //
+            // Every arm sets `w_run` and the shifter clears `busy`; a
+            // command is over on the first cycle both are true, and the
+            // GAP states that follow are the rising edge of chip select
+            // that makes the part act on what it was just sent.
+            case (wst)
+                W_IDLE: if (ask_prog | ask_erase) begin
+                    if (below) begin
+                        // Refused, and nothing happens: no enable, no
+                        // opcode, no chip select. The flag is how software
+                        // finds out.
+                        w_denied <= 1'b1;
+                    end else begin
+                        w_prog <= ask_prog;
+                        w_run  <= 1'b1;
+                        sr     <= {OP_WREN, 24'd0};
+                        n      <= 6'd8;
+                        phase  <= 1'b0;
+                        busy   <= 1'b1;
+                        cmd    <= 1'b1;
+                        wst    <= W_WREN;
+                    end
+                end
+
+                W_WREN: if (w_run && !busy) begin
+                    w_run <= 1'b0;
+                    wst   <= W_GAP;
+                end
+
+                W_GAP: begin
+                    w_run <= 1'b1;
+                    sr    <= w_prog ? {OP_PP, addr} : {OP_SE, addr};
+                    n     <= w_prog ? 6'd40 : 6'd32;
+                    phase <= 1'b0;
+                    busy  <= 1'b1;
+                    cmd   <= 1'b1;
+                    wst   <= W_CMD;
+                end
+
+                W_CMD: if (w_run && !busy) begin
+                    w_run <= 1'b0;
+                    wst   <= W_GAP2;
+                end
+
+                W_GAP2, W_PGAP: begin
+                    // A program takes milliseconds and an erase tens of
+                    // them, and the part ignores everything meanwhile. Ask
+                    // it, and keep asking until bit 0 of its status clears.
+                    if ((wst == W_GAP2) || status[0]) begin
+                        w_run <= 1'b1;
+                        sr    <= {OP_RDSR, 24'd0};
+                        n     <= 6'd16;
+                        phase <= 1'b0;
+                        busy  <= 1'b1;
+                        cmd   <= 1'b1;
+                        wst   <= W_POLL;
+                    end else begin
+                        w_prog <= 1'b0;
+                        wst    <= W_IDLE;
+                    end
+                end
+
+                default: if (w_run && !busy) begin   // W_POLL
+                    w_run <= 1'b0;
+                    wst   <= W_PGAP;
+                end
+            endcase
         end
     end
 
@@ -247,7 +399,10 @@ module cool8_flash (
             A_ADDR_M: o_rdata = addr[15:8];
             A_ADDR_H: o_rdata = addr[23:16];
             A_CTRL:   o_rdata = {7'b0000000, open_r};
-            A_STAT:   o_rdata = {6'b000000, open_r, busy};
+            A_STAT:   o_rdata = {5'b00000, w_busy, open_r, busy};
+            // $FE8F: bit 0 a write is running, bit 2 the last request was
+            // below the floor and was refused.
+            A_WCTRL:  o_rdata = {5'b00000, w_denied, 1'b0, w_busy};
             default:  o_rdata = o_dout;
         endcase
     end
