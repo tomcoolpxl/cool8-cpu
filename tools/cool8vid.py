@@ -167,6 +167,183 @@ def render(machine):
             for x in range(H_VIS)]
 
 
+# ===================================================== the same, quickly
+#
+# `pixel()` above is the definition and `render()` is it written out; at
+# 0.88 s a frame it is also twelve times the cost of emulating the
+# machine that produced it, which makes an interactive front end
+# impossible. What follows is the same arithmetic done to whole arrays
+# at once — about a hundred times faster, and the only reason
+# tools/cool8run.py can run at speed.
+#
+# **It is not checked against `pixel()`.** Both are checked against the
+# same thing: sim/test_vm.py compares each of them to build/text.hex and
+# build/tiles.hex, which are the RTL's own output. A fast path validated
+# against the slow one would only prove they share a misunderstanding.
+
+def _np():
+    import numpy                          # noqa: E402  (optional)
+    return numpy
+
+
+def _row_addr_v(vid, r):
+    m = ((vid.stride << 5) - 1) & 0xFFFF
+    return (vid.base & (0xFFFF ^ m)) | ((vid.base + r * vid.stride) & m)
+
+
+def _words_v(buf, addr):
+    np = _np()
+    a = addr & 0xFFFF
+    b = np.frombuffer(bytes(buf), dtype=np.uint8).astype(np.int64)
+    return b[a] | (b[(a + 1) & 0xFFFF] << 8)
+
+
+def _bswap(w):
+    return ((w & 0xFF) << 8) | ((w >> 8) & 0xFF)
+
+
+def _sprites_v(vid, idx, np):
+    """Every sprite in the frame at once, in descriptor order.
+
+    The scalar version answers one pixel by walking the list; this walks
+    the list once and paints. The order is the same and so is the
+    eight-per-line cut: a sprite's place in the list is decided per
+    scanline, before anything is drawn, and a sprite two lines past its
+    bottom edge still takes a slot.
+    """
+    gy = np.arange(V_VIS)[:, None]
+    gx = np.arange(H_VIS)[None, :]
+
+    d = np.frombuffer(bytes(vid.spr), dtype=np.uint8).astype(np.int64)
+    out = idx
+    written = np.zeros((V_VIS, H_VIS), dtype=bool)
+    used = np.zeros((V_VIS, 1), dtype=np.int64)     # slots taken per line
+
+    for si in range(32):
+        b = d[si * 8:si * 8 + 8]
+        if not (b[1] & 0x40):
+            continue                                # disabled: no slot
+        big = bool(b[1] & 0x80)
+        sh = 16 if big else 8
+        sy = ((b[1] & 0x01) << 8) | b[0]
+        sdy = (gy - sy) & 0x3FF
+        on_line = (sdy < sh + 2) & (used < 8)
+        used = used + on_line.astype(np.int64)
+        if not on_line.any():
+            continue
+
+        sx = ((b[3] & 0x03) << 8) | b[2]
+        sdx = (gx - sx) & 0x3FF
+        cover = on_line & (sdy < sh) & (sdx < sh)
+        if not cover.any():
+            continue
+
+        vflip, hflip, behind = b[6] & 0x80, b[6] & 0x40, b[6] & 0x20
+        row = (sh - 1 - sdy) if vflip else sdy
+        col = (sh - 1 - sdx) if hflip else sdx
+        pat = (((b[5] & 0x07) << 8) | b[4]) << 5
+        row = np.clip(row, 0, sh - 1)
+        col = np.clip(col, 0, sh - 1)
+        w = _words_v(vid.vram, pat + row * (sh >> 1) + ((col >> 2) << 1))
+        ps = _bswap(w)
+        px = (ps >> (12 - (col & 3) * 4)) & 0x0F
+
+        take = (~written) & cover & (px != 0)
+        if behind:
+            # Behind the background: where the background is not colour
+            # zero the sprite loses — and the search stops there, so no
+            # lower sprite gets a look either.
+            win = take & (out == 0)
+        else:
+            win = take
+        out = np.where(win, (vid.spr_bank << 4) | px, out)
+        written = written | take
+
+    return out
+
+
+def render_np(machine):
+    """The frame as a 480x640 numpy array of 12-bit palette colours."""
+    np = _np()
+    vid = machine.video
+    vid.ram = machine.bus.mem
+
+    gy = np.arange(V_VIS)
+    gx = np.arange(H_VIS)
+    xl = (gx >> 1) if vid.hdouble else gx
+    rel = (xl - vid.hstart) & 0x7FF
+    vrel = (gy - vid.vstart) & 0x3FF
+    vlog = (vrel >> 1) if vid.vdouble else vrel
+
+    vis = (bool(vid.mode & 0x80) & (xl >= vid.hstart)[None, :] &
+           (rel < vid.hactive)[None, :] & (gy >= vid.vstart)[:, None] &
+           (vrel < vid.vactive)[:, None])
+
+    eng = vid.engine
+    if eng == 0:
+        vsrc = vrel + (vid.scrl_y & 15)
+        grow = vsrc & 15
+        ra = _row_addr_v(vid, vsrc >> 4)
+        cw = _words_v(vid.ram, ra[:, None] + (rel >> 3)[None, :] * 2)
+        attr = cw >> 8
+        f = np.frombuffer(bytes(vid.font), dtype=np.uint8).astype(np.int64)
+        fb = f[((cw & 0xFF) << 4) | grow[:, None]]
+        lit = ((fb >> (7 - (rel & 7))[None, :]) & 1).astype(bool)
+
+        if vid.cur_on:
+            here = (((rel >> 3) == vid.cur_x)[None, :] &
+                    ((vsrc >> 4) == vid.cur_y)[:, None])
+            style = (vid.cur_ctrl >> 1) & 3
+            if style == 0:
+                lit = np.where(here, True, lit)
+            elif style == 1:
+                band = (((vid.cur_lines & 15) <= grow) &
+                        (grow <= (vid.cur_lines >> 4)))[:, None]
+                lit = np.where(here & band, True, lit)
+            elif style == 2:
+                lit = np.where(here & ((rel & 7) < 2)[None, :], True, lit)
+            else:
+                lit = np.where(here, ~lit, lit)
+        idx = np.where(lit, attr & 0x0F, attr >> 4)
+
+    elif eng == 1:
+        vsrc = vlog + (vid.scrl_y & 7)
+        ra = _row_addr_v(vid, vsrc >> 3)
+        sx = rel + (vid.scrl_x & 7)
+        ent = _words_v(vid.vram, ra[:, None] + (sx >> 3)[None, :] * 2)
+        attr = ent >> 8
+        sub = (sx & 7)[None, :]
+        p = np.where(attr & 0x40, 7 - sub, sub)
+        tr = (vsrc & 7)[:, None]
+        trow = np.where(attr & 0x80, 7 - tr, tr)
+        pa = (vid.pat_base + ((attr & 0x30) << 9) + ((ent & 0xFF) << 5) +
+              (trow << 2))
+        ps = _bswap(_words_v(vid.vram, pa + ((p >> 2) << 1)))
+        idx = ((attr & 0x0F) << 4) | ((ps >> (12 - (p & 3) * 4)) & 0x0F)
+
+    else:
+        bpp = 1 << vid.bpp_log
+        ppw = 16 // bpp
+        ra = vid.base + vlog * vid.stride
+        sx = rel + vid.scrl_x
+        ps = _bswap(_words_v(vid.vram,
+                             ra[:, None] + (sx // ppw)[None, :] * 2))
+        k = (sx % ppw)[None, :]
+        idx = (ps >> (16 - bpp - k * bpp)) & ((1 << bpp) - 1)
+
+    idx = np.broadcast_to(idx, (V_VIS, H_VIS)).copy()
+    if vid.spr_en:
+        idx = _sprites_v(vid, idx, np)
+
+    pal = np.array(vid.pal, dtype=np.int64)
+    return np.where(vis, pal[idx & 0xFF], vid.pal[vid.border])
+
+
+def render_fast(machine):
+    """`render()`'s answer, as a flat list, without the twenty minutes."""
+    return render_np(machine).reshape(-1).tolist()
+
+
 def save_png(frame, path):
     """A minimal truecolour PNG, the same way sim/test_video.py writes one."""
     raw = bytearray()

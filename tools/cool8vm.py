@@ -314,9 +314,21 @@ class Sound:
             mix += self.vol[v] if wave else -self.vol[v]
         return max(-128, min(127, mix))
 
+    def level(self):
+        """The byte the modulator is fed — what the pin's duty cycle is.
+
+        The RTL forms it as `{~sample[8], sample[7:1]}`: drop the bottom
+        bit and flip the sign into an offset. That is 128 + (mix >> 1),
+        so the mixer's +-120 becomes 68..188 out of 256 and silence is
+        exactly half scale. **The halving is not a detail** — it is the
+        headroom that lets eight voices sum without the pin clipping, and
+        a model that skipped it would be twice as loud as the hardware.
+        """
+        return (128 + (self.sample() >> 1)) & 0xFF
+
     def tick(self, n):
         for _ in range(n):
-            self.samples.append((self.sample() + 128) & 0xFF)
+            self.samples.append(self.level())
 
     def take(self):
         out = bytes(self.samples)

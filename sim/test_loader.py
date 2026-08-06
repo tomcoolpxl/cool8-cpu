@@ -31,6 +31,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 BUILD = os.path.join(HERE, "build")
 
+sys.path.insert(0, HERE)
+
 TB = os.path.join(HERE, "tb", "cool8_loader_tb.v")
 RTL = ([os.path.join(ROOT, "rtl", "soc", f)
         for f in ("cool8_uart.v", "cool8_loader.v")] +
@@ -43,18 +45,11 @@ RTL = ([os.path.join(ROOT, "rtl", "soc", f)
 MATRIX = [(15, 0), (15, 3), (31, 1), (103, 0), (103, 1), (103, 3)]
 
 
-def _tool(name):
-    root = os.environ.get("OSS_CAD_SUITE")
-    if root:
-        for cand in (os.path.join(root, "bin", name + ".exe"),
-                     os.path.join(root, "bin", name)):
-            if os.path.exists(cand):
-                return cand
-    found = shutil.which(name)
-    if not found:
-        sys.exit(f"{name} not found. Put the OSS CAD Suite on PATH or set "
-                 f"OSS_CAD_SUITE to its root directory.")
-    return found
+# One toolchain locator, in cosim. This file had its own copy, and when
+# cosim's learned to put the suite's bin directory on PATH so `vvp` can
+# find libvvp-1.dll, this copy did not — six phases failed with no output
+# and looked like a broken loader.
+from cosim import _tool                                  # noqa: E402
 
 
 def build():

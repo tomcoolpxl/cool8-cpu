@@ -55,9 +55,13 @@ BDF = os.path.join(ROOT, "assets", "font", "spleen-8x16.bdf")
 
 H_VIS, V_VIS = 640, 480
 
-# cool8_video_tb's phases, and the two that also dump a frame.
+# cool8_video_tb's phases, and the three that also dump a frame.
+#
+# Phase 13 is dumped for sim/test_vm.py rather than for a picture: it is
+# the only frame with sprites in it, and without it the emulator's sprite
+# path would be the one part of the video model nothing checked.
 N_PHASES = 16
-FRAME_DUMPS = {0: "text.hex", 11: "tiles.hex"}
+FRAME_DUMPS = {0: "text.hex", 11: "tiles.hex", 13: "sprites.hex"}
 
 
 def write_png(path, width, height, rgb):

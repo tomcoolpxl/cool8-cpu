@@ -1123,6 +1123,49 @@ Not yet exercised on hardware: video (no VGA PMOD), the keyboard (no
 level shifter), sound (no RC filter), and the flash write path — which
 should be tried at a high address with the bitstream backed up.
 
+## M9 — The machine without the board ✅
+
+**Gate: an operating system can be developed without hardware, and what
+it sees is what the gates would show it.**
+
+`tools/cool8vm.py` is the computer in Python and `tools/cool8run.py`
+gives it a window, a keyboard and a speaker. The CPU model is the same
+`tools/cool8emu.py` the RTL is checked against — not a copy of it.
+
+What was built:
+
+- **The machine.** Memory map with the ROM overlay, the full I/O page,
+  video registers and VRAM, the sound engine, PS/2, the UART, and the
+  flash with its `$100000` floor and its can-only-clear-bits behaviour.
+- **The picture.** All three engines, all four depths, tile flips and
+  pattern banks, the text map's circular wrap, four cursor styles with
+  blink, and sprites with priority and the behind-background rule.
+  Ported from the testbench's golden model, not from the RTL, so the two
+  derivations stay independent.
+- **The front end.** 640×480 scaled, raw Set 2 scancodes so a keyboard
+  driver written here works on the board, sound through the mixer and to
+  a WAV, F11 for the break button and F12 for a screenshot.
+- **`sw/demo.asm`.** Eight 16×16 sprites over a tiled background with a
+  two-voice arpeggio and a software envelope — 704 bytes, and the first
+  program to drive both new blocks at once.
+
+What the gate cost, and what it caught:
+
+| | |
+|---|---|
+| `sim/test_snd.py` | the sound engine had **no suite at all**; now it has one, and it proves the modulator is lossless — every 256-clock window emits exactly as many carries as the level it was fed |
+| `sim/test_vm.py` | 1,843,200 pixels and 4096 samples against the RTL's own output, both renderers |
+| `sim/test_video.py` | now dumps the sprite frame too, which is what makes the emulator's sprite path checkable |
+
+Four transcription errors were caught by writing the stimulus out twice
+rather than sharing it, and one real defect was found in the toolchain
+plumbing: `OSS_CAD_SUITE` alone was never enough to run `vvp`, which
+died with no output at all and looked like a simulator producing nothing.
+
+Not modelled, deliberately: bus contention, the launch/data split, the
+exact cycle a store lands. Those are `sim/`'s job. See
+[D44](01-decisions.md#d44--there-is-one-emulator-and-it-is-gated-against-the-rtl-not-against-itself).
+
 ## M8 — TinyTapeout — **shelved**
 
 **The target is the FPGA.** M8 is out of the plan and the reasoning is

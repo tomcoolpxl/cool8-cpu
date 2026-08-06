@@ -45,15 +45,31 @@ SPRAMTB = os.path.join(HERE, "tb", "cool8_spram_cpu_tb.v")
 
 # ------------------------------------------------------------- toolchain
 
+def _with_libs(root, path):
+    """Put the toolchain's own directories on PATH before running it.
+
+    Every suite here says "set OSS_CAD_SUITE if it is not on PATH", and
+    that was not quite true: an absolute path finds the executable, but
+    `vvp` then loads `libvvp-1.dll` beside itself and Windows resolves
+    that against PATH. Setting the variable alone gave a process that
+    died with 0xC0000135 and no output at all, which reads like a
+    simulator that produced nothing rather than one that never started.
+    """
+    for d in (os.path.join(root, "bin"), os.path.join(root, "lib")):
+        if os.path.isdir(d) and d not in os.environ.get("PATH", ""):
+            os.environ["PATH"] = d + os.pathsep + os.environ.get("PATH", "")
+    return path
+
+
 def _tool(name):
     root = os.environ.get("OSS_CAD_SUITE")
     if root:
         cand = os.path.join(root, "bin", name + ".exe")
         if os.path.exists(cand):
-            return cand
+            return _with_libs(root, cand)
         cand = os.path.join(root, "bin", name)
         if os.path.exists(cand):
-            return cand
+            return _with_libs(root, cand)
     found = shutil.which(name)
     if not found:
         sys.exit(f"{name} not found. Put the OSS CAD Suite on PATH or set "

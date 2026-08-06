@@ -54,10 +54,25 @@ python sim/test_video.py     # the raster, and build/frame.png
 python sim/test_ps2.py       # the keyboard port
 python sim/test_flash.py     # the SPI flash reader
 python sim/test_monitor.py   # type at the machine and it answers
+python sim/test_snd.py       # the sound engine, on a meter and a scope
+python sim/test_vm.py        # the emulator against the RTL's own frames
 python sim/mutate.py         # 42 deliberate bugs; 41 have to be caught
 python sim/synth.py
 python sim/timing.py
 ```
+
+`test_vm.py` is the odd one out: it runs no Verilog. It compares
+`tools/cool8vm.py` against files the Verilog produced — `build/text.hex`,
+`build/tiles.hex` and `build/sprites.hex` from `test_video.py`, and
+`build/snd.hex` from `test_snd.py` — so a machine emulated in Python has
+to agree with the gates on 1.8 million pixels and 4096 samples. Run it
+with `--regen` to produce those files first.
+
+The stimulus that made them is written out twice, once in Verilog and
+once in Python, deliberately. Sharing it would turn the comparison into
+a test of the renderer against itself; writing it twice means a
+misunderstanding of what a register means has to be made identically in
+two languages to go unnoticed.
 
 `test_soc.py` assembles `asm/soc_*.asm` into `build/` on every run and
 `cool8_soc_tb` loads them over the wire, so the program the CPU executes

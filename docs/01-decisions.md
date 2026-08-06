@@ -1592,5 +1592,53 @@ The question before that — whether four general registers are enough —
 was closed by measurement at the M2 gate; see
 [D21](#d21--four-general-registers-is-enough-confirmed-question-closed).
 
+## D44 — There is one emulator and it is gated against the RTL, not
+against itself
+
+**A software machine is only worth writing an operating system against
+if it agrees with the gates.** `tools/cool8vm.py` is the whole computer
+in Python — the memory map, the ROM overlay, every register in
+[04-system.md §4](04-system.md), video, sound, the keyboard, the UART
+and the flash with its address floor. Three decisions hold it honest.
+
+**The CPU is not modelled there.** `tools/cool8emu.py` is imported and
+used as-is. It is already the executable specification the RTL is
+checked against instruction by instruction across all 511 encodings, so
+a second, faster copy would create two models that have to agree — the
+trap this document warns about for opcode tables. There is one CPU model
+in this project and this is not it.
+
+**The picture is checked against the RTL's own pixels.**
+`sim/test_video.py` dumps three frames as they leave the DUT — mode 0
+text, mode 2 tiles, and eleven sprites over a bitmap — and
+`sim/test_vm.py` replays the stimulus that produced them through the
+emulator's registers and compares all **1,843,200 pixels**. The sound
+engine does the same with 4096 samples of a five-note chord plus noise
+from `sim/test_snd.py`.
+
+**The stimulus is written out twice on purpose**, once in Verilog and
+once in Python. Sharing it would make the comparison a test of the
+renderer against itself. Writing it twice means a misunderstanding of
+what a register means has to be made identically in two languages to go
+unnoticed — and it caught four in one afternoon: a 12-bit concatenation
+read as 16, a byte pair the wrong way round, an unloaded font, and a
+VRAM history the tile phase inherits from the bitmap phases before it.
+
+**There are two renderers and neither validates the other.** The scalar
+one is the definition, at 0.88 s a frame; the vectorised one is what
+makes a window possible, at 13 ms. Both are compared to the same
+hardware frames. A fast path validated against the slow one would only
+prove they share a misunderstanding.
+
+**What it does not model.** Contention: the display fetch stealing a
+cycle, `cool8_vport` stalling on a busy arbiter, the exact instant a
+store lands. The machine is scanline-accurate — the CPU runs a line's
+worth of cycles, then a line is drawn, then the interrupts are raised —
+which is what makes raster splits, mid-frame palette changes and sprite
+multiplexing behave. Code whose correctness depends on the rest needs
+`sim/`, and that is where it lives.
+
+---
+
 The architecture is settled. Anything that reopens it now needs new
 evidence of the same kind: real code, measured, not an argument.

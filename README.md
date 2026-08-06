@@ -33,11 +33,37 @@ without rebuilding the bitstream.
 
 ## Running it without a board
 
-These run against the simulator; no hardware is required.
+The whole machine also exists in software — CPU, video, sound, keyboard,
+UART and flash — in a window, at speed.
+
+```bash
+python tools/cool8run.py                          # boot the ROM and type at it
+python tools/cool8asm.py sw/demo.asm -o build/demo.bin
+python tools/cool8run.py --load build/demo.bin --at 0x0200
+```
+
+Keys arrive as **raw Set 2 scancodes**, the same bytes the PS/2 port
+delivers, so a keyboard driver written against the emulator works on the
+board. F11 is the break button and F12 writes a PNG. `--wav` records the
+sound engine, `--flash disk.bin` gives it a disk that survives, and
+`--headless` needs nothing installed at all.
+
+**What it shows is what the gates produce.** The renderer is compared
+against frames dumped straight out of the Verilog — text, tiles and
+sprites, 1,843,200 pixels — and the sound model against 4096 samples of
+the running engine.
+
+```bash
+python sim/test_vm.py                  # the emulator against the RTL
+python sim/test_vm.py --regen          # ...producing the RTL's frames first
+```
+
+These run against the simulator instead; no hardware is required.
 
 ```bash
 python tools/cool8emu.py --selftest    # the ISA, executable
 python sim/test_video.py               # every mode, every pixel -> build/*.png
+python sim/test_snd.py                 # eight voices on one pin
 python sim/test_monitor.py             # boot the machine and type at it
 ```
 
@@ -246,7 +272,12 @@ python sim/mutate.py          # break the RTL on purpose; require a failure
 The video engine is checked the same way: a golden model of the display
 against all 307,200 pixels of a frame, for every mode.
 
-The full battery is sixteen suites. `sim/cosim.py all` is the gate for
+The emulator is checked against the RTL rather than against itself. The
+stimulus that produces the reference frames is written out twice, once
+in Verilog and once in Python, so a misunderstanding of what a register
+means has to be made identically in two languages to go unnoticed.
+
+The full battery is eighteen suites. `sim/cosim.py all` is the gate for
 any RTL change.
 
 ## Documents
@@ -265,6 +296,10 @@ decision, including the alternatives that were rejected.
 | [06-roadmap.md](docs/06-roadmap.md) | Milestones and their gates |
 | [07-loader.md](docs/07-loader.md) | Loader wire protocol |
 | [08-assembler.md](docs/08-assembler.md) | Assembler reference |
+
+`sw/demo.asm` is the shortest complete example of driving both new
+blocks: eight 16×16 sprites over a tiled background, a two-voice
+arpeggio, and a software envelope, in 704 bytes.
 
 Two files are normative in code rather than prose:
 [`tools/opcodes.py`](tools/opcodes.py) is the only encoding table in the
@@ -294,6 +329,10 @@ shifter, and the RC filter on the audio pin. So video, keyboard and sound
 are verified against pixel-exact and cycle-exact models rather than
 against a screen and a speaker, and the image above is rendered from
 simulation.
+
+Software for it can be written today: `tools/cool8run.py` is the machine
+in a window, and what it draws is checked against the gates' own output
+pixel for pixel.
 
 ```
 ICESTORM_LC   5022 / 5280   258 logic cells and 2 block RAMs left
