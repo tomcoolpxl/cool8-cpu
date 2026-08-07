@@ -335,36 +335,17 @@ END SUB
 ' not become PRINT <FOR-token>.
 ' ---------------------------------------------------------------------
 
-FUNCTION upper(c AS INT) AS INT
-  IF c > 96 THEN
-    IF c < 123 THEN
-      RETURN c - 32
-    END IF
-  END IF
-  RETURN c
-END FUNCTION
 
-FUNCTION isalpha(c AS INT) AS INT
-  DIM u AS BYTE
-  u = upper(c)
-  IF u > 64 THEN
-    IF u < 91 THEN
-      RETURN 1
-    END IF
-  END IF
-  RETURN 0
-END FUNCTION
 
-FUNCTION isdigit(c AS INT) AS INT
-  IF c > 47 THEN
-    IF c < 58 THEN
-      RETURN 1
-    END IF
-  END IF
-  RETURN 0
-END FUNCTION
+' A character that can appear inside a name: a letter, a digit, or _.
+
 
 ' The token for the word of `n` characters at lbuf(i), or 0.
+' The character classes live in their own file because the compiler's
+' lexer needs exactly the same ones, and two copies would be two
+' answers to "is this a letter".
+INCLUDE "chars.bas"
+
 FUNCTION lookup(i AS INT, n AS INT) AS INT
   DIM p AS CARD
   DIM m AS BYTE
@@ -421,11 +402,36 @@ SUB tokenise()
         LOOP
       ELSE
         IF isalpha(lbuf(i)) <> 0 THEN
+          ' A whole identifier, digits and underscores included -- not
+          ' just the letters. Scanning only letters split `x_end` into
+          ' `x_` and `end`, and `end` is a keyword, so the tail of the
+          ' name turned into a keyword token and the name came back from
+          ' LIST as something else entirely.
           w = 0
-          DO WHILE isalpha(lbuf(i + w)) <> 0
+          DO WHILE isident(lbuf(i + w)) <> 0
             w = w + 1
           LOOP
+          ' REM starts a comment, as it does everywhere else. It is a
+          ' comment and not a keyword, so nothing inside it is looked up
+          ' and LIST gives back exactly what was typed.
+          IF w = 3 THEN
+            IF upper(lbuf(i)) = 82 THEN
+              IF upper(lbuf(i + 1)) = 69 THEN
+                IF upper(lbuf(i + 2)) = 77 THEN
+                  DO WHILE i < llen
+                    tbuf(tlen) = lbuf(i)
+                    tlen = tlen + 1
+                    i = i + 1
+                  LOOP
+                  w = 0
+                END IF
+              END IF
+            END IF
+          END IF
           t = lookup(i, w)
+          IF w = 0 THEN
+            t = 0
+          END IF
           IF t <> 0 THEN
             tbuf(tlen) = t
             tlen = tlen + 1
@@ -1649,6 +1655,17 @@ TOKTAB:
         .byte 3, "A","N","D"
         .byte 2, "O","R"
         .byte 3, "X","O","R"
+; ---- the rest of the language, so the compiler sees keywords as
+; ---- keywords. Appended, because the order fixes the token byte and
+; ---- programs already saved to disk hold the old ones.
+        .byte 4, "C","A","R","D"
+        .byte 2, "A","T"
+        .byte 3, "A","S","M"
+        .byte 6, "E","X","T","E","R","N"
+        .byte 7, "I","N","C","L","U","D","E"
+        .byte 6, "I","N","L","I","N","E"
+        .byte 4, "G","O","T","O"
+        .byte 4, "W","E","N","D"
         .byte 0
 
 ; ---- commands, in the order docommand tests them
