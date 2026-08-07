@@ -44,8 +44,10 @@ sys.path.insert(0, os.path.join(ROOT, "tools"))
 import cool8vm as vm                                     # noqa: E402
 import cool8vid as vid                                   # noqa: E402
 import cool8bas as bas                                   # noqa: E402
+import cool8disk as disk                                 # noqa: E402
 
 ORG = 0xC000
+IMG = os.path.join(BUILD, "basic.img")
 FAILS = []
 
 
@@ -68,7 +70,8 @@ def build():
     r = subprocess.run([sys.executable,
                         os.path.join(ROOT, "tools", "cool8asm.py"), apath,
                         "-o", os.path.join(BUILD, "basic.bin"),
-                        "--symbols", os.path.join(BUILD, "basic.sym")],
+                        "--symbols", os.path.join(BUILD, "basic.sym"),
+                        "-I", os.path.join(ROOT, "sw")],
                        capture_output=True, text=True)
     if r.returncode != 0:
         print(r.stdout + r.stderr)
@@ -83,8 +86,8 @@ def build():
 
 
 class Machine:
-    def __init__(self, code, syms):
-        self.m = vm.Machine()
+    def __init__(self, code, syms, flash=None):
+        self.m = vm.Machine(flash_path=flash) if flash else vm.Machine()
         self.m.bus.mem[ORG:ORG + len(code)] = code
         self.m.cpu.pc = ORG
         self.m.cpu.sp = 0xFFF7
@@ -109,6 +112,15 @@ class Machine:
             self.settle()
             if self.m.uart.overrun:
                 raise SystemExit("the FIFO overran")
+
+    def vol(self, n=0):
+        """Drive n as the PC-side tool sees it.
+
+        The flush matters: the emulator holds programmed bytes until
+        asked, so reading the image file without it shows the volume as
+        it was before the machine touched it."""
+        self.m.flash.flush()
+        return disk.Volume(disk.Image(IMG), n)
 
     def cmd(self, s):
         """Type a command on a blank row, the way a person would.
@@ -233,8 +245,133 @@ def main():
     check(M.prog() == [], "NEW empties it")
 
     print()
+    files(code, syms)
+
+    print()
     print("PASS" if not FAILS else f"FAIL -- {len(FAILS)}")
     return 0 if not FAILS else 1
+
+
+def blank(code, syms, label="PROGRAMS"):
+    """A machine with a formatted drive 0 and nothing on it."""
+    if os.path.exists(IMG):
+        os.remove(IMG)
+    img = disk.Image(IMG, create=True)
+    disk.Volume(img, 0).format(label)
+    img.save()
+    M = Machine(code, syms, flash=IMG)
+    M.syms_progend = syms["v_progend"]
+    M.settle()
+    return M
+
+
+def files(code, syms):
+    """S2 -- SAVE, LOAD, DIR, ERA, and running out of room.
+
+    Everything here is typed. The PC-side tool `tools/cool8disk.py` is
+    used only to make the volume and to read it back, which is the whole
+    point of it existing: it is the same filesystem written twice, and a
+    file written by one has to be readable by the other.
+    """
+    print("  S2 -- files")
+
+    M = blank(code, syms)
+    M.type("10 PRINT 1\n20 PRINT 2\n30 PRINT 3\n")
+    wrote = M.prog()
+    M.cmd('SAVE "TEST"')
+
+    v = M.vol()
+    e = v.find("TEST.BAS")
+    check(e is not None and len(v.get("TEST.BAS")) ==
+          sum(3 + len(b) for _, b in wrote),
+          "SAVE writes the program, and the PC tool reads it back",
+          f"entry {e}")
+
+    # ---- NEW, then LOAD, and the program is the one that was saved
+    M.cmd("NEW")
+    M.cmd('LOAD "TEST"')
+    check(M.prog() == wrote, "NEW, LOAD, and it is byte for byte the same",
+          f"{[n for n, _ in M.prog()]} against {[n for n, _ in wrote]}")
+
+    # ---- saving again appends a version and deletes the old entry
+    M.type("40 PRINT 4\n")
+    M.cmd('SAVE "TEST"')
+    v = M.vol()
+    live = [x for x in v.files() if x["name"].startswith(b"TEST")]
+    dead = [x for x in v.entries() if x["status"] == 0]
+    check(len(live) == 1 and len(dead) == 1
+          and live[0]["page"] > dead[0]["page"],
+          "SAVE again appends a new version and marks the old deleted",
+          f"{len(live)} live, {len(dead)} deleted")
+    want = b"".join(bytes((n & 255, n >> 8, len(b))) + b
+                    for n, b in M.prog())
+    check(v.get("TEST.BAS") == want,
+          "and the live one is the newer program, byte for byte",
+          "a version programmed over unerased pages comes back as the "
+          "two ANDed together, and only the bytes show it")
+
+    # ---- DIR lists it
+    M.cmd("CLS")
+    M.cmd("DIR")
+    scr = " ".join(M.screen())
+    check("TEST    .BAS" in scr and "K FREE" in scr,
+          "DIR lists the live file and the space left",
+          " | ".join(r for r in M.screen() if r.strip())[:90])
+
+    # ---- LOAD "n",line merges from a line number
+    M.cmd("NEW")
+    M.type("10 PRINT 9\n")
+    M.cmd('LOAD "TEST",30')
+    got = [n for n, _ in M.prog()]
+    check(got == [10, 30, 40], "LOAD n,30 merges from line 30 on",
+          f"{got}")
+    check(dict(M.prog())[10][-1:] == b"9",
+          "and the line already there is the typed one, not the file's",
+          f"line 10 is {dict(M.prog())[10]!r}")
+
+    # ---- ERA
+    M.cmd('ERA "TEST"')
+    v = M.vol()
+    check(v.find("TEST.BAS") is None, "ERA removes it")
+    M.cmd('LOAD "TEST"')
+    check(any("FILE NOT FOUND" in r for r in M.screen()),
+          "and loading it now gives ?FILE NOT FOUND ERROR",
+          " | ".join(r for r in M.screen() if r.strip())[-70:])
+
+    # ---- a full volume
+    #
+    # Filled from the PC side rather than by typing: 448 KB through the
+    # machine's own SAVE is 51 million clocks of emulation to prove
+    # something the last page proves just as well. What is tested is the
+    # machine's check, and that runs either way.
+    if os.path.exists(IMG):
+        os.remove(IMG)
+    img = disk.Image(IMG, create=True)
+    vol = disk.Volume(img, 0)
+    vol.format("FULL")
+    filler = os.path.join(BUILD, "filler.bin")
+    i = 0
+    while True:
+        room = 448 * 1024 - vol.free_offset()
+        if not room:
+            break
+        n = min(room, 65280)                    # 255 whole pages at a time
+        with open(filler, "wb") as fh:
+            fh.write(b"\xA5" * n)
+        vol.add(filler, f"F{i}.BIN")
+        i += 1
+    img.save()
+    left = 1792 - disk.Volume(disk.Image(IMG), 0).free_offset() // 256
+    M = Machine(code, syms, flash=IMG)
+    M.syms_progend = syms["v_progend"]
+    M.settle()
+    M.type("10 PRINT 1\n")
+    M.cmd('SAVE "TOOBIG"')
+    check(any("DISK FULL" in r for r in M.screen()),
+          f"a volume with {left} pages left gives ?DISK FULL ERROR",
+          " | ".join(r for r in M.screen() if r.strip())[-70:])
+    check(M.vol().find("TOOBIG.BAS") is None,
+          "and nothing was written past the end of the volume")
 
 
 if __name__ == "__main__":

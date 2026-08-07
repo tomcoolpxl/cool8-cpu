@@ -295,6 +295,22 @@ class Assembler:
 
     # ------------------------------------------------------ source prep
 
+    def resolve(self, name, path):
+        """Where an .include lives: next to the file that asked for it,
+        or on the -I path.
+
+        The second is what lets generated assembly include sw/fs.asm.
+        The compiler writes its output into a build directory, so a
+        sibling lookup would look for fs.asm there and not find it."""
+        here = os.path.join(os.path.dirname(path), name)
+        if os.path.exists(here):
+            return here
+        for d in getattr(self, "incdirs", ()):
+            cand = os.path.join(d, name)
+            if os.path.exists(cand):
+                return cand
+        return here                     # let open() report it
+
     def read(self, path, seen=None):
         seen = seen or set()
         real = os.path.abspath(path)
@@ -306,8 +322,8 @@ class Assembler:
             for n, raw in enumerate(fh, 1):
                 m = re.match(r'\s*\.include\s+"([^"]+)"', raw, re.I)
                 if m:
-                    inc = os.path.join(os.path.dirname(path), m.group(1))
-                    out.extend(self.read(inc, seen))
+                    out.extend(self.read(self.resolve(m.group(1), path),
+                                         seen))
                 else:
                     out.append((f"{os.path.basename(path)}:{n}", raw))
         return out
@@ -708,8 +724,9 @@ def _strbytes(a):
                 .replace('\\"', '"').replace("\\\\", "\\")).encode("latin-1")
 
 
-def assemble(path):
+def assemble(path, incdirs=()):
     a = Assembler()
+    a.incdirs = list(incdirs)
     lines = a.read(path)
     lines = a.expand_macros(lines)
     a.pass1(lines)
@@ -724,10 +741,14 @@ def main():
     ap.add_argument("--listing")
     ap.add_argument("--symbols")
     ap.add_argument("--pressure", action="store_true")
+    ap.add_argument("-I", "--include-dir", action="append", default=[],
+                    metavar="DIR",
+                    help="where .include looks when the file is not a "
+                         "sibling of the one including it")
     args = ap.parse_args()
 
     try:
-        a = assemble(args.source)
+        a = assemble(args.source, args.include_dir)
     except AsmError as e:
         print(f"error: {e}", file=sys.stderr)
         sys.exit(1)

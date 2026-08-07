@@ -33,6 +33,7 @@ EXTERN CMDTAB
 EXTERN BANNERTAB
 EXTERN ERRTAB
 EXTERN MSGFREE
+EXTERN MSGKFREE
 
 CONST SCREEN  = $A000
 CONST PROG    = $0200           ' program text starts here
@@ -696,6 +697,112 @@ END SUB
 
 
 ' ---------------------------------------------------------------------
+' Files.
+'
+' sw/fs.asm does the flash; this turns a typed name into the eleven-byte
+' 8.3 field the directory holds, and hands it the program text.
+'
+' The volume is log-structured, so SAVE over a name that already exists
+' deletes the old entry and appends a new one at the tail. On NOR flash
+' that is the cheap operation and not the expensive one: programming can
+' only clear bits, so deleting is one byte cleared to $00 and writing is
+' bytes that are still $FF. Nothing is erased and nothing is rewritten in
+' place, and no 4 KB buffer is needed anywhere.
+' ---------------------------------------------------------------------
+
+CONST FSENT = $0107             ' fs.asm's fsent -- FSVARS+7
+CONST FSFPG = $0104             ' and its first free page
+CONST VOLPGS = 1792             ' 448 KB of pages in a volume
+
+DIM fname(10) AS BYTE           ' 8.3, space padded, upper case
+DIM faddr AS CARD               ' where the bytes are, or go
+DIM flen AS CARD                ' how many of them
+DIM fdrv AS BYTE                ' the mounted drive
+DIM fidx AS BYTE                ' the directory entry DIR is reading
+DIM fok AS BYTE                 ' did the last call succeed
+
+SUB fsmount()
+  ASM
+        LD   R0,[v_fdrv]
+        CALL fs_mount
+  END ASM
+END SUB
+
+SUB fsfind()
+  ASM
+        LDW  X,#a_fname
+        CALL fs_find
+        BCC  .fn1
+        LD   R0,[fsent+14]
+        ST   [v_flen],R0
+        LD   R0,[fsent+15]
+        ST   [v_flen+1],R0
+        MOV  R0,#1
+        BRA  .fn2
+.fn1:   CLR  R0
+.fn2:   ST   [v_fok],R0
+  END ASM
+END SUB
+
+SUB fssave()
+  ASM
+        LD   R0,[v_flen]
+        ST   [fslen],R0
+        LD   R0,[v_flen+1]
+        ST   [fslen+1],R0
+        LDW  X,#a_fname
+        LDW  Y,[v_faddr]
+        CALL fs_save
+        BCC  .sv1
+        MOV  R0,#1
+        BRA  .sv2
+.sv1:   CLR  R0
+.sv2:   ST   [v_fok],R0
+  END ASM
+END SUB
+
+SUB fsload()
+  ASM
+        LDW  X,#a_fname
+        LDW  Y,[v_faddr]
+        CALL fs_load
+        BCC  .ld1
+        LD   R0,[fslen]
+        ST   [v_flen],R0
+        LD   R0,[fslen+1]
+        ST   [v_flen+1],R0
+        MOV  R0,#1
+        BRA  .ld2
+.ld1:   CLR  R0
+.ld2:   ST   [v_fok],R0
+  END ASM
+END SUB
+
+SUB fserase()
+  ASM
+        LDW  X,#a_fname
+        CALL fs_delete
+        BCC  .er1
+        MOV  R0,#1
+        BRA  .er2
+.er1:   CLR  R0
+.er2:   ST   [v_fok],R0
+  END ASM
+END SUB
+
+' Read directory entry `fidx` into fs.asm's fsent, where DIR PEEKs it.
+SUB fsreadent()
+  ASM
+        LD   R0,[v_fidx]
+        CALL fs_seekent
+        CALL fls_seek
+        CALL fls_open
+        CALL fs_rdent
+        CALL fls_close
+  END ASM
+END SUB
+
+' ---------------------------------------------------------------------
 ' The command line: what Return does with a row.
 ' ---------------------------------------------------------------------
 
@@ -738,6 +845,201 @@ FUNCTION number() AS INT
   END IF
   RETURN v
 END FUNCTION
+
+' A file name at ip -- NAME, "NAME", or either with .EXT -- into fname as
+' the eleven-byte 8.3 field the directory holds. 1 if there was one.
+FUNCTION parsename() AS INT
+  DIM k AS BYTE
+  DIM c AS BYTE
+  DIM q AS BYTE
+  k = 0
+  DO WHILE k < 11
+    fname(k) = 32
+    k = k + 1
+  LOOP
+  CALL skipsp()
+  q = 0
+  IF ip < llen THEN
+    IF lbuf(ip) = 34 THEN
+      q = 1
+      ip = ip + 1
+    END IF
+  END IF
+  k = 0
+  DO WHILE ip < llen
+    c = upper(lbuf(ip))
+    IF c = 34 THEN
+      ip = ip + 1
+      EXIT DO
+    END IF
+    IF q = 0 THEN
+      IF c = 32 THEN
+        EXIT DO
+      END IF
+      IF c = 44 THEN
+        EXIT DO
+      END IF
+    END IF
+    IF c = 46 THEN
+      k = 8
+    ELSE
+      IF k < 11 THEN
+        fname(k) = c
+        k = k + 1
+      END IF
+    END IF
+    ip = ip + 1
+  LOOP
+  IF fname(0) = 32 THEN
+    RETURN 0
+  END IF
+  ' Nothing typed after the dot: a program is a .BAS.
+  IF fname(8) = 32 THEN
+    fname(8) = 66
+    fname(9) = 65
+    fname(10) = 83
+  END IF
+  RETURN 1
+END FUNCTION
+
+SUB dosave()
+  DIM had AS BYTE
+  IF parsename() = 0 THEN
+    CALL errmsg(0)
+    RETURN
+  END IF
+  ' Write first, delete second -- the order matters twice over.
+  '
+  ' Deleting first would drop the old file out of the scan that derives
+  ' the free pointer, so the new version would be programmed on top of
+  ' the old one's pages. Those pages are not $FF any more and
+  ' programming only clears bits, so what came back would be the two
+  ' versions ANDed together.
+  '
+  ' It is also the safe order across a power cut: the worst that can be
+  ' interrupted is a second copy nobody is using yet, and the old one
+  ' still loads. fs_find takes the first match scanning from entry zero,
+  ' which is the older of the two, so the delete afterwards removes the
+  ' right one.
+  CALL fsfind()
+  had = fok
+  faddr = PROG
+  flen = progend - PROG
+  CALL fssave()
+  IF fok = 0 THEN
+    CALL errmsg(3)
+    RETURN
+  END IF
+  IF had <> 0 THEN
+    CALL fserase()
+  END IF
+END SUB
+
+' Copy the stored line at p into tbuf, so storeline can place it.
+SUB fetchline(p AS CARD)
+  DIM k AS BYTE
+  tlen = linelen(p)
+  k = 0
+  DO WHILE k < tlen
+    tbuf(k) = PEEK(p + 3 + k)
+    k = k + 1
+  LOOP
+END SUB
+
+SUB doload()
+  DIM from AS INT
+  DIM p AS CARD
+  DIM top AS CARD
+  IF parsename() = 0 THEN
+    CALL errmsg(0)
+    RETURN
+  END IF
+  from = number()
+  IF from < 0 THEN
+    CALL new()
+    faddr = PROG
+    CALL fsload()
+    IF fok = 0 THEN
+      CALL errmsg(4)
+      RETURN
+    END IF
+    progend = PROG + flen
+    RETURN
+  END IF
+  ' LOAD "n",100 merges the file from line 100 on into what is already
+  ' there. The file lands at the top of free memory and the lines are
+  ' stored one at a time, which keeps the program in order and costs
+  ' nothing that a typed-in line does not. The text grows upward as they
+  ' go in, so the two must not meet: the worst case is the whole file.
+  CALL fsfind()
+  IF fok = 0 THEN
+    CALL errmsg(4)
+    RETURN
+  END IF
+  top = MEMTOP - flen + 1
+  IF progend + flen >= top THEN
+    CALL errmsg(1)
+    RETURN
+  END IF
+  faddr = top
+  CALL fsload()
+  IF fok = 0 THEN
+    CALL errmsg(4)
+    RETURN
+  END IF
+  p = top
+  DO WHILE p < top + flen
+    IF lineno(p) >= from THEN
+      CALL fetchline(p)
+      CALL storeline(lineno(p))
+    END IF
+    p = nextline(p)
+  LOOP
+END SUB
+
+SUB dodir()
+  DIM i AS INT
+  DIM k AS BYTE
+  DIM st AS BYTE
+  DIM sz AS CARD
+  i = 0
+  DO WHILE i < 256
+    fidx = i
+    CALL fsreadent()
+    st = PEEK(FSENT + 11)
+    IF st = 255 THEN
+      EXIT DO
+    END IF
+    ' $00 is deleted and $80 is the volume label; neither is a file.
+    IF st <> 0 THEN
+      IF st <> 128 THEN
+        k = 0
+        DO WHILE k < 11
+          IF k = 8 THEN
+            CALL emit(46)
+          END IF
+          CALL emit(PEEK(FSENT + k))
+          k = k + 1
+        LOOP
+        CALL emit(32)
+        sz = PEEK(FSENT + 15)
+        sz = sz << 8
+        sz = sz + PEEK(FSENT + 14)
+        CALL putn(sz)
+        CALL newline()
+      END IF
+    END IF
+    i = i + 1
+  LOOP
+  ' What is left is the tail, in pages of 256 bytes -- 448 KB of them
+  ' does not fit in sixteen bits, so this counts in KB.
+  sz = PEEK(FSFPG + 1)
+  sz = sz << 8
+  sz = sz + PEEK(FSFPG)
+  CALL putn((VOLPGS - sz) >> 2)
+  CALL puts(MSGKFREE)
+  CALL newline()
+END SUB
 
 ' Does lbuf at ip start with the word at table entry `idx`?
 FUNCTION iscmd(p AS CARD) AS INT
@@ -844,6 +1146,38 @@ SUB docommand()
     CALL cls()
     RETURN
   END IF
+  IF idx = 6 THEN                       ' SAVE
+    CALL dosave()
+    RETURN
+  END IF
+  IF idx = 7 THEN                       ' LOAD
+    CALL doload()
+    RETURN
+  END IF
+  IF idx = 8 THEN                       ' DIR
+    CALL dodir()
+    RETURN
+  END IF
+  IF idx = 9 THEN                       ' ERA
+    IF parsename() = 0 THEN
+      CALL errmsg(0)
+      RETURN
+    END IF
+    CALL fserase()
+    IF fok = 0 THEN
+      CALL errmsg(4)
+    END IF
+    RETURN
+  END IF
+  IF idx = 10 THEN                      ' DRIVE
+    a = number()
+    IF a < 0 THEN
+      a = 0
+    END IF
+    fdrv = a AND 15
+    CALL fsmount()
+    RETURN
+  END IF
   CALL errmsg(0)
 END SUB
 
@@ -931,6 +1265,8 @@ POKE VID_BASE_H, SCREEN >> 8
 POKE CUR_CTRL, $19
 vtop = 0
 progend = PROG
+fdrv = 0
+CALL fsmount()
 CALL cls()
 CALL banner()
 
@@ -1076,6 +1412,11 @@ CMDTAB:
         .byte 8, "R","E","N","U","M","B","E","R"
         .byte 6, "D","E","L","E","T","E"
         .byte 3, "C","L","S"
+        .byte 4, "S","A","V","E"
+        .byte 4, "L","O","A","D"
+        .byte 3, "D","I","R"
+        .byte 3, "E","R","A"
+        .byte 5, "D","R","I","V","E"
         .byte 0
 
 ; ---- errors. C64-shaped: a ? , the fault, and ERROR.
@@ -1083,10 +1424,15 @@ ERRTAB:
         .asciz "SYNTAX ERROR"
         .asciz "OUT OF MEMORY ERROR"
         .asciz "UNDEF'D LINE ERROR"
+        .asciz "DISK FULL ERROR"
+        .asciz "FILE NOT FOUND ERROR"
         .byte 0
 
 MSGFREE:
         .asciz " BYTES FREE"
+
+MSGKFREE:
+        .asciz "K FREE"
 
 ; ---- the boot screen: an attribute byte, then the text, then a zero.
 ; ---- Every line here is something the machine checked.
@@ -1106,4 +1452,8 @@ BANNERTAB:
         .byte $0E
         .asciz "COOL8 BASIC 1.0"
         .byte 0
+
+; ---- the filesystem, whole. Its state lives at $0100, below the
+; ---- program text at $0200 and above nothing that BASIC uses.
+        .include "fs.asm"
 END ASM

@@ -408,7 +408,31 @@ fs_save:
 
         LD   R0,[fsfent]
         CMP  R0,#$FF
-        BEQ  .fs9                       ; no free entry
+        BEQ  .fsx                       ; no free entry
+
+        ; And the tail has to hold it. Without this, programming runs
+        ; off the end of the volume and into the next one -- which is
+        ; not a full disk, it is someone else's data. A volume is $0700
+        ; pages; the file needs its whole pages plus one for a partial.
+        LD   R0,[fsfpg]
+        LD   R2,[fsfpg+1]
+        LD   R1,[fslen+1]
+        ADD  R0,R1
+        BCC  .fsp1
+        ADD  R2,#1
+.fsp1:  LD   R1,[fslen]
+        TST  R1
+        BEQ  .fsp2
+        ADD  R0,#1
+        BCC  .fsp2
+        ADD  R2,#1
+.fsp2:  CMP  R2,#7
+        BCC  .fsp3                      ; end page high < 7: it fits
+        BNE  .fsx
+        TST  R0
+        BEQ  .fsp3                      ; exactly $0700: the last page
+.fsx:   JMP  .fs9                       ; out of reach of a Bcc from here
+.fsp3:
 
         ; the name, into the entry being built
         PUSHW Y
