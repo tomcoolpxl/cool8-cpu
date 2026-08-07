@@ -52,6 +52,7 @@ CONST KW_IF    = $8D
 CONST KW_THEN  = $8E
 CONST KW_ELSE  = $8F
 CONST KW_ELSIF = $90
+CONST KW_POKE  = $98
 
 ' What a block stopped on.
 CONST B_EOF   = 0
@@ -75,6 +76,7 @@ CONST N_NUM = 0
 CONST N_VAR = 1
 CONST N_BIN = 2
 CONST N_CMP = 3
+CONST N_PEEK = 4
 
 ' Relations. GT and LE are never generated: a 16-bit SUB leaves Z from
 ' the high byte alone, so BGT and BLE would be wrong whenever the low
@@ -289,6 +291,9 @@ FUNCTION cwidth(i AS BYTE) AS BYTE
   IF nk(i) = N_VAR THEN
     RETURN syw(na(i))
   END IF
+  IF nk(i) = N_PEEK THEN
+    RETURN 1
+  END IF
   x = cwidth(na(i))
   y = cwidth(nb(i))
   IF y > x THEN
@@ -307,6 +312,9 @@ FUNCTION csigned(i AS BYTE) AS BYTE
   END IF
   IF nk(i) = N_VAR THEN
     RETURN sysg(na(i))
+  END IF
+  IF nk(i) = N_PEEK THEN
+    RETURN 0                    ' a byte off the bus is never negative
   END IF
   IF nk(i) = N_BIN THEN
     x = csigned(na(i))
@@ -358,6 +366,9 @@ END FUNCTION
 
 FUNCTION isleaf(i AS BYTE) AS BYTE
   IF nk(i) = N_BIN THEN
+    RETURN 0
+  END IF
+  IF nk(i) = N_PEEK THEN
     RETURN 0
   END IF
   RETURN 1
@@ -507,6 +518,24 @@ SUB cgen(i AS BYTE, w AS BYTE)
   END IF
   a = na(i)
   b = nb(i)
+  IF nk(i) = N_PEEK THEN
+    a = na(i)
+    IF nk(a) = N_NUM THEN
+      ' A known address is one instruction, and every I/O register in
+      ' the machine is a known address. That is the difference between
+      ' a language that can drive hardware and one that talks about it.
+      CALL eb($61)
+      CALL ew(nv(a))
+    ELSE
+      CALL cgen(a, cwidth(a))
+      CALL cxfromr()
+      CALL eb($40)              ' LD R0,[X]
+    END IF
+    IF w = 2 THEN
+      CALL ealur(E_SUB, 1, 1)   ' CLR R1
+    END IF
+    RETURN
+  END IF
   IF nop(i) >= O_SHL THEN
     ' The operand keeps its own width. Narrowing first would load the
     ' low byte and then shift it away, which is what a >> 8 became the
@@ -559,6 +588,14 @@ FUNCTION newlab() AS BYTE
   labr(l) = 0
   RETURN l
 END FUNCTION
+
+' X = R0:R1, the address just computed.
+SUB cxfromr()
+  CALL eb($2F)
+  CALL eb($50)                  ' MOV XL,R0
+  CALL eb($2F)
+  CALL eb($55)                  ' MOV XH,R1
+END SUB
 
 ' A conditional branch to a label. Always long: one pass cannot see how
 ' far forward a block runs, so the short branch is inverted and jumps
@@ -701,6 +738,7 @@ END FUNCTION
 FUNCTION cprimary() AS BYTE
   DIM s AS BYTE
   DIM r AS BYTE
+  DIM i AS BYTE
   IF tk = T_NUM THEN
     r = mknum(tnum)
     CALL nexttok()
@@ -715,6 +753,25 @@ FUNCTION cprimary() AS BYTE
       CALL nexttok()
     END IF
     RETURN r
+  END IF
+  IF tk = KW_PEEK THEN
+    CALL nexttok()
+    IF isop(40) = 0 THEN
+      cerr = 23
+      RETURN mknum(0)
+    END IF
+    CALL nexttok()
+    r = cexpr()
+    IF isop(41) = 0 THEN
+      cerr = 24
+    ELSE
+      CALL nexttok()
+    END IF
+    i = nn
+    nn = nn + 1
+    nk(i) = N_PEEK
+    na(i) = r
+    RETURN i
   END IF
   IF tk = T_NAME THEN
     s = syfind()
@@ -1133,6 +1190,45 @@ SUB cfor()
   clab = save
 END SUB
 
+SUB cpoke()
+  DIM a AS BYTE
+  DIM v AS BYTE
+  DIM k AS BYTE
+  CALL nexttok()
+  nn = 0
+  a = cexpr()
+  IF isop(44) = 0 THEN
+    cerr = 25
+    RETURN
+  END IF
+  CALL nexttok()
+  v = cexpr()
+  IF nk(a) = N_NUM THEN
+    CALL cgen(v, 1)             ' a POKE writes one byte
+    CALL eb($69)
+    CALL ew(nv(a))
+    RETURN
+  END IF
+  IF isleaf(v) <> 0 THEN
+    CALL cgen(a, cwidth(a))
+    CALL cxfromr()
+    CALL cload(v, 0, 2)
+  ELSE
+    ' At its own width, not the pointer's: `b + 2` on a byte stays a
+    ' byte, and only the slot it is parked in is two wide.
+    CALL cgen(v, cwidth(v))
+    k = ctemp()
+    CALL etmp(0, 1, k + k)
+    CALL etmp(1, 1, k + k + 1)
+    CALL cgen(a, cwidth(a))
+    CALL cxfromr()
+    CALL etmp(0, 0, k + k)
+    CALL etmp(1, 0, k + k + 1)
+    ctmps = ctmps - 1
+  END IF
+  CALL eb($48)                  ' ST [X],R0
+END SUB
+
 SUB cstmt()
   IF tk = KW_DIM THEN
     CALL cdim()
@@ -1162,6 +1258,10 @@ SUB cstmt()
       RETURN
     END IF
     CALL ejmp(lpdone)
+    RETURN
+  END IF
+  IF tk = KW_POKE THEN
+    CALL cpoke()
     RETURN
   END IF
   IF tk = T_NAME THEN

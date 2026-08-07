@@ -106,6 +106,16 @@ NEXT i
 FOR b = 0 TO LIMIT
   u = u + 1
 NEXT
+' the hardware: a known address is one instruction, a computed one is X
+POKE $FE10, $80
+POKE $FE12, 0
+b = PEEK($FE22)
+w = PEEK($FE23) + 1
+POKE w, b
+POKE w + 1, b + 2
+POKE $FE24, PEEK($FE24) AND 15
+u = PEEK(u + 1)
+w = w + PEEK($FE70)
 END
 """
 
