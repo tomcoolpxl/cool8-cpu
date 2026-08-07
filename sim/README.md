@@ -60,6 +60,7 @@ python sim/bench_lang.py     # M10: native codegen against stack bytecode
 python sim/test_fs.py        # M11: sw/fs.asm against tools/cool8disk.py
 python sim/test_bas.py       # M12: the compiler against hand-written code
 python sim/test_edit.py      # M13: the editor, typed at through the UART
+python sim/test_lib.py       # M14: demo.bas against demo.asm
 python sim/mutate.py         # 42 deliberate bugs; 41 have to be caught
 python sim/synth.py
 python sim/timing.py

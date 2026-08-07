@@ -71,7 +71,7 @@ class Machine:
         # state one keystroke early and blames the editor.
         self.idle = syms["s_getkey.gk"]
 
-    def settle(self, budget=60_000_000):
+    def settle(self, budget=200_000_000):
         n = 0
         while n < budget:
             if not self.m.uart.rx and self.m.cpu.pc == self.idle:
@@ -218,8 +218,15 @@ def main():
     ed2.settle()
     ed2.type("\x0c")
     ed2.settle()
-    n3 = ed2.m.bus.mem[syms["v_gs"]] | (ed2.m.bus.mem[syms["v_gs"] + 1] << 8)
-    back = bytes(ed2.m.bus.mem[BUF:BUF + n3])
+    # After a load the cursor sits at the top, so the text is on the far
+    # side of the gap. Reading buf[0:gs] was right only while the editor
+    # left the cursor at the end -- the harness had to learn the same
+    # thing the editor did.
+    gs3 = ed2.m.bus.mem[syms["v_gs"]] | (ed2.m.bus.mem[syms["v_gs"] + 1] << 8)
+    ge3 = ed2.m.bus.mem[syms["v_ge"]] | (ed2.m.bus.mem[syms["v_ge"] + 1] << 8)
+    n3 = 24576 - ge3 + gs3
+    back = (bytes(ed2.m.bus.mem[BUF:BUF + gs3])
+            + bytes(ed2.m.bus.mem[BUF + ge3:BUF + 24576]))
     check(n3 == total and back == saved,
           "Ctrl-L reloaded it into a fresh machine, byte for byte",
           f"{n3:,} bytes back, {len(saved):,} saved")

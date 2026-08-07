@@ -565,6 +565,16 @@ SUB loadfile()
   ge = SIZE
   top = 0
   dirty = 0
+  ' Put the cursor at the top, the way opening a file should.
+  '
+  ' Leaving it at the end is what a naive load does, and with top still
+  ' at 0 the next scrollfit walks from the start of the file to the
+  ' cursor once per line it has to scroll past -- O(lines squared), and
+  ' on a 1,010-line file that is hundreds of millions of clocks. Moving
+  ' the gap is O(bytes), once.
+  DO WHILE gs > 0
+    CALL gapleft()
+  LOOP
 END SUB
 
 ' ---------------------------------------------------------------------

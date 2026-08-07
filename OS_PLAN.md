@@ -554,25 +554,144 @@ Four more things the language needed, all now in: `PEEK`/`POKE`,
 for naming what the assembly side owns, and `FUNCTION` with a return
 value.
 
+**M14's compiler work broke this milestone and the gate caught it.**
+Byte typing made a latent bug visible: `chat()` does `RETURN buf(i)` on a
+*byte* array, and the compiler generated the return value at byte width,
+leaving whatever was in `R1` above it. A `FUNCTION` hands back a full
+word whatever the expression's own width is, and until `BYTE` existed
+nothing could tell the difference. Every character the editor read came
+back with rubbish in its high byte, and it hung measuring a word that
+never ended.
+
 **Also learned: the harness was wrong before the editor was.** Waiting
 for the UART FIFO to drain is not the same as waiting for the editor to
 be idle — the byte is taken before it is acted on — so the first runs
 read the state one keystroke early and blamed the editor for losing a
-character. Settling now means "back in `getkey` with nothing to read".
+character. Settling now means "back in `getkey` with nothing to read". It happened
+a second time: after the load fix put the cursor at the top, the text
+lives on the far side of the gap, and the harness was still reading
+`buf[0:gs]` — which is empty. The check had to learn the same thing the
+editor did.
+
+**And one performance defect the 1,010-line run found**: loading a large
+file left the cursor at the end with the window still at the top, so the
+next scroll walked the whole file once per line it had to scroll past —
+O(lines²), hundreds of millions of clocks. Opening a file now puts the
+cursor at the top, which is what an editor should do anyway and is O(n)
+once.
 
 Still to do, and deliberately deferred: two panes, immediate mode (which
 needs the on-machine compiler anyway), hardware scroll for the view, and
 the source-placement rule of §2.2 — the buffer is 24 KB of main RAM at
 `$2000` rather than VRAM.
 
-### M14 — The runtime library
+### M14 — The runtime library ⬜ *(built; gate missed at 2.69×)*
 
-Graphics (`PLOT`, `LINE`, `RECT`, `MODE`, sprites), sound (the eight
-voices, envelopes), strings, `PRINT` formatting, file statements, and
-`FLOAT.LIB` as a loadable.
+[`sw/lib.bas`](sw/lib.bas) — display modes, palette, VRAM, sprites, the
+eight sound voices, vblank, a console with `PRINT`, and an LFSR.
+[`sw/demo.bas`](sw/demo.bas) is `sw/demo.asm` rewritten against it, and
+[`sim/test_lib.py`](sim/test_lib.py) measures one against the other with
+the vblank flag held ready so neither is timed waiting.
 
-**Gate:** `sw/demo.asm` rewritten in the language, and no slower than the
-assembly version by more than 2×.
+**It is the same demo, and that is checked, not assumed:** tile patterns,
+all 128 bytes of the sprite pattern, the tile map, all 256 palette
+entries as a byte stream, eight sprites enabled and moving, and both
+voices playing.
+
+**Gate: within 2× of assembly. Measured 2.51×. Not met.**
+
+| | assembly | BASIC | ratio |
+|---|---|---|---|
+| code size | 704 B | ~5,000 B | ~7× |
+| setup, to frame 1 | 218,046 | ~710,000 | 3.3× |
+| frames per Mclock | 608.1 | 242.3 | **2.51×** |
+
+It started at **9.91×**. What closed most of it, in order of size:
+
+- **Bitwise and shift operators.** The language had none, so every mask
+  was a `Modulo` call and every shift a loop of halvings. `AND`, `OR`,
+  `XOR`, `<<` and `>>` — with a shift of eight compiled as a byte move —
+  took it to 5.11×.
+- **A `BYTE` scalar type with real 8-bit arithmetic.** Sprites, colours
+  and coordinates are all bytes; doing them in 16 bits doubled every
+  load, store, constant and add. Byte-wide expressions, byte-wide
+  comparisons (unsigned, so `BLO`/`BHS`), and byte locals and parameters
+  took it from 3.36× to 2.69× — **and made M12 faster too, from 0.96× to
+  0.92× of hand-written code.**
+- **Hoisting array elements into locals**, and `INLINE`. 2.69× → 2.51×.
+- **Assembly bodies for the hot library routines.** `Sprite`, `Spr16` and
+  `Vfill` read their arguments off the stack directly. 5.11× → 3.92×.
+- **Subscript code generation.** A constant index is a constant address,
+  and an array that fits inside 255 bytes cannot carry into the high
+  byte, so the fixup after `ADDW X` is dead.
+
+**Inlining was built, and it is not what was missing.**
+
+`INLINE SUB` expands a routine at the call site, binding parameters to
+frame slots and substituting leaf arguments outright — so a leaf
+argument costs nothing at all. It is a real win where it applies: M12's
+call benchmark went from 1.03× to **0.90×** of hand-written code, and
+the M12 total from 0.92× to **0.91×**.
+
+It did nothing for this demo, and profiling says why:
+
+| | clocks/frame | share |
+|---|---|---|
+| `MoveSprites` body | 2,878 | 70.5 % |
+| `Spr16` | 568 | 13.9 % |
+| `Music` + `Voice` | 580 | 14.2 % |
+
+**Three things were learned by measuring rather than reasoning:**
+
+- **The first profile was read wrongly.** Argument marshalling is
+  charged to the *caller*, so `Spr16`'s 13.9 % understates what the call
+  costs — most of it hides inside `MoveSprites`.
+- **Expansion is asked for, not guessed at.** A token-count threshold
+  inlined `chat()` throughout the editor and **tripled it to 18,963
+  bytes — past `$2000`, where its own text buffer lives.** A threshold
+  cannot know that a routine called twice should be expanded and one
+  called two hundred times should not. Hence the keyword.
+- **An inlined BASIC body lost to a called assembly one.** `Spr16`
+  rewritten in BASIC and marked `INLINE` measured **2.72× against
+  2.51×**. Nine expanded statements do not beat nine hand-written
+  instructions behind a `CALL`, and nothing but the measurement would
+  have said so.
+
+**What is actually missing is a register allocator.** The assembly keeps
+a sprite's position in a register across the whole update; the compiler
+reloads it from the array on every mention, at about fifteen clocks
+against three. Hoisting by hand into locals — ordinary practice, and
+what the assembly does implicitly — took 2.69× to 2.51×. The rest of
+that gap is the same effect inside expressions, and closing it is a
+register allocator, which is a different and much larger project than
+this milestone.
+
+**Moving the demo's own sprite loop into assembly would report about
+1.0× and answer none of this**, so it was not done.
+
+**Three compiler defects found on the way**, all of which would have bitten
+any program eventually:
+
+- **Temporaries were global.** A call inside an argument list clobbered
+  the caller's spill slot, so `Sprite(i, ...)` wrote sprite 0 eight
+  times and the earlier "1.26×" was measuring a broken loop. They now
+  live in the frame, as §4.1 always said they should.
+- **And then they moved.** Spill slots are addressed off `SP`, and
+  pushing arguments moves `SP` — so the push sequence has to bias its
+  own reads by how far it has already pushed.
+- **A shift narrowed its operand.** `a >> 8` evaluated at byte width
+  loaded the low byte and shifted it away. Only `BYTE` made it visible.
+
+Also added: `PEEK`/`POKE` with a constant address compiling to a single
+instruction, `DIM ... AT` to lay an array over the screen or the I/O
+page, `INCLUDE`, `PRINT` with string literals, and a refusal to let
+`CONST PATBASE` silently replace `SUB PatBase` — names are not case
+sensitive and that one cost an afternoon.
+
+**Not built, and still owed:** `FLOAT.LIB` and the `REAL` type, a string
+type beyond literals, and file statements in the language. `sw/fs.asm`
+is reachable from `ASM` blocks, which is how `sw/edit.bas` saves and
+loads, but `LOAD`/`SAVE` are not yet language statements.
 
 ### M15 — ROM, autoboot, and hardware
 
