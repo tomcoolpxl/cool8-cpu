@@ -121,6 +121,8 @@ DIM cerr AS BYTE                ' 0 while everything is still fine
 ' allocated on entering a construct and given back on leaving it, so
 ' what bounds them is how deeply the program nests, not how long it is.
 DIM clab AS BYTE          ' not nlab: emit.bas has CONST NLAB
+DIM ctmps AS BYTE               ' temporaries live right now
+DIM ctmax AS BYTE               ' and the most that were ever live at once
 DIM lpdone AS BYTE              ' the innermost loop's exit, for EXIT DO
 DIM inloop AS BYTE
 
@@ -134,6 +136,8 @@ SUB cinit()
   cerr = 0
   clab = LMAIN + 1
   inloop = 0
+  ctmps = 0
+  ctmax = 0
 END SUB
 
 ' The symbol whose name is the token just read, or 255.
@@ -363,6 +367,19 @@ END FUNCTION
 ' Generating.
 ' ---------------------------------------------------------------------
 
+' A spill slot, by depth. Nesting an expression inside another needs a
+' deeper one; unwinding gives it back. What has to be reserved is the
+' deepest the program ever got, which is why the silent pass exists.
+FUNCTION ctemp() AS BYTE
+  DIM k AS BYTE
+  k = ctmps
+  ctmps = ctmps + 1
+  IF ctmps > ctmax THEN
+    ctmax = ctmps
+  END IF
+  RETURN k
+END FUNCTION
+
 ' A leaf into Rr, or Rr:Rr+1 at word width. A byte source read wide is
 ' zero-extended with a CLR, which is one instruction; a wide source read
 ' narrow simply drops its high half, which is none.
@@ -483,6 +500,7 @@ SUB cgen(i AS BYTE, w AS BYTE)
   DIM a AS BYTE
   DIM b AS BYTE
   DIM wa AS BYTE
+  DIM k AS BYTE
   IF isleaf(i) <> 0 THEN
     CALL cload(i, 0, w)
     RETURN
@@ -505,9 +523,20 @@ SUB cgen(i AS BYTE, w AS BYTE)
     CALL cgen(a, w)
     CALL cload(b, 2, w)
   ELSE
-    ' Without temporaries yet: this is what S4c adds.
-    cerr = 2
-    RETURN
+    ' Right first, into a slot, so the operand order of a subtraction
+    ' survives being evaluated inside out.
+    CALL cgen(b, w)
+    k = ctemp()
+    CALL etmp(0, 1, k + k)
+    IF w = 2 THEN
+      CALL etmp(1, 1, k + k + 1)
+    END IF
+    CALL cgen(a, w)
+    CALL etmp(2, 0, k + k)
+    IF w = 2 THEN
+      CALL etmp(3, 0, k + k + 1)
+    END IF
+    ctmps = ctmps - 1
   END IF
   CALL cbinop(nop(i), w)
 END SUB
@@ -553,6 +582,7 @@ SUB cgencond(i AS BYTE, l AS BYTE, iffalse AS BYTE)
   DIM op AS BYTE
   DIM w AS BYTE
   DIM uns AS BYTE
+  DIM k AS BYTE
   IF nk(i) <> N_CMP THEN
     cerr = 12
     RETURN
@@ -586,12 +616,23 @@ SUB cgencond(i AS BYTE, l AS BYTE, iffalse AS BYTE)
   IF csigned(b) = 0 THEN
     uns = 1
   END IF
-  IF isleaf(b) = 0 THEN
-    cerr = 13                   ' spilling waits for the frame, in S4d
-    RETURN
+  IF isleaf(b) <> 0 THEN
+    CALL cgen(a, w)
+    CALL cload(b, 2, w)
+  ELSE
+    CALL cgen(b, w)
+    k = ctemp()
+    CALL etmp(0, 1, k + k)
+    IF w = 2 THEN
+      CALL etmp(1, 1, k + k + 1)
+    END IF
+    CALL cgen(a, w)
+    CALL etmp(2, 0, k + k)
+    IF w = 2 THEN
+      CALL etmp(3, 0, k + k + 1)
+    END IF
+    ctmps = ctmps - 1
   END IF
-  CALL cgen(a, w)
-  CALL cload(b, 2, w)
   CALL ealur(E_SUB, 0, 2)
   IF w = 2 THEN
     CALL ealur(E_SBC, 1, 3)
@@ -825,7 +866,11 @@ SUB cdim()
   IF tk = KW_AS THEN
     CALL nexttok()
     IF tk = KW_BYTE THEN
+      ' A BYTE is unsigned as well as narrow. It is not a small INT:
+      ' `b + 2` compared against anything picks the unsigned branch,
+      ' which for values that never go negative is the right one.
       syw(s) = 1
+      sysg(s) = 0
     END IF
     IF tk = KW_CARD THEN
       sysg(s) = 0
@@ -1179,15 +1224,20 @@ SUB cplace()
   LOOP
 END SUB
 
-SUB compile(src AS CARD, org AS CARD)
+' One run over the program: the jump to main, the frame, the body, the
+' closing HALT and the variables.
+SUB cpass(src AS CARD, org AS CARD, frame AS INT, quiet AS BYTE)
   DIM r AS BYTE
   CALL cinit()
   CALL estart(org)
+  ' After estart, which knows nothing about passes.
+  equiet = quiet
   ' The cross-compiler opens with a jump over the SUB bodies to main.
   ' There are no SUBs yet, so main is the next byte -- but the jump is
   ' still there, and byte-identical means identical.
   CALL ejmp(LMAIN)
   CALL elab(LMAIN)
+  CALL eframe(frame)
   CALL lexstart(src)
   CALL nexttok()
   r = cblock()
@@ -1198,4 +1248,15 @@ SUB compile(src AS CARD, org AS CARD)
   ' The variables go after the code, in the order they were declared --
   ' which is what the cross-compiler's .res block comes to.
   CALL cplace()
+END SUB
+
+SUB compile(src AS CARD, org AS CARD)
+  DIM frame AS INT
+  ' Once in the dark, to find out how deep the expressions go, then once
+  ' for real with a frame the right size.
+  ' Once in the dark, to find out how deep the expressions go, then
+  ' once for real with a frame the right size.
+  CALL cpass(src, org, 0, 1)
+  frame = ctmax + ctmax
+  CALL cpass(src, org, frame, 0)
 END SUB

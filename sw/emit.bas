@@ -72,6 +72,21 @@ CONST C_LT = 13
 CONST C_GT = 14
 CONST C_LE = 15
 
+' ## Why there is a silent pass
+'
+' The frame prologue is ADDW SP,#-total, and the cross-compiler deletes
+' the line altogether when the total is zero. This emitter writes bytes,
+' so it cannot delete one it has already written, and it cannot know the
+' total until the body has been read.
+'
+' So the body is compiled twice. The first time equiet is set: cp still
+' advances exactly as it will the second time -- no instruction's length
+' depends on a label's value, because every forward branch is emitted
+' long -- but nothing is written and no chain is touched. That pass
+' costs only time, and it is the only thing that knows how many
+' temporaries the program wants before the program has been read.
+DIM equiet AS BYTE
+
 DIM cp AS CARD                  ' where the next byte goes, and runs
 DIM labv(127) AS CARD            ' placed address, or the abs16 chain head
 DIM labb(127) AS CARD            ' the rel8 chain head
@@ -90,13 +105,17 @@ SUB estart(a AS CARD)
 END SUB
 
 SUB eb(b AS INT)
-  POKE cp, b
+  IF equiet = 0 THEN
+    POKE cp, b
+  END IF
   cp = cp + 1
 END SUB
 
 SUB ew(w AS CARD)
-  POKE cp, w AND 255
-  POKE cp + 1, w >> 8
+  IF equiet = 0 THEN
+    POKE cp, w AND 255
+    POKE cp + 1, w >> 8
+  END IF
   cp = cp + 2
 END SUB
 
@@ -112,6 +131,9 @@ END FUNCTION
 ' A 16-bit operand naming label l.
 SUB eabs(l AS BYTE)
   CALL ew(labv(l))              ' the target, or the site before this one
+  IF equiet <> 0 THEN
+    RETURN
+  END IF
   IF labr(l) = 0 THEN
     labv(l) = cp - 2
   END IF
@@ -128,6 +150,11 @@ SUB elab(l AS BYTE)
   DIM p AS CARD
   DIM q AS CARD
   DIM d AS BYTE
+  IF equiet <> 0 THEN
+    labv(l) = cp
+    labr(l) = 1
+    RETURN
+  END IF
   p = labv(l)
   DO WHILE p <> 0
     q = rdw(p)
@@ -185,6 +212,10 @@ END SUB
 ' it, which is where the program counter will be.
 SUB ebr(cc AS BYTE, l AS BYTE)
   CALL eb($70 + cc)
+  IF equiet <> 0 THEN
+    CALL eb(0)
+    RETURN
+  END IF
   IF labr(l) <> 0 THEN
     CALL eb((labv(l) - cp - 1) AND 255)
     RETURN
@@ -205,6 +236,22 @@ END SUB
 SUB ecall(l AS BYTE)
   CALL eb($29)
   CALL eabs(l)
+END SUB
+
+' A frame of `n` bytes, or nothing at all when there is none.
+SUB eframe(n AS INT)
+  IF n = 0 THEN
+    RETURN
+  END IF
+  CALL eb($2F)
+  CALL eb($6C)                  ' ADDW SP,#d8, signed
+  CALL eb((0 - n) AND 255)
+END SUB
+
+' A temporary at [SP+off]: st = 0 load into Rr, 1 store from Rr.
+SUB etmp(rd AS BYTE, st AS BYTE, off AS INT)
+  CALL eb($60 + st * 8 + rd * 2)
+  CALL eb(off AND 255)
 END SUB
 
 SUB ecalla(a AS CARD)

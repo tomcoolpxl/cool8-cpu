@@ -35,8 +35,13 @@ import cool8bas as bas                                   # noqa: E402
 from test_lex import keyword_bytes, store                # noqa: E402
 
 ORG = 0x0200            # where the compiler itself runs
-SRC = 0x4000            # the stored program it compiles
-OUT = 0x6000            # and where it puts the result
+# Well clear of the driver. The compiler's own variables are laid out
+# after its code, and it is 16 KB of code with 2 KB of tables -- at
+# $4000 the source was being overwritten by the symbol pool that was
+# meant to describe it, and the failure moved every time the driver
+# changed size.
+SRC = 0x8000            # the stored program it compiles
+OUT = 0xA000            # and where it puts the result
 FAILS = []
 
 # The program under test. Chosen for what the generator has to decide:
@@ -62,6 +67,14 @@ w = w >> 8
 b = b << 2
 w = (w + 1) - LIMIT
 w = 0 - w
+' right operands that are not leaves, so the frame has to exist
+w = (w + 1) - (b + 2)
+u = (u XOR $0F0F) AND (u + 1)
+b = (b + 1) - (b AND 3)
+w = w - ((b + 1) + (b + 2))
+IF (w + 1) > (b + 2) THEN
+  w = w + 1
+END IF
 IF w > 10 THEN
   w = w - 1
 END IF
@@ -112,8 +125,8 @@ INCLUDE "lex.bas"
 INCLUDE "emit.bas"
 INCLUDE "comp.bas"
 
-progend = $4000 + {size}
-CALL compile($4000, $6000)
+progend = $8000 + {size}
+CALL compile($8000, $A000)
 POKE $7F00, cp AND 255
 POKE $7F01, cp >> 8
 POKE $7F02, cerr
@@ -124,6 +137,10 @@ POKE $7F06, spend AND 255
 ' symbol 0 is the CONST, which is never placed; symbol 1 is w
 POKE $7F07, labv(2) AND 255
 POKE $7F08, labv(2) >> 8
+POKE $7F09, ctmax
+POKE $7F0A, ctmps
+POKE $7F0B, tsb(0)
+POKE $7F0C, nn
 END
 """
 
@@ -206,7 +223,9 @@ def main():
     if not check(err == 0, "the machine compiled it without complaint",
                  f"error {err}, {nsym} symbols, "
                  f"{end - OUT} bytes emitted, tk=${m.bus.mem[0x7F04]:02X} "
-                 f"tsl={m.bus.mem[0x7F05]} spend={m.bus.mem[0x7F06]}"):
+                 f"tsl={m.bus.mem[0x7F05]} spend={m.bus.mem[0x7F06]} "
+                 f"ctmax={m.bus.mem[0x7F09]} ctmps={m.bus.mem[0x7F0A]} "
+                 f"tsb0={m.bus.mem[0x7F0B]!r} nn={m.bus.mem[0x7F0C]}"):
         print()
         print(f"FAIL -- {len(FAILS)}")
         return 1
