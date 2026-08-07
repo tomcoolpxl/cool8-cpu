@@ -87,6 +87,19 @@ CONST C_LE = 15
 ' temporaries the program wants before the program has been read.
 DIM equiet AS BYTE
 
+' ## Offset references need a table
+'
+' The chain cannot carry `base + off`: the operand field holds the link
+' to the previous site waiting on the label, and there is nowhere left
+' to put an addend. Array element addresses are the only place it comes
+' up -- LDW X,#base+off -- so those sites are recorded here instead and
+' filled in once every label has been placed.
+CONST MAXFIX = 64
+DIM fxsite(63) AS CARD
+DIM fxlab(63) AS BYTE
+DIM fxoff(63) AS CARD
+DIM nfx AS BYTE
+
 DIM cp AS CARD                  ' where the next byte goes, and runs
 DIM labv(127) AS CARD            ' placed address, or the abs16 chain head
 DIM labb(127) AS CARD            ' the rel8 chain head
@@ -95,6 +108,7 @@ DIM labr(127) AS BYTE            ' 1 once the label has been placed
 SUB estart(a AS CARD)
   DIM i AS BYTE
   cp = a
+  nfx = 0
   i = 0
   DO WHILE i < NLAB
     labv(i) = 0
@@ -137,6 +151,35 @@ SUB eabs(l AS BYTE)
   IF labr(l) = 0 THEN
     labv(l) = cp - 2
   END IF
+END SUB
+
+' A 16-bit operand naming label l plus a constant offset.
+SUB eabsoff(l AS BYTE, off AS CARD)
+  IF equiet = 0 THEN
+    IF nfx < MAXFIX THEN
+      fxsite(nfx) = cp
+      fxlab(nfx) = l
+      fxoff(nfx) = off
+      nfx = nfx + 1
+    END IF
+  END IF
+  CALL ew(0)
+END SUB
+
+' Every offset reference, now that the labels are all placed.
+SUB efixups()
+  DIM i AS BYTE
+  DIM a AS CARD
+  IF equiet <> 0 THEN
+    RETURN
+  END IF
+  i = 0
+  DO WHILE i < nfx
+    a = labv(fxlab(i)) + fxoff(i)
+    POKE fxsite(i), a AND 255
+    POKE fxsite(i) + 1, a >> 8
+    i = i + 1
+  LOOP
 END SUB
 
 ' A raw 16-bit operand -- an address that is already known.

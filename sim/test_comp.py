@@ -54,6 +54,10 @@ DIM w AS INT
 DIM b AS BYTE
 DIM u AS CARD
 DIM i AS INT
+DIM tab(9) AS INT
+DIM buf(255) AS BYTE
+DIM big(200) AS INT
+DIM scr(4095) AS BYTE AT $C000
 w = 1000
 b = 7
 u = $ABCD
@@ -116,6 +120,24 @@ POKE w + 1, b + 2
 POKE $FE24, PEEK($FE24) AND 15
 u = PEEK(u + 1)
 w = w + PEEK($FE70)
+' arrays: a constant index is a constant address; a small one cannot
+' carry into the high byte, a big one can
+tab(0) = 1
+tab(3) = w
+buf(7) = b
+buf(i) = b + 1
+tab(i) = w + 1
+big(i) = w
+big(0) = 0
+scr(0) = 65
+scr(i + 1) = b
+w = tab(0) + tab(i)
+b = buf(3) - buf(i)
+w = big(i) + big(2)
+b = scr(i) XOR scr(0)
+FOR i = 0 TO 9
+  tab(i) = tab(i) + 1
+NEXT
 END
 """
 
@@ -174,7 +196,9 @@ def reference():
     addrs, hidden = {}, 0
     for line in open(sym):
         p = line.split()
-        if len(p) == 2 and p[1].startswith("v_"):
+        # a_* is an array, v_* a scalar; both are storage and both are
+        # in the same block, so the first of either ends the code
+        if len(p) == 2 and (p[1].startswith("v_") or p[1].startswith("a_")):
             addrs[p[1][2:]] = int(p[0], 16)
         # FOR evaluates its limit once, into a slot of its own
         elif len(p) == 2 and p[1].endswith("_lim"):
@@ -260,10 +284,17 @@ def main():
           f"the first variable is at ${first:04X}, as the assembler put it",
           f"${first:04X} against ${min(waddr.values()):04X}")
 
-    check(nsym == len(waddr) + 1 + hidden,
-          f"{nsym} symbols: {len(waddr)} variables, a constant, "
-          f"{hidden} FOR limits",
-          f"{nsym} against {len(waddr) + 1 + hidden}")
+    # An AT array is laid over an address and gets no storage, so it
+    # has no symbol on the reference side -- but the machine still
+    # names it.
+    consts = sum(1 for ln in SOURCE.splitlines()
+                 if ln.strip().upper().startswith("CONST "))
+    ats = sum(1 for ln in SOURCE.splitlines() if " AT " in ln.upper())
+    want_n = len(waddr) + consts + hidden + ats
+    check(nsym == want_n,
+          f"{nsym} symbols: {len(waddr)} with storage, {consts} const, "
+          f"{hidden} FOR limits, {ats} laid over an address",
+          f"{nsym} against {want_n}")
 
     print()
     print("PASS" if not FAILS else f"FAIL -- {len(FAILS)}")

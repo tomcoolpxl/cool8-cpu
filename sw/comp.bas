@@ -53,6 +53,7 @@ CONST KW_THEN  = $8E
 CONST KW_ELSE  = $8F
 CONST KW_ELSIF = $90
 CONST KW_POKE  = $98
+CONST KW_AT    = $9D
 
 ' What a block stopped on.
 CONST B_EOF   = 0
@@ -77,6 +78,7 @@ CONST N_VAR = 1
 CONST N_BIN = 2
 CONST N_CMP = 3
 CONST N_PEEK = 4
+CONST N_INDEX = 5
 
 ' Relations. GT and LE are never generated: a 16-bit SUB leaves Z from
 ' the high byte alone, so BGT and BLE would be wrong whenever the low
@@ -106,7 +108,9 @@ DIM sylen(39) AS BYTE
 DIM sykind(39) AS BYTE          ' 0 a variable, 1 a constant
 DIM syw(39) AS BYTE             ' 1 byte wide, 2 word wide
 DIM sysg(39) AS BYTE            ' 1 signed
-DIM syval(39) AS CARD           ' a constant's value
+DIM syval(39) AS CARD           ' a constant's value, or an AT address
+DIM sycnt(39) AS CARD           ' an array's last index
+DIM syat(39) AS BYTE            ' 1 if the array was laid over an address
 DIM nsym AS BYTE
 
 ' ---- the expression tree
@@ -190,6 +194,8 @@ FUNCTION syadd() AS BYTE
   syw(i) = 2
   sysg(i) = 1
   syval(i) = 0
+  sycnt(i) = 0
+  syat(i) = 0
   nsym = nsym + 1
   RETURN i
 END FUNCTION
@@ -294,6 +300,9 @@ FUNCTION cwidth(i AS BYTE) AS BYTE
   IF nk(i) = N_PEEK THEN
     RETURN 1
   END IF
+  IF nk(i) = N_INDEX THEN
+    RETURN syw(na(i))
+  END IF
   x = cwidth(na(i))
   y = cwidth(nb(i))
   IF y > x THEN
@@ -315,6 +324,9 @@ FUNCTION csigned(i AS BYTE) AS BYTE
   END IF
   IF nk(i) = N_PEEK THEN
     RETURN 0                    ' a byte off the bus is never negative
+  END IF
+  IF nk(i) = N_INDEX THEN
+    RETURN sysg(na(i))
   END IF
   IF nk(i) = N_BIN THEN
     x = csigned(na(i))
@@ -369,6 +381,9 @@ FUNCTION isleaf(i AS BYTE) AS BYTE
     RETURN 0
   END IF
   IF nk(i) = N_PEEK THEN
+    RETURN 0
+  END IF
+  IF nk(i) = N_INDEX THEN
     RETURN 0
   END IF
   RETURN 1
@@ -518,6 +533,19 @@ SUB cgen(i AS BYTE, w AS BYTE)
   END IF
   a = na(i)
   b = nb(i)
+  IF nk(i) = N_INDEX THEN
+    CALL caddr(na(i), nb(i))
+    CALL eb($40)                ' LD R0,[X]
+    IF syw(na(i)) = 2 THEN
+      CALL eb($38)              ' INCW X
+      CALL eb($42)              ' LD R1,[X]
+    ELSE
+      IF w = 2 THEN
+        CALL ealur(E_SUB, 1, 1) ' CLR R1
+      END IF
+    END IF
+    RETURN
+  END IF
   IF nk(i) = N_PEEK THEN
     a = na(i)
     IF nk(a) = N_NUM THEN
@@ -588,6 +616,58 @@ FUNCTION newlab() AS BYTE
   labr(l) = 0
   RETURN l
 END FUNCTION
+
+' LDW X,#base, or #base+off. An array laid over an address knows where
+' it is; one that was allocated has to wait for the data block.
+SUB eldwx(sy AS BYTE, off AS CARD)
+  CALL eb($2F)
+  CALL eb($60)
+  IF syat(sy) <> 0 THEN
+    CALL ew(syval(sy) + off)
+  ELSE
+    CALL eabsoff(sylab(sy), off)
+  END IF
+END SUB
+
+' X = base + index * size.
+'
+' Two things the general form does not need to know, and this one does.
+' A constant index is a constant address, so note(0) is one LDW instead
+' of six instructions and a doubling. And a small array cannot carry
+' into the high byte -- for one whose last element is inside 256 bytes
+' the add of the index's high byte is always of zero, and dropping it is
+' eight clocks off every subscript.
+SUB caddr(sy AS BYTE, idx AS BYTE)
+  DIM span AS CARD
+  DIM off AS CARD
+  span = sycnt(sy) + 1
+  IF syw(sy) = 2 THEN
+    span = span + span
+  END IF
+  IF nk(idx) = N_NUM THEN
+    off = nv(idx)
+    IF syw(sy) = 2 THEN
+      off = off + off
+    END IF
+    CALL eldwx(sy, off)
+    RETURN
+  END IF
+  CALL cgen(idx, 2)
+  IF syw(sy) = 2 THEN
+    CALL ealur(E_ADD, 0, 0)
+    CALL ealur(E_ADC, 1, 1)
+  END IF
+  CALL eldwx(sy, 0)
+  CALL eb($2F)
+  CALL eb($70)                  ' ADDW X,R0
+  IF span > 256 THEN
+    CALL eb($2F)
+    CALL eb($49)                ' MOV R2,XH
+    CALL ealur(E_ADD, 2, 1)
+    CALL eb($2F)
+    CALL eb($59)                ' MOV XH,R2
+  END IF
+END SUB
 
 ' X = R0:R1, the address just computed.
 SUB cxfromr()
@@ -783,6 +863,25 @@ FUNCTION cprimary() AS BYTE
     IF sykind(s) = 1 THEN
       RETURN mknum(syval(s))
     END IF
+    IF sykind(s) = 2 THEN
+      IF isop(40) = 0 THEN
+        cerr = 29
+        RETURN mknum(0)
+      END IF
+      CALL nexttok()
+      r = cexpr()
+      IF isop(41) = 0 THEN
+        cerr = 30
+      ELSE
+        CALL nexttok()
+      END IF
+      i = nn
+      nn = nn + 1
+      nk(i) = N_INDEX
+      na(i) = s
+      nb(i) = r
+      RETURN i
+    END IF
     RETURN mkvar(s)
   END IF
   cerr = 5
@@ -913,6 +1012,7 @@ END FUNCTION
 
 SUB cdim()
   DIM s AS BYTE
+  DIM e AS BYTE
   CALL nexttok()
   IF tk <> T_NAME THEN
     cerr = 6
@@ -920,6 +1020,22 @@ SUB cdim()
   END IF
   s = syadd()
   CALL nexttok()
+  IF isop(40) <> 0 THEN
+    CALL nexttok()
+    nn = 0
+    e = cexpr()
+    IF nk(e) <> N_NUM THEN
+      cerr = 26
+      RETURN
+    END IF
+    sycnt(s) = nv(e)
+    sykind(s) = 2
+    IF isop(41) = 0 THEN
+      cerr = 27
+      RETURN
+    END IF
+    CALL nexttok()
+  END IF
   IF tk = KW_AS THEN
     CALL nexttok()
     IF tk = KW_BYTE THEN
@@ -933,6 +1049,19 @@ SUB cdim()
       sysg(s) = 0
     END IF
     CALL nexttok()
+  END IF
+  IF tk = KW_AT THEN
+    ' An array laid over an address rather than allocated: the screen,
+    ' the I/O page, a buffer somewhere chosen.
+    CALL nexttok()
+    nn = 0
+    e = cexpr()
+    IF nk(e) <> N_NUM THEN
+      cerr = 28
+      RETURN
+    END IF
+    syat(s) = 1
+    syval(s) = nv(e)
   END IF
 END SUB
 
@@ -964,12 +1093,61 @@ END SUB
 SUB cassign()
   DIM s AS BYTE
   DIM e AS BYTE
+  DIM idx AS BYTE
   DIM w AS BYTE
+  DIM k AS BYTE
   s = syfind()
   IF s = 255 THEN
     s = syadd()
   END IF
   CALL nexttok()
+  IF sykind(s) = 2 THEN
+    IF isop(40) = 0 THEN
+      cerr = 31
+      RETURN
+    END IF
+    CALL nexttok()
+    nn = 0
+    idx = cexpr()
+    IF isop(41) = 0 THEN
+      cerr = 32
+      RETURN
+    END IF
+    CALL nexttok()
+    IF isop(61) = 0 THEN
+      cerr = 33
+      RETURN
+    END IF
+    CALL nexttok()
+    e = cexpr()
+    w = syw(s)
+    IF isleaf(e) <> 0 THEN
+      ' The address first, then the value straight into R0:R1. A leaf
+      ' cannot disturb X, so the spill the general case needs is pure
+      ' waste here -- and array stores are where inner loops live.
+      CALL caddr(s, idx)
+      CALL cload(e, 0, w)
+    ELSE
+      CALL cgen(e, w)
+      k = ctemp()
+      CALL etmp(0, 1, k + k)
+      IF w = 2 THEN
+        CALL etmp(1, 1, k + k + 1)
+      END IF
+      CALL caddr(s, idx)
+      CALL etmp(0, 0, k + k)
+      IF w = 2 THEN
+        CALL etmp(1, 0, k + k + 1)
+      END IF
+      ctmps = ctmps - 1
+    END IF
+    CALL eb($48)                ' ST [X],R0
+    IF w = 2 THEN
+      CALL eb($38)              ' INCW X
+      CALL eb($4A)              ' ST [X],R1
+    END IF
+    RETURN
+  END IF
   IF isop(61) = 0 THEN
     cerr = 10
     RETURN
@@ -1320,6 +1498,12 @@ SUB cplace()
         cp = cp + 1
       END IF
     END IF
+    IF sykind(i) = 2 THEN
+      IF syat(i) = 0 THEN
+        CALL elab(sylab(i))
+        cp = cp + syw(i) * (sycnt(i) + 1)
+      END IF
+    END IF
     i = i + 1
   LOOP
 END SUB
@@ -1348,6 +1532,7 @@ SUB cpass(src AS CARD, org AS CARD, frame AS INT, quiet AS BYTE)
   ' The variables go after the code, in the order they were declared --
   ' which is what the cross-compiler's .res block comes to.
   CALL cplace()
+  CALL efixups()
 END SUB
 
 SUB compile(src AS CARD, org AS CARD)
