@@ -291,6 +291,16 @@ SUB eframe(n AS INT)
   CALL eb((0 - n) AND 255)
 END SUB
 
+' And giving it back.
+SUB eframeup(n AS INT)
+  IF n = 0 THEN
+    RETURN
+  END IF
+  CALL eb($2F)
+  CALL eb($6C)
+  CALL eb(n AND 255)
+END SUB
+
 ' A temporary at [SP+off]: st = 0 load into Rr, 1 store from Rr.
 SUB etmp(rd AS BYTE, st AS BYTE, off AS INT)
   CALL eb($60 + st * 8 + rd * 2)

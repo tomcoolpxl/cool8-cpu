@@ -54,6 +54,10 @@ CONST KW_ELSE  = $8F
 CONST KW_ELSIF = $90
 CONST KW_POKE  = $98
 CONST KW_AT    = $9D
+CONST KW_SUB   = $81
+CONST KW_FUNC  = $82
+CONST KW_RET   = $92
+CONST KW_CALL  = $93
 
 ' What a block stopped on.
 CONST B_EOF   = 0
@@ -62,6 +66,7 @@ CONST B_ELSE  = 2
 CONST B_ELSIF = 3
 CONST B_LOOP  = 4
 CONST B_NEXT  = 5
+CONST B_ENDSUB = 6
 
 ' Operators, as the generator names them.
 CONST O_ADD = 0
@@ -79,6 +84,9 @@ CONST N_BIN = 2
 CONST N_CMP = 3
 CONST N_PEEK = 4
 CONST N_INDEX = 5
+CONST N_LOCAL = 6
+CONST N_PARAM = 7
+CONST N_CALL = 8
 
 ' Relations. GT and LE are never generated: a 16-bit SUB leaves Z from
 ' the high byte alone, so BGT and BLE would be wrong whenever the low
@@ -120,6 +128,7 @@ DIM na(47) AS BYTE
 DIM nb(47) AS BYTE
 DIM nv(47) AS CARD
 DIM nn AS BYTE
+DIM nnx(47) AS BYTE              ' the next argument of a call
 
 DIM cerr AS BYTE                ' 0 while everything is still fine
 
@@ -131,6 +140,33 @@ DIM ctmps AS BYTE               ' temporaries live right now
 DIM ctmax AS BYTE               ' and the most that were ever live at once
 DIM lpdone AS BYTE              ' the innermost loop's exit, for EXIT DO
 DIM inloop AS BYTE
+
+' ---- the scope inside a SUB
+'
+' Parameters are on the stack above the frame, locals inside it. A
+' parameter is read with [SP+u8] at 3 clocks against 4 for [abs16], so
+' it is cheaper than a global -- the opposite of the 6502, and why
+' recursion was worth keeping.
+CONST MAXLOC = 16
+DIM lcoff(15) AS CARD
+DIM lclen(15) AS BYTE
+DIM lckind(15) AS BYTE          ' 0 a local, 1 a parameter
+DIM lcidx(15) AS BYTE           ' frame offset, or parameter number
+DIM lcw(15) AS BYTE
+DIM lcsg(15) AS BYTE
+DIM nloc AS BYTE
+DIM inbody AS BYTE              ' 1 while a SUB body is being compiled
+DIM cfrm AS BYTE                ' locals allocated so far
+DIM cfmax AS BYTE               ' and the most there have been
+DIM cbtot AS BYTE               ' this body's whole frame, for [SP+@n]
+
+' Each SUB's frame, worked out by the silent pass and used by the real
+' one. SUBs are scanned before anything else, so the k-th SUB is symbol
+' k and this is indexed the same way.
+DIM sbloc(15) AS BYTE           ' its locals
+DIM sbtot(15) AS BYTE           ' and its whole frame
+DIM cloc AS BYTE                ' the locals of the body being compiled
+DIM mainfrm AS BYTE             ' what main turned out to need
 
 ' ---------------------------------------------------------------------
 ' Symbols.
@@ -144,7 +180,87 @@ SUB cinit()
   inloop = 0
   ctmps = 0
   ctmax = 0
+  nloc = 0
+  inbody = 0
+  cfrm = 0
+  cfmax = 0
+  cbtot = 0
+  cloc = 0
 END SUB
+
+' A local or parameter by the name just read, or 255.
+FUNCTION lcfind() AS BYTE
+  DIM i AS BYTE
+  DIM k AS BYTE
+  DIM p AS CARD
+  DIM hit AS BYTE
+  IF inbody = 0 THEN
+    RETURN 255
+  END IF
+  i = 0
+  DO WHILE i < nloc
+    IF lclen(i) = tsl THEN
+      p = lcoff(i)
+      k = 0
+      hit = 1
+      DO WHILE k < tsl
+        IF spool(p + k) <> upper(tsb(k)) THEN
+          hit = 0
+        END IF
+        k = k + 1
+      LOOP
+      IF hit = 1 THEN
+        RETURN i
+      END IF
+    END IF
+    i = i + 1
+  LOOP
+  RETURN 255
+END FUNCTION
+
+' The same, for a name already sitting at the top of the pool -- DIM
+' has read past it by the time the type is known.
+FUNCTION lcaddback(kind AS BYTE, idx AS BYTE, w AS BYTE, sg AS BYTE) AS BYTE
+  DIM i AS BYTE
+  IF nloc >= MAXLOC THEN
+    cerr = 34
+    RETURN 255
+  END IF
+  i = nloc
+  lcoff(i) = spend
+  lclen(i) = sylen(nsym)
+  spend = spend + lclen(i)
+  lckind(i) = kind
+  lcidx(i) = idx
+  lcw(i) = w
+  lcsg(i) = sg
+  nloc = nloc + 1
+  RETURN i
+END FUNCTION
+
+FUNCTION lcadd(kind AS BYTE, idx AS BYTE, w AS BYTE, sg AS BYTE) AS BYTE
+  DIM i AS BYTE
+  DIM k AS BYTE
+  IF nloc >= MAXLOC THEN
+    cerr = 34
+    RETURN 255
+  END IF
+  i = nloc
+  lcoff(i) = spend
+  lclen(i) = tsl
+  k = 0
+  DO WHILE k < tsl
+    spool(spend) = upper(tsb(k))
+    spend = spend + 1
+    k = k + 1
+  LOOP
+  lckind(i) = kind
+  lcidx(i) = idx
+  lcw(i) = w
+  lcsg(i) = sg
+  nloc = nloc + 1
+  RETURN i
+END FUNCTION
 
 ' The symbol whose name is the token just read, or 255.
 FUNCTION syfind() AS BYTE
@@ -303,6 +419,12 @@ FUNCTION cwidth(i AS BYTE) AS BYTE
   IF nk(i) = N_INDEX THEN
     RETURN syw(na(i))
   END IF
+  IF nk(i) >= N_LOCAL THEN
+    IF nk(i) = N_CALL THEN
+      RETURN 2                  ' a FUNCTION hands back a whole word
+    END IF
+    RETURN lcw(na(i))
+  END IF
   x = cwidth(na(i))
   y = cwidth(nb(i))
   IF y > x THEN
@@ -327,6 +449,12 @@ FUNCTION csigned(i AS BYTE) AS BYTE
   END IF
   IF nk(i) = N_INDEX THEN
     RETURN sysg(na(i))
+  END IF
+  IF nk(i) = N_CALL THEN
+    RETURN 1
+  END IF
+  IF nk(i) >= N_LOCAL THEN
+    RETURN lcsg(na(i))
   END IF
   IF nk(i) = N_BIN THEN
     x = csigned(na(i))
@@ -386,6 +514,9 @@ FUNCTION isleaf(i AS BYTE) AS BYTE
   IF nk(i) = N_INDEX THEN
     RETURN 0
   END IF
+  IF nk(i) = N_CALL THEN
+    RETURN 0
+  END IF
   RETURN 1
 END FUNCTION
 
@@ -415,6 +546,30 @@ SUB cload(i AS BYTE, r AS BYTE, w AS BYTE)
     CALL ealui(E_MOV, r, nv(i) AND 255)
     IF w = 2 THEN
       CALL ealui(E_MOV, r + 1, nv(i) >> 8)
+    END IF
+    RETURN
+  END IF
+  IF nk(i) = N_LOCAL THEN
+    s = na(i)
+    CALL eldstsp(r, 0, lcidx(s))
+    IF w = 2 THEN
+      IF lcw(s) = 1 THEN
+        CALL ealur(E_SUB, r + 1, r + 1)
+      ELSE
+        CALL eldstsp(r + 1, 0, lcidx(s) + 1)
+      END IF
+    END IF
+    RETURN
+  END IF
+  IF nk(i) = N_PARAM THEN
+    s = na(i)
+    CALL eldstsp(r, 0, 2 + lcidx(s) + lcidx(s) + cbtot)
+    IF w = 2 THEN
+      IF lcw(s) = 1 THEN
+        CALL ealur(E_SUB, r + 1, r + 1)
+      ELSE
+        CALL eldstsp(r + 1, 0, 3 + lcidx(s) + lcidx(s) + cbtot)
+      END IF
     END IF
     RETURN
   END IF
@@ -533,6 +688,10 @@ SUB cgen(i AS BYTE, w AS BYTE)
   END IF
   a = na(i)
   b = nb(i)
+  IF nk(i) = N_CALL THEN
+    CALL cgencall(na(i), nb(i))
+    RETURN
+  END IF
   IF nk(i) = N_INDEX THEN
     CALL caddr(na(i), nb(i))
     CALL eb($40)                ' LD R0,[X]
@@ -584,14 +743,14 @@ SUB cgen(i AS BYTE, w AS BYTE)
     ' survives being evaluated inside out.
     CALL cgen(b, w)
     k = ctemp()
-    CALL etmp(0, 1, k + k)
+    CALL etmp(0, 1, cloc + k + k)
     IF w = 2 THEN
-      CALL etmp(1, 1, k + k + 1)
+      CALL etmp(1, 1, cloc + k + k + 1)
     END IF
     CALL cgen(a, w)
-    CALL etmp(2, 0, k + k)
+    CALL etmp(2, 0, cloc + k + k)
     IF w = 2 THEN
-      CALL etmp(3, 0, k + k + 1)
+      CALL etmp(3, 0, cloc + k + k + 1)
     END IF
     ctmps = ctmps - 1
   END IF
@@ -669,6 +828,80 @@ SUB caddr(sy AS BYTE, idx AS BYTE)
   END IF
 END SUB
 
+' The arguments of a call, threaded through nnx.
+SUB cargs(c AS BYTE)
+  DIM a AS BYTE
+  DIM prev AS BYTE
+  prev = 255
+  IF isop(40) = 0 THEN
+    RETURN
+  END IF
+  CALL nexttok()
+  DO WHILE isop(41) = 0
+    IF tk = T_EOF THEN
+      cerr = 35
+      RETURN
+    END IF
+    IF cerr <> 0 THEN
+      RETURN                    ' cexpr can fail without consuming
+    END IF
+    a = cexpr()
+    nnx(a) = 255
+    IF prev = 255 THEN
+      nb(c) = a
+    ELSE
+      nnx(prev) = a
+    END IF
+    prev = a
+    IF isop(44) <> 0 THEN
+      CALL nexttok()
+    END IF
+  LOOP
+  CALL nexttok()
+END SUB
+
+' Push the arguments, call, and take them off again.
+'
+' Every argument is evaluated into a slot BEFORE anything is pushed.
+' Pushing as they were computed would move SP while a later argument was
+' still reading a parameter through [SP+u8], and it would read its
+' neighbour instead. The pushes then go right to left, and each load has
+' to say how far SP has already travelled.
+SUB cgencall(sy AS BYTE, first AS BYTE)
+  DIM a AS BYTE
+  DIM n AS BYTE
+  DIM k AS BYTE
+  DIM j AS BYTE
+  DIM base AS BYTE
+  base = ctmps
+  n = 0
+  a = first
+  DO WHILE a <> 255
+    CALL cgen(a, 2)             ' arguments go on the stack as words
+    k = ctemp()
+    CALL etmp(0, 1, cloc + k + k)
+    CALL etmp(1, 1, cloc + k + k + 1)
+    n = n + 1
+    a = nnx(a)
+  LOOP
+  j = 0
+  DO WHILE j < n
+    k = base + n - 1 - j
+    CALL etmp(0, 0, cloc + k + k + j + j)
+    CALL etmp(1, 0, cloc + k + k + 1 + j + j)
+    CALL eb($31)                ' PUSH R1
+    CALL eb($30)                ' PUSH R0
+    j = j + 1
+  LOOP
+  ctmps = ctmps - n
+  CALL ecall(sylab(sy))
+  IF n > 0 THEN
+    CALL eb($2F)
+    CALL eb($6C)                ' ADDW SP,#2*args
+    CALL eb(n + n)
+  END IF
+END SUB
+
 ' X = R0:R1, the address just computed.
 SUB cxfromr()
   CALL eb($2F)
@@ -739,14 +972,14 @@ SUB cgencond(i AS BYTE, l AS BYTE, iffalse AS BYTE)
   ELSE
     CALL cgen(b, w)
     k = ctemp()
-    CALL etmp(0, 1, k + k)
+    CALL etmp(0, 1, cloc + k + k)
     IF w = 2 THEN
-      CALL etmp(1, 1, k + k + 1)
+      CALL etmp(1, 1, cloc + k + k + 1)
     END IF
     CALL cgen(a, w)
-    CALL etmp(2, 0, k + k)
+    CALL etmp(2, 0, cloc + k + k)
     IF w = 2 THEN
-      CALL etmp(3, 0, k + k + 1)
+      CALL etmp(3, 0, cloc + k + k + 1)
     END IF
     ctmps = ctmps - 1
   END IF
@@ -854,10 +1087,32 @@ FUNCTION cprimary() AS BYTE
     RETURN i
   END IF
   IF tk = T_NAME THEN
+    s = lcfind()
+    IF s <> 255 THEN
+      CALL nexttok()
+      i = nn
+      nn = nn + 1
+      nk(i) = N_LOCAL
+      IF lckind(s) = 1 THEN
+        nk(i) = N_PARAM
+      END IF
+      na(i) = s
+      RETURN i
+    END IF
     s = syfind()
     IF s = 255 THEN
       cerr = 4
       RETURN mknum(0)
+    END IF
+    IF sykind(s) = 3 THEN
+      CALL nexttok()
+      i = nn
+      nn = nn + 1
+      nk(i) = N_CALL
+      na(i) = s
+      nb(i) = 255
+      CALL cargs(i)
+      RETURN i
     END IF
     CALL nexttok()
     IF sykind(s) = 1 THEN
@@ -1050,6 +1305,20 @@ SUB cdim()
     END IF
     CALL nexttok()
   END IF
+  IF inbody <> 0 THEN
+    IF sykind(s) = 0 THEN
+      ' Inside a SUB a scalar is a local, in the frame. The symbol just
+      ' added is undone; it was only ever a place to put the name.
+      nsym = nsym - 1
+      spend = syoff(s)
+      CALL lcaddback(0, cfrm, syw(s), sysg(s))
+      cfrm = cfrm + syw(s)
+      IF cfrm > cfmax THEN
+        cfmax = cfrm
+      END IF
+      RETURN
+    END IF
+  END IF
   IF tk = KW_AT THEN
     ' An array laid over an address rather than allocated: the screen,
     ' the I/O page, a buffer somewhere chosen.
@@ -1096,6 +1365,21 @@ SUB cassign()
   DIM idx AS BYTE
   DIM w AS BYTE
   DIM k AS BYTE
+  DIM l AS BYTE
+  l = lcfind()
+  IF l <> 255 THEN
+    CALL nexttok()
+    IF isop(61) = 0 THEN
+      cerr = 10
+      RETURN
+    END IF
+    CALL nexttok()
+    nn = 0
+    e = cexpr()
+    CALL cgen(e, lcw(l))
+    CALL cstoreloc(l)
+    RETURN
+  END IF
   s = syfind()
   IF s = 255 THEN
     s = syadd()
@@ -1130,14 +1414,14 @@ SUB cassign()
     ELSE
       CALL cgen(e, w)
       k = ctemp()
-      CALL etmp(0, 1, k + k)
+      CALL etmp(0, 1, cloc + k + k)
       IF w = 2 THEN
-        CALL etmp(1, 1, k + k + 1)
+        CALL etmp(1, 1, cloc + k + k + 1)
       END IF
       CALL caddr(s, idx)
-      CALL etmp(0, 0, k + k)
+      CALL etmp(0, 0, cloc + k + k)
       IF w = 2 THEN
-        CALL etmp(1, 0, k + k + 1)
+        CALL etmp(1, 0, cloc + k + k + 1)
       END IF
       ctmps = ctmps - 1
     END IF
@@ -1172,6 +1456,20 @@ END SUB
 ' ---------------------------------------------------------------------
 ' Statements and blocks.
 ' ---------------------------------------------------------------------
+
+SUB cstoreloc(l AS BYTE)
+  IF lckind(l) = 1 THEN
+    CALL eldstsp(0, 1, 2 + lcidx(l) + lcidx(l) + cbtot)
+    IF lcw(l) = 2 THEN
+      CALL eldstsp(1, 1, 3 + lcidx(l) + lcidx(l) + cbtot)
+    END IF
+    RETURN
+  END IF
+  CALL eldstsp(0, 1, lcidx(l))
+  IF lcw(l) = 2 THEN
+    CALL eldstsp(1, 1, lcidx(l) + 1)
+  END IF
+END SUB
 
 SUB cstoreto(sy AS BYTE, w AS BYTE)
   CALL eb($69)                                  ' ST [abs16],R0
@@ -1368,6 +1666,28 @@ SUB cfor()
   clab = save
 END SUB
 
+' A SUB definition met while compiling main: its body comes later.
+SUB cskipsub()
+  DO
+    IF tk = T_EOF THEN
+      RETURN
+    END IF
+    IF tk = KW_END THEN
+      CALL nexttok()
+      IF tk = KW_SUB THEN
+        CALL nexttok()
+        RETURN
+      END IF
+      IF tk = KW_FUNC THEN
+        CALL nexttok()
+        RETURN
+      END IF
+    ELSE
+      CALL nexttok()
+    END IF
+  LOOP
+END SUB
+
 SUB cpoke()
   DIM a AS BYTE
   DIM v AS BYTE
@@ -1396,18 +1716,19 @@ SUB cpoke()
     ' byte, and only the slot it is parked in is two wide.
     CALL cgen(v, cwidth(v))
     k = ctemp()
-    CALL etmp(0, 1, k + k)
-    CALL etmp(1, 1, k + k + 1)
+    CALL etmp(0, 1, cloc + k + k)
+    CALL etmp(1, 1, cloc + k + k + 1)
     CALL cgen(a, cwidth(a))
     CALL cxfromr()
-    CALL etmp(0, 0, k + k)
-    CALL etmp(1, 0, k + k + 1)
+    CALL etmp(0, 0, cloc + k + k)
+    CALL etmp(1, 0, cloc + k + k + 1)
     ctmps = ctmps - 1
   END IF
   CALL eb($48)                  ' ST [X],R0
 END SUB
 
 SUB cstmt()
+  DIM e AS BYTE
   IF tk = KW_DIM THEN
     CALL cdim()
     RETURN
@@ -1436,6 +1757,43 @@ SUB cstmt()
       RETURN
     END IF
     CALL ejmp(lpdone)
+    RETURN
+  END IF
+  IF tk = KW_RET THEN
+    CALL nexttok()
+    IF tk <> T_NL THEN
+      ' A FUNCTION hands back a full word whatever the expression's own
+      ' width is, or the caller stores rubbish above the answer.
+      nn = 0
+      e = cexpr()
+      CALL cgen(e, 2)
+    END IF
+    IF inbody <> 0 THEN
+      ' Release the frame; R0:R1 stands. Nothing at all when there is
+      ' no frame -- the cross-compiler drops the line, so an ADDW SP,#0
+      ' here would be three bytes it never wrote.
+      CALL eframeup(cbtot)
+    END IF
+    CALL eb($22)                ' RET
+    RETURN
+  END IF
+  IF tk = KW_CALL THEN
+    CALL nexttok()
+    IF tk <> T_NAME THEN
+      cerr = 36
+      RETURN
+    END IF
+    nn = 0
+    e = cprimary()
+    CALL cgen(e, 2)
+    RETURN
+  END IF
+  IF tk = KW_SUB THEN
+    CALL cskipsub()
+    RETURN
+  END IF
+  IF tk = KW_FUNC THEN
+    CALL cskipsub()
     RETURN
   END IF
   IF tk = KW_POKE THEN
@@ -1478,6 +1836,12 @@ FUNCTION cblock() AS BYTE
         IF tk = KW_IF THEN
           RETURN B_ENDIF
         END IF
+        IF tk = KW_SUB THEN
+          RETURN B_ENDSUB
+        END IF
+        IF tk = KW_FUNC THEN
+          RETURN B_ENDSUB
+        END IF
         CALL eb($21)                            ' a bare END is a HALT
       ELSE
         CALL cstmt()
@@ -1508,20 +1872,157 @@ SUB cplace()
   LOOP
 END SUB
 
-' One run over the program: the jump to main, the frame, the body, the
-' closing HALT and the variables.
+' One look ahead for SUB names, so a call can come before its
+' definition. It is the only thing this compiler reads twice -- and
+' because it runs first in both passes, the k-th SUB is symbol k, which
+' is how each body's frame survives from one pass to the other.
+SUB cscan(src AS CARD)
+  DIM sy AS BYTE
+  DIM n AS BYTE
+  DIM isfn AS BYTE
+  CALL lexstart(src)
+  CALL nexttok()
+  DO WHILE tk <> T_EOF
+    isfn = 2
+    IF tk = KW_SUB THEN
+      isfn = 0
+    END IF
+    IF tk = KW_FUNC THEN
+      isfn = 1
+    END IF
+    IF cerr <> 0 THEN
+      RETURN
+    END IF
+    IF isfn = 2 THEN
+      CALL nexttok()
+    ELSE
+      CALL nexttok()
+      IF tk = T_NAME THEN
+        sy = syadd()
+        sykind(sy) = 3
+        syat(sy) = isfn
+        n = 0
+        CALL nexttok()
+        IF isop(40) <> 0 THEN
+          CALL nexttok()
+          DO WHILE isop(41) = 0
+            IF tk = T_EOF THEN
+              EXIT DO
+            END IF
+            IF tk = T_NAME THEN
+              n = n + 1
+            END IF
+            CALL nexttok()
+          LOOP
+        END IF
+        sycnt(sy) = n
+      END IF
+    END IF
+  LOOP
+END SUB
+
+' One SUB body. tk is on its SUB or FUNCTION.
+SUB cbody(k AS BYTE)
+  DIM l AS BYTE
+  DIM i AS BYTE
+  DIM r AS BYTE
+  CALL nexttok()                ' the name
+  CALL nexttok()
+  nloc = 0
+  inbody = 1
+  cfrm = 0
+  cfmax = 0
+  ctmps = 0
+  ctmax = 0
+  cloc = sbloc(k)
+  cbtot = sbtot(k)
+  i = 0
+  IF isop(40) <> 0 THEN
+    CALL nexttok()
+    DO WHILE isop(41) = 0
+      IF tk = T_EOF THEN
+        EXIT DO
+      END IF
+      IF tk <> T_NAME THEN
+        EXIT DO
+      END IF
+      l = lcadd(1, i, 2, 1)
+      i = i + 1
+      CALL nexttok()
+      IF tk = KW_AS THEN
+        CALL nexttok()
+        IF tk = KW_BYTE THEN
+          lcw(l) = 1
+          lcsg(l) = 0
+        END IF
+        IF tk = KW_CARD THEN
+          lcsg(l) = 0
+        END IF
+        CALL nexttok()
+      END IF
+      IF isop(44) <> 0 THEN
+        CALL nexttok()
+      END IF
+    LOOP
+    CALL nexttok()
+  END IF
+  IF tk = KW_AS THEN            ' FUNCTION f(...) AS INT
+    CALL nexttok()
+    CALL nexttok()
+  END IF
+  CALL elab(sylab(k))
+  CALL eframe(cbtot)
+  r = cblock()
+  IF r <> B_ENDSUB THEN
+    cerr = 37
+  END IF
+  CALL nexttok()                ' the SUB or FUNCTION after END
+  CALL eframeup(cbtot)
+  CALL eb($22)                  ' RET
+  inbody = 0
+  sbloc(k) = cfmax
+  sbtot(k) = cfmax + ctmax + ctmax
+END SUB
+
+' Every SUB body, after main, in the order they were written.
+SUB csubs(src AS CARD)
+  DIM k AS BYTE
+  k = 0
+  CALL lexstart(src)
+  CALL nexttok()
+  DO WHILE tk <> T_EOF
+    IF cerr <> 0 THEN
+      RETURN
+    END IF
+    IF tk = KW_SUB THEN
+      CALL cbody(k)
+      k = k + 1
+    ELSE
+      IF tk = KW_FUNC THEN
+        CALL cbody(k)
+        k = k + 1
+      ELSE
+        CALL nexttok()
+      END IF
+    END IF
+  LOOP
+END SUB
+
+' One run over the program: the scan, the jump to main, the frame, the
+' body, the closing HALT, the SUBs and the variables.
 SUB cpass(src AS CARD, org AS CARD, frame AS INT, quiet AS BYTE)
   DIM r AS BYTE
   CALL cinit()
   CALL estart(org)
   ' After estart, which knows nothing about passes.
   equiet = quiet
+  CALL cscan(src)
   ' The cross-compiler opens with a jump over the SUB bodies to main.
-  ' There are no SUBs yet, so main is the next byte -- but the jump is
-  ' still there, and byte-identical means identical.
   CALL ejmp(LMAIN)
   CALL elab(LMAIN)
   CALL eframe(frame)
+  cloc = 0
+  cbtot = frame
   CALL lexstart(src)
   CALL nexttok()
   r = cblock()
@@ -1529,6 +2030,8 @@ SUB cpass(src AS CARD, org AS CARD, frame AS INT, quiet AS BYTE)
   ' the cross-compiler emits it unconditionally, so falling off the end
   ' of a program stops rather than running into the variables.
   CALL eb($21)
+  mainfrm = ctmax + ctmax
+  CALL csubs(src)
   ' The variables go after the code, in the order they were declared --
   ' which is what the cross-compiler's .res block comes to.
   CALL cplace()
@@ -1536,12 +2039,15 @@ SUB cpass(src AS CARD, org AS CARD, frame AS INT, quiet AS BYTE)
 END SUB
 
 SUB compile(src AS CARD, org AS CARD)
-  DIM frame AS INT
-  ' Once in the dark, to find out how deep the expressions go, then once
-  ' for real with a frame the right size.
-  ' Once in the dark, to find out how deep the expressions go, then
-  ' once for real with a frame the right size.
+  DIM i AS BYTE
+  i = 0
+  DO WHILE i < 16
+    sbloc(i) = 0
+    sbtot(i) = 0
+    i = i + 1
+  LOOP
+  ' Once in the dark, to find out how deep every frame goes, then once
+  ' for real with frames the right size.
   CALL cpass(src, org, 0, 1)
-  frame = ctmax + ctmax
-  CALL cpass(src, org, frame, 0)
+  CALL cpass(src, org, mainfrm, 0)
 END SUB
