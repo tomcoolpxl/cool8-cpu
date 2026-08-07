@@ -197,14 +197,68 @@ bitstream rebuild.
 | | |
 |---|---|
 | S0 | harness renders from the machine's own video registers — **done** |
-| S1 | screen editor, tokenised storage, `LIST`/`NEW`/`RENUMBER`/`DELETE` — **done**, `sim/test_basic.py` |
-| S2 | files: `SAVE` append, `LOAD` merge, `DIR`, `ERA`, `COMPACT` |
-| S3 | the code emitter, with backpatch chains — **where the size risk gets measured** |
-| S4 | the compiler, and the fixed point: it compiles its own source byte-identically |
-| S5 | `RUN`, via the video-RAM overlay |
-| S6 | `STRING` |
-| S7 | bootstrap and the bitstream. **The board is not touched without asking.** |
+| S1 | screen editor, tokenised storage, `LIST`/`NEW`/`RENUMBER`/`DELETE` — **done** |
+| S2 | files: `SAVE` append, `LOAD` merge, `DIR`, `ERA`, `COMPACT` — **done** |
+| S3 | the code emitter, byte-identical to `cool8asm.py` — **done** |
+| S4 | the compiler: symbols, expressions, control flow, temporaries, `PEEK`/`POKE`, arrays, `SUB`/`CALL` — **done**, byte-identical to the cross-compiler |
+| S5 | `ASM` blocks in the on-machine compiler, then shrink it to the overlay |
+| S6 | `RUN` |
+| S7 | `STRING` |
+| S8 | bootstrap and the bitstream. **The board is not touched without asking.** |
 
-**The machine cannot `RUN` anything until S5.** S1 and S2 are still worth
-having first: they are testable on their own, and the system image they
-produce is built by the cross-compiler, which keeps working throughout.
+## 9. Self-hosting is not a goal
+
+The plan used to end at a fixed point: the compiler compiling its own
+source, byte for byte, after which `tools/cool8bas.py` would freeze.
+That is dropped, and the measurement that killed it is worth keeping:
+
+```
+compiler code + tables                30,020
+its own source, comments stripped     36,686
+resident system                       12,064
+                                      ------
+                                      78,770   of 65,536
+```
+
+It does not fit in the address space, and the gap is not the sort you
+close by tightening a loop. With comments the source alone is 59 KB,
+because the stored form keeps them verbatim so `LIST` can give them
+back — prose costs the same as code.
+
+**No 8-bit home computer self-hosted.** BBC BASIC was written on Acorn's
+development systems; Commodore's on a cross-assembler. The machine's job
+is to compile the user's programs, and it does that: seven feature areas,
+byte-identical. Building the system stays the cross-compiler's job, and
+`tools/cool8bas.py` therefore stays part of the toolchain rather than
+being frozen and retired.
+
+What survives from the exercise is the useful half. The on-machine
+compiler is real and gated, and the thing that actually needs solving is
+smaller and more honest: it is 30 KB against a 16 KB overlay.
+
+## 10. What BBC BASIC did, and what is worth taking
+
+It was the fastest 8-bit BASIC and it was an **interpreter** — 16 KB of
+hand-written 6502 assembly. It carried features that should have made it
+slower than its rivals (40-bit floats where others had 32, 32-bit
+integers where others had 16, arbitrarily long variable names) and was
+still fastest, because of how it was built rather than what it was:
+
+- **Resident integer variables.** `A%`–`Z%` at fixed addresses
+  `&0400`–`&046B`. No lookup at all; the name *is* an address.
+- **Variable lookup by first character** — one linked list per starting
+  letter, heads at `&0480`–`&04F5`. Short chains, not a scan.
+- **Hot pointers in zero page.**
+- **Structured control flow**, so `GOTO`'s line search rarely mattered.
+- **An inline 6502 assembler** in `[ ]`: write the program in BASIC and
+  the five per cent that needs speed in assembly, from inside BASIC.
+
+Copying the interpreter wholesale is the wrong move here, and the reason
+is measured rather than assumed: token dispatch on this ISA costs 31.2
+clocks against 2.0 for native code, because there is no `LDW X,[X]` and
+so no cheap indirect jump. `sim/bench_lang.py` measured compiled code
+beating bytecode by 6.3x. The 6502 had no such penalty; COOL8 does.
+
+**The inline assembler is the part to take.** It is what let a BBC user
+put an inner loop in assembly without the interpreter having to be
+clever about it, and this machine's compiler should offer the same.
