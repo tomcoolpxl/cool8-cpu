@@ -463,23 +463,107 @@ measured in hundreds, it is not where the time goes.
 source-placement plan was resting on, was out by a factor of thirty.
 That correction is recorded there.
 
-### M12 — The compiler
+### M12 — The compiler ✅ *(as a cross-compiler)*
 
-Tokeniser, dictionary, expression code generator, control flow,
-procedures, arrays. Integer only.
+**Gate: within 15 % of hand-written code. Total 0.96×, PASS.**
 
-**Gate:** the M10 benchmarks, compiled by the compiler rather than by
-hand, within 15% of the hand-compiled clocks. That is what says the code
-generator is real.
+[`tools/cool8bas.py`](tools/cool8bas.py) — lexer, recursive-descent
+parser, symbol table and native code generator, one pass, no
+intermediate representation and no optimiser.
+[`sim/test_bas.py`](sim/test_bas.py) is the gate.
 
-### M13 — The editor
+| Benchmark | Compiled | By hand | Ratio |
+|---|---|---|---|
+| BM1 `FOR k = 1 TO 1000` | 52,058 | 47,015 | 1.11× |
+| BM2 `k = k + 1` ×1000 | 49,017 | 47,015 | 1.04× |
+| BM3 `a = k*2+3-k` | 170,017 | 200,015 | **0.85×** |
+| BM6 nested loop + `SUB` | 351,017 | 340,015 | 1.03× |
+| BM7 `m(l) = k` | 516,057 | 505,055 | 1.02× |
+| Byte sieve 8190 | 2,907,971 | 3,069,408 | **0.95×** |
+| **Total** | **4,046,137** | 4,208,523 | **0.96×** |
 
-Full screen, syntax colour, hardware scroll, two panes, immediate mode,
-the source-placement rule of §2.2.
+**The compiler is 4 % faster overall than the code M10 wrote by hand**,
+and on BM3 it is 15 % faster. The reason is the expression tree: the
+hand-written IR was flat, so `a = k*2+3-k` stored and reloaded `a`
+between each operation, where the compiler keeps the intermediate in
+`R0:R1`. Hand-written assembly is not automatically better than
+generated assembly, and here it was not.
 
-**Gate:** a program of over 1,000 lines is written, edited, saved,
-reloaded and run entirely on the machine — in the emulator, with no host
-tools involved.
+Correctness beyond the benchmarks, all passing: recursion through stack
+parameters, `IF`/`ELSEIF`/`ELSE`, precedence with parentheses and unary
+minus, `EXIT DO` from the inner loop only, and multi-argument calls.
+
+**Two things were missing and both cost real time**, found by the gate
+rather than by reading:
+
+- **Constant folding.** `SIZE + 1` was an add executed every iteration —
+  and worse, its result was not a leaf, so the comparison spilled
+  through a temporary as well. **That alone was 35 % on the sieve.**
+  Folding in the parser is not an optimisation; it is the difference
+  between a constant being a number and being a computation.
+- **Leaf-aware array stores.** `flags(i) = 1` was parking the value in a
+  temporary before computing the address, because in general the value
+  expression can want `X` too. A leaf cannot, so the spill was 16 clocks
+  of waste on every array write — which is exactly where inner loops
+  live.
+
+**What this milestone is not.** The compiler runs on the PC, not on the
+machine. The gate was about whether the code generator is good enough to
+build on, and it is — but §4's on-machine compiler is still to be
+written, and the assembly port is the larger half of the work. What the
+cross-compiler buys is that the language, the calling convention and the
+code shapes are now settled and measured, so the port has a specification
+instead of a plan. It is also permanently useful: building COOL8 programs
+on a desktop is worth having whether or not the machine ever self-hosts.
+
+Still absent, and deliberately: `FUNCTION` with a return value, locals
+inside a `SUB`, strings, and every type but 16-bit `INT` and `BYTE`
+arrays. Those arrive with M14's runtime.
+
+### M13 — The editor ⬜ *(built and driven; RUN blocked on M12)*
+
+[`sw/edit.bas`](sw/edit.bas) — **703 lines of COOL8 BASIC, compiled by
+our own compiler to 6,155 bytes.** Gap buffer, full-screen display,
+syntax colouring, cursor movement, insert and delete, save and load
+through `sw/fs.asm`. [`sim/test_edit.py`](sim/test_edit.py) drives it by
+*typing at it*: every character goes in through the UART and every check
+reads the screen or the flash back out.
+
+**Written, edited, saved and reloaded all happen on the machine.
+`RUN` does not, and cannot yet** — running a program needs a compiler on
+the machine, and M12 delivered a cross-compiler. That part of the gate
+is blocked on self-hosting, not on the editor.
+
+**The editor is the first real program the language has carried**, and it
+found two things nothing smaller would have:
+
+- **No locals inside a `SUB`.** `drawline` calls `clearrow`, and with
+  only globals they shared `c` — so `clearrow` returned with `c = 80`
+  and `drawline` never stored a character. The editor drew nothing and
+  the cause was invisible. Locals are now in the compiler: a scalar
+  `DIM` inside a `SUB` takes a frame slot, the prologue and every exit
+  adjust `SP`, and the frame size is patched in after the body is read,
+  because one pass cannot know it in advance.
+- **`REM` is a keyword.** A variable called `incom`... was called `rem`,
+  and the lexer ate `rem = 1` as a comment. That is BASIC working as
+  designed and it will bite whoever writes the next program too.
+
+Four more things the language needed, all now in: `PEEK`/`POKE`,
+`DIM ... AT addr` for laying an array over the screen or the I/O page,
+`ASM`/`END ASM` for data tables and for calling `sw/fs.asm`, `EXTERN`
+for naming what the assembly side owns, and `FUNCTION` with a return
+value.
+
+**Also learned: the harness was wrong before the editor was.** Waiting
+for the UART FIFO to drain is not the same as waiting for the editor to
+be idle — the byte is taken before it is acted on — so the first runs
+read the state one keystroke early and blamed the editor for losing a
+character. Settling now means "back in `getkey` with nothing to read".
+
+Still to do, and deliberately deferred: two panes, immediate mode (which
+needs the on-machine compiler anyway), hardware scroll for the view, and
+the source-placement rule of §2.2 — the buffer is 24 KB of main RAM at
+`$2000` rather than VRAM.
 
 ### M14 — The runtime library
 
