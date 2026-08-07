@@ -60,6 +60,8 @@ fsa     = FSVARS+24             ; 3: the flash address being worked
 fslen   = FSVARS+27             ; 2: length, in and out
 fsname  = FSVARS+29             ; 11: the name being sought
 fstmp   = FSVARS+40             ; 2
+fspg    = FSVARS+42             ; 2: the page fs_rdpg/fs_wrpg work on
+fsbuf   = FSVARS+44             ; 2: and the 256 bytes they work through
 
 
 ; ---------------------------------------------------------------------
@@ -126,6 +128,86 @@ fls_prog:
         CALL fsa_inc
         POP  R1
         RET
+
+; ---------------------------------------------------------------------
+; Whole pages, for COMPACT.
+;
+; The caller puts a page number in [fspg] and a 256-byte buffer address
+; in [fsbuf]; every volume base is 64 KB aligned, so the flash address
+; is base + (page << 8) and that is one add.
+;
+; These are the only routines that erase.
+; ---------------------------------------------------------------------
+
+; fs_seekpg -- fsa = the flash address of page [fspg]
+fs_seekpg:
+        PUSH R0
+        PUSH R1
+        CLR  R0
+        ST   [fsa],R0
+        LD   R0,[fspg]
+        ST   [fsa+1],R0
+        LD   R0,[fsbase+2]
+        LD   R1,[fspg+1]
+        ADD  R0,R1
+        ST   [fsa+2],R0
+        POP  R1
+        POP  R0
+        RET
+
+; fs_rdpg -- page [fspg] into [fsbuf], 256 bytes.
+fs_rdpg:
+        PUSH R0
+        PUSH R1
+        PUSHW Y
+        CALL fs_seekpg
+        CALL fls_seek
+        CALL fls_open
+        LDW  Y,[fsbuf]
+        CLR  R1
+.rg1:   LD   R0,[FLS_DATA]
+        ST   [Y],R0
+        INCW Y
+        ADD  R1,#1
+        BNE  .rg1
+        CALL fls_close
+        POPW Y
+        POP  R1
+        POP  R0
+        RET
+
+; fs_wrpg -- [fsbuf] into page [fspg]. The page must be erased first;
+; programming only clears bits.
+fs_wrpg:
+        PUSH R0
+        PUSH R1
+        PUSHW Y
+        CALL fs_seekpg
+        LDW  Y,[fsbuf]
+        CLR  R1
+.wg1:   LD   R0,[Y]
+        CALL fls_prog                   ; advances fsa itself
+        INCW Y
+        ADD  R1,#1
+        BNE  .wg1
+        POPW Y
+        POP  R1
+        POP  R0
+        RET
+
+; fs_erapg -- erase the 4 KB sector holding page [fspg].
+fs_erapg:
+        PUSH R0
+        CALL fs_seekpg
+        CALL fls_seek
+        MOV  R0,#2
+        ST   [FLS_WCTRL],R0
+.eg1:   LD   R0,[FLS_WCTRL]
+        BTST R0,#$01
+        BNE  .eg1
+        POP  R0
+        RET
+
 
 ; fsa_base -- fsa = fsbase
 fsa_base:
@@ -215,8 +297,12 @@ fs_mount:
         LD   R0,[fsent+14]
         TST  R0
         BEQ  .mn3
-        ADD  R2,#1
+        ; CLR is SUB Rd,Rd and so it SETS carry. It has to happen before
+        ; the ADD, not between the ADD and the ADC that reads its carry
+        ; -- that way round every file with a partial last page pushed
+        ; the derived free pointer 256 pages too high.
         CLR  R0
+        ADD  R2,#1
         ADC  R3,R0
 .mn3:   LD   R0,[fsent+12]
         ADD  R0,R2
@@ -412,8 +498,9 @@ fs_save:
 
         ; And the tail has to hold it. Without this, programming runs
         ; off the end of the volume and into the next one -- which is
-        ; not a full disk, it is someone else's data. A volume is $0700
-        ; pages; the file needs its whole pages plus one for a partial.
+        ; not a full disk, it is someone else's data. Data ends at page
+        ; $06F0; the sixteen pages above that are COMPACT's scratch. The
+        ; file needs its whole pages plus one for a partial.
         LD   R0,[fsfpg]
         LD   R2,[fsfpg+1]
         LD   R1,[fslen+1]
@@ -426,11 +513,11 @@ fs_save:
         ADD  R0,#1
         BCC  .fsp2
         ADD  R2,#1
-.fsp2:  CMP  R2,#7
-        BCC  .fsp3                      ; end page high < 7: it fits
-        BNE  .fsx
-        TST  R0
-        BEQ  .fsp3                      ; exactly $0700: the last page
+.fsp2:  CMP  R2,#6
+        BCC  .fsp3                      ; end page high < 6: it fits
+        BNE  .fsx                       ; high > 6: it does not
+        CMP  R0,#$F1
+        BCC  .fsp3                      ; $06xx, up to $06F0 exactly
 .fsx:   JMP  .fs9                       ; out of reach of a Bcc from here
 .fsp3:
 

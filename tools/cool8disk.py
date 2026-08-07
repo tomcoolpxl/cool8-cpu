@@ -15,8 +15,17 @@ disk.img` and the emulated machine sees the same files.
 ## The format, and why it is this one
 
 Sixteen volumes of 448 KB, mounted by number, filling the 7 MB above the
-`$100000` hardware floor exactly. Each is one 4 KB directory sector
-followed by 111 sectors of data.
+`$100000` hardware floor exactly. Each is one 4 KB directory sector, then
+110 sectors of data, then one 4 KB sector the machine keeps for itself.
+
+**That last sector is what makes COMPACT possible on a machine with no
+spare RAM.** Compaction has to erase a 4 KB sector before rewriting it,
+which destroys anything else living there, so the contents have to be
+somewhere else first -- and "somewhere else" cannot be main RAM, which
+holds the user's program, nor video RAM, which holds their sprites and
+the compiler image. So it is on the disk: gather a sector's worth into
+the scratch, erase the destination, copy back. Slow, and it costs 4 KB
+of every volume.
 
 **It is built around what NOR flash can actually do**, which is: erase a
 4 KB sector to all-ones, and thereafter only ever clear bits.
@@ -62,6 +71,7 @@ ENTRY = 16
 N_ENTRIES = DIR_SIZE // ENTRY
 DATA_START = DIR_SIZE           # page 16
 SECTOR = 4096
+DATA_END = VOL_SIZE - SECTOR    # the last sector is COMPACT's scratch
 
 ST_FREE = 0xFF
 ST_DELETED = 0x00
@@ -194,8 +204,8 @@ class Volume:
         if i is None:
             sys.exit(f"drive {self.n}: all {N_ENTRIES} entries used")
         off = self.free_offset()
-        if off + len(blob) > VOL_SIZE:
-            sys.exit(f"drive {self.n}: {VOL_SIZE - off} bytes free, "
+        if off + len(blob) > DATA_END:
+            sys.exit(f"drive {self.n}: {DATA_END - off} bytes free, "
                      f"{len(blob)} wanted")
         self.img.program(self.base + off, blob)
         e = bytearray(name)
@@ -242,7 +252,7 @@ def cmd_format(a):
     img = Image(a.image, create=True)
     Volume(img, a.drive).format(a.label)
     img.save()
-    print(f"drive {a.drive}: formatted, {VOL_SIZE - DATA_START:,} bytes free"
+    print(f"drive {a.drive}: formatted, {DATA_END - DATA_START:,} bytes free"
           + (f", labelled {a.label.upper()}" if a.label else ""))
 
 
@@ -255,7 +265,7 @@ def cmd_dir(a):
         print(f"  {show_name(e['name']):<13} {e['length']:6,} bytes   "
               f"@ ${v.base + e['page']*256:06X}")
         n += 1
-    free = VOL_SIZE - v.free_offset()
+    free = DATA_END - v.free_offset()
     dead = sum(1 for e in v.entries() if e['status'] == ST_DELETED)
     print(f"  {n} file{'s' if n != 1 else ''}, {free:,} bytes free"
           + (f", {dead} deleted (compact to reclaim)" if dead else ""))

@@ -188,10 +188,16 @@ datlen  = datend-dat
           "and the file that was already there is unharmed")
 
     # ------------------------------- 3. the free pointer really is derived
-    check(e is not None and e["page"] * 256 >= 0x1000 + len(payload),
-          "the second file lands after the first, with nothing stored "
-          "to say so",
-          "" if e is None else f"page {e['page']} = +${e['page']*256:05X}")
+    # Exactly the next free page, not merely somewhere after it. This
+    # used to read `>=`, and passed for a long time while fs_mount was
+    # deriving a pointer 256 pages too high on every file whose length
+    # was not a multiple of 256 -- the machine and the PC tool disagreed
+    # about where the free space started, which is the one thing this
+    # file exists to catch.
+    want = (0x1000 + len(payload) + 255) // 256
+    check(e is not None and e["page"] == want,
+          "the second file lands on exactly the next free page",
+          "" if e is None else f"page {e['page']}, wanted {want}")
 
     # ------------------------------------------- 4. the machine deletes
     code = build("fs_del", f"""

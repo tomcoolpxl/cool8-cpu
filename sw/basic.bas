@@ -712,7 +712,7 @@ END SUB
 
 CONST FSENT = $0107             ' fs.asm's fsent -- FSVARS+7
 CONST FSFPG = $0104             ' and its first free page
-CONST VOLPGS = 1792             ' 448 KB of pages in a volume
+CONST VOLPGS = 1776             ' data pages; the rest is scratch
 
 DIM fname(10) AS BYTE           ' 8.3, space padded, upper case
 DIM faddr AS CARD               ' where the bytes are, or go
@@ -787,6 +787,48 @@ SUB fserase()
         BRA  .er2
 .er1:   CLR  R0
 .er2:   ST   [v_fok],R0
+  END ASM
+END SUB
+
+' ---- whole pages, for COMPACT
+
+DIM pbuf(255) AS BYTE           ' one page in transit
+DIM cpage AS INT                ' the page it comes from or goes to
+
+SUB rdpage(p AS INT)
+  cpage = p
+  ASM
+        LD   R0,[v_cpage]
+        ST   [fspg],R0
+        LD   R0,[v_cpage+1]
+        ST   [fspg+1],R0
+        LDW  X,#a_pbuf
+        STW  [fsbuf],X
+        CALL fs_rdpg
+  END ASM
+END SUB
+
+SUB wrpage(p AS INT)
+  cpage = p
+  ASM
+        LD   R0,[v_cpage]
+        ST   [fspg],R0
+        LD   R0,[v_cpage+1]
+        ST   [fspg+1],R0
+        LDW  X,#a_pbuf
+        STW  [fsbuf],X
+        CALL fs_wrpg
+  END ASM
+END SUB
+
+SUB erasesect(p AS INT)
+  cpage = p
+  ASM
+        LD   R0,[v_cpage]
+        ST   [fspg],R0
+        LD   R0,[v_cpage+1]
+        ST   [fspg+1],R0
+        CALL fs_erapg
   END ASM
 END SUB
 
@@ -997,6 +1039,207 @@ SUB doload()
   LOOP
 END SUB
 
+' ---------------------------------------------------------------------
+' COMPACT -- the only command that erases.
+'
+' Deleting a file clears its status byte and leaves the bytes where they
+' are, because that is all NOR flash lets you do cheaply. COMPACT is what
+' gets the space back: it slides the live files down and rewrites the
+' directory.
+'
+' Sliding means erasing a 4 KB sector before rewriting it, which destroys
+' whatever else lives in that sector -- so the contents have to be
+' somewhere else first. There is nowhere in RAM to put 4 KB: main RAM
+' holds the user's program and video RAM holds their sprites and the
+' compiler image, and a command that quietly ate either would be worse
+' than no command. So the somewhere else is the last sector of the
+' volume, reserved for exactly this. Gather a sector's worth into the
+' scratch, erase the destination, copy it back.
+'
+' It costs 4 KB of every volume, and it is slow -- every byte is
+' programmed twice, and a program is one flash opcode. Compaction was
+' slow on every machine that had it.
+' ---------------------------------------------------------------------
+
+CONST SCRATCH = 1776            ' the reserved sector, and the data end
+CONST LASTSEC = 110             ' the last sector of data
+
+DIM ci AS INT                   ' the entry nextsrc is walking
+DIM cleft AS INT                ' pages left in it
+DIM csrc AS INT                 ' and its next source page
+DIM spg(15) AS INT              ' the sixteen sources for one sector
+
+FUNCTION entpages() AS INT
+  DIM n AS INT
+  n = PEEK(FSENT + 15)
+  IF PEEK(FSENT + 14) <> 0 THEN
+    n = n + 1                   ' a partial page still costs a page
+  END IF
+  RETURN n
+END FUNCTION
+
+FUNCTION entpage() AS INT
+  DIM n AS INT
+  n = PEEK(FSENT + 13)
+  n = n << 8
+  RETURN n + PEEK(FSENT + 12)
+END FUNCTION
+
+' The live files' pages, in order, one per call. 0 when there are no
+' more. Entries are appended and data goes at the tail, so walking the
+' directory in index order walks the pages in increasing order too.
+FUNCTION nextsrc() AS INT
+  DIM st AS BYTE
+  DIM r AS INT
+  DO WHILE cleft = 0
+    IF ci > 255 THEN
+      RETURN 0
+    END IF
+    fidx = ci
+    ci = ci + 1
+    CALL fsreadent()
+    st = PEEK(FSENT + 11)
+    IF st = 255 THEN
+      ci = 256
+      RETURN 0
+    END IF
+    IF st <> 0 THEN
+      IF st <> 128 THEN
+        csrc = entpage()
+        cleft = entpages()
+      END IF
+    END IF
+  LOOP
+  r = csrc
+  csrc = csrc + 1
+  cleft = cleft - 1
+  RETURN r
+END FUNCTION
+
+' The directory, rebuilt: the live entries at new page numbers, in the
+' same order, with the deleted ones gone.
+SUB rewritedir()
+  DIM i AS INT
+  DIM slot AS INT
+  DIM k AS INT
+  DIM st AS BYTE
+  DIM dst AS INT
+  DIM np AS INT
+  ' Build it in the scratch first, so the old directory is still there
+  ' to read while the new one is being written.
+  CALL erasesect(SCRATCH)
+  k = 0
+  DO WHILE k < 256
+    pbuf(k) = 255
+    k = k + 1
+  LOOP
+  slot = 0
+  dst = 16
+  i = 0
+  DO WHILE i < 256
+    fidx = i
+    CALL fsreadent()
+    st = PEEK(FSENT + 11)
+    IF st = 255 THEN
+      EXIT DO
+    END IF
+    IF st <> 0 THEN
+      k = 0
+      DO WHILE k < 16
+        pbuf((slot AND 15) * 16 + k) = PEEK(FSENT + k)
+        k = k + 1
+      LOOP
+      IF st <> 128 THEN
+        np = entpages()
+        pbuf((slot AND 15) * 16 + 12) = dst AND 255
+        pbuf((slot AND 15) * 16 + 13) = dst >> 8
+        dst = dst + np
+      END IF
+      slot = slot + 1
+      IF (slot AND 15) = 0 THEN
+        CALL wrpage(SCRATCH + (slot >> 4) - 1)
+        k = 0
+        DO WHILE k < 256
+          pbuf(k) = 255
+          k = k + 1
+        LOOP
+      END IF
+    END IF
+    i = i + 1
+  LOOP
+  IF (slot AND 15) <> 0 THEN
+    CALL wrpage(SCRATCH + (slot >> 4))
+  END IF
+  ' Now the swap. Everything above the entries stays $FF from the erase.
+  CALL erasesect(0)
+  k = 0
+  DO WHILE k <= slot >> 4
+    CALL rdpage(SCRATCH + k)
+    CALL wrpage(k)
+    k = k + 1
+  LOOP
+END SUB
+
+SUB docompact()
+  DIM sect AS INT
+  DIM n AS INT
+  DIM s AS INT
+  DIM moved AS BYTE
+  DIM done AS BYTE
+  ci = 0
+  cleft = 0
+  sect = 1
+  done = 0
+  DO WHILE sect <= LASTSEC
+    IF done <> 0 THEN
+      ' past the live data: stale bytes, and nothing may be appended
+      ' over them, so they have to go back to $FF.
+      CALL erasesect(sect * 16)
+    ELSE
+      n = 0
+      moved = 0
+      DO WHILE n < 16
+        s = nextsrc()
+        IF s = 0 THEN
+          EXIT DO
+        END IF
+        spg(n) = s
+        IF s <> sect * 16 + n THEN
+          moved = 1
+        END IF
+        n = n + 1
+      LOOP
+      IF n < 16 THEN
+        moved = 1               ' a partial sector: its tail must be clean
+        done = 1
+      END IF
+      IF moved <> 0 THEN
+        ' Read before erasing, always. The sources are all at or above
+        ' this sector, and sixteen live pages consumed from at or above
+        ' its start leaves the cursor past its end -- so by the time the
+        ' destination is erased there is nothing left in it to lose.
+        CALL erasesect(SCRATCH)
+        s = 0
+        DO WHILE s < n
+          CALL rdpage(spg(s))
+          CALL wrpage(SCRATCH + s)
+          s = s + 1
+        LOOP
+        CALL erasesect(sect * 16)
+        s = 0
+        DO WHILE s < n
+          CALL rdpage(SCRATCH + s)
+          CALL wrpage(sect * 16 + s)
+          s = s + 1
+        LOOP
+      END IF
+    END IF
+    sect = sect + 1
+  LOOP
+  CALL rewritedir()
+  CALL fsmount()
+END SUB
+
 SUB dodir()
   DIM i AS INT
   DIM k AS BYTE
@@ -1169,7 +1412,11 @@ SUB docommand()
     END IF
     RETURN
   END IF
-  IF idx = 10 THEN                      ' DRIVE
+  IF idx = 10 THEN                      ' COMPACT
+    CALL docompact()
+    RETURN
+  END IF
+  IF idx = 11 THEN                      ' DRIVE
     a = number()
     IF a < 0 THEN
       a = 0
@@ -1416,6 +1663,7 @@ CMDTAB:
         .byte 4, "L","O","A","D"
         .byte 3, "D","I","R"
         .byte 3, "E","R","A"
+        .byte 7, "C","O","M","P","A","C","T"
         .byte 5, "D","R","I","V","E"
         .byte 0
 

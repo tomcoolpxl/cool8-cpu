@@ -352,7 +352,7 @@ def files(code, syms):
     filler = os.path.join(BUILD, "filler.bin")
     i = 0
     while True:
-        room = 448 * 1024 - vol.free_offset()
+        room = disk.DATA_END - vol.free_offset()
         if not room:
             break
         n = min(room, 65280)                    # 255 whole pages at a time
@@ -361,7 +361,8 @@ def files(code, syms):
         vol.add(filler, f"F{i}.BIN")
         i += 1
     img.save()
-    left = 1792 - disk.Volume(disk.Image(IMG), 0).free_offset() // 256
+    left = (disk.DATA_END
+            - disk.Volume(disk.Image(IMG), 0).free_offset()) // 256
     M = Machine(code, syms, flash=IMG)
     M.syms_progend = syms["v_progend"]
     M.settle()
@@ -372,6 +373,82 @@ def files(code, syms):
           " | ".join(r for r in M.screen() if r.strip())[-70:])
     check(M.vol().find("TOOBIG.BAS") is None,
           "and nothing was written past the end of the volume")
+
+    print()
+    compact(code, syms)
+
+
+def compact(code, syms):
+    """COMPACT -- the only command that erases.
+
+    The thing being proved is not just that the space comes back. It is
+    that it comes back **without the machine borrowing memory it does
+    not own**: the user's program stays in RAM and video RAM keeps the
+    sprites and patterns that were in it. There is nowhere in RAM to put
+    a 4 KB sector, so the scratch is on the disk.
+    """
+    print("  COMPACT")
+
+    M = blank(code, syms)
+    saved = {}
+    for name, line in (("ONE", 1), ("TWO", 2), ("THREE", 3)):
+        M.cmd("NEW")
+        M.type(f"10 PRINT {line}\n20 PRINT {line}\n")
+        M.cmd(f'SAVE "{name}"')
+        saved[name] = M.vol().get(f"{name}.BAS")
+
+    M.cmd('ERA "TWO"')
+    before = M.vol()
+    dead = [e for e in before.entries() if e["status"] == 0]
+    check(len(dead) == 1 and before.find("THREE.BAS")["page"] == 18,
+          "three files, the middle one deleted, THREE still at page 18",
+          f"{[(e['name'], e['page']) for e in before.files()]}")
+
+    # What must survive: a program in RAM, and a pattern in video RAM.
+    M.cmd("NEW")
+    M.type("10 PRINT 7\n")
+    inram = M.prog()
+    pattern = bytes((i * 7 + 13) & 0xFF for i in range(4096))
+    M.m.video.vram[0x4000:0x5000] = pattern
+
+    M.cmd("COMPACT")
+
+    v = M.vol()
+    check(v.find("THREE.BAS")["page"] == 17,
+          "COMPACT slides THREE down onto the hole at page 17",
+          f"{[(e['name'], e['page']) for e in v.files()]}")
+    check(v.get("ONE.BAS") == saved["ONE"]
+          and v.get("THREE.BAS") == saved["THREE"],
+          "and both survivors come back byte for byte")
+    check(v.find("TWO.BAS") is None
+          and not [e for e in v.entries() if e["status"] == 0],
+          "the deleted entry is gone, not just marked",
+          f"{[e['status'] for e in v.entries()[:5]]}")
+    check(v.label() == "PROGRAMS", "the volume label survives",
+          f"label is {v.label()!r}")
+    check(v.free_offset() == 18 * 256,
+          "and the free pointer drops by the page that was freed",
+          f"free at page {v.free_offset() // 256}")
+
+    # The tail has to be $FF again: a program can only clear bits, so a
+    # later SAVE onto stale bytes would come back as the two ANDed.
+    img = disk.Image(IMG)
+    tail = img.data[before.base + 18 * 256:before.base + disk.DATA_END]
+    check(set(tail) == {0xFF},
+          "everything above the live data is erased, ready to append",
+          f"{len(tail) - tail.count(0xFF)} bytes are not $FF")
+
+    check(M.prog() == inram, "the program in RAM is untouched",
+          f"{[n for n, _ in M.prog()]} against {[n for n, _ in inram]}")
+    check(bytes(M.m.video.vram[0x4000:0x5000]) == pattern,
+          "and so is video RAM -- the scratch is on the disk")
+
+    # And the volume still works afterwards.
+    M.cmd('SAVE "FOUR"')
+    check(M.vol().get("FOUR.BAS") is not None
+          and M.vol().find("FOUR.BAS")["page"] == 18,
+          "a SAVE after COMPACT lands in the reclaimed space",
+          f"{[(e['name'], e['page']) for e in M.vol().files()]}")
 
 
 if __name__ == "__main__":
