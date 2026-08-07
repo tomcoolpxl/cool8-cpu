@@ -693,14 +693,85 @@ type beyond literals, and file statements in the language. `sw/fs.asm`
 is reachable from `ASM` blocks, which is how `sw/edit.bas` saves and
 loads, but `LOAD`/`SAVE` are not yet language statements.
 
-### M15 — ROM, autoboot, and hardware
+### M15 — ROM, autoboot, and hardware ⬜ *(software done; board not touched)*
 
-Rebuild the boot ROM with autoboot and raw flash write. Bring the whole
-thing up on the board.
+**Autoboot works, the ROM writes flash, the bitstream is rebuilt, and
+the full battery is green. The board has not been programmed** — that
+needs asking first.
 
-**Gate:** power on the iCESugar and get the IDE, with no PC attached.
-Full battery green, and the hardware re-verified — this is the milestone
-that touches the bitstream.
+[`sim/test_autoboot.py`](sim/test_autoboot.py), all seven:
+
+```
+BOOT.BIN was found, loaded to $0200 and run          ok
+and the image in memory is the file, byte for byte   ok
+with no BOOT.BIN it falls through to the monitor     ok
+and nothing was run                                  ok
+autoboot tidied its scratch away                     ok
+W programmed 22 bytes at $7F0000                     ok
+a W below $100000 is refused, and nothing changes    ok
+```
+
+**Autoboot is the only thing the ROM knows about the filesystem.** It
+walks volume 0's 256 directory entries looking for `BOOT.BIN`, takes the
+start page and length out of the entry, loads it to `$0200` and jumps.
+It does not mount, allocate or write; `sw/fs.asm` does all of that and
+lives in the OS. A file's address is `low = 0, mid = page low, high =
+$10 + page high` — one add, which is what the 448 KB volume was chosen
+for. **The disk image is built by `cool8disk.py`, so if the ROM's idea
+of a directory entry and the tool's ever drift, autoboot stops finding
+the file** — the same two-implementations check `test_fs.py` makes, a
+layer down.
+
+`W src len [flsH]` programs memory into flash, defaulting to `$100000`.
+It is the reason a board with blank flash can be given its first OS
+without a PC. The hardware floor still refuses anything below the
+megabyte mark whatever the command asks for.
+
+**Three things the ROM work turned up:**
+
+- **The image overflowed into the I/O hole.** `$FE00–$FEFF` is the I/O
+  page and always wins the decode, so those 256 bytes of the ROM can
+  never be read — and the additions pushed the image 89 bytes into them.
+  The 248 bytes at `$FF00`, below the vectors, were empty, so the
+  keyboard tables moved up there rather than something useful being cut.
+- **Autoboot cannot be a subroutine.** A `CALL` pushes a return address
+  below the stack pointer and leaves it there, and the boot sequence
+  promises the monitor a cleared RAM. Two bytes — but the promise is
+  either kept or it is not. It also puts its 16-byte directory scratch
+  back before falling through.
+- **A test was passing by luck.** `cool8_mon_tb` checked the scroll by
+  sampling `VID_BASE` at the end, and `vtop` wraps at 32 rows — so a
+  session that scrolls a multiple of 32 times leaves the register back
+  at `$8000` and reads as "never scrolled". **One extra line in the
+  monitor's help text landed on it.** The check is now a latch: whether
+  the origin ever moved, not where it happens to be.
+
+Bitstream rebuilt and unchanged in size — the ROM is block RAM, not
+logic:
+
+```
+ICESTORM_LC   5022 / 5280   95 %
+ICESTORM_RAM    28 / 30     93 %
+sclk closes at 11.20 MHz against 8.38
+```
+
+`build/system.img` holds the IDE as `BOOT.BIN`, and the emulator boots
+it: ROM → directory scan → `$0200` → the editor, accepting keystrokes.
+
+**What the gate still needs, and cannot get yet.** "Power on and get the
+IDE with no PC attached" is not reachable on the board as it stands:
+there is no VGA PMOD to see it on and no PS/2 level shifter to type
+with, so the machine would boot into an editor nobody can see or use.
+What *can* be checked on hardware is the boot path, the monitor over the
+serial console, and the `W` command — and that needs asking before
+anything is programmed.
+
+**Deferred: the page-program burst** (§3.4). A NOR page program takes up
+to 256 data bytes in one command and the RTL sends one, which is why
+saving is measured in seconds. It is a contained change to
+`cool8_flash.v`'s shifter worth about 13×, but it is a bitstream change
+on top of a bitstream change, and this milestone already has one
+untested on silicon.
 
 ---
 

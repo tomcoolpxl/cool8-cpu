@@ -42,6 +42,9 @@ FLS_ADDR_M = $FE89
 FLS_ADDR_H = $FE8A
 FLS_DATA  = $FE8B
 FLS_CTRL  = $FE8C
+FLS_STAT  = $FE8D
+FLS_WDATA = $FE8E
+FLS_WCTRL = $FE8F
 VID_BASE_H = $FE13              ; the display origin, high byte
 
 SCREEN    = $8000               ; mode 0's map, stride 256
@@ -68,6 +71,9 @@ vtop    = MVARS+71              ; which map row is at the top of the screen
 dumpad  = MVARS+72              ; word -- where D and U carry on from
 ldest   = MVARS+74              ; word
 llen    = MVARS+76              ; word
+wsrc    = MVARS+78              ; word -- W: where the bytes come from
+wlen    = MVARS+80              ; word
+wadr    = MVARS+82              ; 3 bytes -- the flash address, 24-bit
 
 ; ---------------------------------------------------------------------
 ; The command loop.
@@ -136,6 +142,8 @@ cmdtab: .byte 'D'
         .word cmd_g
         .byte 'L'
         .word cmd_l
+        .byte 'W'
+        .word cmd_w
         .byte '?'
         .word cmd_h
         .byte 0
@@ -291,6 +299,102 @@ cmd_l:  CALL skipsp
 
 cmd_h:  LDW  X,#msg_help
         JMP  puts
+
+; ---------------------------------------------------------------------
+; W src len [flashH] -- program memory into the flash.
+;
+; The counterpart to L, and the reason a board with blank flash can be
+; given its first OS without a PC. `flashH` is the top sixteen bits of
+; the destination and defaults to $1000, so the default target is the
+; megabyte mark -- above the hardware floor, which refuses anything
+; below it in gates whatever this code asks for (D42).
+;
+; **The address does not advance on a program the way it does on a
+; read.** The part is sent one opcode per byte, so every byte costs a
+; seek as well. That is why saving is slow and why a page-program burst
+; is the obvious next thing to build.
+; ---------------------------------------------------------------------
+
+cmd_w:  CALL skipsp
+        CALL gethex
+        TST  R0
+        BNE  .w1
+        JMP  .werr                      ; past a branch's reach
+.w1:    STW  [wsrc],X
+        CALL skipsp
+        CALL gethex
+        TST  R0
+        BNE  .w2
+        JMP  .werr
+.w2:    STW  [wlen],X
+        CALL skipsp
+        CALL gethex
+        TST  R0
+        BNE  .wad
+        LDW  X,#$1000
+.wad:   CLR  R0
+        ST   [wadr],R0
+        MOV  R0,XL
+        ST   [wadr+1],R0
+        MOV  R0,XH
+        ST   [wadr+2],R0
+
+        MOV  R0,#$04                    ; clear any earlier refusal
+        ST   [FLS_WCTRL],R0
+
+        LDW  Y,[wsrc]
+        LDW  X,[wlen]
+        MOV  R2,XL
+        MOV  R3,XH
+.wl:    MOV  R0,R2
+        OR   R0,R3
+        BEQ  .wdone
+        LD   R0,[wadr]                  ; the address, every single byte
+        ST   [FLS_ADDR_L],R0
+        LD   R0,[wadr+1]
+        ST   [FLS_ADDR_M],R0
+        LD   R0,[wadr+2]
+        ST   [FLS_ADDR_H],R0
+        LD   R0,[Y]
+        ST   [FLS_WDATA],R0
+        MOV  R0,#1
+        ST   [FLS_WCTRL],R0
+.wbusy: LD   R0,[FLS_WCTRL]
+        BTST R0,#$01
+        BNE  .wbusy
+        INCW Y
+        CALL wadvance
+        SUB  R2,#1
+        BCS  .wl
+        SUB  R3,#1
+        BRA  .wl
+
+.wdone: LD   R0,[FLS_WCTRL]
+        BTST R0,#$04                    ; refused: below the floor
+        BNE  .wref
+        LDW  X,#msg_ok
+        JMP  puts
+.wref:  LDW  X,#msg_refused
+        JMP  puts
+.werr:  LDW  X,#msg_what
+        JMP  puts
+
+; wadvance -- wadr = wadr + 1, 24-bit
+wadvance:
+        PUSH R0
+        LD   R0,[wadr]
+        ADD  R0,#1
+        ST   [wadr],R0
+        BNE  .wa9
+        LD   R0,[wadr+1]
+        ADD  R0,#1
+        ST   [wadr+1],R0
+        BNE  .wa9
+        LD   R0,[wadr+2]
+        ADD  R0,#1
+        ST   [wadr+2],R0
+.wa9:   POP  R0
+        RET
 
 ; ---------------------------------------------------------------------
 ; U [addr] -- unassemble.
@@ -774,6 +878,9 @@ msg_what:
         .asciz "?"
 msg_ok: .byte $0D,$0A
         .asciz "ok"
+msg_refused:
+        .byte $0D,$0A
+        .asciz "refused - below the floor"
 msg_help:
         .byte $0D,$0A
         .ascii "D [addr]            dump"
@@ -785,54 +892,12 @@ msg_help:
         .ascii "G addr              go"
         .byte $0D,$0A
         .ascii "L dest len [flsH]   load from flash"
+        .byte $0D,$0A
+        .ascii "W src len [flsH]    write to flash"
         .byte $0D,$0A,0
 
 ; The US layout, indexed by Set 2 make code. Zero means the key has no
 ; character -- a function key, a modifier, something on the numeric pad
 ; nobody has asked for yet.
-
-keymap:
-        .byte 0,0,0,0,0,0,0,0                   ; $00
-        .byte 0,0,0,0,0,$09,'`',0               ; $08  $0D tab
-        .byte 0,0,0,0,0,'q','1',0               ; $10
-        .byte 0,0,'z','s','a','w','2',0         ; $18
-        .byte 0,'c','x','d','e','4','3',0       ; $20
-        .byte 0,' ','v','f','t','r','5',0       ; $28
-        .byte 0,'n','b','h','g','y','6',0       ; $30
-        .byte 0,0,'m','j','u','7','8',0         ; $38
-        .byte 0,',','k','i','o','0','9',0       ; $40
-        .byte 0,'.','/','l',';','p','-',0       ; $48
-        .byte 0,0,$27,0,'[','=',0,0             ; $50  $27 apostrophe
-        .byte 0,0,$0D,']',0,$5C,0,0             ; $58  $5C backslash
-        .byte 0,0,0,0,0,0,$08,0                 ; $60  $66 backspace
-        .byte 0,'1',0,'4','7',0,0,0             ; $68
-        .byte '0','.','2','5','6','8',$1B,0     ; $70  $76 escape
-        .byte 0,'+','3','-','*','9',0,0         ; $78
-
-; The keys shift does something to that is not a case change.
-
-shiftmap:
-        .byte '`','~'
-        .byte '1','!'
-        .byte '2','@'
-        .byte '3','#'
-        .byte '4','$'
-        .byte '5','%'
-        .byte '6','^'
-        .byte '7','&'
-        .byte '8','*'
-        .byte '9','('
-        .byte '0',')'
-        .byte '-','_'
-        .byte '=','+'
-        .byte '[','{'
-        .byte ']','}'
-        .byte $5C,'|'
-        .byte ';',':'
-        .byte $27,$22
-        .byte ',','<'
-        .byte '.','>'
-        .byte '/','?'
-        .byte 0
 
 mstack  = $0200

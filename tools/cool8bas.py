@@ -52,6 +52,9 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 
+# Where compiled code starts. User programs load at $0200; the system
+# itself is compiled to $C000, where OS_PLAN's map puts the resident
+# software.
 ORG = 0x0200
 
 KEYWORDS = {
@@ -59,7 +62,7 @@ KEYWORDS = {
     'for', 'to', 'next', 'do', 'loop', 'while', 'until', 'exit',
     'wend', 'call', 'as', 'int', 'byte', 'return', 'goto', 'poke',
     'rem', 'at', 'asm', 'function', 'peek', 'extern',
-    'print', 'include', 'and', 'or', 'xor', 'inline',
+    'print', 'include', 'and', 'or', 'xor', 'inline', 'card',
 }
 
 # `a > b` is compiled as `b < a`, and `a <= b` as `b >= a`.
@@ -175,7 +178,8 @@ def lex(src):
 class Sym:
     def __init__(self, kind, label=None, size=2, count=1, index=None,
                  value=None, nargs=0, returns=False,
-                 body=None, params=None, inlinable=False):
+                 body=None, params=None, inlinable=False,
+                 signed=True):
         self.kind = kind        # 'var' | 'array' | 'const' | 'sub' | 'param'
         self.label = label
         self.size = size
@@ -187,12 +191,17 @@ class Sym:
         self.body = body            # (start, stop) token range, for inlining
         self.params = params or []  # [(name, width)]
         self.inlinable = inlinable
+        # INT is signed; BYTE and CARD are not. An address or a size is
+        # a CARD -- $9FFF is 40,959, and as a signed INT that is
+        # negative, which makes every bounds check backwards.
+        self.signed = signed
 
 
 # =========================================================== the compiler
 
 class Compiler:
-    def __init__(self):
+    def __init__(self, org=None):
+        self.org = ORG if org is None else org
         self.t = []
         self.p = 0
         self.out = []
@@ -307,6 +316,31 @@ class Compiler:
         if k == 'neg':
             return 2
         return 2                        # calls, strings, externs
+
+    def signed(self, e):
+        """Is this value signed? Unsigned wins in a mixed comparison.
+
+        A literal adapts, so `p < MEMTOP` with an unsigned MEMTOP is an
+        unsigned comparison and a bounds check on an address does what
+        it looks like it does.
+        """
+        k = e[0]
+        if k == 'num':
+            return None                 # adapts to the other side
+        if k in ('var', 'local', 'param'):
+            return e[3] if len(e) > 3 else True
+        if k == 'index':
+            return e[1].signed
+        if k == 'peek':
+            return False
+        if k == 'bin':
+            a, b = self.signed(e[2]), self.signed(e[3])
+            if a is False or b is False:
+                return False
+            if a is None and b is None:
+                return None
+            return True
+        return True
 
     def is_leaf(self, e):
         return e[0] in ('num', 'var', 'param', 'const', 'extern', 'local',
@@ -544,6 +578,7 @@ class Compiler:
         # A comparison of two bytes is unsigned and needs no high half:
         # one subtract, and the carry says it all.
         w = max(self.width(a), self.width(b))
+        uns = self.signed(a) is False or self.signed(b) is False
         if self.is_leaf(b):
             self.gen(a, w)
             self.load(b, 2, w)
@@ -559,7 +594,7 @@ class Compiler:
             self.e("SBC  R1,R3")
             if op in ('=', '<>'):
                 self.e("OR   R0,R1")
-            self.branch(BRANCH[op], label)
+            self.branch((BYTE_BRANCH if uns else BRANCH)[op], label)
         else:
             self.branch(BYTE_BRANCH[op], label)
 
@@ -734,7 +769,7 @@ class Compiler:
                         if self.t[j][1] == ',':
                             j += 1
                     j += 1
-                if self.t[j][0] == 'as':        # FUNCTION f(...) AS INT
+                if self.t[j][0] == 'as':        # FUNCTION f(...) AS type
                     j += 2
                 # find the matching END SUB / END FUNCTION
                 k, depth = j, 1
@@ -819,22 +854,26 @@ class Compiler:
                 i = 0
                 while not self.at('op', ')'):
                     pn = self.take('name')[1]
-                    pw = 2
+                    pw, psg = 2, True
                     if self.at('as'):
                         self.take('as')
                         if self.at('byte'):
                             self.take('byte')
-                            pw = 1
+                            pw, psg = 1, False
+                        elif self.at('card'):
+                            self.take('card')
+                            psg = False
                         else:
                             self.take('int')
-                    params[pn.lower()] = Sym('param', index=i, size=pw)
+                    params[pn.lower()] = Sym('param', index=i, size=pw,
+                                             signed=psg)
                     i += 1
                     if self.at('op', ','):
                         self.take('op', ',')
                 self.take('op', ')')
-            if self.at('as'):           # FUNCTION f(...) AS INT
+            if self.at('as'):           # FUNCTION f(...) AS INT/CARD/BYTE
                 self.take('as')
-                self.take('int')
+                self.take()
             self.lab(s.label)
             first = len(self.out)
             self.e("ADDW SP,#-@F")
@@ -934,6 +973,7 @@ class Compiler:
             # Its value is its address.
             self.take('extern')
             name = self.take('name')[1]
+            self.redefine_check(name)
             self.glob[name.lower()] = Sym('extern', label=name)
             return
         if k == 'const':
@@ -955,12 +995,15 @@ class Compiler:
                 n = self.const_expr()
                 self.take('op', ')')
 
-            w = 2
+            w, sg = 2, True
             if self.at('as'):
                 self.take('as')
                 if self.at('byte'):
                     self.take('byte')
-                    w = 1
+                    w, sg = 1, False
+                elif self.at('card'):
+                    self.take('card')
+                    sg = False
                 else:
                     self.take('int')
 
@@ -968,12 +1011,14 @@ class Compiler:
                 # A scalar. Inside a SUB it is a local, in the frame;
                 # outside, a global.
                 if self.local is not None:
-                    self.local[low] = Sym('local', index=self.frame, size=w)
+                    self.local[low] = Sym('local', index=self.frame,
+                                          size=w, signed=sg)
                     self.frame += w
                     self.max_frame = max(self.max_frame, self.frame)
                     return
                 self.redefine_check(name)
-                self.glob[low] = Sym('var', label=f"v_{low}", size=w)
+                self.glob[low] = Sym('var', label=f"v_{low}", size=w,
+                                     signed=sg)
                 self.data.append(f"v_{low}: .res {w}")
                 return
 
@@ -984,9 +1029,10 @@ class Compiler:
                 self.take('at')
                 a = self.const_expr()
                 self.glob[low] = Sym('array', label=f"${a:04X}",
-                                     size=w, count=n)
+                                     size=w, count=n, signed=sg)
                 return
-            self.glob[low] = Sym('array', label=f"a_{low}", size=w, count=n)
+            self.glob[low] = Sym('array', label=f"a_{low}", size=w,
+                                 count=n, signed=sg)
             self.data.append(f"a_{low}: .res {w * (n + 1)}")
             return
         if k == 'if':
@@ -1188,10 +1234,10 @@ class Compiler:
         if isinstance(s, tuple):        # a substituted argument
             return s[1]
         if s.kind == 'param':
-            return ('param', s.index, s.size)
+            return ('param', s.index, s.size, s.signed)
         if s.kind == 'local':
-            return ('local', s.index, s.size)
-        return ('var', s.label, s.size)
+            return ('local', s.index, s.size, s.signed)
+        return ('var', s.label, s.size, s.signed)
 
     def store_var(self, s):
         if s.kind == 'local':
@@ -1342,7 +1388,7 @@ class Compiler:
     # ---------------------------------------------------------- output
 
     def assemble(self):
-        o = [f"        .org ${ORG:04X}"] + self.out
+        o = [f"        .org ${self.org:04X}"] + self.out
         if self.uses_mul:
             o += MUL16
         o.append("")
@@ -1373,8 +1419,8 @@ MUL16 = [
 ]
 
 
-def compile_source(src):
-    return Compiler().parse(src)
+def compile_source(src, org=None):
+    return Compiler(org).parse(src)
 
 
 def main():
@@ -1383,12 +1429,13 @@ def main():
     ap.add_argument("-o", "--output")
     ap.add_argument("-S", "--asm", action="store_true",
                     help="write the assembly and stop")
+    ap.add_argument("--org", help="where the code starts (default $0200)")
     a = ap.parse_args()
 
     with open(a.source) as fh:
         src = fh.read()
     try:
-        asm = compile_source(src)
+        asm = compile_source(src, int(a.org, 0) if a.org else None)
     except Err as e:
         sys.exit(f"{a.source}: {e}")
 

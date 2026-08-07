@@ -36,6 +36,13 @@ module cool8_mon_tb;
     reg          rst_n = 1'b0;
 
     integer      errors, checks, i, n;
+
+    // **Whether the origin ever moved, not where it happens to be now.**
+    // `vtop` wraps at 32 rows, so a session that scrolls a multiple of
+    // 32 times leaves VID_BASE back at $8000 and a sampled check reads
+    // that as "never scrolled". One extra line in the monitor's help
+    // text was enough to land on it. A latch cannot be fooled that way.
+    reg          base_moved;
     reg          verbose;
     reg [1023:0] vcdfile;
 
@@ -68,6 +75,11 @@ module cool8_mon_tb;
     integer      d_bit;
     reg          d_miso, d_bad;
     wire         spi_miso = d_miso;
+
+    always @(posedge clk) begin
+        if (!rst_n) base_moved <= 1'b0;
+        else if (u_soc.u_vid.u_vregs.base_r != 16'h8000) base_moved <= 1'b1;
+    end
 
     always #5 clk = ~clk;
     always #2.39 pclk = ~pclk;
@@ -406,7 +418,7 @@ module cool8_mon_tb;
         // that quietly — a bulk copy leaves VID_BASE at $8000 and passes
         // every other phase in this file.
         checks = checks + 1;
-        if (u_soc.u_vid.u_vregs.base_r == 16'h8000) begin
+        if (!base_moved) begin
             errors = errors + 1;
             $display("FAIL VID_BASE never moved — scroll is copying again");
         end else if (u_soc.u_vid.u_vregs.base_r[7:0] != 8'h00) begin

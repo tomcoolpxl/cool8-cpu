@@ -198,6 +198,16 @@ module cool8_boot_tb;
         end
         $readmemh(romfile, u_mem.u_rom.rom);
 
+        // This bench is a core and a memory: there is no I/O page, so
+        // the flash port at $FE88-$FE8C is ordinary RAM here. The ROM
+        // now looks on the flash for a BOOT.BIN before it reaches the
+        // monitor, so FLS_DATA has to read as something. All-ones is
+        // what an erased or absent part gives, and an all-ones
+        // directory is an empty volume -- so autoboot finds nothing and
+        // falls through, which is exactly what a blank board does.
+        // $FE8B is the odd byte of word $3F45 in the high SPRAM.
+        u_mem.u_ram.u_hi.mem[14'h3F45][15:8] = 8'hFF;
+
         if (!$value$plusargs("stopat=%h", stopat)) begin
             $display("FAIL: no +stopat= given");
             $finish;

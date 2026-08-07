@@ -163,7 +163,121 @@ reset:  LDW  X,#stack
         ST   [mon_cx],R0
         MOV  R0,#3
         ST   [mon_cy],R0
+
+; Step 5a: autoboot.
+;
+; Look on drive 0 for a file called BOOT.BIN and, if it is there, load it
+; to $0200 and run it. That is the whole of what this ROM knows about the
+; filesystem -- it walks the 256 directory entries of volume 0 looking
+; for one name, and takes the start page and length out of the entry it
+; finds. It does not mount, allocate, or write; sw/fs.asm does all of
+; that and lives in the OS, where it belongs.
+;
+; Volume 0's directory is at $100000 and a volume base is 64 KB aligned,
+; so a file's address is `low = 0, mid = page low, high = $10 + page
+; high` -- one add, and the reason 448 KB was chosen for a volume.
+;
+; If there is no such file the machine falls through to the monitor,
+; which is what a board with blank flash does and what you want while
+; developing.
+
+; Inline, not a subroutine: a CALL would push a return address below the
+; stack pointer and leave it there, and the sequence this implements
+; promises the monitor a cleared RAM. Two bytes, but the promise is
+; either kept or it is not.
+
+autoboot:
+        CLR  R0                         ; the directory, at $100000
+        ST   [FLS_ADDR_L],R0
+        ST   [FLS_ADDR_M],R0
+        MOV  R0,#$10
+        ST   [FLS_ADDR_H],R0
+        MOV  R0,#1
+        ST   [FLS_CTRL],R0
+
+        CLR  R3                         ; entry counter
+.ab1:   LDW  Y,#bootent
+        MOV  R1,#16
+.ab2:   LD   R0,[FLS_DATA]
+        ST   [Y],R0
+        INCW Y
+        SUB  R1,#1
+        BNE  .ab2
+
+        LD   R0,[bootent+11]            ; status
+        CMP  R0,#$FF
+        BEQ  .ab8                       ; never used
+        TST  R0
+        BEQ  .ab8                       ; deleted
+        CMP  R0,#$80
+        BEQ  .ab8                       ; the volume label
+
+        LDW  X,#bootent
+        LDW  Y,#bootname
+        MOV  R1,#11
+.ab3:   LD   R0,[X]
+        LD   R2,[Y]
+        CMP  R0,R2
+        BNE  .ab8
+        INCW X
+        INCW Y
+        SUB  R1,#1
+        BNE  .ab3
+        BRA  .abgo
+
+.ab8:   ADD  R3,#1
+        BNE  .ab1                       ; 256 entries, and it wrapped
+        CLR  R0                         ; nothing to boot
+        ST   [FLS_CTRL],R0
+        ; Put the scratch back. The boot sequence promises RAM is clear
+        ; when the monitor starts, and sixteen bytes of directory entry
+        ; left lying about would make that promise false -- quietly, and
+        ; only for whoever looked.
+        LDW  Y,#bootent
+        MOV  R1,#16
+.ab9:   ST   [Y],R0
+        INCW Y
+        SUB  R1,#1
+        BNE  .ab9
         JMP  monitor
+
+; Found it. Close the directory stream, re-open at the file, and pull it
+; into $0200.
+.abgo:  CLR  R0
+        ST   [FLS_CTRL],R0
+        CLR  R0
+        ST   [FLS_ADDR_L],R0
+        LD   R0,[bootent+12]            ; start page, low
+        ST   [FLS_ADDR_M],R0
+        LD   R0,[bootent+13]            ; start page, high
+        ADD  R0,#$10                    ; + the volume base
+        ST   [FLS_ADDR_H],R0
+        MOV  R0,#1
+        ST   [FLS_CTRL],R0
+
+        LDW  Y,#$0200
+        LD   R2,[bootent+14]            ; length
+        LD   R3,[bootent+15]
+.ab4:   MOV  R0,R2
+        OR   R0,R3
+        BEQ  .ab5
+        LD   R0,[FLS_DATA]
+        ST   [Y],R0
+        INCW Y
+        SUB  R2,#1
+        BCS  .ab4
+        SUB  R3,#1
+        BRA  .ab4
+
+.ab5:   CLR  R0
+        ST   [FLS_CTRL],R0
+        MOV  R0,#$07                    ; all three LEDs: booted
+        ST   [LED],R0
+        LDW  X,#$0200
+        JMP  [X]
+
+bootname:
+        .ascii "BOOT    BIN"
 
 ; ---------------------------------------------------------------------
 ; The vector table copied into RAM, and the ROM's own copy at the top.
@@ -204,6 +318,17 @@ banner: .ascii "COOL8"
         .byte 0
 
 LED     = $FE03
+FLS_ADDR_L = $FE88
+FLS_ADDR_M = $FE89
+FLS_ADDR_H = $FE8A
+FLS_DATA   = $FE8B
+FLS_CTRL   = $FE8C
+
+; A directory entry, read one at a time while autoboot walks the volume.
+; It sits in the monitor's variable block, above everything the monitor
+; itself uses, because by the time autoboot runs the RAM is cleared and
+; the monitor has not started.
+bootent = $EF60
 VID_MODE  = $FE10
 PAL_IDX   = $FE1E
 PAL_DATA  = $FE1F
@@ -226,6 +351,59 @@ mon_cy  = $EF43
 
         .include "monitor.asm"
         .include "disasm.asm"
+
+; The last 248 bytes below the vectors are ROM too, and were empty.
+; Autoboot and the W command pushed the image 89 bytes past $FDFF into
+; the I/O hole, which is not addressable at all -- so the shift table
+; moves up here rather than something useful being cut. It has to come
+; after both includes, or the disassembler would be assembled on top of
+; it and run off the end of the image.
+
+        .org  $FF00
+
+keymap:
+        .byte 0,0,0,0,0,0,0,0                   ; $00
+        .byte 0,0,0,0,0,$09,'`',0               ; $08  $0D tab
+        .byte 0,0,0,0,0,'q','1',0               ; $10
+        .byte 0,0,'z','s','a','w','2',0         ; $18
+        .byte 0,'c','x','d','e','4','3',0       ; $20
+        .byte 0,' ','v','f','t','r','5',0       ; $28
+        .byte 0,'n','b','h','g','y','6',0       ; $30
+        .byte 0,0,'m','j','u','7','8',0         ; $38
+        .byte 0,',','k','i','o','0','9',0       ; $40
+        .byte 0,'.','/','l',';','p','-',0       ; $48
+        .byte 0,0,$27,0,'[','=',0,0             ; $50  $27 apostrophe
+        .byte 0,0,$0D,']',0,$5C,0,0             ; $58  $5C backslash
+        .byte 0,0,0,0,0,0,$08,0                 ; $60  $66 backspace
+        .byte 0,'1',0,'4','7',0,0,0             ; $68
+        .byte '0','.','2','5','6','8',$1B,0     ; $70  $76 escape
+        .byte 0,'+','3','-','*','9',0,0         ; $78
+
+; The keys shift does something to that is not a case change.
+
+shiftmap:
+        .byte '`','~'
+        .byte '1','!'
+        .byte '2','@'
+        .byte '3','#'
+        .byte '4','$'
+        .byte '5','%'
+        .byte '6','^'
+        .byte '7','&'
+        .byte '8','*'
+        .byte '9','('
+        .byte '0',')'
+        .byte '-','_'
+        .byte '=','+'
+        .byte '[','{'
+        .byte ']','}'
+        .byte $5C,'|'
+        .byte ';',':'
+        .byte $27,$22
+        .byte ',','<'
+        .byte '.','>'
+        .byte '/','?'
+        .byte 0
 
 ; The ROM's own vectors. Only RESET is ever fetched from here in
 ; practice -- the code above copies all four into RAM, and after the
