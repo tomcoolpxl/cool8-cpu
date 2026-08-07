@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""S4b -- symbols and expressions, compiled on the machine.
+"""S4c -- symbols, expressions and control flow, on the machine.
 
     python sim/test_comp.py
 
@@ -48,6 +48,7 @@ SOURCE = """CONST LIMIT = 100 + 23
 DIM w AS INT
 DIM b AS BYTE
 DIM u AS CARD
+DIM i AS INT
 w = 1000
 b = 7
 u = $ABCD
@@ -61,6 +62,37 @@ w = w >> 8
 b = b << 2
 w = (w + 1) - LIMIT
 w = 0 - w
+IF w > 10 THEN
+  w = w - 1
+END IF
+IF b = 0 THEN
+  b = 1
+ELSE
+  b = b - 1
+END IF
+IF w < 0 THEN
+  w = 0
+ELSEIF w > 999 THEN
+  w = 999
+ELSE
+  w = w + 1
+END IF
+IF u >= $8000 THEN u = 0
+DO WHILE w <> 0
+  w = w - 1
+  IF w = 5 THEN
+    EXIT DO
+  END IF
+LOOP
+DO
+  b = b + 1
+LOOP UNTIL b >= 200
+FOR i = 1 TO 10
+  w = w + i
+NEXT i
+FOR b = 0 TO LIMIT
+  u = u + 1
+NEXT
 END
 """
 
@@ -112,12 +144,15 @@ def reference():
     if r.returncode != 0:
         print(r.stdout + r.stderr)
         raise SystemExit("the reference would not assemble")
-    addrs = {}
+    addrs, hidden = {}, 0
     for line in open(sym):
         p = line.split()
         if len(p) == 2 and p[1].startswith("v_"):
             addrs[p[1][2:]] = int(p[0], 16)
-    return open(out, "rb").read(), addrs
+        # FOR evaluates its limit once, into a slot of its own
+        elif len(p) == 2 and p[1].endswith("_lim"):
+            hidden += 1
+    return open(out, "rb").read(), addrs, hidden
 
 
 def build_driver(size):
@@ -137,10 +172,10 @@ def build_driver(size):
 
 
 def main():
-    print("  S4b -- sw/comp.bas, against cool8bas.py")
+    print("  S4c -- sw/comp.bas, against cool8bas.py")
     print()
 
-    want, waddr = reference()
+    want, waddr, hidden = reference()
     kw = keyword_bytes()
     stored = store(SOURCE.splitlines(), kw)
 
@@ -155,7 +190,7 @@ def main():
     m.cpu.sp = 0xFFF7
     m.romen = False
     n, last = 0, -1
-    while n < 40_000_000:
+    while n < 250_000_000:
         if m.cpu.pc == last:
             break
         last = m.cpu.pc
@@ -196,10 +231,10 @@ def main():
           f"the first variable is at ${first:04X}, as the assembler put it",
           f"${first:04X} against ${min(waddr.values()):04X}")
 
-    check(nsym == len(waddr) + 1,
-          f"{nsym} symbols, the reference {len(waddr)} variables "
-          f"and a constant",
-          f"{nsym} against {len(waddr) + 1}")
+    check(nsym == len(waddr) + 1 + hidden,
+          f"{nsym} symbols: {len(waddr)} variables, a constant, "
+          f"{hidden} FOR limits",
+          f"{nsym} against {len(waddr) + 1 + hidden}")
 
     print()
     print("PASS" if not FAILS else f"FAIL -- {len(FAILS)}")

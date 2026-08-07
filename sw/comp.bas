@@ -40,6 +40,26 @@ CONST KW_AND   = $99
 CONST KW_OR    = $9A
 CONST KW_XOR   = $9B
 CONST KW_CARD  = $9C
+CONST KW_FOR   = $85
+CONST KW_NEXT  = $86
+CONST KW_TO    = $87
+CONST KW_DO    = $88
+CONST KW_LOOP  = $89
+CONST KW_WHILE = $8A
+CONST KW_UNTIL = $8B
+CONST KW_EXIT  = $8C
+CONST KW_IF    = $8D
+CONST KW_THEN  = $8E
+CONST KW_ELSE  = $8F
+CONST KW_ELSIF = $90
+
+' What a block stopped on.
+CONST B_EOF   = 0
+CONST B_ENDIF = 1
+CONST B_ELSE  = 2
+CONST B_ELSIF = 3
+CONST B_LOOP  = 4
+CONST B_NEXT  = 5
 
 ' Operators, as the generator names them.
 CONST O_ADD = 0
@@ -54,6 +74,17 @@ CONST O_SHR = 6
 CONST N_NUM = 0
 CONST N_VAR = 1
 CONST N_BIN = 2
+CONST N_CMP = 3
+
+' Relations. GT and LE are never generated: a 16-bit SUB leaves Z from
+' the high byte alone, so BGT and BLE would be wrong whenever the low
+' bytes differ and the high ones match. a > b is compiled as b < a.
+CONST R_LT = 0
+CONST R_GE = 1
+CONST R_EQ = 2
+CONST R_NE = 3
+CONST R_GT = 4
+CONST R_LE = 5
 
 ' MAX-, not N-: the language is case-insensitive, so a constant NSYM
 ' and a variable nsym are one name -- the DIM won, the guard became
@@ -86,6 +117,13 @@ DIM nn AS BYTE
 
 DIM cerr AS BYTE                ' 0 while everything is still fine
 
+' Control-flow labels, above the two each symbol takes. They are
+' allocated on entering a construct and given back on leaving it, so
+' what bounds them is how deeply the program nests, not how long it is.
+DIM clab AS BYTE          ' not nlab: emit.bas has CONST NLAB
+DIM lpdone AS BYTE              ' the innermost loop's exit, for EXIT DO
+DIM inloop AS BYTE
+
 ' ---------------------------------------------------------------------
 ' Symbols.
 ' ---------------------------------------------------------------------
@@ -94,6 +132,8 @@ SUB cinit()
   nsym = 0
   spend = 0
   cerr = 0
+  clab = LMAIN + 1
+  inloop = 0
 END SUB
 
 ' The symbol whose name is the token just read, or 255.
@@ -148,6 +188,8 @@ FUNCTION syadd() AS BYTE
   RETURN i
 END FUNCTION
 
+' syfind never matches a nameless slot, so a length of zero is enough
+' to hide one.
 ' A variable's low-byte label. The high byte is the next one along.
 FUNCTION sylab(i AS BYTE) AS BYTE
   RETURN i * 2
@@ -249,6 +291,65 @@ FUNCTION cwidth(i AS BYTE) AS BYTE
     RETURN y
   END IF
   RETURN x
+END FUNCTION
+
+' 0 unsigned, 1 signed, 2 a literal that takes whichever it is used
+' with. Only a genuinely unsigned operand forces an unsigned compare.
+FUNCTION csigned(i AS BYTE) AS BYTE
+  DIM x AS BYTE
+  DIM y AS BYTE
+  IF nk(i) = N_NUM THEN
+    RETURN 2
+  END IF
+  IF nk(i) = N_VAR THEN
+    RETURN sysg(na(i))
+  END IF
+  IF nk(i) = N_BIN THEN
+    x = csigned(na(i))
+    y = csigned(nb(i))
+    IF x = 0 THEN
+      RETURN 0
+    END IF
+    IF y = 0 THEN
+      RETURN 0
+    END IF
+    IF x = 2 THEN
+      IF y = 2 THEN
+        RETURN 2
+      END IF
+    END IF
+  END IF
+  RETURN 1
+END FUNCTION
+
+FUNCTION mkcmp(op AS BYTE, a AS BYTE, b AS BYTE) AS BYTE
+  DIM i AS BYTE
+  i = nn
+  nn = nn + 1
+  nk(i) = N_CMP
+  nop(i) = op
+  na(i) = a
+  nb(i) = b
+  RETURN i
+END FUNCTION
+
+' A slot with no name: FOR's limit, evaluated once as every BASIC since
+' Dartmouth has done. It is placed with the others, in the order the
+' loop was met, which is where the cross-compiler puts it too.
+FUNCTION syhidden(w AS BYTE) AS BYTE
+  DIM i AS BYTE
+  IF nsym >= MAXSYM THEN
+    cerr = 1
+    RETURN 255
+  END IF
+  i = nsym
+  syoff(i) = spend
+  sylen(i) = 0
+  sykind(i) = 0
+  syw(i) = w
+  sysg(i) = 1
+  nsym = nsym + 1
+  RETURN i
 END FUNCTION
 
 FUNCTION isleaf(i AS BYTE) AS BYTE
@@ -411,6 +512,118 @@ SUB cgen(i AS BYTE, w AS BYTE)
   CALL cbinop(nop(i), w)
 END SUB
 
+' A fresh control label.
+'
+' Labels are given back when a construct ends, so the same number comes
+' round again -- and it has to arrive clean. A recycled label still
+' holding a placed address made ebr emit a displacement to the previous
+' construct; one still holding a chain head made elab walk a chain that
+' was not there any more and poke bytes wherever the garbage pointed,
+' which is how the compiler ended up executing the program it was
+' writing.
+FUNCTION newlab() AS BYTE
+  DIM l AS BYTE
+  l = clab
+  clab = clab + 1
+  labv(l) = 0
+  labb(l) = 0
+  labr(l) = 0
+  RETURN l
+END FUNCTION
+
+' A conditional branch to a label. Always long: one pass cannot see how
+' far forward a block runs, so the short branch is inverted and jumps
+' over a JMP. Three bytes and two clocks on the taken path, and not
+' optional. The inverse of a condition is the condition with its low bit
+' flipped -- BLT/BGE, BEQ/BNE and BCC/BCS are adjacent encodings.
+SUB cbranch(cc AS BYTE, l AS BYTE)
+  DIM skip AS BYTE
+  skip = newlab()
+  CALL ebr(cc XOR 1, skip)
+  CALL ejmp(l)
+  CALL elab(skip)
+  clab = clab - 1
+END SUB
+
+' Evaluate a comparison and branch on it.
+SUB cgencond(i AS BYTE, l AS BYTE, iffalse AS BYTE)
+  DIM a AS BYTE
+  DIM b AS BYTE
+  DIM t AS BYTE
+  DIM op AS BYTE
+  DIM w AS BYTE
+  DIM uns AS BYTE
+  IF nk(i) <> N_CMP THEN
+    cerr = 12
+    RETURN
+  END IF
+  op = nop(i)
+  a = na(i)
+  b = nb(i)
+  IF op = R_GT THEN
+    op = R_LT
+    t = a
+    a = b
+    b = t
+  END IF
+  IF op = R_LE THEN
+    op = R_GE
+    t = a
+    a = b
+    b = t
+  END IF
+  IF iffalse <> 0 THEN
+    op = op XOR 1
+  END IF
+  w = cwidth(a)
+  IF cwidth(b) > w THEN
+    w = cwidth(b)
+  END IF
+  uns = 0
+  IF csigned(a) = 0 THEN
+    uns = 1
+  END IF
+  IF csigned(b) = 0 THEN
+    uns = 1
+  END IF
+  IF isleaf(b) = 0 THEN
+    cerr = 13                   ' spilling waits for the frame, in S4d
+    RETURN
+  END IF
+  CALL cgen(a, w)
+  CALL cload(b, 2, w)
+  CALL ealur(E_SUB, 0, 2)
+  IF w = 2 THEN
+    CALL ealur(E_SBC, 1, 3)
+    IF op >= R_EQ THEN
+      CALL ealur(E_OR, 0, 1)    ' Z is the high byte alone otherwise
+    END IF
+  ELSE
+    uns = 1                     ' two bytes compare unsigned, always
+  END IF
+  IF op = R_EQ THEN
+    CALL cbranch(C_EQ, l)
+    RETURN
+  END IF
+  IF op = R_NE THEN
+    CALL cbranch(C_NE, l)
+    RETURN
+  END IF
+  IF uns <> 0 THEN
+    IF op = R_LT THEN
+      CALL cbranch(C_CC, l)
+    ELSE
+      CALL cbranch(C_CS, l)
+    END IF
+    RETURN
+  END IF
+  IF op = R_LT THEN
+    CALL cbranch(C_LT, l)
+  ELSE
+    CALL cbranch(C_GE, l)
+  END IF
+END SUB
+
 ' ---------------------------------------------------------------------
 ' Parsing.
 ' ---------------------------------------------------------------------
@@ -534,7 +747,47 @@ FUNCTION carith() AS BYTE
   RETURN a
 END FUNCTION
 
+' A relation, if there is one, on top of the bitwise layer.
 FUNCTION cexpr() AS BYTE
+  DIM a AS BYTE
+  DIM b AS BYTE
+  DIM i AS BYTE
+  DIM r AS BYTE
+  a = cbitwise()
+  r = 255
+  IF isop(60) <> 0 THEN
+    r = R_LT
+  END IF
+  IF isop(62) <> 0 THEN
+    r = R_GT
+  END IF
+  IF isop(61) <> 0 THEN
+    r = R_EQ
+  END IF
+  IF isop2(60, 62) <> 0 THEN
+    r = R_NE
+  END IF
+  IF isop2(60, 61) <> 0 THEN
+    r = R_LE
+  END IF
+  IF isop2(62, 61) <> 0 THEN
+    r = R_GE
+  END IF
+  IF r = 255 THEN
+    RETURN a
+  END IF
+  CALL nexttok()
+  b = cbitwise()
+  i = nn
+  nn = nn + 1
+  nk(i) = N_CMP
+  nop(i) = r
+  na(i) = a
+  nb(i) = b
+  RETURN i
+END FUNCTION
+
+FUNCTION cbitwise() AS BYTE
   DIM a AS BYTE
   DIM op AS BYTE
   a = carith()
@@ -636,6 +889,280 @@ END SUB
 ' The whole program.
 ' ---------------------------------------------------------------------
 
+' ---------------------------------------------------------------------
+' Statements and blocks.
+' ---------------------------------------------------------------------
+
+SUB cstoreto(sy AS BYTE, w AS BYTE)
+  CALL eb($69)                                  ' ST [abs16],R0
+  CALL eabs(sylab(sy))
+  IF w = 2 THEN
+    CALL eb($6B)                                ' ST [abs16],R1
+    CALL eabs(sylab(sy) + 1)
+  END IF
+END SUB
+
+SUB cif()
+  DIM endl AS BYTE
+  DIM nxt AS BYTE
+  DIM e AS BYTE
+  DIM r AS BYTE
+  DIM save AS BYTE
+  save = clab
+  endl = newlab()
+  nxt = newlab()
+  CALL nexttok()
+  nn = 0
+  e = cexpr()
+  IF tk <> KW_THEN THEN
+    cerr = 15
+    RETURN
+  END IF
+  CALL nexttok()
+  CALL cgencond(e, nxt, 1)
+  IF tk <> T_NL THEN
+    CALL cstmt()                                ' a single-line IF
+    CALL elab(nxt)
+    clab = save
+    RETURN
+  END IF
+  r = cblock()
+  IF r = B_ELSE THEN
+    CALL nexttok()
+    CALL ejmp(endl)
+    CALL elab(nxt)
+    r = cblock()
+    IF r <> B_ENDIF THEN
+      cerr = 16
+      RETURN
+    END IF
+    CALL nexttok()
+    CALL elab(endl)
+    clab = save
+    RETURN
+  END IF
+  IF r = B_ELSIF THEN
+    ' ELSEIF is an IF inside the else arm, which is all it ever was.
+    CALL ejmp(endl)
+    CALL elab(nxt)
+    CALL cif()
+    CALL elab(endl)
+    clab = save
+    RETURN
+  END IF
+  IF r <> B_ENDIF THEN
+    cerr = 17
+    RETURN
+  END IF
+  CALL nexttok()
+  CALL elab(nxt)
+  clab = save
+END SUB
+
+SUB cdo()
+  DIM top AS BYTE
+  DIM done AS BYTE
+  DIM save AS BYTE
+  DIM svd AS BYTE
+  DIM svi AS BYTE
+  DIM e AS BYTE
+  DIM r AS BYTE
+  save = clab
+  top = newlab()
+  done = newlab()
+  CALL nexttok()
+  CALL elab(top)
+  IF tk = KW_WHILE THEN
+    CALL nexttok()
+    nn = 0
+    e = cexpr()
+    CALL cgencond(e, done, 1)
+  ELSE
+    IF tk = KW_UNTIL THEN
+      CALL nexttok()
+      nn = 0
+      e = cexpr()
+      CALL cgencond(e, done, 0)
+    END IF
+  END IF
+  svd = lpdone
+  svi = inloop
+  lpdone = done
+  inloop = 1
+  r = cblock()
+  lpdone = svd
+  inloop = svi
+  IF r <> B_LOOP THEN
+    cerr = 18
+    RETURN
+  END IF
+  CALL nexttok()
+  IF tk = KW_WHILE THEN
+    CALL nexttok()
+    nn = 0
+    e = cexpr()
+    CALL cgencond(e, top, 0)
+  ELSE
+    IF tk = KW_UNTIL THEN
+      CALL nexttok()
+      nn = 0
+      e = cexpr()
+      CALL cgencond(e, top, 1)
+    ELSE
+      CALL ejmp(top)
+    END IF
+  END IF
+  CALL elab(done)
+  clab = save
+END SUB
+
+SUB cfor()
+  DIM sy AS BYTE
+  DIM lim AS BYTE
+  DIM top AS BYTE
+  DIM done AS BYTE
+  DIM save AS BYTE
+  DIM svd AS BYTE
+  DIM svi AS BYTE
+  DIM a AS BYTE
+  DIM b AS BYTE
+  DIM w AS BYTE
+  DIM r AS BYTE
+  save = clab
+  top = newlab()
+  done = newlab()
+  CALL nexttok()
+  IF tk <> T_NAME THEN
+    cerr = 19
+    RETURN
+  END IF
+  sy = syfind()
+  IF sy = 255 THEN
+    sy = syadd()
+  END IF
+  CALL nexttok()
+  IF isop(61) = 0 THEN
+    cerr = 20
+    RETURN
+  END IF
+  CALL nexttok()
+  nn = 0
+  a = cexpr()
+  IF tk <> KW_TO THEN
+    cerr = 21
+    RETURN
+  END IF
+  CALL nexttok()
+  b = cexpr()
+  w = syw(sy)
+  lim = syhidden(w)
+  ' The limit first, once, then the start.
+  CALL cgen(b, w)
+  CALL cstoreto(lim, w)
+  CALL cgen(a, w)
+  CALL cstoreto(sy, w)
+  CALL elab(top)
+  ' Tested at the top, so FOR i = 1 TO 0 runs no times at all.
+  nn = 0
+  CALL cgencond(mkcmp(R_LE, mkvar(sy), mkvar(lim)), done, 1)
+  svd = lpdone
+  svi = inloop
+  lpdone = done
+  inloop = 1
+  r = cblock()
+  lpdone = svd
+  inloop = svi
+  IF r <> B_NEXT THEN
+    cerr = 22
+    RETURN
+  END IF
+  CALL nexttok()
+  IF tk = T_NAME THEN
+    CALL nexttok()
+  END IF
+  nn = 0
+  CALL cgen(mkbin(O_ADD, mkvar(sy), mknum(1)), w)
+  CALL cstoreto(sy, w)
+  CALL ejmp(top)
+  CALL elab(done)
+  clab = save
+END SUB
+
+SUB cstmt()
+  IF tk = KW_DIM THEN
+    CALL cdim()
+    RETURN
+  END IF
+  IF tk = KW_CONST THEN
+    CALL cconst()
+    RETURN
+  END IF
+  IF tk = KW_IF THEN
+    CALL cif()
+    RETURN
+  END IF
+  IF tk = KW_DO THEN
+    CALL cdo()
+    RETURN
+  END IF
+  IF tk = KW_FOR THEN
+    CALL cfor()
+    RETURN
+  END IF
+  IF tk = KW_EXIT THEN
+    CALL nexttok()
+    CALL nexttok()                              ' the DO
+    IF inloop = 0 THEN
+      cerr = 14
+      RETURN
+    END IF
+    CALL ejmp(lpdone)
+    RETURN
+  END IF
+  IF tk = T_NAME THEN
+    CALL cassign()
+    RETURN
+  END IF
+  cerr = 11
+END SUB
+
+' Statements up to a terminator. Which terminator it was.
+FUNCTION cblock() AS BYTE
+  DO
+    IF cerr <> 0 THEN
+      RETURN B_EOF
+    END IF
+    IF tk = T_EOF THEN
+      RETURN B_EOF
+    END IF
+    IF tk = T_NL THEN
+      CALL nexttok()
+    ELSE
+      IF tk = KW_ELSE THEN
+        RETURN B_ELSE
+      END IF
+      IF tk = KW_ELSIF THEN
+        RETURN B_ELSIF
+      END IF
+      IF tk = KW_LOOP THEN
+        RETURN B_LOOP
+      END IF
+      IF tk = KW_NEXT THEN
+        RETURN B_NEXT
+      END IF
+      IF tk = KW_END THEN
+        CALL nexttok()
+        IF tk = KW_IF THEN
+          RETURN B_ENDIF
+        END IF
+        CALL eb($21)                            ' a bare END is a HALT
+      ELSE
+        CALL cstmt()
+      END IF
+    END IF
+  LOOP
+END FUNCTION
+
 SUB cplace()
   DIM i AS BYTE
   i = 0
@@ -653,6 +1180,7 @@ SUB cplace()
 END SUB
 
 SUB compile(src AS CARD, org AS CARD)
+  DIM r AS BYTE
   CALL cinit()
   CALL estart(org)
   ' The cross-compiler opens with a jump over the SUB bodies to main.
@@ -662,36 +1190,7 @@ SUB compile(src AS CARD, org AS CARD)
   CALL elab(LMAIN)
   CALL lexstart(src)
   CALL nexttok()
-  DO
-    IF tk = T_EOF THEN
-      EXIT DO
-    END IF
-    IF cerr <> 0 THEN
-      EXIT DO
-    END IF
-    IF tk = T_NL THEN
-      CALL nexttok()
-    ELSE
-      IF tk = KW_DIM THEN
-        CALL cdim()
-      ELSE
-        IF tk = KW_CONST THEN
-          CALL cconst()
-        ELSE
-          IF tk = KW_END THEN
-            CALL eb($21)                        ' HALT
-            CALL nexttok()
-          ELSE
-            IF tk = T_NAME THEN
-              CALL cassign()
-            ELSE
-              cerr = 11
-            END IF
-          END IF
-        END IF
-      END IF
-    END IF
-  LOOP
+  r = cblock()
   ' A HALT after the last statement, whether or not one was written --
   ' the cross-compiler emits it unconditionally, so falling off the end
   ' of a program stops rather than running into the variables.
