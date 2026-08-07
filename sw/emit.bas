@@ -42,7 +42,7 @@
 ' high, placed a byte apart. A chain patches in the address it is given,
 ' so `v+1` cannot be expressed as an offset from `v` -- it has to be its
 ' own label.
-CONST NLAB = 128
+CONST NLAB = 256
 
 ' ALU operation numbers, in encoding order.
 CONST E_MOV = 0
@@ -94,19 +94,22 @@ DIM equiet AS BYTE
 ' to put an addend. Array element addresses are the only place it comes
 ' up -- LDW X,#base+off -- so those sites are recorded here instead and
 ' filled in once every label has been placed.
-CONST MAXFIX = 64
-DIM fxsite(63) AS CARD
-DIM fxlab(63) AS BYTE
-DIM fxoff(63) AS CARD
+CONST MAXFIX = 128
+DIM fxsite(127) AS CARD
+DIM fxlab(127) AS BYTE
+DIM fxoff(127) AS CARD
 DIM nfx AS BYTE
 
 DIM cp AS CARD                  ' where the next byte goes, and runs
-DIM labv(127) AS CARD            ' placed address, or the abs16 chain head
-DIM labb(127) AS CARD            ' the rel8 chain head
-DIM labr(127) AS BYTE            ' 1 once the label has been placed
+DIM labv(255) AS CARD            ' placed address, or the abs16 chain head
+DIM labb(255) AS CARD            ' the rel8 chain head
+DIM labr(255) AS BYTE            ' 1 once the label has been placed
 
 SUB estart(a AS CARD)
-  DIM i AS BYTE
+  ' CARD, not BYTE: NLAB is 256 and a byte counter never reaches it --
+  ' it wraps to 0 and the loop runs for ever. The same trap cost a
+  ' session once already.
+  DIM i AS CARD
   cp = a
   nfx = 0
   i = 0

@@ -101,25 +101,28 @@ CONST R_LE = 5
 ' MAX-, not N-: the language is case-insensitive, so a constant NSYM
 ' and a variable nsym are one name -- the DIM won, the guard became
 ' `nsym >= nsym`, and the table looked full the moment it was empty.
-CONST MAXSYM = 40
+' 255, not 256: the expression nodes hold a symbol index in one byte
+' and 255 is the "no such symbol" answer. The compiler's own source
+' declares 238, so the margin is thin but real.
+CONST MAXSYM = 255
 CONST MAXNODE = 48
 
-' Labels above the symbols' own two-each.
-CONST LMAIN = 80
-CONST MAXPOOL = 512
+CONST MAXPOOL = 1400
 
 ' ---- the symbol table
-DIM spool(511) AS BYTE          ' the names, end to end
+DIM spool(1399) AS BYTE          ' the names, end to end
 DIM spend AS CARD
-DIM syoff(39) AS CARD           ' where each one starts
-DIM sylen(39) AS BYTE
-DIM sykind(39) AS BYTE          ' 0 a variable, 1 a constant
-DIM syw(39) AS BYTE             ' 1 byte wide, 2 word wide
-DIM sysg(39) AS BYTE            ' 1 signed
-DIM syval(39) AS CARD           ' a constant's value, or an AT address
-DIM sycnt(39) AS CARD           ' an array's last index
-DIM syat(39) AS BYTE            ' 1 if the array was laid over an address
+DIM syoff(255) AS CARD           ' where each one starts
+DIM sylen(255) AS BYTE
+DIM sykind(255) AS BYTE          ' 0 a variable, 1 a constant
+DIM syw(255) AS BYTE             ' 1 byte wide, 2 word wide
+DIM sysg(255) AS BYTE            ' 1 signed
+DIM syval(255) AS CARD           ' a constant's value, or an AT address
+DIM sycnt(255) AS CARD           ' an array's last index
+DIM syat(255) AS BYTE            ' 1 if the array was laid over an address
 DIM nsym AS BYTE
+DIM sylb(255) AS BYTE           ' its label, or 255 before it needs one
+DIM slab AS BYTE                ' the next permanent label to hand out
 
 ' ---- the expression tree
 DIM nk(47) AS BYTE
@@ -176,7 +179,8 @@ SUB cinit()
   nsym = 0
   spend = 0
   cerr = 0
-  clab = LMAIN + 1
+  clab = NLAB - 1
+  slab = 1
   inloop = 0
   ctmps = 0
   ctmax = 0
@@ -312,15 +316,38 @@ FUNCTION syadd() AS BYTE
   syval(i) = 0
   sycnt(i) = 0
   syat(i) = 0
+  sylb(i) = 255                 ' no label until something needs one
   nsym = nsym + 1
   RETURN i
 END FUNCTION
 
 ' syfind never matches a nameless slot, so a length of zero is enough
 ' to hide one.
-' A variable's low-byte label. The high byte is the next one along.
+
+' A symbol's label, made when it is first needed.
+'
+' Two apiece was simple and cost 476 labels on the compiler's own
+' source, most of them never used: a constant needs none, a SUB and an
+' array need one, and only a scalar needs the second for its high byte.
+' On demand it is nearer 180. Permanent labels grow up from 0 and
+' control-flow labels down from the top, so the two disciplines --
+' never freed, and freed when a construct ends -- do not have to share
+' a counter.
 FUNCTION sylab(i AS BYTE) AS BYTE
-  RETURN i * 2
+  IF sylb(i) <> 255 THEN
+    RETURN sylb(i)
+  END IF
+  IF slab >= clab THEN
+    cerr = 38
+    RETURN 0
+  END IF
+  sylb(i) = slab
+  IF sykind(i) = 0 THEN
+    slab = slab + 2             ' a scalar needs its high byte too
+  ELSE
+    slab = slab + 1
+  END IF
+  RETURN sylb(i)
 END FUNCTION
 
 ' ---------------------------------------------------------------------
@@ -500,6 +527,7 @@ FUNCTION syhidden(w AS BYTE) AS BYTE
   sykind(i) = 0
   syw(i) = w
   sysg(i) = 1
+  sylb(i) = 255
   nsym = nsym + 1
   RETURN i
 END FUNCTION
@@ -768,8 +796,12 @@ END SUB
 ' writing.
 FUNCTION newlab() AS BYTE
   DIM l AS BYTE
+  IF clab <= slab THEN
+    cerr = 38
+    RETURN 0
+  END IF
+  clab = clab - 1
   l = clab
-  clab = clab + 1
   labv(l) = 0
   labb(l) = 0
   labr(l) = 0
@@ -2018,8 +2050,8 @@ SUB cpass(src AS CARD, org AS CARD, frame AS INT, quiet AS BYTE)
   equiet = quiet
   CALL cscan(src)
   ' The cross-compiler opens with a jump over the SUB bodies to main.
-  CALL ejmp(LMAIN)
-  CALL elab(LMAIN)
+  CALL ejmp(0)
+  CALL elab(0)
   CALL eframe(frame)
   cloc = 0
   cbtot = frame
