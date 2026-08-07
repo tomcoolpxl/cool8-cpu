@@ -101,27 +101,32 @@ CONST R_LE = 5
 ' MAX-, not N-: the language is case-insensitive, so a constant NSYM
 ' and a variable nsym are one name -- the DIM won, the guard became
 ' `nsym >= nsym`, and the table looked full the moment it was empty.
-' 255, not 256: the expression nodes hold a symbol index in one byte
-' and 255 is the "no such symbol" answer. The compiler's own source
-' declares 238, so the margin is thin but real.
-CONST MAXSYM = 255
+' How many things one program may NAME -- variables, constants and SUBs
+' together. Not how big anything is: array bounds live in sycnt, which
+' is 16-bit, so an array can have 65535 elements.
+'
+' This was 255, sized so the compiler could compile its own source. That
+' is no longer a goal, and 128 is generous for a program a person types
+' at a machine with 39.5 KB of user memory -- it halves six tables and
+' the name pool, which is 2.5 KB of RAM back.
+CONST MAXSYM = 128
 CONST MAXNODE = 48
 
-CONST MAXPOOL = 1400
+CONST MAXPOOL = 700
 
 ' ---- the symbol table
-DIM spool(1399) AS BYTE          ' the names, end to end
+DIM spool(699) AS BYTE          ' the names, end to end
 DIM spend AS CARD
-DIM syoff(255) AS CARD           ' where each one starts
-DIM sylen(255) AS BYTE
-DIM sykind(255) AS BYTE          ' 0 a variable, 1 a constant
-DIM syw(255) AS BYTE             ' 1 byte wide, 2 word wide
-DIM sysg(255) AS BYTE            ' 1 signed
-DIM syval(255) AS CARD           ' a constant's value, or an AT address
-DIM sycnt(255) AS CARD           ' an array's last index
-DIM syat(255) AS BYTE            ' 1 if the array was laid over an address
+DIM syoff(127) AS CARD           ' where each one starts
+DIM sylen(127) AS BYTE
+DIM sykind(127) AS BYTE          ' 0 a variable, 1 a constant
+DIM syw(127) AS BYTE             ' 1 byte wide, 2 word wide
+DIM sysg(127) AS BYTE            ' 1 signed
+DIM syval(127) AS CARD           ' a constant's value, or an AT address
+DIM sycnt(127) AS CARD           ' an array's last index
+DIM syat(127) AS BYTE            ' 1 if the array was laid over an address
 DIM nsym AS BYTE
-DIM sylb(255) AS BYTE           ' its label, or 255 before it needs one
+DIM sylb(127) AS BYTE           ' its label, or 255 before it needs one
 DIM slab AS BYTE                ' the next permanent label to hand out
 
 ' ---- the expression tree

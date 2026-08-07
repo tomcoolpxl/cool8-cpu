@@ -42,7 +42,7 @@
 ' high, placed a byte apart. A chain patches in the address it is given,
 ' so `v+1` cannot be expressed as an offset from `v` -- it has to be its
 ' own label.
-CONST NLAB = 256
+CONST NLAB = 192
 
 ' ALU operation numbers, in encoding order.
 CONST E_MOV = 0
@@ -101,9 +101,9 @@ DIM fxoff(127) AS CARD
 DIM nfx AS BYTE
 
 DIM cp AS CARD                  ' where the next byte goes, and runs
-DIM labv(255) AS CARD            ' placed address, or the abs16 chain head
-DIM labb(255) AS CARD            ' the rel8 chain head
-DIM labr(255) AS BYTE            ' 1 once the label has been placed
+DIM labv(191) AS CARD            ' placed address, or the abs16 chain head
+DIM labb(191) AS CARD            ' the rel8 chain head
+DIM labr(191) AS BYTE            ' 1 once the label has been placed
 
 SUB estart(a AS CARD)
   ' CARD, not BYTE: NLAB is 256 and a byte counter never reaches it --
