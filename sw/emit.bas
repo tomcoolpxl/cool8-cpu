@@ -38,7 +38,11 @@
 ' it and no two of them are further apart than that.
 ' ---------------------------------------------------------------------
 
-CONST NLAB = 32
+' Every variable takes two: one label for its low byte and one for its
+' high, placed a byte apart. A chain patches in the address it is given,
+' so `v+1` cannot be expressed as an offset from `v` -- it has to be its
+' own label.
+CONST NLAB = 128
 
 ' ALU operation numbers, in encoding order.
 CONST E_MOV = 0
@@ -69,9 +73,9 @@ CONST C_GT = 14
 CONST C_LE = 15
 
 DIM cp AS CARD                  ' where the next byte goes, and runs
-DIM labv(31) AS CARD            ' placed address, or the abs16 chain head
-DIM labb(31) AS CARD            ' the rel8 chain head
-DIM labr(31) AS BYTE            ' 1 once the label has been placed
+DIM labv(127) AS CARD            ' placed address, or the abs16 chain head
+DIM labb(127) AS CARD            ' the rel8 chain head
+DIM labr(127) AS BYTE            ' 1 once the label has been placed
 
 SUB estart(a AS CARD)
   DIM i AS BYTE
