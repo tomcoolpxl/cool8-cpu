@@ -1285,17 +1285,28 @@ prim:
         ; the name was an array's and X has to be worked out instead
         CALL varidx
         CMP  R0,#52
-        BCC  .notstr            ; resident A-Z: one letter, never a string
+        BCC  .notstr            ; resident A-Z: neither of the below
+        ; **A builtin is asked about first, and that order matters.**
+        ; LEFT$, RIGHT$, MID$ and CHR$ all end in '$', so `isstr` says
+        ; yes to every one of them and they would be read as string
+        ; variables of those names. LEN and ASC do not, which is why
+        ; they worked while the other four did not.
+        ;
+        ; X is the variable's value and isbuilt returns a handler in it,
+        ; so it is kept across the question.
+        PUSHW X
+        PUSH R0
+        CALL isbuilt
+        POP  R0
+        BCC  .built
+        POPW X
         PUSH R0
         CALL isstr
         POP  R0
-        BCS  .nostr
-        JMP  sload              ; X is already on its descriptor
-.nostr: PUSH R0
-        CALL islen
-        POP  R0
         BCS  .notstr
-        JMP  slen
+        JMP  sload              ; X is already on its descriptor
+.built: ADDW SP,#2              ; not a variable after all
+        JMP  [X]
 .notstr:
         SKIPSP                  ; `A (3)` is stored with the space in it
         CMP  R2,#$28            ; '('
@@ -1882,23 +1893,6 @@ slen:   SKIPSP
         POP  R0
         RET
 
-; islen -- C clear if NBUF is exactly the three letters LEN.
-islen:  LD   R0,[NLEN]
-        CMP  R0,#3
-        BNE  .no
-        LD   R0,[NBUF]
-        CMP  R0,#$4C            ; 'L'
-        BNE  .no
-        LD   R0,[NBUF+1]
-        CMP  R0,#$45            ; 'E'
-        BNE  .no
-        LD   R0,[NBUF+2]
-        CMP  R0,#$4E            ; 'N'
-        BNE  .no
-        CLC
-        RET
-.no:    SEC
-        RET
 
 ; ---------------------------------------------------------------------
 ; Division, and why MOD is free.
@@ -2239,3 +2233,216 @@ doquit: LD   R0,[DDEPTH]
 .eol:   CALL nextline
         BCS  .scan
         RET                     ; the program ended inside the loop
+
+; ---------------------------------------------------------------------
+; The string functions.
+;
+; All of them are **plain names**, matched against a small table, not
+; keywords. TOKTAB is full: `lookup` computes $80 + index and a 37th
+; entry would be $A4, which is the numeric literal. The escape hatch is
+; a second table from $A5, and it has not been needed -- a name costs a
+; table entry here and nothing in the tokeniser.
+;
+; They are cheap for one reason: the argument has already appended
+; itself to the accumulator by the time the function runs, so LEFT$ and
+; friends are a length change and at most a move *within* the
+; accumulator. Nothing allocates, nothing copies to the heap, and
+; nothing has to be freed.
+; ---------------------------------------------------------------------
+
+; sopen -- step over the '(' ',' or ')' that has to be there.
+sopen:  SKIPSP
+        INCW Y
+        RET
+
+; strim -- of the argument that starts at R2, keep R0 characters from
+; offset R3, moved down to R2. Both are clamped to what is there, which
+; is what makes LEFT$(a$,99) the whole string rather than an error.
+strim:  PUSHW X
+        PUSHW Y
+        LD   R1,[SLEN]
+        SUB  R1,R2              ; how much the argument left
+        CMP  R3,R1
+        BCC  .in
+        CLR  R0                 ; the offset is past the end: empty
+        CLR  R3
+        BRA  .move
+.in:    PUSH R1
+        SUB  R1,R3              ; what is left after the offset
+        CMP  R0,R1
+        BCC  .keep
+        MOV  R0,R1
+.keep:  POP  R1
+.move:  PUSH R0
+        LD   R1,[SACC]
+        MOV  XL,R1
+        LD   R1,[SACC+1]
+        MOV  XH,R1
+        MOV  R1,XL
+        MOV  YL,R1
+        MOV  R1,XH
+        MOV  YH,R1
+        ADDW X,R2               ; the destination
+        ADDW Y,R2
+        ADDW Y,R3               ; and the source
+        MOV  R1,R0
+        TST  R1
+        BEQ  .done
+.mv:    LD   R3,[Y+]
+        ST   [X],R3
+        INCW X
+        SUB  R1,#1
+        BNE  .mv
+.done:  POP  R0
+        ADD  R0,R2
+        ST   [SLEN],R0
+        MOV  R0,#1
+        ST   [STYPE],R0
+        POPW Y
+        POPW X
+        RET
+
+sleft:  CALL sopen              ; '('
+        LD   R2,[SLEN]
+        PUSH R2
+        CALL eval               ; the string, appended where R2 says
+        CALL sopen              ; ','
+        CALL eval               ; how many
+        CALL sopen              ; ')'
+        POP  R2
+        CLR  R3
+        JMP  strim
+
+sright: CALL sopen
+        LD   R2,[SLEN]
+        PUSH R2
+        CALL eval
+        CALL sopen
+        CALL eval
+        CALL sopen
+        POP  R2
+        PUSH R0
+        LD   R3,[SLEN]
+        SUB  R3,R2              ; what the argument left
+        POP  R0
+        PUSH R3
+        CMP  R3,R0
+        BCS  .fits
+        MOV  R0,R3              ; more asked for than there is
+.fits:  POP  R3
+        SUB  R3,R0              ; so the offset is the rest of it
+        JMP  strim
+
+smid:   CALL sopen
+        LD   R2,[SLEN]
+        PUSH R2
+        CALL eval
+        CALL sopen              ; ','
+        CALL eval               ; where to start, counting from one
+        PUSH R0
+        CALL sopen              ; ','
+        CALL eval               ; how many
+        CALL sopen              ; ')'
+        POP  R3
+        TST  R3
+        BEQ  .z
+        SUB  R3,#1              ; one-based, as every BASIC has it
+.z:     POP  R2
+        JMP  strim
+
+; schr -- CHR$(n). The one that makes a string out of nothing.
+schr:   CALL sopen
+        CALL eval
+        CALL sopen
+        CALL sputc
+        MOV  R0,#1
+        ST   [STYPE],R0
+        RET
+
+; sasc -- ASC(a$), and the accumulator forgets the argument again.
+sasc:   CALL sopen
+        LD   R2,[SLEN]
+        PUSH R2
+        CALL eval
+        CALL sopen
+        POP  R2
+        LD   R0,[SLEN]
+        SUB  R0,R2
+        BEQ  .empty
+        PUSHW X
+        LD   R0,[SACC]
+        MOV  XL,R0
+        LD   R0,[SACC+1]
+        MOV  XH,R0
+        ADDW X,R2
+        LD   R0,[X]
+        POPW X
+        CLR  R1
+        BRA  .done
+.empty: CLR  R0                 ; ASC("") is zero, not an error
+        CLR  R1
+.done:  ST   [SLEN],R2
+        PUSH R0
+        CLR  R0
+        ST   [STYPE],R0
+        POP  R0
+        RET
+
+; isbuilt -- the name in NBUF a builtin? C clear and X on its handler.
+isbuilt:
+        PUSHW Y
+        LDW  X,#btab
+.each:  MOV  R0,XL
+        ST   [BENT],R0
+        MOV  R0,XH
+        ST   [BENT+1],R0
+        LD   R0,[X]
+        BEQ  .miss
+        LD   R1,[NLEN]
+        CMP  R0,R1
+        BNE  .next
+        INCW X
+        LDW  Y,#NBUF
+        MOV  R1,R0
+.cmp:   LD   R2,[X]
+        INCW X
+        LD   R3,[Y+]
+        SUB  R2,R3
+        BNE  .next
+        SUB  R1,#1
+        BNE  .cmp
+        LD   R0,[X]
+        INCW X
+        LD   R1,[X]
+        MOV  XL,R0
+        MOV  XH,R1
+        POPW Y
+        CLC
+        RET
+.next:  LD   R0,[BENT]          ; back to the entry and over it whole
+        MOV  XL,R0
+        LD   R0,[BENT+1]
+        MOV  XH,R0
+        LD   R0,[X]
+        ADDW X,R0
+        ADDW X,#3
+        BRA  .each
+.miss:  POPW Y
+        SEC
+        RET
+
+; Length, the name, then the handler. Six characters is NSIG, and
+; RIGHT$ is exactly six.
+btab:   .byte 3,"L","E","N"
+        .word slen
+        .byte 5,"L","E","F","T","$"
+        .word sleft
+        .byte 6,"R","I","G","H","T","$"
+        .word sright
+        .byte 4,"M","I","D","$"
+        .word smid
+        .byte 4,"C","H","R","$"
+        .word schr
+        .byte 3,"A","S","C"
+        .word sasc
+        .byte 0

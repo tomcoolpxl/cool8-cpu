@@ -555,6 +555,61 @@ CASES = [
              line(40, [K["END"]])),
      {0: 1, 1: 0}),
 
+    # ---- the string functions. Each one's argument has already
+    # appended itself to the accumulator, so they are a length change
+    # and at most a move within it -- nothing allocates.
+    ("LEFT$, RIGHT$ and MID$",
+     program(spaced(10, name("A$"), "=", name('"ABCDEF"')),
+             spaced(20, name("B$"), "=", name("LEFT$"), "(", name("A$"),
+                    ",", num(3), ")"),
+             spaced(30, [K["PRINT"]], name("B$")),
+             line(40, [K["END"]])),
+     {}, "ABC"),
+
+    ("RIGHT$ takes them off the other end",
+     program(spaced(10, name("A$"), "=", name('"ABCDEF"')),
+             spaced(20, [K["PRINT"]], name("RIGHT$"), "(", name("A$"),
+                    ",", num(2), ")"),
+             line(30, [K["END"]])),
+     {}, "EF"),
+
+    ("MID$ counts from one, as every BASIC does",
+     program(spaced(10, name("A$"), "=", name('"ABCDEF"')),
+             spaced(20, [K["PRINT"]], name("MID$"), "(", name("A$"), ",",
+                    num(3), ",", num(2), ")"),
+             line(30, [K["END"]])),
+     {}, "CD"),
+
+    ("asking for more than there is gives what there is",
+     program(spaced(10, name("A$"), "=", name('"AB"')),
+             spaced(20, [K["PRINT"]], name("LEFT$"), "(", name("A$"),
+                    ",", num(99), ")"),
+             line(30, [K["END"]])),
+     {}, "AB"),
+
+    ("CHR$ and ASC are inverses",
+     program(spaced(10, name("A"), "=", name("ASC"), "(",
+                    name('"A"'), ")"),
+             spaced(20, [K["PRINT"]], name("CHR$"), "(", num(66), ")"),
+             line(30, [K["END"]])),
+     {0: 65}, "B"),
+
+    ("a function inside a concatenation, which is where the accumulator earns it",
+     program(spaced(10, name("A$"), "=", name('"HELLO"')),
+             spaced(20, name("B$"), "=", name("LEFT$"), "(", name("A$"),
+                    ",", num(2), ")", "+", name('"-"'), "+",
+                    name("RIGHT$"), "(", name("A$"), ",", num(2), ")"),
+             spaced(30, [K["PRINT"]], name("B$")),
+             line(40, [K["END"]])),
+     {}, "HE-LO"),
+
+    ("LEN of a function result",
+     program(spaced(10, name("A$"), "=", name('"ABCDEF"')),
+             spaced(20, name("A"), "=", name("LEN"), "(", name("MID$"),
+                    "(", name("A$"), ",", num(2), ",", num(3), ")", ")"),
+             line(30, [K["END"]])),
+     {0: 3}),
+
     # ---- DO/LOOP, with the test at either end or both.
     ("DO ... LOOP UNTIL, which always runs once",
      program(spaced(10, [K["DO"]]),

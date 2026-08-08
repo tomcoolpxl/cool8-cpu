@@ -41,6 +41,7 @@ MAXDO   = 4
 DOSTK   = $0000                 ; 16: MAXDO frames of DOFR
 DDEPTH  = $0010                 ; 1: loops open, 0 = none
 DNEST   = $0011                 ; 1: nesting seen while skipping one
+BENT    = $0012                 ; 2: the builtin table entry being tried
 
 ; ---- the interpreter
 LREC    = $0014                 ; 2: the current line record
