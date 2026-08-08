@@ -16,18 +16,37 @@
 ; not consecutive in TOKTAB, so dispatch is a table indexed by
 ; token - $80 with every unimplemented slot pointing at one handler.
 ;
-; ## Recursion is bounded, and that is deliberate
+; ## Recursion is bounded, and the bound is tighter than it looks
 ;
-; The stack is 256 bytes and the I/O page sits directly below it, so a
-; stack that runs past ~250 bytes pushes return addresses into hardware
-; registers where they are silently lost. That cost a day earlier in
-; this project.
+; The stack is 256 bytes. It is not where an earlier version of this
+; comment said: sw/boot.asm:339 sets SP to $0200 and nothing moves it,
+; so it grows down through page 1, and page 0 below holds this file's
+; state, the A-Z variables and the filesystem's workspace. An overrun
+; corrupts those rather than the I/O page.
 ;
-; The expression evaluator is recursive descent, which is safe here for
-; a reason worth writing down: a level costs one return address, so a
-; parenthesis costs six bytes, not the sixty a compiled recursive
-; descent cost. Depth 20 is 120 bytes. The compiler blew the stack
-; because its frames were large, not because it recursed.
+; The expression evaluator is recursive descent, which is cheap here
+; because a level costs one return address rather than a frame -- the
+; compiler blew its stack because its frames were large, not because it
+; recursed.
+;
+; **Measured, by sim/test_interp.py, rather than assumed: a parenthesis
+; costs 4.0 bytes** -- 26 bytes at depth 5, 106 at depth 25. The earlier
+; guess of six was pessimistic in the wrong direction, because the real
+; problem is not the slope but where it ends up:
+;
+;   a stored line holds 127 token bytes, so the deepest expression a
+;   user can type is about 60 parentheses, and that reaches 246 bytes
+;   of the 256.
+;
+; Ten bytes of margin, measured from an empty stack -- and the editor is
+; already 78 bytes down when it calls RUN, so 78 + 246 does not fit.
+;
+; So the evaluator counts its own nesting and refuses past MAXEXPR with
+; ?FORMULA TOO COMPLEX, which is the error C64 BASIC has for exactly
+; this reason. 24 levels is about 102 bytes, which leaves the editor its
+; 78 and 76 spare. The counter is only touched where prim actually
+; recurses, so an expression without a parenthesis pays nothing.
+; sim/test_interp.py gates both the slope and the refusal.
 ; ---------------------------------------------------------------------
 
 ; ---- the editor's tokens (sw/basic.bas TOKTAB, order frozen)
@@ -61,19 +80,28 @@ K_NUM   = $A4                   ; a binary literal: two bytes follow
 
 NTOK    = 37                    ; $80..$A4
 
-; ---- state, all in zero page: every one is touched per statement
-IP      = $0010                 ; 2: where we are in the token stream
-LREC    = $0014                 ; 2: the current line record
-PEND    = $0016                 ; 2: progend, snapshot at RUN
-ERR     = $0018                 ; 1: nonzero stops the program
-TVAR    = $0019                 ; 1: a variable index, doubled
-LVAR    = $001A                 ; 1: the FOR variable, doubled
-LLIM    = $001B                 ; 2: its limit
-LBODY   = $001D                 ; 2: where its body starts
-LLINE   = $001F                 ; 2: and which line that was
-MTMP    = $0023                 ; 4: multiply scratch
+; ---- state
+;
+; The page 0 map and the error codes are in sw/zp.asm, which the
+; including file supplies once. LVAR/LLIM/LBODY/LLINE are adjacent there
+; on purpose: they are the innermost FOR's frame and fpush copies them
+; as seven consecutive bytes.
+;
+; The FOR stack is the BBC Micro's shape rather than BBC BASIC (86)'s.
+; The BBC gave FOR, REPEAT and GOSUB a stack each and said "Too many
+; FORs" when one filled; BBC BASIC (86) merged them onto the processor
+; stack. The first is right here, because the processor stack is 256
+; bytes shared with everything else and a deeply parenthesised
+; expression already reaches 246 of it.
 
-VARS    = $0040                 ; 52: A-Z, two bytes each
+; ---- how deep an expression may nest
+;
+; Measured at 4.0 bytes of stack a level, so 24 is about 102 bytes. The
+; editor is already 78 bytes down when it calls RUN and the whole stack
+; is 256, which is where the number comes from: it is a stack budget,
+; not a limit on what anyone would write. Ten nested parentheses is
+; already beyond what BBC or C64 BASIC will take.
+MAXEXPR = 24
 
 ; ---------------------------------------------------------------------
 ; run -- execute from the first line to the last.
@@ -92,6 +120,9 @@ irun:
         INCW X
         SUB  R1,#1
         BNE  .iz
+        CLR  R0
+        ST   [FDEPTH],R0        ; and no FOR loop is running
+        ST   [EDEPTH],R0        ; at statement level, not inside a paren
         ; LREC and PEND are set by the caller -- the editor passes the
         ; program it is holding, and the gate passes one it built.
         CALL openline
@@ -184,7 +215,7 @@ stmt:
         MOV  XH,R2
         JMP  [X]
 
-bad:    MOV  R0,#1              ; ?SYNTAX ERROR
+bad:    MOV  R0,#E_SYN
         ST   [ERR],R0
         RET
 
@@ -229,7 +260,7 @@ sttab:
         .word bad               ; $A3 WEND
         .word bad               ; $A4 NUM
 
-h_end:  MOV  R0,#255            ; a clean stop, not an error
+h_end:  MOV  R0,#E_DONE         ; a clean stop, not an error
         ST   [ERR],R0
         RET
 
@@ -347,11 +378,82 @@ h_goto:
 ; ---------------------------------------------------------------------
 ; FOR v = <expr> TO <expr>   /   NEXT [v]
 ;
-; One level, which is what the gate needs; a stack of them costs the
-; same per iteration because the state is read from fixed addresses
-; either way.
+; Nested to MAXFOR levels, and the claim the one-level version made --
+; that a stack costs the same per iteration -- turned out to be true, so
+; it is built that way: the innermost loop stays in the four cached
+; locations and only the *enclosing* ones are pushed. NEXT's hot path
+; therefore gains one load and one branch over the whole nesting
+; question, and nothing else.
+;
+; Before this, a nested FOR overwrote the outer loop's variable, limit,
+; body and line, and the outer NEXT then counted the inner variable
+; toward the inner limit. It did not fail; it silently ran the wrong
+; program.
 ; ---------------------------------------------------------------------
+; The two errors the FOR stack can raise. They live here rather than
+; beside `bad` because only this code reaches them, and putting them up
+; there pushed sttab twelve bytes further from the dispatcher -- which
+; put `BCC h_let`, the hot path for an assignment, out of branch range.
+e_fors: MOV  R0,#E_FORS         ; ?TOO MANY FORS
+        ST   [ERR],R0
+        RET
+e_next: MOV  R0,#E_NEXT         ; ?NEXT WITHOUT FOR
+        ST   [ERR],R0
+        RET
+
+; fpush / fpop -- the cached frame to and from FORSTK[R0].
+;
+; LVAR, LLIM, LBODY and LLINE were laid out adjacent for this: the frame
+; is seven consecutive bytes at $001A, so saving one is a block copy
+; rather than seven named moves. MUL puts Rd*Rs in X and touches neither
+; operand, so the slot address is one instruction.
+;
+; Y is the token pointer and the copy needs a second pointer, so Y is
+; spilled for the duration -- two bytes, and only on a FOR or a NEXT
+; that ends a loop, never per iteration.
+fpush:  MOV  R1,#FORFR
+        MUL  R0,R1              ; X = R0 * FORFR
+        ADDW X,#FORSTK
+        PUSHW Y
+        LDW  Y,#LVAR
+        MOV  R1,#FORFR
+.fp:    LD   R0,[Y+]
+        ST   [X],R0
+        INCW X
+        SUB  R1,#1
+        BNE  .fp
+        POPW Y
+        RET
+
+fpop:   MOV  R1,#FORFR
+        MUL  R0,R1
+        ADDW X,#FORSTK
+        PUSHW Y
+        LDW  Y,#LVAR
+        MOV  R1,#FORFR
+.fq:    LD   R0,[X]
+        ST   [Y+],R0
+        INCW X
+        SUB  R1,#1
+        BNE  .fq
+        POPW Y
+        RET
+
 h_for:
+        ; Room for another? The innermost lives in the cache, so the
+        ; stack holds FDEPTH-1 frames and FDEPTH is the count of loops.
+        LD   R0,[FDEPTH]
+        CMP  R0,#MAXFOR
+        BCC  .room
+        JMP  e_fors             ; out of reach for a branch
+.room:  CMP  R0,#0
+        BEQ  .first             ; nothing cached yet, nothing to save
+        SUB  R0,#1
+        CALL fpush              ; the loop we are about to displace
+.first: LD   R0,[FDEPTH]
+        ADD  R0,#1
+        ST   [FDEPTH],R0
+
         CALL varidx
         ST   [LVAR],R0
         INCW Y                  ; the '='
@@ -377,10 +479,38 @@ h_for:
         JMP  stmt
 
 h_next:
-        LD   R0,[Y]             ; an optional variable name
-        CMP  R0,#$80
+        LD   R0,[FDEPTH]
+        BNE  .live
+        JMP  e_next             ; NEXT without FOR
+        ; An optional variable name, and it has to be tested for as a
+        ; letter rather than as "not a token". A bare NEXT at the end of
+        ; a line sits on the terminator, which is $00 and therefore also
+        ; below $80; the looser test consumed it as a name.
+.live:  LD   R0,[Y]
+        CMP  R0,#$41            ; 'A'
+        BCC  .go
+        CMP  R0,#$5B            ; past 'Z'
         BCS  .go
-        INCW Y
+        CALL varidx             ; R0 = its doubled index, Y past it
+        ; `NEXT i` when an inner loop is still open closes the inner one
+        ; -- the BBC's rule, and the thing that makes GOTO out of a loop
+        ; recoverable rather than a slow leak.
+.match: LD   R1,[LVAR]
+        CMP  R0,R1
+        BEQ  .go
+        LD   R1,[FDEPTH]
+        SUB  R1,#1
+        ST   [FDEPTH],R1
+        CMP  R1,#0
+        BEQ  .nomatch
+        PUSH R0
+        SUB  R1,#1
+        MOV  R0,R1
+        CALL fpop
+        POP  R0
+        BRA  .match
+.nomatch:
+        JMP  e_next
 .go:    LDW  X,#VARS
         LD   R0,[LVAR]
         ADDW X,R0
@@ -411,7 +541,16 @@ h_next:
         LD   R0,[LBODY+1]
         MOV  YH,R0
         JMP  stmt
-.out:   JMP  stmt
+        ; The loop is done: drop it and bring the enclosing one back
+        ; into the cache, if there is one.
+.out:   LD   R0,[FDEPTH]
+        SUB  R0,#1
+        ST   [FDEPTH],R0
+        CMP  R0,#0
+        BEQ  .last
+        SUB  R0,#1
+        CALL fpop
+.last:  JMP  stmt
 
 ; ---------------------------------------------------------------------
 ; The expression evaluator.
@@ -614,6 +753,35 @@ false:  CLR  R0
         CLR  R1
         RET
 
+; edin / edout -- one level of expression nesting, and back.
+;
+; Only the three places prim actually recurses call these, so an
+; expression without a parenthesis pays nothing at all -- which matters,
+; because prim runs once per operand and is the hottest thing here after
+; NEXT. R2 is scratch across prim already; nothing survives it.
+;
+; edin returns with C set when it has refused, and the caller hands back
+; zero. It does not try to unwind: ERR is set, every enclosing level
+; refuses in turn because the counter is still at the limit, and the
+; expression collapses to a value nobody uses because `stmt` checks ERR
+; before running another statement.
+edin:   LD   R2,[EDEPTH]
+        CMP  R2,#MAXEXPR
+        BCS  .over
+        ADD  R2,#1
+        ST   [EDEPTH],R2
+        CLC
+        RET
+.over:  MOV  R2,#E_DEEP         ; ?FORMULA TOO COMPLEX
+        ST   [ERR],R2
+        SEC
+        RET
+
+edout:  LD   R2,[EDEPTH]
+        SUB  R2,#1
+        ST   [EDEPTH],R2
+        RET
+
 prim:
         LD   R0,[Y]
         CMP  R0,#K_NUM
@@ -639,11 +807,17 @@ prim:
         INCW Y
         RET
 .paren: INCW Y
+        CALL edin
+        BCS  .deep
         CALL eval
+        CALL edout
         INCW Y                  ; the ')'
         RET
 .neg:   INCW Y
+        CALL edin
+        BCS  .deep
         CALL prim
+        CALL edout
         MOV  R2,R0
         MOV  R3,R1
         CLR  R0
@@ -653,11 +827,19 @@ prim:
         RET
 .peek:  INCW Y
         INCW Y                  ; the '('
+        CALL edin
+        BCS  .deep
         CALL eval
+        CALL edout
         INCW Y                  ; the ')'
         MOV  XL,R0
         MOV  XH,R1
         LD   R0,[X]
+        CLR  R1
+        RET
+        ; Refused. The value is never used -- stmt stops on ERR before
+        ; the statement that would have consumed it completes.
+.deep:  CLR  R0
         CLR  R1
         RET
 

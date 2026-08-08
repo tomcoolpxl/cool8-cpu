@@ -46,7 +46,7 @@ import cool8vid as vid                                   # noqa: E402
 import cool8bas as bas                                   # noqa: E402
 import cool8disk as disk                                 # noqa: E402
 
-ORG = 0xC000
+ORG = 0xA000
 IMG = os.path.join(BUILD, "basic.img")
 FAILS = []
 
@@ -90,7 +90,13 @@ class Machine:
         self.m = vm.Machine(flash_path=flash) if flash else vm.Machine()
         self.m.bus.mem[ORG:ORG + len(code)] = code
         self.m.cpu.pc = ORG
-        self.m.cpu.sp = 0xFFF7
+        # Where sw/boot.asm:339 leaves it, not somewhere roomier. The
+        # stack grows down through page 1 and page 0 holds the
+        # interpreter's state and the filesystem's, so a harness that
+        # hands BASIC a 63 KB stack cannot fail the way the machine
+        # would. Measured high-water mark for the whole S1-S3 run is 78
+        # bytes, in s_rowaddr, leaving 178 spare.
+        self.m.cpu.sp = 0x0200
         self.m.romen = False
         # rawkey's `.rk0` is reached only when nothing is waiting, so it
         # is the one address that means "idle" rather than "busy".

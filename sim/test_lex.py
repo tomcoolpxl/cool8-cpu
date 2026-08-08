@@ -75,12 +75,15 @@ def check(ok, what, detail=""):
 
 
 def keyword_bytes():
-    """The keyword -> token byte map, read out of sw/basic.bas's TOKTAB.
+    """The keyword -> token byte map, read out of sw/toktab.asm.
 
     Read rather than restated: the table is the machine's, and a copy
-    here would only ever agree with itself.
+    here would only ever agree with itself. It used to be inline in
+    sw/basic.bas and moved to its own file when sw/asm.asm needed it as
+    well -- the assembler has to turn keyword bytes back into words,
+    because the editor tokenises the inside of an ASM block.
     """
-    src = open(os.path.join(ROOT, "sw", "basic.bas"), encoding="utf-8")
+    src = open(os.path.join(ROOT, "sw", "toktab.asm"), encoding="utf-8")
     text = src.read()
     body = text.split("TOKTAB:", 1)[1]
     out, tok = {}, 0x80

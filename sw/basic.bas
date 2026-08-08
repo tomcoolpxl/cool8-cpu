@@ -19,9 +19,17 @@
 '
 ' ## Where things live (OS_PLAN section 2.1)
 '
-'   $0200-$9FFF   program text, then compiled code, variables, strings
-'   $A000-$BFFF   the screen: 128x32 cells at stride 256, 80x30 shown
-'   $C000-$FDFF   this program
+'   $0200-$7FFF   program text, then compiled code, variables, strings
+'   $8000-$9FFF   the screen: 128x32 cells at stride 256, 80x30 shown
+'   $A000-$FDFF   this program
+'
+' The map must be 8 KB aligned -- the row wrap is a mask, not a compare
+' -- so the screen sits at $8000 or $A000 and nowhere between. It is at
+' $8000 because that is where mode 0's preset, the boot ROM's banner and
+' the monitor already put it; the editor used to override the preset to
+' $A000, and that override was the only thing forcing this program up to
+' $C000. Moving it back buys 8 KB of system space for 8 KB of program
+' space, and leaves one screen base instead of three.
 '
 ' Program text grows up from $0200 and is kept in ascending line order,
 ' tokenised: keywords become one byte each, which measured 23 % smaller
@@ -35,9 +43,9 @@ EXTERN ERRTAB
 EXTERN MSGFREE
 EXTERN MSGKFREE
 
-CONST SCREEN  = $A000
+CONST SCREEN  = $8000
 CONST PROG    = $0200           ' program text starts here
-CONST MEMTOP  = $9FFF
+CONST MEMTOP  = $7FFF
 CONST COLS    = 80
 CONST ROWS    = 30
 
@@ -73,8 +81,6 @@ CONST K_INS   = 263
 ' of what makes an interpreted FOR slow. Appended, so saved programs
 ' keep working -- TOKTAB order is frozen.
 CONST T_NUM   = $A4
-
-DIM scr(8191) AS BYTE AT $A000
 
 DIM cx AS BYTE                  ' cursor column on screen
 DIM cy AS BYTE                  ' cursor row on screen
@@ -792,8 +798,12 @@ END SUB
 ' place, and no 4 KB buffer is needed anywhere.
 ' ---------------------------------------------------------------------
 
-CONST FSENT = $0107             ' fs.asm's fsent -- FSVARS+7
-CONST FSFPG = $0104             ' and its first free page
+' Two of fs.asm's variables, by address, because BASIC cannot see an
+' assembler equate. They must track FSVARS in sw/fs.asm, which is at
+' $0074 -- it was moved out of $0100 so that page 1 is the CPU stack and
+' nothing else. If fs.asm moves again these move with it.
+CONST FSENT = $007B             ' fs.asm's fsent -- FSVARS+7
+CONST FSFPG = $0078             ' and its first free page -- FSVARS+4
 CONST VOLPGS = 1776             ' data pages; the rest is scratch
 
 DIM fname(10) AS BYTE           ' 8.3, space padded, upper case
@@ -1700,49 +1710,10 @@ SUB backspace()
 END SUB
 
 ASM
-; ---- the token table: length, then the word. Order fixes the token
-; ---- byte: the first entry is $80.
-TOKTAB:
-        .byte 5, "P","R","I","N","T"
-        .byte 3, "S","U","B"
-        .byte 8, "F","U","N","C","T","I","O","N"
-        .byte 3, "D","I","M"
-        .byte 5, "C","O","N","S","T"
-        .byte 3, "F","O","R"
-        .byte 4, "N","E","X","T"
-        .byte 2, "T","O"
-        .byte 2, "D","O"
-        .byte 4, "L","O","O","P"
-        .byte 5, "W","H","I","L","E"
-        .byte 5, "U","N","T","I","L"
-        .byte 4, "E","X","I","T"
-        .byte 2, "I","F"
-        .byte 4, "T","H","E","N"
-        .byte 4, "E","L","S","E"
-        .byte 6, "E","L","S","E","I","F"
-        .byte 3, "E","N","D"
-        .byte 6, "R","E","T","U","R","N"
-        .byte 4, "C","A","L","L"
-        .byte 2, "A","S"
-        .byte 3, "I","N","T"
-        .byte 4, "B","Y","T","E"
-        .byte 4, "P","E","E","K"
-        .byte 4, "P","O","K","E"
-        .byte 3, "A","N","D"
-        .byte 2, "O","R"
-        .byte 3, "X","O","R"
-; ---- the rest of the language, so the compiler sees keywords as
-; ---- keywords. Appended, because the order fixes the token byte and
-; ---- programs already saved to disk hold the old ones.
-        .byte 4, "C","A","R","D"
-        .byte 2, "A","T"
-        .byte 3, "A","S","M"
-        .byte 6, "E","X","T","E","R","N"
-        .byte 7, "I","N","C","L","U","D","E"
-        .byte 6, "I","N","L","I","N","E"
-        .byte 4, "G","O","T","O"
-        .byte 4, "W","E","N","D"
-        .byte 0
+; ---- the keyword table. It is its own file because sw/asm.asm reads
+; ---- it too -- the editor tokenises the inside of an ASM block, so the
+; ---- assembler has to turn those bytes back into words.
+        .include "toktab.asm"
 
 ; ---- commands, in the order docommand tests them
 CMDTAB:
@@ -1794,7 +1765,7 @@ BANNERTAB:
         .asciz "COOL8 BASIC 1.0"
         .byte 0
 
-; ---- the filesystem, whole. Its state lives at $0100, below the
-; ---- program text at $0200 and above nothing that BASIC uses.
+; ---- the filesystem, whole. Its state lives at $0074, in page 0 with
+; ---- the interpreter's, so that page 1 is the CPU stack alone.
         .include "fs.asm"
 END ASM

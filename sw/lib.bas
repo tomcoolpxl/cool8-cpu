@@ -44,7 +44,10 @@ CONST SPR_DATA   = $FE2B
 CONST SPR_CTRL   = $FE2C
 CONST SND_IDX    = $FE50
 CONST SND_DATA   = $FE51
-CONST TXT        = $8200
+' The text map, 8 KB aligned because the row wrap is a mask. This used
+' to be $8200, which is not aligned: Cls wrote 8192 bytes from there and
+' spilled $200 past the end of the window into whatever followed.
+CONST TXT        = $8000
 
 ' ---------------------------------------------------------------------
 ' The display.
@@ -306,7 +309,7 @@ SUB Scroll()
   IF vtop > 31 THEN
     vtop = 0
   END IF
-  POKE VID_BASE_H, $82 + vtop
+  POKE VID_BASE_H, $80 + vtop
   row = vtop + 29
   IF row > 31 THEN
     row = row - 32

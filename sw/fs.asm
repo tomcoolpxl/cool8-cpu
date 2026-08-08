@@ -49,7 +49,20 @@ FLS_WDATA  = $FE8E
 FLS_WCTRL  = $FE8F
 
 ; ---- state
-FSVARS  = $0100
+;
+; This lived at $0100 and should not have. The boot ROM sets SP to $0200
+; (boot.asm:339) and nothing moves it afterwards, so the CPU stack grows
+; down through page 1 -- straight into this block at depth 210. The
+; failure was quiet in the worst way: a deep expression corrupted the
+; mounted volume rather than a return address, so the machine kept
+; running and the disk went wrong later.
+;
+; Page 1 is now the stack and nothing else, which is what the BBC Micro
+; does; its filing system workspace sits in page 0 at &B0-&CF for the
+; same reason. There is no cost to being here -- COOL8 has no zero-page
+; addressing mode (D6), so $0074 is neither faster nor slower than
+; $0100.
+FSVARS  = $0074                 ; 46 bytes, $0074-$00A1
 fsdrv   = FSVARS+0              ; the mounted drive
 fsbase  = FSVARS+1              ; 3: volume base, 24-bit little endian
 fsfpg   = FSVARS+4              ; 2: first free page in the volume

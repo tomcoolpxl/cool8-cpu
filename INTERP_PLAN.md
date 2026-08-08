@@ -13,15 +13,15 @@ That decision is measured, not assumed. See §5.
 The compiler works ([docs/11-compiler.md](docs/11-compiler.md)) and is
 shelved for one reason: 22.5 KB of code plus 4.3 KB of tables in a
 39.5 KB user area leaves a program about 12 KB. An interpreter has no
-compiled output at all, so the same machine gives a program **~43 KB**.
+compiled output at all, so the same machine gives a program **31.5 KB**.
 
 ```
-                              program space    speed
-compiler in a 24 KB overlay        ~12 KB       1.0x
-statement interpreter, 20 KB       ~43 KB       3-5x
+                                 program space    speed
+compiler in a 24 KB overlay           ~12 KB       1.0x
+statement interpreter, 23.5 KB        31.5 KB      3-5x
 ```
 
-Three and a half times the room for three to five times the time, and
+Two and a half times the room for three to five times the time, and
 `ASM` blocks cover the cases where the time matters. That is the bargain
 BBC BASIC made and it is a better one here than it was on a 6502,
 because this ISA's `CALL`/`RET` is 9 clocks and its table dispatch 38.
@@ -54,22 +54,82 @@ arithmetic (`docs/11-compiler.md` §3), so the assembler is small.
 ## 3. Memory
 
 ```
-$0000-$01FF    512 B   zero page: the interpreter's hot state
-$0200-$AFFF   43.5 KB  program text, variables, arrays, strings
-$B000-$FDFF   20 KB    the system: editor, interpreter, filesystem
+$0000-$00FF    256 B   the interpreter's hot state
+$0200-$7FFF   31.5 KB  program text, variables, arrays, strings
+$8000-$9FFF    8 KB    the screen: 128x32 cells at stride 256
+$A000-$FDFF   23.5 KB  the system: editor, interpreter, filesystem
 $FE00-$FEFF            I/O
-$FF00-$FFFF            stack and vectors
+$FF00-$FFFF            vectors
 ```
 
-The screen moves out of `$A000` and into video RAM's text page, freeing
-8 KB — text mode reads main RAM today only because the boot ROM set it
-that way.
+**An earlier version of this file said the screen could move into video
+RAM's text page, "because text mode reads main RAM today only because
+the boot ROM set it that way". That was wrong.** Which memory the text
+fetch reads is fixed by the engine decode in `rtl/soc/cool8_fetch.v` —
+`want_ram` is asserted by the text states and `want_vr` by the tile and
+bitmap states, and nothing else chooses. [D28](docs/01-decisions.md)
+refused to add a `VID_ADDRSPACE` bit on purpose, so *"the failure mode
+does not exist to be documented"*. No sequence of `VID_BASE`,
+`VID_CTRL` or `VID_MODE` writes can move the text map, and doing it in
+RTL is D28's rejected runner-up: first light would go behind an indirect
+port and `tools/cool8screen.py` would lose the screen entirely.
 
-**The stack is 256 bytes and the I/O page is directly below it.** A
-stack that grows past ~250 bytes pushes return addresses into hardware
-registers, where they are silently lost. The interpreter's expression
-evaluator must therefore be iterative, not recursive — which it is
-anyway, for speed.
+What actually happened is cheaper. The map has to be 8 KB aligned,
+because the row wrap is a mask rather than a compare, so it sits at
+`$8000` or `$A000` and nowhere between. Mode 0's preset, the boot ROM's
+banner and the monitor all use `$8000`; the editor was overriding the
+preset to `$A000`, and that override was the only thing forcing the
+system up to `$C000`. Moving it back buys **8 KB of system space for
+8 KB of program space** and leaves one screen base where there were
+three.
+
+So the program area is 31.5 KB, not 43.5 KB. Against the compiler's
+~12 KB that is still the argument this design was chosen on. The
+43.5 KB number needs the RTL move, and the RTL move needs D28 reopened
+with evidence.
+
+**The stack is 256 bytes, and what is below it is not the I/O page.**
+An earlier version of this file said the stack lives at `$FF00-$FFFF`
+with `$FE00-$FEFF` directly beneath, so an overrun would push return
+addresses into hardware registers. That is the ISA's reset value
+(`SP <- $FFF8`) and it is not what runs: `sw/boot.asm:339` sets
+`stack = $0200` and `reset` loads it, and `sw/basic.bas` never touches
+`SP`. So the stack grows down through `$01FF`, and at depth ~210 it
+reaches `FSVARS` at `$0100` — the filesystem's own state
+(`sw/fs.asm:52-64`). The failure is quieter than the documented one: not
+a lost return address, but a corrupted mount.
+
+**The harnesses do not reproduce this.** `sim/test_basic.py:93` and
+`sim/test_fs.py:80` set `SP = $FFF7`; `sim/test_interp.py:240` sets
+`$7FF0`. None of them runs at `$0200`, so none of them can catch a depth
+problem the real machine would hit. That matters at I5, where `RUN`
+enters the interpreter several frames deep inside `docommand` rather
+than at the top of an empty stack.
+
+The expression evaluator is recursive descent, and that is cheap here
+because a level costs one return address rather than a frame — the
+compiler blew its stack because its frames were large, not because it
+recursed. **Measured: a parenthesis costs 4.0 bytes.** A stored line
+holds 127 token bytes, so the deepest expression that could be typed was
+about 60 parentheses — 246 of the 256, ten bytes of margin, and that
+from an *empty* stack when the editor is already 78 bytes down at `RUN`.
+
+So the evaluator counts its own nesting and refuses past 24 levels with
+`?FORMULA TOO COMPLEX`, the error C64 BASIC has for exactly this. 24 is
+about 102 bytes, which leaves the editor its 78 and 76 spare. It is a
+stack budget rather than a limit on what anyone would write — ten nested
+parentheses is already past what BBC or C64 BASIC will take. The counter
+is touched only where the evaluator actually recurses, so an expression
+without a parenthesis pays nothing and the benchmark did not move.
+
+**The language's own stacks do not go on the CPU stack.** `FOR` keeps
+its innermost loop in four fixed locations and pushes only the enclosing
+ones, onto a bounded stack of its own in page 0, with `?TOO MANY FORS`
+when it fills. That is the BBC Micro's shape — it gave `FOR`, `REPEAT`
+and `GOSUB` a stack each — rather than BBC BASIC (86)'s, which merged
+them onto the processor stack. `DO`/`LOOP` and `CALL` join it at I4.
+Caching the innermost rather than the top of the stack is what makes
+nesting free: `h_for` is 0.0% of the expression benchmark.
 
 ---
 
@@ -92,15 +152,29 @@ containing one pays the search once.
 | `sim/bench_dispatch.py` | token table 49 clocks/op, direct thread 30, subroutine 20, native 11 |
 | `sim/bench_interp.py` | `FOR K=1 TO 1000: NEXT` — 1.88x native, 1.48x with a tight `NEXT` |
 | `sim/bench_interp2.py` | expression 5.04x, subscript 3.11x, call 4.56x |
+| `sim/test_interp.py` | **the real interpreter, not a prototype: 7.63x on the expression case**, 1,025 bytes, and a parenthesis costs 4.0 bytes of stack |
+
+The first three rows measure prototypes. The last measures
+`sw/interp.asm` itself and is the one to believe.
 
 The loop figure flatters: one dispatch covers a whole iteration. The
 expression figure is the real one, and it is where the work goes.
 
-**The open question.** `bench_interp2`'s expression walker calls a
-`term` subroutine per operand. Folding the common cases — a variable, a
-small constant — inline should recover much of the 5x, and that is the
-first thing to build and measure. If it does not, a hybrid becomes worth
-looking at: interpret statements, compile expressions.
+**The open question, now live rather than speculative.** The prototype
+walker called a `term` subroutine per operand, and folding the common
+cases — a variable, a small constant — was supposed to recover much of
+the 5x. It was folded, and the real interpreter measures 7.57x. The two
+figures are not directly comparable (different benchmarks, and I2's
+carries a whole statement's line machinery), which is exactly why the
+number has to be re-measured **in a loop** at I4 before anything is
+concluded from it.
+
+If it stays there, the honest options are a hybrid — interpret
+statements, compile expressions — or accepting it and leaning on `ASM`
+blocks. That is a decision to bring back, not one to swallow. And
+`sim/prof_interp.py` decides where the time actually goes first: a round
+already went into the expression evaluator at 16% of the run while the
+line machinery was 48%.
 
 ---
 
@@ -108,10 +182,17 @@ looking at: interpret statements, compile expressions.
 
 | | |
 |---|---|
-| I1 | the core: dispatch, resident variables, an inlined expression walker, `LET`, `FOR`/`NEXT`, `END`. **Gate: the same answers as native, and the expression case measured.** |
-| I2 | the rest of the statements: `IF`, `GOTO`, `GOSUB`, `PRINT`, `INPUT`, arrays |
+| I1 | the core: dispatch, resident variables, an inlined expression walker, `LET`, `FOR`/`NEXT`, `END`. **Gate: the same answers as native, and the expression case measured.** — done |
+| I2 | the editor's own tokens, executed: assignment, precedence, parens, unary minus, `IF`/`THEN`/`ELSE`, the six relationals, `FOR`/`NEXT`, `GOTO`, `POKE`/`PEEK`, `END`. 7.57x on the expression benchmark — done |
+| I2b | the screen to `$8000`, so the system has room for the rest; the filesystem's workspace out of the stack's page; `FOR` given a bounded stack so it nests — done |
 | I3 | `ASM` blocks |
-| I4 | strings |
+| I4 | strings, and the seventeen statements I2 left on `bad`: `DIM` and arrays, `DO`/`LOOP`, `EXIT`, `ELSEIF`, `CALL`/`RETURN`, `AND`/`OR`/`XOR`, `/` and `MOD`, long names |
 | I5 | wired to `RUN` in the editor, replacing the overlay |
 
 I1 is the one that decides the design, so it carries the measurement.
+
+I2 shipped a subset: `DIM`, `DO`/`LOOP`, `EXIT`, `ELSEIF`, `RETURN`,
+`CALL` and the bitwise operators are still `bad` in `sttab`. They moved
+to I4 rather than getting a milestone of their own, because strings need
+a name table and a heap and so do arrays, and building that machinery
+twice would be the waste.

@@ -139,6 +139,7 @@ s_findline:
 
 printed:  .word 0
 nprint:   .byte 0
+        .include "zp.asm"
         .include "interp.asm"
 prog:
 """
@@ -220,6 +221,53 @@ CASES = [
              line(20, name("A"), "=", [K["PEEK"]], "(", num(0x2000), ")"),
              line(30, [K["END"]])),
      {0: 65}),
+
+    # Nesting. Before FOR had a stack this did not fail -- it silently
+    # ran the wrong program, because the inner loop overwrote the outer
+    # one's variable, limit, body and line, and the outer NEXT then
+    # counted I toward J's limit. S is the one that shows it: 3 x 4
+    # additions of 1.
+    ("nested FOR: 3 x 4 iterations",
+     program(line(10, [K["FOR"]], name("I"), "=", num(1), [K["TO"]],
+                  num(3)),
+             line(20, [K["FOR"]], name("J"), "=", num(1), [K["TO"]],
+                  num(4)),
+             line(30, name("S"), "=", name("S"), "+", num(1)),
+             line(40, [K["NEXT"]], name("J")),
+             line(50, [K["NEXT"]], name("I")),
+             line(60, [K["END"]])),
+     {18: 12, 8: 4, 9: 5}),
+
+    # Three deep, and the innermost body runs 2 x 3 x 4 times.
+    ("three levels of FOR",
+     program(line(10, [K["FOR"]], name("I"), "=", num(1), [K["TO"]],
+                  num(2)),
+             line(20, [K["FOR"]], name("J"), "=", num(1), [K["TO"]],
+                  num(3)),
+             line(30, [K["FOR"]], name("L"), "=", num(1), [K["TO"]],
+                  num(4)),
+             line(40, name("S"), "=", name("S"), "+", num(1)),
+             line(50, [K["NEXT"]], name("L")),
+             line(60, [K["NEXT"]], name("J")),
+             line(70, [K["NEXT"]], name("I")),
+             line(80, [K["END"]])),
+     {18: 24}),
+
+    # The outer variable is still the outer variable after the inner
+    # loop has been and gone -- the cache really is restored, not just
+    # left holding whatever the inner loop finished with. A is read
+    # inside the loop and so is 5; I is read after NEXT has incremented
+    # past the limit and so is 6, the same way K ends 11 above.
+    ("the outer variable survives the inner loop",
+     program(line(10, [K["FOR"]], name("I"), "=", num(5), [K["TO"]],
+                  num(5)),
+             line(20, [K["FOR"]], name("J"), "=", num(1), [K["TO"]],
+                  num(9)),
+             line(30, [K["NEXT"]], name("J")),
+             line(40, name("A"), "=", name("I")),
+             line(50, [K["NEXT"]], name("I")),
+             line(60, [K["END"]])),
+     {0: 5, 8: 6}),
 ]
 
 
@@ -255,6 +303,108 @@ def main():
                for i in want}
         ok = got == want
         check(ok, name_, f"got {got}, wanted {want}" if not ok else "")
+    # ---- the errors the FOR stack raises
+    #
+    # A bounded stack is only worth having if going over it says so. The
+    # BBC Micro's "Too many FORs" is the model: the alternative is
+    # wrapping and running the wrong program, which is what the
+    # one-level version did.
+    def run_err(prog):
+        m = vm.Machine()
+        m.bus.mem[CODE:CODE + len(code)] = code
+        at = syms["prog"]
+        m.bus.mem[at:at + len(prog)] = bytes(prog)
+        m.cpu.pc, m.cpu.sp, m.romen = CODE, 0x7FF0, False
+        m.bus.mem[0x0016] = (at + len(prog)) & 0xFF
+        m.bus.mem[0x0017] = (at + len(prog)) >> 8
+        last = -1
+        for _ in range(5_000_000):
+            if m.cpu.pc == last:
+                break
+            last = m.cpu.pc
+            m.cpu.step()
+        return m.bus.mem[0x0018]        # ERR
+
+    # MAXFOR is 8, so the ninth is one too many.
+    nest = [line(10 + i, [K["FOR"]], name(chr(65 + i)), "=", num(1),
+                 [K["TO"]], num(2)) for i in range(9)]
+    err = run_err(program(*nest, line(200, [K["END"]])))
+    check(err == 2, "a tenth nested FOR stops with ?TOO MANY FORS",
+          f"ERR was {err}, wanted 2")
+
+    err = run_err(program(line(10, [K["NEXT"]]), line(20, [K["END"]])))
+    check(err == 3, "NEXT with no FOR stops with ?NEXT WITHOUT FOR",
+          f"ERR was {err}, wanted 3")
+
+    # Eight deep is legal and must still run to a clean stop.
+    nest8 = [line(10 + i, [K["FOR"]], name(chr(65 + i)), "=", num(1),
+                  [K["TO"]], num(1)) for i in range(8)]
+    nest8 += [line(100 + i, [K["NEXT"]], name(chr(72 - i)))
+              for i in range(8)]
+    err = run_err(program(*nest8, line(200, [K["END"]])))
+    check(err == 255, "eight deep is legal and ends cleanly",
+          f"ERR was {err}, wanted 255")
+
+    # ---- the stack, which is 256 bytes on the machine and not here
+    #
+    # interp.asm's header says a parenthesis costs six bytes of stack,
+    # so depth 20 is 120 and safe. That is a claim about a hazard that
+    # has already cost a day on this project, and the harness runs with
+    # SP at $7FF0 where the machine runs it at $0200 -- so the harness
+    # cannot fail the way the machine would. Measure it instead.
+    #
+    # Two depths, because the interesting number is the slope: the
+    # difference divides out everything that is not per-level.
+    def depth_cost(d):
+        prog = program(line(10, name("A"), "=",
+                            "(" * d, num(7), ")" * d),
+                       line(20, [K["END"]]))
+        m = vm.Machine()
+        m.bus.mem[CODE:CODE + len(code)] = code
+        at = syms["prog"]
+        m.bus.mem[at:at + len(prog)] = bytes(prog)
+        m.cpu.pc, m.cpu.sp, m.romen = CODE, 0x7FF0, False
+        m.bus.mem[0x0016] = (at + len(prog)) & 0xFF
+        m.bus.mem[0x0017] = (at + len(prog)) >> 8
+        low, last = 0x7FF0, -1
+        for _ in range(2_000_000):
+            if m.cpu.pc == last:
+                break
+            last = m.cpu.pc
+            m.cpu.step()
+            if m.cpu.sp < low:
+                low = m.cpu.sp
+        a = m.bus.mem[VARS] | (m.bus.mem[VARS + 1] << 8)
+        return 0x7FF0 - low, a
+
+    MAXEXPR = 24                        # must track sw/interp.asm
+    d5, a5 = depth_cost(5)
+    d20, a20 = depth_cost(20)
+    check(a5 == 7 and a20 == 7, "a deeply parenthesised expression still "
+          "gives the right answer", f"got {a5} and {a20}, wanted 7")
+    per = (d20 - d5) / 15.0
+    print(f"    a parenthesis costs {per:.1f} bytes of stack "
+          f"({d5} at depth 5, {d20} at depth 20)")
+
+    # The evaluator refuses past MAXEXPR, so the worst case is bounded
+    # by the counter rather than by what fits in a 127-byte line. The
+    # editor is 78 bytes down when it calls RUN; the two together have
+    # to fit in the 256-byte stack, and page 0 below it holds the
+    # interpreter's state, the variables and the filesystem's workspace.
+    worst = d20 + per * (MAXEXPR - 20)
+    check(worst + 78 < 256, "the deepest expression the evaluator allows "
+          "still fits under the editor",
+          f"{MAXEXPR} levels reach {worst:.0f} bytes and the editor is "
+          f"already 78 down, of 256")
+
+    # And past it, it says so rather than running off the stack.
+    over = program(line(10, name("A"), "=",
+                        "(" * (MAXEXPR + 6), num(7), ")" * (MAXEXPR + 6)),
+                   line(20, [K["END"]]))
+    err = run_err(over)
+    check(err == 4, "past that it stops with ?FORMULA TOO COMPLEX",
+          f"ERR was {err}, wanted 4")
+
     # ---- the open question: what does an expression cost in a loop?
     #
     # I1 reported 6.09x for a single statement, which is fixed overhead
