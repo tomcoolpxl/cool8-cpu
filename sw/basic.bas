@@ -68,6 +68,12 @@ CONST K_END   = 261
 CONST K_DEL   = 262
 CONST K_INS   = 263
 
+' A numeric literal, stored as two binary bytes rather than as digits.
+' Without it a loop re-parses decimal on every iteration, which is most
+' of what makes an interpreted FOR slow. Appended, so saved programs
+' keep working -- TOKTAB order is frozen.
+CONST T_NUM   = $A4
+
 DIM scr(8191) AS BYTE AT $A000
 
 DIM cx AS BYTE                  ' cursor column on screen
@@ -375,8 +381,38 @@ FUNCTION lookup(i AS INT, n AS INT) AS INT
   RETURN 0
 END FUNCTION
 
+' A literal into tbuf as T_NUM and two bytes.
+SUB puttnum(v AS CARD)
+  tbuf(tlen) = T_NUM
+  tlen = tlen + 1
+  tbuf(tlen) = v AND 255
+  tlen = tlen + 1
+  tbuf(tlen) = v >> 8
+  tlen = tlen + 1
+END SUB
+
+FUNCTION ishex(c AS INT) AS INT
+  IF isdigit(c) <> 0 THEN
+    RETURN 1
+  END IF
+  IF upper(c) > 64 THEN
+    IF upper(c) < 71 THEN
+      RETURN 1
+    END IF
+  END IF
+  RETURN 0
+END FUNCTION
+
+FUNCTION hexof(c AS INT) AS INT
+  IF isdigit(c) <> 0 THEN
+    RETURN c - 48
+  END IF
+  RETURN upper(c) - 55
+END FUNCTION
+
 SUB tokenise()
   DIM i AS BYTE
+  DIM v AS CARD
   DIM w AS BYTE
   DIM t AS BYTE
   DIM k AS BYTE
@@ -445,9 +481,35 @@ SUB tokenise()
           END IF
           i = i + w
         ELSE
-          tbuf(tlen) = lbuf(i)
-          tlen = tlen + 1
-          i = i + 1
+          IF isdigit(lbuf(i)) <> 0 THEN
+            v = 0
+            DO WHILE i < llen
+              IF isdigit(lbuf(i)) = 0 THEN
+                EXIT DO
+              END IF
+              v = v * 10 + (lbuf(i) - 48)
+              i = i + 1
+            LOOP
+            CALL puttnum(v)
+          ELSE
+            IF lbuf(i) = 36 THEN
+              ' $ and hex digits
+              v = 0
+              i = i + 1
+              DO WHILE i < llen
+                IF ishex(lbuf(i)) = 0 THEN
+                  EXIT DO
+                END IF
+                v = (v << 4) + hexof(lbuf(i))
+                i = i + 1
+              LOOP
+              CALL puttnum(v)
+            ELSE
+              tbuf(tlen) = lbuf(i)
+              tlen = tlen + 1
+              i = i + 1
+            END IF
+          END IF
         END IF
       END IF
     END IF
@@ -618,6 +680,7 @@ SUB list(a AS INT, b AS INT)
   DIM p AS CARD
   DIM k AS BYTE
   DIM t AS BYTE
+  DIM v AS CARD
   p = PROG
   DO WHILE p < progend
     IF lineno(p) >= a THEN
@@ -629,12 +692,20 @@ SUB list(a AS INT, b AS INT)
       k = 0
       DO WHILE k < linelen(p)
         t = PEEK(p + 3 + k)
-        IF t > 127 THEN
-          CALL puttok(t)
+        IF t = T_NUM THEN
+          ' a binary literal: two bytes, printed back as digits
+          v = PEEK(p + 4 + k)
+          v = v + (PEEK(p + 5 + k) << 8)
+          CALL putn(v)
+          k = k + 3
         ELSE
-          CALL emit(t)
+          IF t > 127 THEN
+            CALL puttok(t)
+          ELSE
+            CALL emit(t)
+          END IF
+          k = k + 1
         END IF
-        k = k + 1
       LOOP
       CALL newline()
     END IF

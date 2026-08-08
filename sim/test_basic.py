@@ -217,7 +217,8 @@ def main():
     M.type("30 PRINT 9")                       # type over it
     M.type("\r")                               # Return anywhere on the row
     p = dict(M.prog())
-    check(p.get(30, b"")[-1:] == b"9",
+    # a literal is stored as T_NUM and two binary bytes now, not digits
+    check(p.get(30, b"")[-3:] == bytes([0xA4, 9, 0]),
           "cursor up onto a listed line, retype, Return -- it is replaced",
           f"row {row} was {before!r}, is now {M.row(row)!r}; "
           f"line 30 is {p.get(30)!r}")
@@ -325,7 +326,7 @@ def files(code, syms):
     got = [n for n, _ in M.prog()]
     check(got == [10, 30, 40], "LOAD n,30 merges from line 30 on",
           f"{got}")
-    check(dict(M.prog())[10][-1:] == b"9",
+    check(dict(M.prog())[10][-3:] == bytes([0xA4, 9, 0]),
           "and the line already there is the typed one, not the file's",
           f"line 10 is {dict(M.prog())[10]!r}")
 
