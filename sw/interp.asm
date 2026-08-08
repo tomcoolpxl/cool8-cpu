@@ -159,6 +159,8 @@ irun:
         ST   [EDEPTH],R0        ; at statement level, not inside a paren
         ST   [NNAME],R0         ; and no long name is defined yet
         ST   [CDEPTH],R0        ; nor a call in progress
+        ST   [ibreak],R0        ; and nothing is asking it to stop
+        ST   [ibreak],R0        ; and nothing is asking it to stop
         ; Every SUB is found now, while LREC is still the program's
         ; first record -- the only moment that address is known without
         ; keeping a pointer to it. A call is then a name lookup rather
@@ -286,7 +288,7 @@ sttab:
         .word h_sub             ; $81 SUB -- a definition, skipped
         .word h_sub             ; $82 FUNCTION
         .word h_dim             ; $83 DIM
-        .word bad               ; $84 CONST
+        .word h_const           ; $84 CONST
         .word h_for             ; $85 FOR
         .word h_next            ; $86 NEXT
         .word bad               ; $87 TO
@@ -750,6 +752,7 @@ h_goto:
         ST   [LREC],R0
         ST   [LREC+1],R1
         CALL openline
+        CALL ipoll
         JMP  stmt
 
 ; ---------------------------------------------------------------------
@@ -921,6 +924,7 @@ h_next:
         MOV  YL,R0
         LD   R0,[LBODY+1]
         MOV  YH,R0
+        CALL ipoll
         JMP  stmt
         ; The loop is done: drop it and bring the enclosing one back
         ; into the cache, if there is one.
@@ -2204,6 +2208,7 @@ doback: CALL dofr
         ST   [LREC+1],R2
         MOV  YL,R0
         MOV  YH,R1
+        CALL ipoll
         JMP  stmt
 
 ; dopop -- the loop is done and we are already past its LOOP.
@@ -2557,7 +2562,26 @@ h_call: LD   R0,[CDEPTH]
         CALL subname
         CALL nlook
         BCC  .found
-        JMP  e_call             ; no SUB of that name
+        ; Not a SUB. [D45](../docs/01-decisions.md) put the assembler's
+        ; labels in this same table, so a *plain* name that is there is
+        ; a block of machine code and CALL means call it. Dropping the
+        ; '#' is all that separates the two namespaces.
+        LD   R0,[NLEN]
+        SUB  R0,#1
+        ST   [NLEN],R0
+        CALL nlook
+        BCC  .native
+        JMP  e_call             ; neither a SUB nor a label
+.native:
+        LD   R0,[X]
+        INCW X
+        LD   R1,[X]
+        MOV  XL,R0
+        MOV  XH,R1
+        PUSHW Y                 ; the block owns the registers, not Y
+        CALL [X]
+        POPW Y
+        JMP  stmt
 .found: LD   R0,[X]
         INCW X
         LD   R1,[X]
@@ -2606,6 +2630,7 @@ h_ret:  LD   R0,[CDEPTH]
         ST   [LREC+1],R2
         MOV  YL,R0
         MOV  YH,R1
+        CALL ipoll
         JMP  stmt
 
 
@@ -2822,3 +2847,39 @@ sinstr: CALL sopen
 .none:  CLR  R0
         CLR  R1
         RET
+
+; ---------------------------------------------------------------------
+; The break flag.
+;
+; **The interpreter never touches a device.** It reads one byte, and
+; something else keeps that byte fresh -- which is how both machines
+; this design borrows from did it. The C64's `STOP` routine "does not
+; scan the keyboard": the 60 Hz jiffy IRQ calls UDTIM, which scans the
+; RUN/STOP row and sets a flag, and BASIC polls the flag. The BBC's
+; 100 Hz interrupt sets the escape flag and BASIC polls that. Neither
+; interpreter can afford to look at hardware, and neither can this one:
+; a device read blocks, costs a bus cycle, and would have to know which
+; wire the key came in on.
+;
+; `sw/basic.bas` owns the interrupt that sets this. It lives here so
+; that sim/test_interp.py, which has no editor, still links.
+ibreak: .byte 0
+
+; ipoll -- checked at the loop back-edges only, because those are the
+; only places a program can spin: NEXT going round, LOOP going round,
+; GOTO, and RETURN. A straight-line program cannot fail to end.
+ipoll:  LD   R2,[ibreak]
+        BEQ  .none
+        CLR  R2
+        ST   [ibreak],R2
+        MOV  R2,#E_STOP
+        ST   [ERR],R2
+.none:  RET
+
+; CONST name = value. An interpreter has no compile step in which to
+; fold a constant, so this is an assignment -- which is what every
+; interpreted BASIC that has the keyword does. It is not write
+; protected, and saying so is better than refusing the statement.
+h_const:
+        SKIPSP                  ; the dispatcher left Y on the space
+        JMP  h_let

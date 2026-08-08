@@ -1807,5 +1807,45 @@ precedence and saves a recursion level off a 256-byte stack.
 
 ---
 
+## D49 — A running program is stopped by an interrupt setting a flag,
+not by the interpreter looking at a device
+
+**The vertical blank takes the keystroke; the interpreter reads one
+byte.** That is the C64's arrangement and the BBC Micro's, and it is the
+only shape that can stop a program at all — a running program is by
+definition not reading the keyboard, so something else has to.
+
+The C64's `STOP` routine "does not scan the keyboard": its 60 Hz jiffy
+IRQ calls `UDTIM`, which scans the RUN/STOP row and sets a byte, and
+BASIC polls the byte. The BBC's 100 Hz interrupt sets the escape flag
+the same way, and `*FX229` even chooses whether ESCAPE interrupts or is
+merely ASCII 27. Both machines keep the device read *out* of the
+interpreter.
+
+**Vblank is the tick because the UART cannot interrupt.** `cool8_soc.v`
+drives the core with `irq | vid_irq | ps2_irq`; nothing carries the UART
+or the timer to it, and `irq` is an external input nothing drives. So
+the tick does the reading — which is exactly what the C64 does, its
+jiffy IRQ scanning a keyboard that cannot interrupt either.
+
+**Where it is polled, and why not per statement.** At the four loop
+back-edges only: `NEXT` going round, `LOOP` going round, `GOTO`, and
+`RETURN`. Those are the only places a program can spin, and a
+straight-line program cannot fail to end. Polling per *statement* would
+have cost eleven clocks on the hottest path in the system and, worse,
+pushed `BCC h_let` out of branch range for the fourth time.
+
+**What it does not fix.** At 115200 a host that streams sends 192 bytes
+a frame into a 16-byte FIFO, so a paste is still lost — a person typing
+never comes close. Escape was rejected as the key because `serialkey`
+treats 27 as the ANSI prefix and then *blocks* in `waitraw`, so Escape
+and the cursor keys are the same byte. Ctrl-C is the serial console's
+own convention and is unambiguous.
+
+The hard escape remains `SW[0]`, wired to `NMI`, which drops a hung
+machine into the monitor with its state intact.
+
+---
+
 The architecture is settled. Anything that reopens it now needs new
 evidence of the same kind: real code, measured, not an argument.

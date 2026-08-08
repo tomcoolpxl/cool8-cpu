@@ -81,7 +81,7 @@ def run(code, steps=40_000_000):
     m.romen = False
     n = 0
     while n < steps and not m.cpu.halted:
-        m.cpu.step()
+        m.tick()
         n += 1
     if not m.cpu.halted:
         raise SystemExit("the machine did not halt")

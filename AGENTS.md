@@ -118,6 +118,7 @@ python sim/test_vram.py              # video RAM and its four-way arbiter
 python sim/test_vport.py             # the CPU's indirect VRAM port
 python sim/test_ps2.py               # the keyboard port, against a keyboard
 python sim/test_flash.py             # the SPI reader, against a flash
+python sim/test_run.py               # RUN, typed at the editor over the UART
 python sim/test_monitor.py           # M6's gate: type at it and it answers
 python sim/mutate.py                 # break the RTL on purpose; require a fail
 python sim/synth.py                  # hygiene, LUT/FF count, gate estimate
@@ -152,31 +153,65 @@ It is a 16 KB ROM disassembly, so ask it a narrow question; a broad one
 gets a summary that misses the answer. If something cannot be reached,
 say it was not confirmed rather than filling it in from memory.
 
-## Debug and measure with the tooling. Do not write a scratch script.
+## The machine is `tools/cool8vm.py`. Drive it through its API.
 
-**This is a standing rule and it has been broken more than once.** When
-software on the machine misbehaves, or you want to know where its time
-or bytes go, the answer is already written:
+**Every software test runs on `vm.Machine`, and nothing reimplements
+part of it.** That is not a style preference: for a year each harness
+grew its own stepping loop, and each one was a subtly different machine.
+One of them could not deliver an interrupt at all and nobody knew until
+software wanted one.
 
-| want | use | not |
-|---|---|---|
-| where execution went, disassembled from a label | `sim/dbg.py` — `Image`, `Run.go()` | a hand-rolled `cpu.step()` loop printing PCs |
-| the *first* structural fault, not its tenth symptom | `Run.go()`'s four invariants | reading a register dump and guessing |
-| who wrote to this address | `Run.watch(lo, hi)` and `r.hits` | narrowing it down by bisecting prints |
-| which routine the clocks go to | `sim/prof_interp.py`, `dbg.Profile` | reasoning about which loop looks hot |
-| which routine the bytes go to | `python tools/cool8asm.py <file> --pressure` | counting instructions by eye |
-| two code streams that should agree | `dbg.diff` | a byte compare, which drowns after the first length change |
+```python
+import cool8vm as vm
+m = vm.Machine()
+m.bus.mem[0xA000:0xA000 + len(code)] = code
+m.cpu.pc, m.cpu.sp, m.romen = 0xA000, 0x0200, False
+```
 
-[docs/10-debugging.md](docs/10-debugging.md) explains what each gives
-you and why it exists. Every one of them was written *because* the
-ad-hoc version produced confident nonsense — a misaligned dump showed
-`MOV R0,#$00` six times running while the machine was executing data,
-and that reading was believed for an hour.
+| want | call |
+|---|---|
+| one instruction, peripherals in step | `m.tick()` |
+| run to a PC, a predicate, a cycle count | `m.run(until=…, cycles=…)` → `"until"`, `"breakpoint"`, `"halt"`, `"cycles"`, `"budget"` |
+| stop at an address | `m.breakpoints.add(addr)` |
+| type at it | `m.type("10 PRINT 1
+RUN
+")` |
+| what it said on the wire | `m.said()` |
+| the text screen | `m.text()`, `m.row(r)`, `m.shows("42")` |
+| who wrote to an address | `m.watch(lo, hi)` then read `m.hits` — `(pc, addr, value)` |
+| where the clocks went | `m.profile(syms, org, end)` then `m.profile_report()` |
 
-A throwaway script also throws away the finding. If a run is worth
+**Never loop on `cpu.step()`.** Only the machine advances the raster,
+the sound and the interrupt flags, so a bare stepping loop runs a
+machine where *no time passes* — no vblank, no raster compare, no
+interrupt that can ever fire.
+
+**Never compute a screen address.** `m.row()` reads through the
+machine's own `VID_BASE`, which is what catches a program that never set
+it — the rule [docs/10-debugging.md](docs/10-debugging.md) §3 exists for.
+`sim/test_basic.py` used to reach into `cool8vid._row_addr_v`, a private
+function, and every new harness copied it.
+
+**`sim/dbg.py` still owns the structural checks**, and they are a
+different job: exact disassembly decoded forward from a label, a shadow
+call stack that pairs every `RET` with its `CALL`, the SP-neutrality
+check that names the culprit rather than the victim, and `dbg.diff`,
+which aligns two code streams on instruction boundaries so the first
+differing *mnemonic* is the answer. Reach for it when the fault is
+structural; reach for `Machine` when you want to drive, watch or
+measure.
+
+**Profile before optimising, and believe the profile.** A round once
+went into the expression evaluator at 16 % of a run while the line
+machinery was 48 %. A 256-byte lookup table built on an estimate of 10 %
+bought 2 %. `python tools/cool8asm.py <file> --pressure` is the same
+question for bytes.
+
+**A throwaway script also throws away the finding.** If a run is worth
 tracing twice, the case belongs in the suite that already builds and
-runs the image — `sim/test_interp.py`, `sim/test_asm.py` — so the next
-regression is caught rather than re-diagnosed.
+runs the image — `sim/test_interp.py`, `sim/test_asm.py`,
+`sim/test_run.py` — so the next regression is caught rather than
+re-diagnosed.
 
 ## The verification contract
 
@@ -255,6 +290,24 @@ Easy to get wrong:
 - **The COOL8 assembler splits operands on commas before it recognises
   character literals**, so `MOV R0,#','` is three operands and no
   encoding matches. Write `#$2C`.
+- **`tools/cool8vm.py` could not deliver an interrupt to anything.** It
+  set `cpu.irq`; `cool8emu.py`'s input is `irq_line`, so the assignment
+  made a new attribute the CPU never read. Nothing noticed for as long
+  as no software wanted an interrupt, and the first thing that did —
+  BASIC's break key — simply hung. Python will invent an attribute for
+  you; the emulator's own name is the one to check against.
+- **Only `Machine.run_line` advances the raster, the sound and the
+  interrupt flags.** A harness that loops on `cpu.step()` therefore runs
+  a machine where *no time passes*: no vblank, no raster compare, no
+  interrupt that could ever fire, and anything waiting on one waits for
+  ever. Use `Machine.tick()` — one instruction with the peripherals kept
+  in step — unless you specifically want a scanline at a time.
+- **The machine can be typed at and read from directly.**
+  `Machine.type()`, `.said()`, `.row()`, `.text()` and `.shows()` are on
+  the emulator, so an external test program needs to know nothing about
+  where the screen lives. `sim/test_basic.py` used to reach into
+  `cool8vid._row_addr_v`, a private function, and every new harness
+  copied it.
 - **A conditional branch reaches ±127 bytes** and a dispatcher at the
   top of a large file does not. `sw/disasm.asm` defines `jlo`/`jhs`/`jeq`
   macros that invert the test and let a `JMP` carry the distance; the

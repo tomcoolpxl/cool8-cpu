@@ -41,12 +41,22 @@ EXTERN CMDTAB
 EXTERN BANNERTAB
 EXTERN ERRTAB
 EXTERN RUNTAB
+EXTERN iisr
+EXTERN irring
+EXTERN irhead
+EXTERN irtail
+EXTERN ibreak
 EXTERN MSGFREE
 EXTERN MSGKFREE
 
 CONST SCREEN  = $8000
 CONST PROG    = $0200           ' program text starts here
 CONST MEMTOP  = $7FFF
+' The user area really ends here. RUN puts the string accumulator at
+' $7F00 and the CALL stack at $7EE0, so the top 288 bytes are not a
+' program's to fill. FREE reported MEMTOP - progend, and a program
+' that believed it would have run into both.
+CONST USERTOP = $7EDF
 CONST COLS    = 80
 CONST ROWS    = 30
 
@@ -81,7 +91,7 @@ CONST K_INS   = 263
 ' Without it a loop re-parses decimal on every iteration, which is most
 ' of what makes an interpreted FOR slow. Appended, so saved programs
 ' keep working -- TOKTAB order is frozen.
-CONST T_NUM   = $A4
+CONST T_LIT   = $A4
 
 DIM cx AS BYTE                  ' cursor column on screen
 DIM cy AS BYTE                  ' cursor row on screen
@@ -246,12 +256,28 @@ FUNCTION getkey() AS INT
 END FUNCTION
 
 ' Non-blocking: 0 if nothing is waiting.
+'
+' It reads the ring the interrupt fills, not the device. That is the
+' C64's arrangement and the BBC's -- the interrupt keeps the input
+' fresh and everything above it reads memory -- and it is what lets a
+' *running* program be stopped, since a running program cannot poll.
+' `.rk0` is still the "nothing waiting" branch: sim/test_basic.py
+' settles on it.
 FUNCTION rawkey() AS INT
   ASM
-        LD   R0,[$FE70]
-        BTST R0,#$01
+        LD   R0,[irtail]
+        LD   R1,[irhead]
+        CMP  R0,R1
         BEQ  .rk0
-        LD   R0,[$FE71]
+        PUSHW X
+        LDW  X,#irring
+        ADDW X,R0
+        LD   R1,[X]
+        POPW X
+        ADD  R0,#1
+        AND  R0,#15
+        ST   [irtail],R0
+        MOV  R0,R1
         CLR  R1
         RET
 .rk0:   CLR  R0
@@ -388,9 +414,9 @@ FUNCTION lookup(i AS INT, n AS INT) AS INT
   RETURN 0
 END FUNCTION
 
-' A literal into tbuf as T_NUM and two bytes.
+' A literal into tbuf as T_LIT and two bytes.
 SUB puttnum(v AS CARD)
-  tbuf(tlen) = T_NUM
+  tbuf(tlen) = T_LIT
   tlen = tlen + 1
   tbuf(tlen) = v AND 255
   tlen = tlen + 1
@@ -683,7 +709,7 @@ SUB storeline(n AS INT)
   IF tlen > 0 THEN
     need = 4 + tlen
   END IF
-  IF progend - old + need > MEMTOP THEN
+  IF progend - old + need > USERTOP THEN
     CALL errmsg(1)
     RETURN
   END IF
@@ -726,7 +752,7 @@ SUB list(a AS INT, b AS INT)
       k = 0
       DO WHILE k < linelen(p)
         t = PEEK(p + 3 + k)
-        IF t = T_NUM THEN
+        IF t = T_LIT THEN
           ' a binary literal: two bytes, printed back as digits
           v = PEEK(p + 4 + k)
           v = v + (PEEK(p + 5 + k) << 8)
@@ -782,7 +808,7 @@ SUB deleterange(a AS INT, b AS INT)
 END SUB
 
 FUNCTION freebytes() AS CARD
-  RETURN MEMTOP - progend
+  RETURN USERTOP - progend
 END FUNCTION
 
 ' ---------------------------------------------------------------------
@@ -1747,6 +1773,20 @@ POKE CUR_CTRL, $19
 vtop = 0
 progend = PROG
 fdrv = 0
+
+' The input interrupt. sw/boot.asm leaves NMI, IRQ and BRK all pointing
+' at a bare RETI and never enables interrupts, so this is the first
+' handler the machine has had. Vblank is the tick because the UART
+' cannot raise an interrupt of its own -- the core sees
+' `irq | vid_irq | ps2_irq` and nothing carries the UART to it -- so the
+' tick does the reading, exactly as the C64's jiffy IRQ scans a keyboard
+' that cannot interrupt either.
+POKE $FFFC, iisr AND 255
+POKE $FFFD, iisr >> 8
+POKE $FE1D, $20                 ' enable the vertical blank interrupt
+ASM
+        EI
+END ASM
 CALL fsmount()
 CALL cls()
 CALL banner()
@@ -1899,6 +1939,7 @@ RUNTAB:
         .asciz "DIVISION BY ZERO ERROR"
         .asciz "LOOP ERROR"
         .asciz "CALL ERROR"
+        .asciz "BREAK"
         .byte 0
 
 ; ---- errors. C64-shaped: a ? , the fault, and ERROR.
@@ -1938,6 +1979,57 @@ BANNERTAB:
 ; ---- the filesystem, whole. Its state lives at $0074, in page 0 with
 ; ---- the interpreter's, so that page 1 is the CPU stack alone.
         .include "fs.asm"
+
+; ---------------------------------------------------------------------
+; The input ring, and the interrupt that fills it.
+;
+; **Neither the editor nor the interpreter reads a device.** The C64's
+; STOP routine "does not scan the keyboard" -- the 60 Hz jiffy IRQ sets
+; a flag and BASIC polls it -- and the BBC's 100 Hz interrupt sets the
+; escape flag the same way. Copying that is what lets a *running*
+; program be stopped at all: it cannot poll, so something else must.
+;
+; The vertical blank is the tick, because the UART cannot raise an
+; interrupt (docs/04-system.md section 6: the core sees
+; `irq | vid_irq | ps2_irq` and nothing carries the UART to it). So the
+; tick does the reading, which is the C64's shape exactly -- its jiffy
+; IRQ scans a keyboard that cannot interrupt either.
+;
+; Sixteen bytes, which is the UART's own FIFO depth. At 115200 a full
+; line arrives faster than 60 Hz can drain it, so a host that streams
+; will still overrun -- a person typing never will, and the harness
+; waits for the ring to empty between chunks.
+IRSIZE  = 16
+irring: .space 16
+irhead: .byte 0
+irtail: .byte 0
+
+iisr:   PUSH R0
+        PUSH R1
+        PUSHW X
+        MOV  R0,#$22            ; acknowledge vblank, keep it enabled
+        ST   [$FE1D],R0
+.more:  LD   R0,[$FE70]         ; UART_STAT: anything waiting?
+        BTST R0,#$01
+        BEQ  .done
+        LD   R0,[$FE71]         ; taking it is the only way to see it
+        CMP  R0,#$03            ; Ctrl-C, the serial console's Break
+        BNE  .keep
+        MOV  R0,#1
+        ST   [ibreak],R0        ; the flag the interpreter polls
+        BRA  .more
+.keep:  LD   R1,[irhead]
+        LDW  X,#irring
+        ADDW X,R1
+        ST   [X],R0
+        ADD  R1,#1
+        AND  R1,#15
+        ST   [irhead],R1
+        BRA  .more
+.done:  POPW X
+        POP  R1
+        POP  R0
+        RETI
 
 ; ---- the interpreter and the on-machine assembler. Both are written
 ; ---- without .org for exactly this: every address in the image is

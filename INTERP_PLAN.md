@@ -173,8 +173,8 @@ containing one pays the search once.
 | `sim/bench_dispatch.py` | token table 49 clocks/op, direct thread 30, subroutine 20, native 11 |
 | `sim/bench_interp.py` | `FOR K=1 TO 1000: NEXT` — 1.88x native, 1.48x with a tight `NEXT` |
 | `sim/bench_interp2.py` | expression 5.04x, subscript 3.11x, call 4.56x |
-| `sim/test_interp.py` | **the real interpreter, not a prototype: 12.62x on the expression case**, 4,190 bytes, and a parenthesis costs 4.0 bytes of stack |
-| `sim/test_run.py` | **the whole thing, typed at over the UART**: boot, enter a program a character at a time, `RUN`, and read the answer off the screen through the machine's own `VID_BASE`. Ten programs and three faults that have to name their line. `basic.bin` is 20,815 bytes |
+| `sim/test_interp.py` | **the real interpreter, not a prototype: 12.80x on the expression case**, 4,264 bytes, and a parenthesis costs 4.0 bytes of stack |
+| `sim/test_run.py` | **the whole thing, typed at over the UART**: boot, enter a program a character at a time, `RUN`, and read the answer off the screen. Ten programs, three faults that must name their line, and Ctrl-C stopping a loop that never ends. `basic.bin` is 21,003 bytes |
 | `sim/test_asm.py` | `sw/asm.asm` against `tools/cool8asm.py`, byte for byte: 96 single instructions, 16 multi-line cases, 7 refusals, and **every one of the 488 reachable encodings**. 2,521 bytes of code and 313 of table |
 
 The first three rows measure prototypes. The last measures
@@ -247,6 +247,7 @@ guessed at:
 | + strings | 11.99x | a type test per read, and a reset per statement |
 | + `/` and `MOD` | 12.86x | two more tests in the operator peek |
 | class table | 12.61x | one indexed load for the name lookahead |
+| + Ctrl-C | 12.80x | one flag read at each loop back-edge |
 
 Every step but the last adds a test to the same inner loop, which is why
 the total compounds. `sim/prof_interp.py` says where it lands: `stmt`
@@ -277,7 +278,7 @@ two. [D45](docs/01-decisions.md) records why BBC declined the same fix.
 | I4a | `AND`/`OR`/`XOR`, and `TRUE` becomes -1 so one implementation serves logic and bits both. The `<=` and `>` arms of the evaluator fixed � they popped the caller's return address � done |
 | I4b | strings: the `$` suffix, the accumulator, the four-byte descriptor, literals, assignment, concatenation, `LEN`, equality and `PRINT` � done |
 | I4c | `DO`/`LOOP` with `WHILE`/`UNTIL` at either end, `EXIT`, `ELSEIF`, `CALL`/`RETURN`, `/` and `MOD`, and the string functions: `LEN`, `LEFT$`, `RIGHT$`, `MID$`, `CHR$`, `ASC`, `STR$`, `VAL`, `INSTR` — done |
-| I5 | wired to `RUN` in the editor, replacing the overlay — done |
+| I5 | wired to `RUN` in the editor, replacing the overlay, with Ctrl-C stopping a running program through a vblank interrupt ([D49](docs/01-decisions.md)) — done |
 
 I4 is complete, and nothing I2 deferred is still deferred. Nineteen
 `sttab` slots point at `bad`, and fourteen of them should: `TO`,

@@ -180,12 +180,7 @@ def run(code, syms, prog, budget=2_000_000):
     end = at + len(prog)
     m.bus.mem[0x0016], m.bus.mem[0x0017] = end & 0xFF, end >> 8
     m.cpu.pc, m.cpu.sp, m.romen = CODE, 0x7FF0, False
-    last = -1
-    for _ in range(budget):
-        if m.cpu.pc == last:
-            break
-        last = m.cpu.pc
-        m.cpu.step()
+    m.run(budget=budget)
     return m
 
 

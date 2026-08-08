@@ -101,13 +101,28 @@ class Machine:
         # rawkey's `.rk0` is reached only when nothing is waiting, so it
         # is the one address that means "idle" rather than "busy".
         self.idle = syms["s_rawkey.rk0"]
+        # ...and an empty UART FIFO no longer means an empty *input*.
+        # The vblank interrupt drains the FIFO into a ring and rawkey
+        # reads the ring, so a machine can sit at `.rk0` for an instant
+        # with bytes still queued. Settling on the FIFO alone let `type`
+        # feed its next chunk on top of one still being consumed, and
+        # the line arrived scrambled -- which looked like a division bug
+        # because it only bit lines past a certain length.
+        self.irhead = syms["irhead"]
+        self.irtail = syms["irtail"]
 
     def settle(self, budget=80_000_000):
         n = 0
         while n < budget:
-            if not self.m.uart.rx and self.m.cpu.pc == self.idle:
+            if (not self.m.uart.rx
+                    and self.m.bus.mem[self.irhead]
+                    == self.m.bus.mem[self.irtail]
+                    and self.m.cpu.pc == self.idle):
                 return
-            self.m.cpu.step()
+            # tick, not cpu.step: only the machine advances the raster
+            # and the interrupt flags, so a bare stepping loop runs a
+            # machine where no time passes and no interrupt can fire.
+            self.m.tick()
             n += 1
         raise SystemExit("the machine never went idle")
 
@@ -142,13 +157,16 @@ class Machine:
         self.type(s + "\r")
 
     def row(self, r):
-        """One displayed row, through the machine's own VID_BASE."""
-        base = vid._row_addr_v(self.m.video, r)
-        return "".join(chr(self.m.bus.mem[(base + 2 * c) & 0xFFFF])
-                       for c in range(80)).replace("\x00", " ").rstrip()
+        """One displayed row, through the machine's own VID_BASE.
+
+        The machine knows where its screen is. This used to reach into
+        `cool8vid._row_addr_v`, a private function, and work it out
+        again -- so every harness that wanted the screen had to.
+        """
+        return self.m.row(r)
 
     def screen(self):
-        return [self.row(r) for r in range(30)]
+        return self.m.text()
 
     def find(self, text):
         for r, line in enumerate(self.screen()):

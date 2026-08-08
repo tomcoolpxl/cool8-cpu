@@ -4,13 +4,83 @@ Software that runs on the machine is hard to debug from outside it: the
 only thing the emulator hands back is a program counter. This is the
 tooling that closes that gap, and the rules that came out of using it.
 
-`sim/dbg.py` is the module. It wraps `tools/cool8vm.py` rather than
-changing it — the emulator is gated byte-identical against the RTL and
-must stay a model of the hardware, not a debugger.
+There are two layers and they do different jobs.
+
+**`tools/cool8vm.py`'s `Machine` is the machine, and everything drives
+it through the same API** — running, typing, reading the screen,
+watching an address, profiling. Nothing reimplements part of it.
+
+**`sim/dbg.py` sits on top for the *structural* checks** — exact
+disassembly, a shadow call stack, SP neutrality, and a diff of two code
+streams. Those need a decoded image and bookkeeping the machine has no
+business carrying.
 
 ---
 
-## 1. What it gives you
+## 0. Driving the machine
+
+```python
+import cool8vm as vm
+m = vm.Machine()
+m.bus.mem[0xA000:0xA000 + len(code)] = code
+m.cpu.pc, m.cpu.sp, m.romen = 0xA000, 0x0200, False
+```
+
+| | |
+|---|---|
+| `m.tick()` | one instruction, with the raster, sound and interrupt flags kept in step |
+| `m.run(until=…, cycles=…, budget=…)` | returns `"until"`, `"breakpoint"`, `"halt"`, `"cycles"` or `"budget"`. `until` takes a PC, a set of PCs, or a predicate |
+| `m.breakpoints.add(addr)` | stop there, whatever else was asked |
+| `m.type("10 PRINT 1
+RUN
+")` | keystrokes, `
+` sent as Return |
+| `m.said()` | everything the machine has put on the wire |
+| `m.text()`, `m.row(r)`, `m.shows("42")` | the text screen, through the machine's own `VID_BASE` |
+| `m.watch(lo, hi)` → `m.hits` | every write into the range, as `(pc, addr, value)` |
+| `m.profile(syms, org, end)` → `m.profile_report()` | where the clocks went, by routine |
+
+**Two rules, and both were learned the hard way.**
+
+*Never loop on `cpu.step()`.* Only the machine advances the raster, the
+sound and the interrupt flags. A bare stepping loop is a machine where
+no time passes — no vblank, no raster compare, no interrupt that could
+ever fire — and anything waiting on one waits for ever. That went
+unnoticed for as long as every harness polled its devices, and the first
+software that wanted an interrupt simply hung.
+
+*Never compute a screen address.* `m.row()` reads through the machine's
+own `VID_BASE`, which is what catches a program that never set it (§3).
+`sim/test_basic.py` used to reach into `cool8vid._row_addr_v`, a private
+function, and every new harness copied the arithmetic.
+
+### All four at once
+
+Typing at the editor, reading the screen, catching who wrote to a byte,
+and measuring where the time went — one machine, one run:
+
+```python
+import test_basic as B
+code, syms = B.build()
+M = B.Machine(code, syms); M.settle()
+
+M.m.profile(syms, 0xA000, 0xFE00)   # where the clocks go
+M.m.watch(0x0018)                   # ERR: who stops the program
+
+M.cmd("10 PRINT 6 * 7"); M.cmd("20 END"); M.cmd("RUN")
+M.settle(120_000_000)
+
+M.screen()[-1]                      # '42'
+M.m.hits[-1]                        # (0xa9d6, 0x18, 255) -- h_end
+M.m.profile_report(3)               # [('s_serialkey', 4430535, 33.5), ...]
+```
+
+The watch answers "who set `ERR`" with an address, not a guess: `$A9D6`
+is `h_end`, and 255 is the clean stop. The profile says a third of that
+run was `serialkey` — which is the editor waiting for a key, not the
+interpreter, and is exactly the kind of thing an estimate gets wrong.
+
+## 1. What dbg.py adds
 
 ### Exact disassembly
 
@@ -125,6 +195,12 @@ program forgets, the test must fail.
 | `sim/test_basic.py` | the editor, typed at over the UART |
 | `sim/test_fs.py` | `sw/fs.asm` against `tools/cool8disk.py` — the same filesystem written twice |
 | `sim/cosim.py` | the RTL against the emulator |
+| `sim/test_run.py` | `RUN`, typed at the editor over the UART, read off the screen |
+
+Every one of those drives `vm.Machine` through the API in §0.
+`sim/test_corpus.py` is the deliberate exception: it calls compiled
+routines on a bare CPU with no peripherals, because that is what it is
+testing.
 
 The pattern throughout: **write it twice and make the two agree.** A
 single implementation can only ever agree with itself, and every one of

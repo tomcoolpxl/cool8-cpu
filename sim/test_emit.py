@@ -170,14 +170,9 @@ def main():
     m.romen = False
     # END compiles to HALT; the emulator has no halted flag, so stop
     # when the program counter stops moving.
-    n, last = 0, -1
-    while n < 20_000_000:
-        if m.cpu.pc == last:
-            break
-        last = m.cpu.pc
-        m.cpu.step()
-        n += 1
-    else:
+    # m.run, not a stepping loop: the machine advances the raster and
+    # the interrupt flags and a bare loop does not (AGENTS.md).
+    if m.run(budget=20_000_000) != "halt":
         raise SystemExit("the driver never halted")
 
     end = m.bus.mem[0x7F00] | (m.bus.mem[0x7F01] << 8)

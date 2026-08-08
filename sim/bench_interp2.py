@@ -70,13 +70,7 @@ def run(code):
     m.cpu.pc = CODE
     m.cpu.sp = 0x7FF0
     m.romen = False
-    last = -1
-    for _ in range(80_000_000):
-        if m.cpu.pc == last:
-            break
-        last = m.cpu.pc
-        m.cpu.step()
-    else:
+    if m.run(budget=80_000_000) != "halt":
         raise SystemExit("never halted")
     return m.cpu.cycles, m
 

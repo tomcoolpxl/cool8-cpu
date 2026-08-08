@@ -911,13 +911,9 @@ def main():
         # patch the progend the harness loaded
         m.bus.mem[0x0016] = end & 0xFF
         m.bus.mem[0x0017] = end >> 8
-        last = -1
-        for _ in range(20_000_000):
-            if m.cpu.pc == last:
-                break
-            last = m.cpu.pc
-            m.cpu.step()
-        else:
+        # m.run, not a stepping loop: the machine advances the raster
+        # and the interrupt flags and a bare loop does not (AGENTS.md).
+        if m.run(budget=20_000_000) != "halt":
             check(False, name_, "never halted")
             continue
         got = {i: m.bus.mem[VARS + 2 * i] | (m.bus.mem[VARS + 2 * i + 1] << 8)
@@ -946,12 +942,7 @@ def main():
         m.cpu.pc, m.cpu.sp, m.romen = CODE, 0x7FF0, False
         m.bus.mem[0x0016] = (at + len(prog)) & 0xFF
         m.bus.mem[0x0017] = (at + len(prog)) >> 8
-        last = -1
-        for _ in range(5_000_000):
-            if m.cpu.pc == last:
-                break
-            last = m.cpu.pc
-            m.cpu.step()
+        m.run(budget=5_000_000)
         return m.bus.mem[0x0018]        # ERR
 
     # MAXFOR is 8, so the ninth is one too many.
@@ -1061,12 +1052,14 @@ def main():
         m.cpu.pc, m.cpu.sp, m.romen = CODE, 0x7FF0, False
         m.bus.mem[0x0016] = (at + len(prog)) & 0xFF
         m.bus.mem[0x0017] = (at + len(prog)) >> 8
+        # The high-water mark needs a look at every instruction, so
+        # this one keeps its loop -- but ticks the machine, not the CPU.
         low, last = 0x7FF0, -1
         for _ in range(2_000_000):
             if m.cpu.pc == last:
                 break
             last = m.cpu.pc
-            m.cpu.step()
+            m.tick()
             if m.cpu.sp < low:
                 low = m.cpu.sp
         a = m.bus.mem[VARS] | (m.bus.mem[VARS + 1] << 8)
@@ -1120,12 +1113,7 @@ def main():
     m.romen = False
     m.bus.mem[0x0016] = end & 0xFF
     m.bus.mem[0x0017] = end >> 8
-    last = -1
-    for _ in range(80_000_000):
-        if m.cpu.pc == last:
-            break
-        last = m.cpu.pc
-        m.cpu.step()
+    m.run(budget=80_000_000)
     got = m.bus.mem[VARS + 20] | (m.bus.mem[VARS + 21] << 8)
     # the native equivalent, as the compiler emits it
     nat, _ = build("bnat", """
@@ -1170,12 +1158,7 @@ done:   HALT
     mn.cpu.pc = CODE
     mn.cpu.sp = 0x7FF0
     mn.romen = False
-    last = -1
-    for _ in range(80_000_000):
-        if mn.cpu.pc == last:
-            break
-        last = mn.cpu.pc
-        mn.cpu.step()
+    mn.run(budget=80_000_000)
     kn = mn.bus.mem[0x0054] | (mn.bus.mem[0x0055] << 8)
     print()
     check(got == kn == 1001,

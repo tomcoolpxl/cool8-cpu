@@ -233,14 +233,9 @@ def main():
     m.cpu.pc = ORG
     m.cpu.sp = 0xFFF7
     m.romen = False
-    n, last = 0, -1
-    while n < 20_000_000:
-        if m.cpu.pc == last:
-            break
-        last = m.cpu.pc
-        m.cpu.step()
-        n += 1
-    else:
+    # m.run, not a stepping loop: the machine advances the raster and
+    # the interrupt flags and a bare loop does not (AGENTS.md).
+    if m.run(budget=20_000_000) != "halt":
         raise SystemExit("the driver never halted")
 
     # Decode what the machine wrote.

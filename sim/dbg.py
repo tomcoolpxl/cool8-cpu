@@ -276,7 +276,10 @@ class Run:
             op = mem[pc]
             if pc in img.entries:
                 self.trail.append(img.entries[pc][2:])
-            self.m.cpu.step()
+            # tick, not cpu.step: the machine advances the raster and
+            # the interrupt flags, and code being debugged may be
+            # waiting on one.
+            self.m.tick()
             new = self.m.cpu.pc
             if op == 0x29:
                 self.stack.append((pc + 3, img.entries.get(new, img.name(new)),
@@ -372,7 +375,7 @@ class Profile:
                 break
             last = pc
             before = m.cpu.cycles
-            m.cpu.step()
+            m.tick()
             cost = m.cpu.cycles - before
             who = self._who(pc)
             self.by[who] = self.by.get(who, 0) + cost

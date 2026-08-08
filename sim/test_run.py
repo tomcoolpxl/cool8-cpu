@@ -108,6 +108,33 @@ ERRORS = [
 ]
 
 
+def breaks_out(code, syms):
+    """Ctrl-C stops a program that would otherwise never stop.
+
+    Nothing polls a device to make this work: the vertical blank
+    interrupt takes the byte and sets a flag, and the interpreter reads
+    that flag at its loop back-edges. That is the C64's arrangement --
+    its jiffy IRQ sets the RUN/STOP flag and BASIC polls it -- and it is
+    the only shape that can stop a *running* program, which by
+    definition is not reading the keyboard.
+    """
+    M = B.Machine(code, syms)
+    M.settle()
+    for ln in ["10 A = A + 1", "20 GOTO 10", "30 END"]:
+        M.cmd(ln)
+    # `cmd` settles after typing, and a program that never ends
+    # never settles -- so RUN goes straight to the machine and the
+    # ticks are counted here. `M.m.type` feeds; `M.type` waits.
+    M.type("\x1b[B" * 29, chunk=3)
+    M.type("\x1b[H", chunk=3)
+    M.m.type("RUN\r")
+    for _ in range(1_500_000):   # typed, read, and looping
+        M.m.tick()
+    M.m.uart.feed(b"")
+    M.settle(40_000_000)
+    return M
+
+
 def main():
     print("  I5 -- RUN, typed at the editor")
     print()
@@ -125,6 +152,12 @@ def main():
         check(shows(M, want), what,
               "screen:\n      " + "\n      ".join(
                   r for r in M.screen() if r.strip()))
+    print()
+    M = breaks_out(code, syms)
+    check(shows(M, "?BREAK IN 10") or shows(M, "?BREAK IN 20"),
+          "Ctrl-C stops a program that never would",
+          " | ".join(r.strip() for r in M.screen() if r.strip()))
+
     print()
     print("PASS" if not FAILS else f"FAIL -- {len(FAILS)}")
     return 0 if not FAILS else 1

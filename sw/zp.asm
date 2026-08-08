@@ -168,6 +168,7 @@ E_ARNG  = 14                    ; branch out of range
 E_DIV0  = 15                    ; ?DIVISION BY ZERO ERROR
 E_DOS   = 16                    ; ?TOO MANY DOS / ?LOOP WITHOUT DO
 E_CALL  = 17                    ; ?NO SUCH SUB / ?RETURN WITHOUT CALL
+E_STOP  = 18                    ; ?BREAK -- the user stopped it
 ; 13 was E_AFULL, "too many symbols". There is no symbol table to fill:
 ; a label is a BASIC variable, so running out of them is E_NAMES.
 E_DONE  = 255

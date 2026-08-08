@@ -1112,9 +1112,7 @@ auto-repeat work with no effort at all.
 |---|---|---|
 | Raster compare | IRQ | `VID_RCMP` match |
 | Vertical blank | IRQ | Start of vblank |
-| Timer expiry | IRQ | |
-| Keyboard data available | IRQ | |
-| UART RX | IRQ | |
+| Keyboard data available | IRQ | `KBD_CTRL` bit 4 enables it |
 | Break button, `SW[0]` | NMI | Debounced, edge-triggered |
 
 `SW[0]` is wired to `NMI` as a **break button**: press it and a hung
@@ -1131,6 +1129,16 @@ on the first low sample turns that into a continuous NMI. The counter
 resets on any high sample so noise never accumulates, and saturates so
 one press gives one interrupt. This was found on the board and could not
 have been found anywhere else.
+
+**The timer and the UART do not raise interrupts.** This table listed
+both for a long time and the hardware never agreed: `cool8_soc.v:468`
+drives the core with `irq | vid_irq | ps2_irq`, and `tools/cool8vm.py`
+mirrors it. `TMR_CTRL` bit 4 and the UART's status bits exist, but
+nothing carries either to the core, and `irq` is an external SoC input
+that nothing on the board drives. Software wanting either must poll it
+**from** another interrupt — which is what `sw/basic.bas` does, taking
+the vertical blank as its tick the way the C64 takes the 60 Hz jiffy
+IRQ and the BBC its 100 Hz one.
 
 All IRQ sources OR together into the core's single `irq` input. The
 handler reads the per-peripheral status registers to find the cause.

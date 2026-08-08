@@ -661,6 +661,10 @@ class MachineBus(emu.Bus):
 
     def write(self, addr, value):
         addr &= 0xFFFF
+        # A watch costs one compare when nothing is watched, which is
+        # why it can live on the bus rather than in a separate wrapper.
+        if self.m._wlo <= addr <= self.m._whi:
+            self.m.hits.append((self.m.cpu.pc, addr, value & 0xFF))
         if (addr & 0xFF00) == 0xFE00:
             self.m.io_write(addr & 0xFF, value & 0xFF)
             return
@@ -689,6 +693,12 @@ class Machine:
         self.line = 0
         self.frames = 0
         self._snd_owed = 0
+        self._tick_owed = 0
+        self.breakpoints = set()
+        self._wlo, self._whi = 1, 0     # an empty watch range
+        self.hits = []
+        self._plabels = None            # profiling off costs one test
+        self._pby, self._ptotal = {}, 0
 
     # -------------------------------------------------------- the I/O page
 
@@ -732,13 +742,135 @@ class Machine:
     def _irq(self):
         return self.video.irq or self.kbd.irq
 
-    def run_line(self):
-        """One scanline: the CPU, then the raster, then the interrupts."""
-        target = self.cpu.cycles + CYCLES_PER_LINE
-        while self.cpu.cycles < target:
-            self.cpu.irq = self._irq()
-            self.cpu.step()
+    # ------------------------------------------------ driving it from outside
+    #
+    # A test program should be able to type at this machine and read what
+    # it said back without knowing how either works. Both of these went
+    # unwritten for a long time and every harness grew its own copy --
+    # `sim/test_basic.py` reached into `cool8vid._row_addr_v`, a private
+    # function, to work out where a row of text lives.
 
+    def type(self, text):
+        """Type at the machine. `\\n` becomes Return, as a terminal sends it.
+
+        Bytes go into the UART's 16-byte FIFO, so feed a line at a time
+        and let the machine drain it -- exactly the constraint a real
+        serial console has at 115200.
+        """
+        if isinstance(text, str):
+            text = text.replace("\n", "\r").encode("latin-1")
+        self.uart.feed(text)
+
+    def said(self):
+        """Everything the machine has sent since the last call."""
+        return self.uart.take()
+
+    def row(self, r, cols=80):
+        """One row of the text screen, through the machine's own VID_BASE.
+
+        Read from the registers rather than from a remembered address, so
+        a program that forgets to set VID_BASE fails here the way it
+        would on the board -- the rule docs/10-debugging.md section 3 was
+        written about.
+        """
+        import cool8vid as _vid
+        base = _vid._row_addr_v(self.video, r)
+        return "".join(chr(self.bus.mem[(base + 2 * c) & 0xFFFF])
+                       for c in range(cols)).replace("\x00", " ").rstrip()
+
+    def text(self, rows=30, cols=80):
+        """The visible text screen, as a list of strings."""
+        return [self.row(r, cols) for r in range(rows)]
+
+    def shows(self, want):
+        """Is `want` a line on the screen, ignoring surrounding space?"""
+        return any(r.strip() == want for r in self.text())
+
+    # ------------------------------------------------------- debugging
+    #
+    # Breakpoints, a watch and a profile live on the machine itself,
+    # because the alternative is what happened for a year: every harness
+    # grew its own stepping loop, and each one was a machine with
+    # slightly different behaviour. sim/dbg.py still owns the
+    # *structural* checks -- that every RET matches its CALL, that no PC
+    # lands mid-instruction -- which need a shadow stack and a decoded
+    # image and are a different job.
+
+    def watch(self, lo, hi=None):
+        """Record every write into [lo, hi] as (pc, addr, value).
+
+        `m.hits` is the log. This is the tool for "who wrote to that
+        byte" -- the question that otherwise gets answered by bisecting
+        print statements.
+        """
+        self._wlo, self._whi = lo, hi if hi is not None else lo
+        self.hits = []
+
+    def unwatch(self):
+        self._wlo, self._whi = 1, 0        # an empty range: never matches
+        self.hits = []
+
+    def profile(self, syms, org=0, end=0x10000):
+        """Attribute every cycle from here on to the routine it ran in.
+
+        Attribution is by nearest preceding code label and the cost is
+        the emulator's own cycle count, so the numbers add up to the
+        total rather than approximating it. `profile_report()` reads
+        them back.
+
+        **Profile before optimising.** A round once went into the
+        expression evaluator at 16 % of a run while the line machinery
+        was 48 %, and a 256-byte lookup table built on a guess bought
+        2 %.
+        """
+        self._plabels = sorted(
+            (a, n) for n, a in syms.items()
+            if org <= a < end and not n.startswith(("v_", "a_", "str_")))
+        self._pby, self._ptotal = {}, 0
+
+    def profile_report(self, top=14):
+        """[(name, cycles, percent)], heaviest first."""
+        t = self._ptotal or 1
+        rows = sorted(self._pby.items(), key=lambda kv: -kv[1])[:top]
+        return [(n, c, 100.0 * c / t) for n, c in rows]
+
+    def _pwho(self, pc):
+        lo = None
+        for a, n in self._plabels:
+            if a <= pc:
+                lo = n
+            else:
+                break
+        return lo or f"${pc:04X}"
+
+    def run(self, until=None, cycles=None, budget=200_000_000):
+        """Run the machine. Returns why it stopped.
+
+        `until` is a predicate on the machine, a PC, or a set of PCs.
+        Stops on a breakpoint in `m.breakpoints` whatever else is asked,
+        and on a HALT -- a PC that does not move.
+        """
+        if isinstance(until, int):
+            until = {until}
+        if isinstance(until, (set, frozenset, list, tuple)):
+            want = set(until)
+            until = lambda mm: mm.cpu.pc in want          # noqa: E731
+        start, last = self.cpu.cycles, -1
+        for _ in range(budget):
+            if until is not None and until(self):
+                return "until"
+            if self.breakpoints and self.cpu.pc in self.breakpoints:
+                return "breakpoint"
+            if cycles is not None and self.cpu.cycles - start >= cycles:
+                return "cycles"
+            if self.cpu.pc == last:
+                return "halt"
+            last = self.cpu.pc
+            self.tick()
+        return "budget"
+
+    def _end_line(self):
+        """The bookkeeping that happens when a scanline finishes."""
         # Sound is taken at a fixed rate rather than per line, so the
         # sample stream is the right length however long a line runs.
         self._snd_owed += CYCLES_PER_LINE
@@ -754,6 +886,47 @@ class Machine:
         self.video.raster = self.line
         if (self.line & 0xFF) == self.video.rcmp:
             self.video.irq_fl |= 0x01           # raster compare
+
+    def run_line(self):
+        """One scanline: the CPU, then the raster, then the interrupts."""
+        target = self.cpu.cycles + CYCLES_PER_LINE
+        while self.cpu.cycles < target:
+            # irq_line, not irq. cool8emu.py's input is `irq_line`;
+            # assigning `irq` made a new attribute the CPU never read,
+            # so this machine could not deliver an interrupt to anything
+            # and nothing noticed until software wanted one.
+            self.cpu.irq_line = self._irq()
+            self.cpu.step()
+        self._end_line()
+
+    def tick(self):
+        """One instruction, with the raster and the interrupts kept in
+        step with it.
+
+        **A harness that loops on `cpu.step()` runs a machine where no
+        time passes.** Only `run_line` advanced the raster, the sound and
+        the interrupt flags, so a bare stepping loop gave a machine with
+        no vblank, no raster compare and no interrupt that could ever
+        fire -- and anything waiting on one waited for ever. That was
+        invisible while every harness polled its devices; it stops being
+        invisible the moment software wants an interrupt.
+
+        Instruction granularity rather than a whole line, because a
+        harness watching for a particular PC has to see every one.
+        """
+        self.cpu.irq_line = self._irq()
+        before = self.cpu.cycles
+        pc = self.cpu.pc
+        self.cpu.step()
+        spent = self.cpu.cycles - before
+        if self._plabels is not None:
+            who = self._pwho(pc)
+            self._pby[who] = self._pby.get(who, 0) + spent
+            self._ptotal += spent
+        self._tick_owed += spent
+        while self._tick_owed >= CYCLES_PER_LINE:
+            self._tick_owed -= CYCLES_PER_LINE
+            self._end_line()
 
     def run_frame(self):
         for _ in range(V_TOTAL):
