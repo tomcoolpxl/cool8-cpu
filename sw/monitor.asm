@@ -658,6 +658,8 @@ getline:
         BEQ  .back
         CMP  R0,#' '
         BLO  .gl
+        CMP  R0,#$80            ; a named key -- the monitor has no use
+        BHS  .gl                ; for one, and it is not text
         LD   R1,[linelen]
         CMP  R1,#64
         BHS  .gl
@@ -682,104 +684,19 @@ getline:
         POP  R0
         RET
 
-; ---------------------------------------------------------------------
-; The keyboard.
-;
-; Set 2 scancodes arrive raw, prefixes and break codes and all, because
-; that is what the hardware promised (04-system.md section 4.3) and
-; because a table is cheaper here than a state machine is in gates.
-; ---------------------------------------------------------------------
+; The keyboard. Shared with sw/basic.bas -- the editor needs the same
+; decoder and cannot reach this one, because basic.bin ends at $F20A
+; and 523 bytes of it sit under the ROM window. The tables are up at
+; $FF00 with the rest of what would not fit down here.
 
-; scancode -- R0 = a raw code, returns ASCII or 0 for "not a character".
-scancode:
-        PUSH R1
-        MOV  R1,R0
+        .include "kbd.asm"
 
-        LD   R0,[kbrk]
-        TST  R0
-        BNE  .brk
+; The bitmap kbd.asm maintains for whoever wants it. Nothing in the
+; monitor asks which keys are held -- that is KEY(), in the interpreter
+; -- so both hooks are one byte and sw/kdown.asm stays out of the ROM.
 
-        MOV  R0,R1
-        CMP  R0,#$F0
-        BNE  .n1
-        MOV  R0,#1
-        ST   [kbrk],R0
-        BRA  .none
-.n1:    CMP  R0,#$E0
-        BNE  .n2
-        MOV  R0,#1
-        ST   [kext],R0
-        BRA  .none
-.n2:    CMP  R0,#$12
-        BEQ  .shon
-        CMP  R0,#$59
-        BNE  .look
-.shon:  MOV  R0,#1
-        ST   [kshift],R0
-        BRA  .none
-
-        ; A break code: the release of whatever comes after $F0. Only
-        ; the shifts matter; everything else is dropped, which is what
-        ; makes auto-repeat work without any effort.
-.brk:   CLR  R0
-        ST   [kbrk],R0
-        ST   [kext],R0
-        MOV  R0,R1
-        CMP  R0,#$12
-        BEQ  .shoff
-        CMP  R0,#$59
-        BNE  .none
-.shoff: CLR  R0
-        ST   [kshift],R0
-        BRA  .none
-
-.look:  CLR  R0
-        ST   [kext],R0
-        MOV  R0,R1
-        BTST R0,#$80
-        BNE  .none
-        PUSHW X
-        LDW  X,#keymap
-        ADDW X,R0
-        LD   R0,[X]
-        POPW X
-        TST  R0
-        BEQ  .none
-        LD   R1,[kshift]
-        TST  R1
-        BEQ  .done
-        CALL shiftit
-.done:  POP  R1
-        RET
-.none:  CLR  R0
-        POP  R1
-        RET
-
-; shiftit -- R0 = the unshifted character, returns the shifted one.
-; Letters are a bit; everything else is a short table, which is 42 bytes
-; against the 128 a second keymap would cost.
-shiftit:
-        PUSH R1
-        PUSHW X
-        CMP  R0,#'a'
-        BLO  .sym
-        CMP  R0,#'z'+1
-        BHS  .sym
-        BCLR R0,#$20
-        BRA  .sd
-.sym:   LDW  X,#shiftmap
-.sl:    LD   R1,[X]
-        TST  R1
-        BEQ  .sd
-        INCW X
-        CMP  R1,R0
-        BEQ  .hit
-        INCW X
-        BRA  .sl
-.hit:   LD   R0,[X]
-.sd:    POPW X
-        POP  R1
-        RET
+kdset:
+kdclr:  RET
 
 ; ---------------------------------------------------------------------
 ; Parsing the command line.

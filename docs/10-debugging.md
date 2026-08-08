@@ -36,9 +36,25 @@ RUN
 ")` | keystrokes, `
 ` sent as Return |
 | `m.said()` | everything the machine has put on the wire |
+| `m.key("HI")`, `m.key(["K_UP"])` | keystrokes at the **PS/2 port**: make, break, and any shift |
+| `m.scancode([0x1C])` | raw Set 2 — a make with no break is a key *held* |
 | `m.text()`, `m.row(r)`, `m.shows("42")` | the text screen, through the machine's own `VID_BASE` |
+| `m.trace(n, syms)` → `m.trace_report(rows)` | the last n instructions, disassembled, with registers |
 | `m.watch(lo, hi)` → `m.hits` | every write into the range, as `(pc, addr, value)` |
 | `m.profile(syms, org, end)` → `m.profile_report()` | where the clocks went, by routine |
+
+`type()` and `key()` are not interchangeable. One is the serial console
+and one is the keyboard on the desk — different drivers, a different
+interrupt, and for a long time only one of them existed in BASIC at all.
+The codes `key()` sends come out of `sw/keymap.asm` itself, so the day
+the table changes the harness changes with it.
+
+`trace()` answers the question a breakpoint cannot. A breakpoint says
+where the machine stopped; a trace says what it did on the way, and it
+decodes *forward* from the live PC rather than backwards from a symptom
+— which is the failure this whole document opens with. Pass
+`into=False` to step over `CALL`s when a routine's own shape is what you
+are looking at.
 
 **Two rules, and both were learned the hard way.**
 

@@ -29,7 +29,7 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
-BUILD = os.path.join(HERE, "build")
+BUILD = os.environ.get("COOL8_BUILD") or os.path.join(HERE, "build")
 os.makedirs(BUILD, exist_ok=True)
 sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.join(ROOT, "tools"))

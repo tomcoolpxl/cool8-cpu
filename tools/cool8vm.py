@@ -46,6 +46,7 @@ FPGA-only concerns — wait states, the launch/data split, `io_wreq` versus
 
 import argparse
 import os
+import re
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -53,6 +54,7 @@ ROOT = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
 
 import cool8emu as emu                              # noqa: E402
+import opcodes                                      # noqa: E402
 import mkrom                                        # noqa: E402
 import mkfont                                       # noqa: E402
 
@@ -161,6 +163,133 @@ class Ps2:
             self.irq_en = bool(v & 0x10)
             if v & 0x01:
                 self.q.clear()
+
+
+def _operands(line):
+    """The values on one `.byte` line, honouring quotes.
+
+    One pass, because both the separator and the comment marker occur as
+    characters in the table itself: `.byte 0,',','k'` rules out
+    `split(",")` and `.byte 0,'.','/','l',';','p'` rules out cutting the
+    comment off first.
+    """
+    line = line.strip()[len(".byte"):]
+    out, cur, q = [], "", False
+    for c in line:
+        if c == "'":
+            q = not q
+            cur += c
+        elif q:
+            cur += c
+        elif c == ";":
+            break
+        elif c == ",":
+            out.append(cur.strip())
+            cur = ""
+        else:
+            cur += c
+    if cur.strip():
+        out.append(cur.strip())
+    return out
+
+
+def _value(tok):
+    if tok.startswith("'"):
+        return ord(tok[1])
+    if tok.startswith("$"):
+        return int(tok[1:], 16)
+    return int(tok, 0)
+
+
+def _table(text, label):
+    """Every `.byte` value under `label`, up to the blank line after it."""
+    body = text.split(label + ":", 1)[1]
+    out = []
+    for line in body.splitlines():
+        line = line.strip()
+        if not line.startswith(".byte"):
+            if line.startswith(";") or not line:
+                continue
+            break
+        out += [_value(t) for t in _operands(line)]
+    return out
+
+
+def _kbd_tables(_cache={}):
+    """keymap, shiftmap and extmap, read out of sw/keymap.asm.
+
+    **Read, not restated.** The machine decodes with that table; a copy
+    here would only ever agree with itself, and the one thing this is for
+    is catching the day they disagree. sim/test_lex.py reads
+    sw/toktab.asm for the same reason.
+
+    Returns character -> (scancode, shifted) and name -> scancode, the
+    K_* names coming from sw/basic.bas so even the ordering is the
+    machine's rather than a guess about it.
+    """
+    if _cache:
+        return _cache["chars"], _cache["named"]
+
+    here = os.path.dirname(os.path.abspath(__file__))
+    sw = os.path.join(os.path.dirname(here), "sw")
+    with open(os.path.join(sw, "keymap.asm"), encoding="utf-8") as fh:
+        text = fh.read()
+
+    keymap = _table(text, "keymap")
+    shiftmap = _table(text, "shiftmap")
+    extmap = _table(text, "extmap")
+
+    # Ascending, so the main row wins over the keypad: '1' is $16 before
+    # it is $69, and a test that meant to press the 1 key means that one.
+    chars = {}
+    for code, ch in enumerate(keymap):
+        if ch:
+            chars.setdefault(chr(ch), (code, False))
+    for i in range(0, len(shiftmap) - 1, 2):
+        plain, shifted = chr(shiftmap[i]), chr(shiftmap[i + 1])
+        if plain in chars:
+            chars.setdefault(shifted, (chars[plain][0], True))
+    for ch in "abcdefghijklmnopqrstuvwxyz":
+        if ch in chars:
+            chars.setdefault(ch.upper(), (chars[ch][0], True))
+    if "\r" in chars:
+        chars.setdefault("\n", chars["\r"])
+
+    # The K_* constants, so `K_UP` here is the K_UP the editor compares
+    # against rather than a number that happens to match today.
+    with open(os.path.join(sw, "basic.bas"), encoding="utf-8") as fh:
+        consts = dict(re.findall(r"^CONST\s+(K_\w+)\s*=\s*(\d+)",
+                                 fh.read(), re.M))
+    base = min(int(v) for v in consts.values()) if consts else 256
+    named = {}
+    for name, v in consts.items():
+        want = 0x80 + (int(v) - base)
+        for i in range(0, len(extmap) - 1, 2):
+            if extmap[i + 1] == want:
+                named[name] = extmap[i]
+    _cache["chars"], _cache["named"] = chars, named
+    return chars, named
+
+
+def _encode_keys(text):
+    """Characters and K_* names to the make and break codes a keyboard sends."""
+    chars, named = _kbd_tables()
+    if isinstance(text, str):
+        text = list(text)
+    out = bytearray()
+    for item in text:
+        if item in named:
+            out += bytes((0xE0, named[item], 0xE0, 0xF0, named[item]))
+            continue
+        if item not in chars:
+            raise KeyError("no key on this keyboard sends %r" % (item,))
+        code, shifted = chars[item]
+        if shifted:
+            out += bytes((0x12,))
+        out += bytes((code, 0xF0, code))
+        if shifted:
+            out += bytes((0xF0, 0x12))
+    return bytes(out)
 
 
 class Flash:
@@ -765,6 +894,33 @@ class Machine:
         """Everything the machine has sent since the last call."""
         return self.uart.take()
 
+    def key(self, text):
+        """Type at the machine's *keyboard*, rather than at its serial port.
+
+        `type()` reaches the UART, which is the console on a desk with a
+        cable to it. This reaches the PS/2 port, which is what a person
+        at the board uses -- a different driver, a different interrupt
+        and, until sw/kbd.asm existed, no driver at all in BASIC. A test
+        that only ever calls `type()` proves nothing about the machine
+        anyone will actually hold.
+
+        Each character becomes its Set 2 make code and its `$F0` break
+        code, with shift wrapped round the ones that need it, so what
+        arrives is what a keyboard sends. Named keys go in as `K_*`
+        strings: `m.key(["K_UP", "K_UP"])` or `m.key("HI" + "\\n")`.
+        """
+        self.kbd.feed(_encode_keys(text))
+
+    def scancode(self, codes):
+        """Raw Set 2 bytes, for the cases `key()` cannot express.
+
+        A make with no matching break -- a key *held* -- is the obvious
+        one, and it is the whole point of the bitmap KEY() reads. Also
+        `$E0` prefixes, `$E1`, and anything else being fed deliberately
+        malformed to see what the decoder does with it.
+        """
+        self.kbd.feed(bytes(codes))
+
     def row(self, r, cols=80):
         """One row of the text screen, through the machine's own VID_BASE.
 
@@ -809,6 +965,71 @@ class Machine:
     def unwatch(self):
         self._wlo, self._whi = 1, 0        # an empty range: never matches
         self.hits = []
+
+    def trace(self, n=40, syms=None, into=True):
+        """Run n instructions and return what they were.
+
+        Each row is `(pc, label, text, regs)` -- the address, the nearest
+        preceding symbol, the disassembly, and R0-R3/X/Y/SP/flags *after*
+        it ran. `print(m.trace_report(...))` formats it.
+
+        This is the question a breakpoint alone cannot answer: not "where
+        did it stop" but "what did it do on the way". Decoding is
+        forward from the live PC, one instruction at a time, so the
+        boundaries are the ones the CPU actually used rather than a
+        guess made by decoding backwards from a symptom -- the mistake
+        that cost a day and is written up at the top of sim/dbg.py.
+
+        `into=False` runs CALLs to completion instead of stepping into
+        them, which is how you watch one routine's shape without its
+        callees burying it.
+        """
+        rd = lambda a: self.bus.mem[a & 0xFFFF]           # noqa: E731
+        rows = []
+        for _ in range(n):
+            pc = self.cpu.pc
+            try:
+                text, size = opcodes.disassemble(rd, pc)
+            except Exception:
+                text, size = "??", 1
+            depth = 0
+            self.tick()
+            if not into and text.split()[0] == "CALL":
+                # Back to the instruction after the call, however deep it
+                # went. A stack-pointer test, not a matching-RET test:
+                # RETI and a hand-rolled return both land here too.
+                sp = self.cpu.sp
+                while self.cpu.sp < sp and depth < 5_000_000:
+                    self.tick()
+                    depth += 1
+            c = self.cpu
+            regs = (c.r[0], c.r[1], c.r[2], c.r[3], c.x, c.y, c.sp,
+                    "".join(f for f, b in
+                            (("Z", c.Z), ("N", c.N), ("C", c.C))
+                            if b) or "-")
+            rows.append((pc, self._sym(pc, syms), text, regs))
+        return rows
+
+    def trace_report(self, rows):
+        """A trace as text, one instruction a line."""
+        out = []
+        for pc, label, text, r in rows:
+            out.append("$%04X %-14s %-22s R %02X %02X %02X %02X  "
+                       "X %04X Y %04X SP %04X %s"
+                       % (pc, label or "", text, r[0], r[1], r[2], r[3],
+                          r[4], r[5], r[6], r[7]))
+        return "\n".join(out)
+
+    def _sym(self, pc, syms):
+        if not syms:
+            return ""
+        best = None
+        for n, a in syms.items():
+            if a <= pc and (best is None or a > best[1]):
+                best = (n, a)
+        if best is None:
+            return ""
+        return best[0] if best[1] == pc else "%s+%d" % (best[0], pc - best[1])
 
     def profile(self, syms, org=0, end=0x10000):
         """Attribute every cycle from here on to the routine it ran in.

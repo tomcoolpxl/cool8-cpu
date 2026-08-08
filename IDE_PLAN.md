@@ -83,6 +83,14 @@ Decoded from PS/2 scancodes and from ANSI sequences over the serial
 port into the same internal key codes, so the emulator and the board
 behave identically.
 
+**Done.** [`sw/kbd.asm`](sw/kbd.asm) is the decoder, shared as source
+with the boot ROM's monitor; the `$E0`-prefixed keys come back as
+`$80+n` and `serialkey()` folds those and the terminal's `ESC [ A` into
+the same `K_*`. Break is Ctrl+Pause rather than Esc, so a program can
+still read Esc ([D50](docs/01-decisions.md)). Gated by
+`sim/test_run.py` and by `sim/test_boot_basic.py`, which types at the
+PS/2 port of a machine booted from a flash image.
+
 ---
 
 ## 3. Stored form

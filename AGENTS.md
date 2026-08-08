@@ -22,6 +22,21 @@ If you catch yourself adding a fact to this file, it belongs in `docs/`.
 If a fact here has drifted from `docs/`, `docs/` is right and this file
 is the bug.
 
+**All project memory lives in this repository — in this file and the
+documents it points at.** Nothing goes in an agent's own store outside
+the repo. A note kept there is invisible to the user, invisible to
+review, invisible to the next agent that clones this tree, and it cannot
+be corrected when it goes stale. If something is worth remembering
+between sessions, it is worth a commit.
+
+## Standing rules
+
+1. **Never touch the physical board without asking first.** Not to
+   program it, not to read from it, not "just to check".
+2. **Profile before optimising**, and report the number afterwards —
+   including when it got worse (§"Debug and measure with the tooling").
+3. **Report the size at every milestone**, not at the end.
+
 | Document | Owns, and is normative for |
 |---|---|
 | [00-goals.md](docs/00-goals.md) | Scope, the hard constraints C1–C3, non-goals, the FPGA resource budget |
@@ -177,9 +192,27 @@ m.cpu.pc, m.cpu.sp, m.romen = 0xA000, 0x0200, False
 RUN
 ")` |
 | what it said on the wire | `m.said()` |
+| type at the **keyboard**, not the cable | `m.key("HI")`, `m.key(["K_UP"])` |
+| hold a key, or send a malformed code | `m.scancode([0x1C])` — a make with no break |
 | the text screen | `m.text()`, `m.row(r)`, `m.shows("42")` |
+| what it just executed | `m.trace(n, syms)` then `print(m.trace_report(rows))` |
 | who wrote to an address | `m.watch(lo, hi)` then read `m.hits` — `(pc, addr, value)` |
 | where the clocks went | `m.profile(syms, org, end)` then `m.profile_report()` |
+
+**`m.type()` is the serial console; `m.key()` is the keyboard.** They are
+different drivers, a different interrupt and, until `sw/kbd.asm` existed,
+one of them had no driver in BASIC at all. A test that only ever calls
+`type()` proves nothing about the machine a person holds. `m.key()` sends
+the make code, the break code and any shift around them, out of the real
+`sw/keymap.asm`; `m.scancode()` is the raw form, and the only way to
+express a key that is *held* — which is what `KEY()` reads.
+
+**`m.trace()` is for "what did it do", which a breakpoint cannot say.**
+A breakpoint tells you where it stopped. The trace decodes forward from
+the live PC, one instruction at a time, so boundaries are the ones the
+CPU used — never decoded backwards from a symptom, the mistake written
+up at the top of `sim/dbg.py`. `into=False` steps over `CALL`s so one
+routine's shape is not buried under its callees.
 
 **Never loop on `cpu.step()`.** Only the machine advances the raster,
 the sound and the interrupt flags, so a bare stepping loop runs a
@@ -191,6 +224,15 @@ machine's own `VID_BASE`, which is what catches a program that never set
 it — the rule [docs/10-debugging.md](docs/10-debugging.md) §3 exists for.
 `sim/test_basic.py` used to reach into `cool8vid._row_addr_v`, a private
 function, and every new harness copied it.
+
+**Do not bisect by re-running variant programs and reading the screen.**
+That is the ad-hoc stepping loop wearing a different hat: it answers
+slowly, it answers about the wrong thing as often as not, and it throws
+the finding away. It cost a round on the keyboard work before one
+`m.trace()` call showed the machine had simply already finished. Reach
+for the API at the *first* sign of a fault. **If the API cannot answer
+the question, extend `Machine`** — `key`, `scancode` and `trace` all
+exist because the question came up and the answer was not there.
 
 **`sim/dbg.py` still owns the structural checks**, and they are a
 different job: exact disassembly decoded forward from a label, a shadow

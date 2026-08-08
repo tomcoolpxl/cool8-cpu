@@ -36,7 +36,7 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
-BUILD = os.path.join(HERE, "build")
+BUILD = os.environ.get("COOL8_BUILD") or os.path.join(HERE, "build")
 os.makedirs(BUILD, exist_ok=True)
 
 sys.path.insert(0, os.path.join(ROOT, "tools"))
@@ -108,6 +108,14 @@ class Machine:
         # feed its next chunk on top of one still being consumed, and
         # the line arrived scrambled -- which looked like a division bug
         # because it only bit lines past a certain length.
+        #
+        # The keyboard's own FIFO joined the list when sw/kbd.asm did,
+        # and for the third time the same way: an empty ring stopped
+        # meaning an empty *input*, so `key()` returned with six raw
+        # scancodes still sitting in the PS/2 FIFO and the screen
+        # unchanged. Every place a byte can be waiting has to be in this
+        # condition or the harness is settling on a machine that is not
+        # finished.
         self.irhead = syms["irhead"]
         self.irtail = syms["irtail"]
 
@@ -115,6 +123,7 @@ class Machine:
         n = 0
         while n < budget:
             if (not self.m.uart.rx
+                    and not self.m.kbd.q
                     and self.m.bus.mem[self.irhead]
                     == self.m.bus.mem[self.irtail]
                     and self.m.cpu.pc == self.idle):
@@ -133,6 +142,20 @@ class Machine:
             self.settle()
             if self.m.uart.overrun:
                 raise SystemExit("the FIFO overran")
+
+    def key(self, text):
+        """Type at the keyboard rather than at the serial port.
+
+        A character at a time, because a make and a break and possibly a
+        shift round them is up to six bytes of a 16-byte FIFO, and
+        because a person cannot press two keys at once by typing. Held
+        keys are `m.scancode()`, which is deliberately not this.
+        """
+        for ch in text:
+            self.m.key([ch])
+            self.settle()
+            if self.m.kbd.overrun:
+                raise SystemExit("the keyboard FIFO overran")
 
     def vol(self, n=0):
         """Drive n as the PC-side tool sees it.

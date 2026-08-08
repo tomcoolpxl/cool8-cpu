@@ -279,6 +279,7 @@ two. [D45](docs/01-decisions.md) records why BBC declined the same fix.
 | I4b | strings: the `$` suffix, the accumulator, the four-byte descriptor, literals, assignment, concatenation, `LEN`, equality and `PRINT` � done |
 | I4c | `DO`/`LOOP` with `WHILE`/`UNTIL` at either end, `EXIT`, `ELSEIF`, `CALL`/`RETURN`, `/` and `MOD`, and the string functions: `LEN`, `LEFT$`, `RIGHT$`, `MID$`, `CHR$`, `ASC`, `STR$`, `VAL`, `INSTR` — done |
 | I5 | wired to `RUN` in the editor, replacing the overlay, with Ctrl-C stopping a running program through a vblank interrupt ([D49](docs/01-decisions.md)) — done |
+| I6 | the keyboard a program can read: `INKEY` for what was typed, `KEY(c)` for what is *held*, on the bitmap the shared decoder maintains ([D50](docs/01-decisions.md), [D51](docs/01-decisions.md)). Measured: 574 bytes of driver, 56 of interpreter — done |
 
 I4 is complete, and nothing I2 deferred is still deferred. Nineteen
 `sttab` slots point at `bad`, and fourteen of them should: `TO`,

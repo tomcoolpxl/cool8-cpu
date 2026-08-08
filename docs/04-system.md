@@ -264,10 +264,38 @@ sense that both raise this bit.
 
 The hardware delivers **raw Set 2 scancodes**, including `$E0` prefixes
 and `$F0` break codes. Translation to ASCII is software's job — it
-belongs in the monitor, not in gates, and
-[`sw/monitor.asm`](../sw/monitor.asm) does it in a 128-byte table plus a
+belongs in the decoder, not in gates, and
+[`sw/kbd.asm`](../sw/kbd.asm) does it in a 128-byte table plus a
 21-entry list of the keys shift does something to that is not a case
-change.
+change. That file is `.include`d by both the boot ROM and BASIC, which
+cannot share it at run time: `basic.bin` runs past `$F000` and would be
+hidden under its own ROM window ([D50](01-decisions.md)).
+
+**Bit 4 of `KBD_CTRL` is used.** BASIC sets it, so a keypress raises IRQ
+rather than waiting up to a frame for the vertical blank, and the same
+handler drains both this and the UART into one ring. The UART is not on
+that line and cannot be (§6), which is why the vblank still ticks.
+
+#### Scancodes a program reaches for
+
+`KEY(c)` takes a raw Set 2 code, because it asks about a key and not
+about a character ([D51](01-decisions.md)). The common ones:
+
+| key | code | key | code | key | code |
+|---|---|---|---|---|---|
+| `A`–`Z` | see the keymap | up | `$75` | space | `$29` |
+| `1` | `$16` | down | `$72` | enter | `$5A` |
+| `Z` | `$1A` | left | `$6B` | escape | `$76` |
+| `X` | `$22` | right | `$74` | left shift | `$12` |
+| `.` | `$49` | home | `$6C` | ctrl | `$14` |
+
+The cursor keys share their codes with the numeric keypad and are told
+apart by the `$E0` prefix. There is no keypad on this machine, so only
+one of each pair can ever be pressed and `KEY($75)` is unambiguous.
+
+**Ctrl+Pause is Break.** It arrives as `$E0 $7E` and the decoder returns
+`$03` — the byte the serial console's Ctrl-C already sends — so a
+running program is stopped the same way whichever keyboard is attached.
 
 **Read `KBD_STAT` bit 0 before `KBD_DATA`.** The FIFO is a block RAM and
 its read register is a cycle behind, so a read taken in the cycle a byte
@@ -1112,7 +1140,7 @@ auto-repeat work with no effort at all.
 |---|---|---|
 | Raster compare | IRQ | `VID_RCMP` match |
 | Vertical blank | IRQ | Start of vblank |
-| Keyboard data available | IRQ | `KBD_CTRL` bit 4 enables it |
+| Keyboard data available | IRQ | `KBD_CTRL` bit 4 enables it. **BASIC uses this** |
 | Break button, `SW[0]` | NMI | Debounced, edge-triggered |
 
 `SW[0]` is wired to `NMI` as a **break button**: press it and a hung
@@ -1135,7 +1163,10 @@ both for a long time and the hardware never agreed: `cool8_soc.v:468`
 drives the core with `irq | vid_irq | ps2_irq`, and `tools/cool8vm.py`
 mirrors it. `TMR_CTRL` bit 4 and the UART's status bits exist, but
 nothing carries either to the core, and `irq` is an external SoC input
-that nothing on the board drives. Software wanting either must poll it
+that nothing on the board drives. **The keyboard is not in that
+position** — `ps2_irq` is right there in the same expression — which is
+why BASIC's handler is entered on a keypress but still has to drain the
+UART on the vblank tick. Software wanting either must poll it
 **from** another interrupt — which is what `sw/basic.bas` does, taking
 the vertical blank as its tick the way the C64 takes the 60 Hz jiffy
 IRQ and the BBC its 100 Hz one.

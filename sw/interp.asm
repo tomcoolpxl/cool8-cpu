@@ -2414,6 +2414,69 @@ sasc:   CALL sopen
         POP  R0
         RET
 
+; ---------------------------------------------------------------------
+; The keyboard, as a program sees it.
+;
+; Two functions, because they answer two different questions and one of
+; them cannot answer the other. INKEY takes the next key out of the ring
+; the interrupt fills -- what was *typed*, in order, each key once. That
+; is what a menu wants and it is the C64's GET.
+;
+; It is not what a game wants. A queue delivers a held key once, then
+; nothing until auto-repeat starts, and it can only ever name one key at
+; a time -- so left-and-fire is not expressible. KEY(c) reads the bitmap
+; sw/kbd.asm maintains instead: is that key down *now*, asked of as many
+; keys as you like. The C64 hit this exact wall, which is why its games
+; read PEEK(197) rather than using GET, and why they then dropped to the
+; CIA when one key at a time turned out not to be enough either.
+; ---------------------------------------------------------------------
+
+; Both reach outside the interpreter, and they are the only things here
+; that do: `s_serialkey` is the editor's, and `kdbit` is sw/kbd.asm's.
+; Neither exists when interp.asm is assembled on its own, so a harness
+; that does that supplies them -- sim/test_interp.py and sim/test_asm.py
+; stub both, and sim/test_run.py exercises the real ones on the whole
+; system, which is the only place they mean anything.
+
+; INKEY -- the next key, or 0 if none. No parentheses: `IF INKEY = 27`.
+;
+; s_serialkey is the editor's, and it is deliberately not bypassed: it
+; is the one place that turns both a terminal's ESC [ A and the PS/2
+; decoder's $80+n into K_UP, so a program gets the same code for a
+; cursor key whichever keyboard the machine has in front of it.
+inkey:  CALL s_serialkey
+        PUSH R0
+        CLR  R0
+        ST   [STYPE],R0
+        POP  R0
+        RET
+
+; KEY(c) -- is raw Set 2 scancode c held? TRUE (-1) or FALSE (0).
+;
+; The argument is a scancode and not ASCII, because this asks about a
+; key and not about a character: shift is a key, the cursors are keys,
+; and $1C is the one under your left middle finger whether or not it is
+; currently producing an A. docs/04-system.md lists the ones a game
+; reaches for.
+ikey:   CALL sopen              ; the '('
+        CALL eval
+        CALL sopen              ; the ')'
+        MOV  R1,R0
+        CALL kdbit              ; X on the byte, R0 the mask
+        LD   R1,[X]
+        AND  R0,R1
+        BEQ  .up
+        MOV  R0,#$FF            ; TRUE is -1, all ones (D47)
+        MOV  R1,#$FF
+        BRA  .fin
+.up:    CLR  R0
+        CLR  R1
+.fin:   PUSH R0
+        CLR  R0
+        ST   [STYPE],R0
+        POP  R0
+        RET
+
 ; isbuilt -- the name in NBUF a builtin? C clear and X on its handler.
 isbuilt:
         PUSHW Y
@@ -2477,6 +2540,10 @@ btab:   .byte 3,"L","E","N"
         .word sval
         .byte 5,"I","N","S","T","R"
         .word sinstr
+        .byte 5,"I","N","K","E","Y"
+        .word inkey
+        .byte 3,"K","E","Y"
+        .word ikey
         .byte 0
 
 ; ---------------------------------------------------------------------

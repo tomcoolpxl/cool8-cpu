@@ -296,7 +296,10 @@ FUNCTION waitraw() AS INT
   LOOP
 END FUNCTION
 
-' ESC [ A and friends into the named key codes.
+' ESC [ A and friends into the named key codes -- and $80+n, which is
+' what sw/kbd.asm returns for the same keys off the PS/2 port. The two
+' wires meet here and nowhere else, so everything above this function
+' sees one set of key codes whichever one a key arrived on.
 FUNCTION serialkey() AS INT
   DIM c AS INT
   DIM d AS INT
@@ -304,8 +307,18 @@ FUNCTION serialkey() AS INT
   IF c = 0 THEN
     RETURN 0
   END IF
+  IF c >= 128 THEN
+    RETURN K_UP + (c - 128)
+  END IF
   IF c <> 27 THEN
     RETURN c
+  END IF
+  ' A lone Escape is Escape. Waiting for the rest of a sequence that is
+  ' never coming would hang a game's loop on the one key it is most
+  ' likely to test for; a terminal sends ESC [ A in a single burst and
+  ' the interrupt has the whole of it in the ring before anything looks.
+  IF PEEK(irhead) = PEEK(irtail) THEN
+    RETURN 27
   END IF
   d = waitraw()
   IF d <> 91 THEN
@@ -1776,14 +1789,20 @@ fdrv = 0
 
 ' The input interrupt. sw/boot.asm leaves NMI, IRQ and BRK all pointing
 ' at a bare RETI and never enables interrupts, so this is the first
-' handler the machine has had. Vblank is the tick because the UART
+' handler the machine has had. Vblank is the tick for the *UART*, which
 ' cannot raise an interrupt of its own -- the core sees
 ' `irq | vid_irq | ps2_irq` and nothing carries the UART to it -- so the
 ' tick does the reading, exactly as the C64's jiffy IRQ scans a keyboard
 ' that cannot interrupt either.
+'
+' The keyboard is not in that position: KBD_CTRL bit 4 puts it on the
+' same line, so a keypress is seen when it happens rather than up to a
+' frame later. Both sources land in one handler and one ring.
 POKE $FFFC, iisr AND 255
 POKE $FFFD, iisr >> 8
 POKE $FE1D, $20                 ' enable the vertical blank interrupt
+POKE $FE42, $11                 ' clear the keyboard FIFO and enable its
+POKE $FE42, $10                 ' interrupt -- stale codes are not input
 ASM
         EI
 END ASM
@@ -1989,11 +2008,15 @@ BANNERTAB:
 ; escape flag the same way. Copying that is what lets a *running*
 ; program be stopped at all: it cannot poll, so something else must.
 ;
-; The vertical blank is the tick, because the UART cannot raise an
+; The vertical blank is the tick for the UART, which cannot raise an
 ; interrupt (docs/04-system.md section 6: the core sees
 ; `irq | vid_irq | ps2_irq` and nothing carries the UART to it). So the
 ; tick does the reading, which is the C64's shape exactly -- its jiffy
 ; IRQ scans a keyboard that cannot interrupt either.
+;
+; The PS/2 port *is* on that line, through KBD_CTRL bit 4, so a keypress
+; is handled when it happens. Both sources end in the same ring and
+; nothing above here can tell which wire a key came in on.
 ;
 ; Sixteen bytes, which is the UART's own FIFO depth. At 115200 a full
 ; line arrives faster than 60 Hz can drain it, so a host that streams
@@ -2004,6 +2027,14 @@ irring: .space 16
 irhead: .byte 0
 irtail: .byte 0
 
+; kbd.asm's state. It declares none of its own, because the same source
+; is assembled into the boot ROM where a .byte would land in ROM and
+; could never be written.
+kshift: .byte 0
+kbrk:   .byte 0
+kext:   .byte 0
+kdown:  .space 16
+
 iisr:   PUSH R0
         PUSH R1
         PUSHW X
@@ -2011,25 +2042,46 @@ iisr:   PUSH R0
         ST   [$FE1D],R0
 .more:  LD   R0,[$FE70]         ; UART_STAT: anything waiting?
         BTST R0,#$01
-        BEQ  .done
+        BEQ  .kbd
         LD   R0,[$FE71]         ; taking it is the only way to see it
         CMP  R0,#$03            ; Ctrl-C, the serial console's Break
         BNE  .keep
-        MOV  R0,#1
+.stop:  MOV  R0,#1
         ST   [ibreak],R0        ; the flag the interpreter polls
         BRA  .more
-.keep:  LD   R1,[irhead]
+.keep:  CALL irpush
+        BRA  .more
+
+        ; The keyboard. Raw Set 2 arrives and kbd.asm turns it into a
+        ; key, or into nothing at all for a prefix, a release or a
+        ; shift. Ctrl+Pause decodes to $03, so the Break key and the
+        ; serial console's Ctrl-C are the same byte and stop a program
+        ; through the same test above.
+.kbd:   LD   R0,[$FE40]         ; KBD_STAT
+        BTST R0,#$01
+        BEQ  .done
+        LD   R0,[$FE41]         ; KBD_DATA, read has a side effect
+        CALL scancode
+        TST  R0
+        BEQ  .kbd
+        CMP  R0,#$03
+        BEQ  .stop
+        CALL irpush
+        BRA  .kbd
+.done:  POPW X
+        POP  R1
+        POP  R0
+        RETI
+
+; irpush -- R0 into the ring. Both inputs come through here.
+irpush: LD   R1,[irhead]
         LDW  X,#irring
         ADDW X,R1
         ST   [X],R0
         ADD  R1,#1
         AND  R1,#15
         ST   [irhead],R1
-        BRA  .more
-.done:  POPW X
-        POP  R1
-        POP  R0
-        RETI
+        RET
 
 ; ---- the interpreter and the on-machine assembler. Both are written
 ; ---- without .org for exactly this: every address in the image is
@@ -2042,4 +2094,14 @@ iisr:   PUSH R0
         .include "zp.asm"
         .include "interp.asm"
         .include "asm.asm"
+
+; ---- the keyboard, the same source the boot ROM's monitor is built
+; ---- from. It cannot be shared at run time: this image ends at $F20A,
+; ---- so its last 523 bytes are under the ROM window and turning ROMEN
+; ---- on to call into the ROM would hide those bytes from the CPU.
+; ---- kdown.asm is the half the monitor does not want, and the reason
+; ---- kdset/kdclr are the includer's rather than kbd.asm's own.
+        .include "kbd.asm"
+        .include "keymap.asm"
+        .include "kdown.asm"
 END ASM

@@ -1845,6 +1845,89 @@ own convention and is unambiguous.
 The hard escape remains `SW[0]`, wired to `NMI`, which drops a hung
 machine into the monitor with its state intact.
 
+## D50 -- One keyboard decoder, included twice, and its storage belongs
+## to whoever included it
+
+`sw/monitor.asm` had a complete Set 2 decoder -- `$F0` breaks, the `$E0`
+prefix, both shifts, a 128-byte keymap -- and BASIC could not use a byte
+of it. `basic.bin` ends at **$F448**, so its last 1,097 bytes sit under
+the `$F000-$FDFF` ROM window; setting ROMEN to call into the ROM would
+hide BASIC from itself while it looked. The two builds cannot share
+code at run time under any arrangement short of moving BASIC below
+`$F000`, which costs more than the 187 bytes of table it would save.
+
+So the decoder is **shared as source**, the answer `sw/toktab.asm`
+already gives: `sw/kbd.asm` for the code, `sw/keymap.asm` for the
+tables, `.include`d by `sw/boot.asm` and by `sw/basic.bas`.
+
+**It declares no storage.** A `.byte 0` inside it would land in ROM in
+one of the two builds and could never be written, so `kshift`, `kbrk`
+and `kext` are named but not defined, and each includer places them --
+the monitor at `MVARS+68`, BASIC beside its input ring. The same rule
+took over `kdset`/`kdclr`: the bitmap they maintain is 115 bytes that
+only `KEY()` reads, so the monitor answers both with **a bare RET** and
+`sw/kdown.asm` never enters the ROM. That turned a build that was 26
+bytes *over* `$FDFF` into one with 36 to spare.
+
+**Named keys are `$80+n`, not ANSI.** The cursors, Home, End, Delete and
+Insert have no character, and they share their scancodes with the
+numeric keypad -- `$75` is both cursor-up and keypad-8, told apart only
+by the `$E0` in front. The monitor cleared that prefix without reading
+it, so cursor-up typed an `8` for as long as the decoder existed. The
+decoder now returns `$80+n`, a range the keymap cannot produce because
+`.look` already rejects every scancode with bit 7 set. One byte in a
+byte-wide ring, and `serialkey()` folds it into the same `K_UP` it makes
+out of a terminal's `ESC [ A` -- so one function knows what a named key
+is, and nothing above it can tell which wire the key came in on.
+
+Emitting real ANSI sequences instead was the runner-up. It would have
+cost a table of finals, 3-4 bytes of a 16-byte ring per keypress, and
+about 30 bytes more code, to make the PS/2 port pretend to be a
+terminal it is not.
+
+**Break is Ctrl+Pause**, which arrives as `$E0 $7E` and decodes to `$03`
+-- the byte the serial console's Ctrl-C already produces. One entry in
+`extmap`, no new code in the interrupt handler, and one break path
+rather than two. Escape stays an ordinary character, which a game's menu
+wants it to be, and which D49 already declined to spend.
+
+---
+
+## D51 -- A key-down bitmap, not the C64's single byte
+
+`INKEY` is a queue and cannot answer a game's question. A held key
+arrives once and then not again until auto-repeat, and a queue names one
+key at a time, so left-and-fire is not expressible in it. The C64 hit
+this exactly: `GET` reads the buffer, so games read `PEEK(197)` instead
+-- the key currently down -- and then dropped to reading the CIA
+directly when *one* key turned out not to be enough either. The BBC
+asked about one key at a time with `INKEY(-n)`.
+
+COOL8's keyboard delivers make and break codes, so **16 bytes of bitmap
+answers for all 128 keys at once**, which is the thing neither machine
+could do. `scancode` sets a bit on every make and clears it on every
+break; `KEY(c)` tests one. Measured: `kdbit` 54 bytes, `kdclr` 32,
+`kdset` 29, eight bytes of mask table, 16 of RAM -- 139, all of it in
+BASIC and one byte of it in the ROM. In the interrupt it is about 15 us
+per key pressed and released, or 0.015 % of the CPU at ten keys a
+second.
+
+**The argument is a raw Set 2 scancode**, not ASCII. This asks about a
+key and not about a character: shift is a key, the cursors are keys, and
+`$1C` is the one under your left middle finger whether or not it is
+currently producing an `A`. Reversing the keymap to accept `KEY(ASC("A"))`
+would have cost a 128-byte scan per call and still needed a separate
+spelling for the cursors, which share their codes with the keypad. The
+cost is that the codes have to be looked up, so
+[04-system.md](04-system.md) section 4.3 lists the ones a game reaches
+for.
+
+With no keypad on this machine an `$E0`-prefixed key shares a bit with
+the keypad key it shares a scancode with. That is not a collision: only
+one of the two can be pressed.
+
+---
+
 ---
 
 The architecture is settled. Anything that reopens it now needs new

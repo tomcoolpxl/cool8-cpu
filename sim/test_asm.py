@@ -22,7 +22,7 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
-BUILD = os.path.join(HERE, "build")
+BUILD = os.environ.get("COOL8_BUILD") or os.path.join(HERE, "build")
 os.makedirs(BUILD, exist_ok=True)
 
 sys.path.insert(0, os.path.join(ROOT, "tools"))
@@ -161,6 +161,20 @@ s_findline:
         MOV  R1,XH
         RET
 
+
+; INKEY and KEY reach outside the interpreter: the ring belongs to the
+; editor and the key-down bitmap to sw/kbd.asm, and neither is here
+; when interp.asm is assembled on its own. Stubbed rather than pulled
+; in, because this file tests the interpreter and not the keyboard --
+; sim/test_run.py drives the real ones on the whole system.
+s_serialkey:
+        CLR  R0
+        CLR  R1
+        RET
+kdbit:  CLR  R0                 ; a zero mask: KEY() is always false
+        LDW  X,#kdstub
+        RET
+kdstub: .byte 0
         .include "zp.asm"
         .include "interp.asm"
         .include "toktab.asm"
@@ -269,6 +283,20 @@ s_findline:
         MOV  R1,XH
         RET
 
+
+; INKEY and KEY reach outside the interpreter: the ring belongs to the
+; editor and the key-down bitmap to sw/kbd.asm, and neither is here
+; when interp.asm is assembled on its own. Stubbed rather than pulled
+; in, because this file tests the interpreter and not the keyboard --
+; sim/test_run.py drives the real ones on the whole system.
+s_serialkey:
+        CLR  R0
+        CLR  R1
+        RET
+kdbit:  CLR  R0                 ; a zero mask: KEY() is always false
+        LDW  X,#kdstub
+        RET
+kdstub: .byte 0
         .include "zp.asm"
         .include "interp.asm"
         .include "toktab.asm"

@@ -1,0 +1,57 @@
+{
+  "name": "cool8",
+  "version": "1.0.0",
+  "private": true,
+  "description": "A clean-sheet 8-bit CPU and the retro home computer around it. Node is here only to name and run the commands; every one of them is Python or iverilog underneath.",
+  "scripts": {
+    "test": "node tools/run.mjs test",
+    "test:sw": "node tools/run.mjs test --group sw",
+    "test:rtl": "node tools/run.mjs test --group rtl",
+    "check": "node tools/run.mjs check",
+    "build": "node tools/run.mjs build",
+    "bench": "node tools/run.mjs bench",
+    "prof": "python sim/prof_interp.py",
+    "cosim": "python sim/cosim.py all",
+    "rom": "python tools/mkrom.py sw/boot.asm -o sim/build/boot.hex",
+    "boot": "python tools/mkboot.py sim/build/basic.bin -o sim/build/BOOT.BIN",
+    "list": "node tools/run.mjs --list"
+  },
+  "cool8": {
+    "python": "python",
+    "buildRoot": "sim/build",
+    "groups": {
+      "sw": [
+        {"id": "interp",     "run": "sim/test_interp.py",     "about": "I2 -- the interpreter on the editor's stored form"},
+        {"id": "asm",        "run": "sim/test_asm.py",        "about": "I3b -- the on-machine assembler, byte-identical to cool8asm"},
+        {"id": "basic",      "run": "sim/test_basic.py",      "about": "S1 -- the screen editor, typed at"},
+        {"id": "run",        "run": "sim/test_run.py",        "about": "I5 -- RUN, plus INKEY and KEY from the keyboard"},
+        {"id": "boot_basic", "run": "sim/test_boot_basic.py", "about": "M16 -- reset to BASIC to a keypress, off a flash image"},
+        {"id": "autoboot",   "run": "sim/test_autoboot.py",   "about": "M15 -- autoboot and the monitor's flash write"},
+        {"id": "corpus",     "run": "sim/test_corpus.py",     "about": "the compiler against its corpus"},
+        {"id": "emit",       "run": "sim/test_emit.py",       "about": "S3 -- the code emitter, gated against the assembler"},
+        {"id": "comp",       "run": "sim/test_comp.py",       "about": "the self-hosted compiler"},
+        {"id": "lex",        "run": "sim/test_lex.py",        "about": "S4a -- the compiler's front end"},
+        {"id": "fs",         "run": "sim/test_fs.py",         "about": "the filesystem, both implementations"},
+        {"id": "bas",        "run": "sim/test_bas.py",        "about": "the code-size gate: within 15% of hand-written"},
+        {"id": "names",      "run": "sim/check_names.py",     "about": "global name collisions across the system image"}
+      ],
+      "rtl": [
+        {"id": "cosim", "run": "sim/cosim.py", "args": ["all"], "about": "the emulator against the RTL -- the gate for any RTL change", "slow": true}
+      ]
+    },
+    "check": [
+      {"id": "opcodes", "run": "tools/opcodes.py",   "args": ["--check"],    "about": "the encoding table against the documented examples"},
+      {"id": "asmtab",  "run": "tools/mkasmtab.py",  "args": ["--check"],    "about": "sw/asmtab.asm is current"},
+      {"id": "emu",     "run": "tools/cool8emu.py",  "args": ["--selftest"], "about": "the CPU model's self-test"}
+    ],
+    "build": [
+      {"id": "rom",   "run": "tools/mkrom.py",  "args": ["sw/boot.asm", "-o", "sim/build/boot.hex"], "about": "the 4 KB boot ROM"},
+      {"id": "basic", "run": "sim/build_basic.py",                                                   "about": "basic.bin and BOOT.BIN"}
+    ],
+    "bench": [
+      {"id": "dispatch", "run": "sim/bench_dispatch.py", "about": "dispatch alone"},
+      {"id": "interp",   "run": "sim/bench_interp.py",   "about": "the interpreter against native"},
+      {"id": "lang",     "run": "sim/bench_lang.py",     "about": "the language benchmark"}
+    ]
+  }
+}

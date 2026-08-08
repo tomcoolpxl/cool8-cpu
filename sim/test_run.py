@@ -135,6 +135,77 @@ def breaks_out(code, syms):
     return M
 
 
+def keyboard(code, syms):
+    """INKEY and KEY, driven from the PS/2 port rather than the UART.
+
+    Two questions and two answers, and the reason there are two of each:
+
+    `INKEY` is the queue -- what was typed, each key once, in order.
+    That is the C64's GET, and it cannot answer a game's question. A held
+    key arrives once and then not again until auto-repeat, and only ever
+    one key at a time, so left-and-fire is not expressible in it. `KEY(c)`
+    reads the bitmap sw/kbd.asm keeps instead: is that key down *now*,
+    asked of as many keys as you like.
+
+    ## Why these programs never end
+
+    A held key still produces its character, and that character sits in
+    the ring until something reads it. So when a program ends and the
+    editor comes back, the editor reads it -- and types it over the row
+    the program just printed on. The first version of this test looked
+    like KEY() returning FALSE and was nothing of the kind: the answer
+    had been printed and then overwritten by the `a` of the held A key.
+
+    That is worth knowing rather than working around. It is what the
+    hardware does, it is what the C64 does with its own buffer, and a
+    game that ends while the player is still holding a key will see
+    exactly this. A program that does not want it can drain INKEY before
+    it ends. These loop forever and are stopped with Ctrl-C, so the
+    editor never gets a turn and the screen holds what was printed.
+    """
+    out = {}
+
+    # ---- KEY: nothing, one key, then two at once
+    M = B.Machine(code, syms)
+    M.settle()
+    for ln in ["10 DO", '20 IF KEY($1C) AND KEY($29) THEN PRINT "BOTH"',
+               "30 LOOP"]:
+        M.cmd(ln)
+    M.m.type("RUN\r")
+    M.m.run(cycles=4_000_000)
+    out["none"] = M.m.shows("BOTH")
+    M.m.scancode([0x1C])                        # A down, and stays down
+    M.m.run(cycles=4_000_000)
+    out["one"] = M.m.shows("BOTH")
+    M.m.scancode([0x29])                        # space down as well
+    M.m.run(cycles=4_000_000)
+    out["both"] = M.m.shows("BOTH")
+    kd = syms["kdown"]
+    M.m.scancode([0xF0, 0x29])                  # space back up
+    M.m.run(cycles=2_000_000)
+    out["released"] = bytes(M.m.bus.mem[kd:kd + 16])
+
+    # ---- INKEY: a character, a named key, and a lone Escape
+    M = B.Machine(code, syms)
+    M.settle()
+    for ln in ["10 DO", "20 A = INKEY", "30 IF A <> 0 THEN PRINT A",
+               "40 LOOP"]:
+        M.cmd(ln)
+    M.m.type("RUN\r")
+    M.m.run(cycles=4_000_000)
+    out["quiet"] = M.m.shows("90")
+    M.m.key("Z")
+    M.m.run(cycles=4_000_000)
+    out["char"] = M.m.shows("90")               # ASCII Z
+    M.m.key(["K_UP"])
+    M.m.run(cycles=4_000_000)
+    out["named"] = M.m.shows("256")             # K_UP
+    M.m.type("\x1b")
+    M.m.run(cycles=4_000_000)
+    out["esc"] = M.m.shows("27")
+    return out
+
+
 def main():
     print("  I5 -- RUN, typed at the editor")
     print()
@@ -157,6 +228,19 @@ def main():
     check(shows(M, "?BREAK IN 10") or shows(M, "?BREAK IN 20"),
           "Ctrl-C stops a program that never would",
           " | ".join(r.strip() for r in M.screen() if r.strip()))
+
+    print()
+    k = keyboard(code, syms)
+    check(not k["none"], "KEY() is false with nothing held")
+    check(not k["one"], "and still false with only one of the two down")
+    check(k["both"], "TWO keys held at once -- what a queue cannot say")
+    check(k["released"] == bytes([0, 0, 0, 0x10] + [0] * 12),
+          "and releasing one leaves the other held",
+          k["released"].hex(" "))
+    check(not k["quiet"], "INKEY is 0 when nothing was typed")
+    check(k["char"], "a key on the PS/2 port reaches a running program")
+    check(k["named"], "and a cursor key arrives as K_UP, not as a keypad 8")
+    check(k["esc"], "a lone Escape returns 27 rather than blocking")
 
     print()
     print("PASS" if not FAILS else f"FAIL -- {len(FAILS)}")
