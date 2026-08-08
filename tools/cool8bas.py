@@ -463,7 +463,16 @@ class Compiler:
             if e[1][0] == 'num':
                 self.e(f"LD   R0,[${e[1][1] & 0xFFFF:04X}]")
             else:
-                self.gen(e[1])
+                # An address is 16 bits whatever the expression's own
+                # width would be. Without the 2, `PEEK(FSENT + k)` with
+                # a constant below 256 takes the byte path -- width()
+                # calls a literal one byte wide -- and R1 is never
+                # loaded, so XH carries whatever the last expression
+                # left. It read the right byte of the wrong page, and
+                # only when the previous statement happened to leave R1
+                # non-zero, which is why it hid until FSVARS moved from
+                # $0100 to $0074.
+                self.gen(e[1], 2)
                 self.e("MOV  XL,R0")
                 self.e("MOV  XH,R1")
                 self.e("LD   R0,[X]")
@@ -476,7 +485,7 @@ class Compiler:
                 self.e(f"LD   R0,[${e[1][1] & 0xFFFF:04X}]")
                 self.e("CLR  R1")
             else:
-                self.gen(e[1])
+                self.gen(e[1], 2)    # an address is always 16 bits
                 self.e("MOV  XL,R0")
                 self.e("MOV  XH,R1")
                 self.e("LD   R0,[X]")
@@ -910,8 +919,12 @@ class Compiler:
                 self.gen(val, 1)        # a POKE writes one byte
                 self.e(f"ST   [${addr[1] & 0xFFFF:04X}],R0")
                 return
+            # Both of these take the address at 16 bits whatever its own
+            # width would be -- see the note in gen()'s peek arm. A POKE
+            # getting this wrong writes to the wrong page rather than
+            # reading from it, so it is the more dangerous of the two.
             if self.is_leaf(val):
-                self.gen(addr)
+                self.gen(addr, 2)
                 self.e("MOV  XL,R0")
                 self.e("MOV  XH,R1")
                 self.load(val, 0)
@@ -919,7 +932,7 @@ class Compiler:
                 self.gen(val)
                 tv = self.temp()
                 self.store_temp(tv)
-                self.gen(addr)
+                self.gen(addr, 2)
                 self.e("MOV  XL,R0")
                 self.e("MOV  XH,R1")
                 self.load_temp(tv, 0)

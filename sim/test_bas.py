@@ -117,6 +117,12 @@ CORRECT = [
     ("EXIT DO leaves the inner loop only", "exitdo.bas",
      {"a": 23, "b": 3}),
     ("several parameters, called twice", "args.bas", {"r": 579}),
+    # 65+66+67+68. Both sums must be 266: the first goes through
+    # PEEK/POKE on a computed address below 256, the second through
+    # literal addresses. They disagree when an address is built at byte
+    # width and the high byte is left to chance.
+    ("an address is 16 bits, even under 256", "addr.bas",
+     {"a": 266, "b": 266}),
 ]
 
 
