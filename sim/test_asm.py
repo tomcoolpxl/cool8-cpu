@@ -154,7 +154,7 @@ start:  CLR  R0
 ; than it was, at the price of the three editor stubs interp.asm wants.
 s_putn:   RET
 s_newline:RET
-s_puts:   RET
+s_putsn:  RET
 s_findline:
         LDW  X,#prog
         MOV  R0,XL
@@ -267,7 +267,7 @@ start:  CLR  R0
 
 s_putn:   RET
 s_newline:RET
-s_puts:   RET
+s_putsn:  RET
 s_findline:
         LDW  X,#prog
         MOV  R0,XL

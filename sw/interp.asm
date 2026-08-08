@@ -644,25 +644,32 @@ h_print:
         CALL eval
         LD   R2,[STYPE]
         BNE  .str
-        PUSH R1
+        PUSHW Y                 ; saved *first*: the argument has to be
+        PUSH R1                 ;   on top when the call reads [SP+2]
         PUSH R0
-        PUSHW Y
         CALL s_putn
         CALL s_newline
-        POPW Y
         POP  R0
         POP  R1
+        POPW Y
         JMP  stmt
         ; A heap string is length-counted, so PRINT needs a sibling of
         ; puts that takes one rather than a NUL.
+        ; putsn(p AS CARD, n AS INT). The compiler pushes right to left
+        ; and **an INT is two bytes**, so the count needs a high byte of
+        ; its own -- pushing one left the callee reading a length out of
+        ; the saved Y and looping until the machine stopped answering.
 .str:   PUSHW Y
+        CLR  R2
+        PUSH R2                 ; n, high byte
         LD   R2,[SLEN]
-        PUSH R2
+        PUSH R2                 ; n, low
         LD   R0,[SACC+1]
-        PUSH R0
+        PUSH R0                 ; p, high
         LD   R0,[SACC]
-        PUSH R0
-        CALL s_puts
+        PUSH R0                 ; p, low -- and so on top, at [SP+2]
+        CALL s_putsn
+        POP  R0
         POP  R0
         POP  R0
         POP  R0

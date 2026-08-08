@@ -40,6 +40,7 @@ EXTERN TOKTAB
 EXTERN CMDTAB
 EXTERN BANNERTAB
 EXTERN ERRTAB
+EXTERN RUNTAB
 EXTERN MSGFREE
 EXTERN MSGKFREE
 
@@ -449,8 +450,20 @@ SUB tokenise()
           ' `x_` and `end`, and `end` is a keyword, so the tail of the
           ' name turned into a keyword token and the name came back from
           ' LIST as something else entirely.
+          ' **Bounded by llen, and that is not decoration.**
+          ' `shiftlbuf` slides the line down over the line number and
+          ' shortens llen without clearing what it left behind, so
+          ' `20 END` becomes `END` with `END` still sitting at lbuf(3).
+          ' An unbounded scan read `ENDEND`, found no keyword, and
+          ' stored six characters where the END token belonged -- so the
+          ' interpreter walked off the end of the program instead of
+          ' stopping. `PRINT` escaped it only because its own stale tail
+          ' happened to begin with a space.
           w = 0
-          DO WHILE isident(lbuf(i + w)) <> 0
+          DO WHILE i + w < llen
+            IF isident(lbuf(i + w)) = 0 THEN
+              EXIT DO
+            END IF
             w = w + 1
           LOOP
           ' A trailing $ is part of the name, not the start of a hex
@@ -458,8 +471,10 @@ SUB tokenise()
           ' apart -- so it is taken here, before the $ arm below can
           ' claim it. A bare $FE70 still parses as hex, because it does
           ' not follow an identifier.
-          IF lbuf(i + w) = 36 THEN
-            w = w + 1
+          IF i + w < llen THEN
+            IF lbuf(i + w) = 36 THEN
+              w = w + 1
+            END IF
           END IF
           ' REM starts a comment, as it does everywhere else. It is a
           ' comment and not a keyword, so nothing inside it is looked up
@@ -773,6 +788,121 @@ END FUNCTION
 ' ---------------------------------------------------------------------
 ' Errors, C64-shaped: short, because string space is scarce.
 ' ---------------------------------------------------------------------
+
+' ---------------------------------------------------------------------
+' RUN.
+'
+' The interpreter walks the program the editor is holding -- there is no
+' compile step and no second copy -- so all this does is tell it where
+' everything is, assemble any ASM blocks, and go.
+'
+' The map above the program, from the top down:
+'
+'   $7F00-$7FFF   the string accumulator, 256 bytes
+'   $7EE0-$7EFF   the CALL stack, 8 frames of 4
+'   ...-$7EDF     the heap, growing down
+'   codetop...    the name table, growing up
+'   progend...    the assembled ASM blocks
+'   $0200...      the program text
+'
+' The name table starts where the assembled code ends, which is why the
+' assembly pass runs first: until it has, codetop is not known.
+' ---------------------------------------------------------------------
+SUB dorun()
+  DIM e AS BYTE
+  DIM p AS CARD
+  ASM
+        MOV  R0,#$00            ; LREC = PROG, the first record
+        ST   [$0014],R0
+        MOV  R0,#$02
+        ST   [$0015],R0
+        MOV  R0,#$00            ; ACBASE: code goes after the program
+        ST   [$00DC],R0
+        MOV  R0,#$7F            ; SACC = $7F00
+        ST   [$0034],R0
+        MOV  R0,#$00
+        ST   [$0033],R0
+        MOV  R0,#$E0            ; CSTK = $7EE0
+        ST   [$003C],R0
+        MOV  R0,#$7E
+        ST   [$003D],R0
+        MOV  R0,#$DF            ; HEAP comes down from $7EDF
+        ST   [$002A],R0
+        MOV  R0,#$7E
+        ST   [$002B],R0
+  END ASM
+  ' PEND and the code base need progend, which is a BASIC variable
+  POKE $0016, progend AND 255
+  POKE $0017, progend >> 8
+  POKE $00DC, progend AND 255
+  POKE $00DD, progend >> 8
+  ASM
+        MOV  R0,#$00            ; the assembly pass, over the whole
+        MOV  R1,#$02            ;   program, before a statement runs
+        CALL aprog
+        LD   R0,[$0018]         ; did it fault?
+        TST  R0
+        BNE  .out
+        LD   R0,[$00DA]         ; the name table starts where the
+        ST   [$0027],R0         ;   assembled code ended
+        LD   R0,[$00DB]
+        ST   [$0028],R0
+        MOV  R0,#$00            ; and LREC goes back to the first
+        ST   [$0014],R0         ;   record: the assembly pass walked it
+        MOV  R0,#$02            ;   all the way to the end
+        ST   [$0015],R0
+        CALL irun
+.out:
+  END ASM
+  e = PEEK($0018)
+  IF e <> 255 THEN
+    IF e <> 0 THEN
+      CALL runerr(e)
+    END IF
+  END IF
+END SUB
+
+' ?<what> IN <line>. LREC still holds the record that failed, so the
+' line number is a read rather than a search.
+SUB runerr(n AS INT)
+  DIM p AS CARD
+  DIM k AS BYTE
+  DIM r AS CARD
+  p = RUNTAB
+  k = 1
+  DO WHILE k < n
+    DO WHILE PEEK(p) <> 0
+      p = p + 1
+    LOOP
+    p = p + 1
+    k = k + 1
+  LOOP
+  CALL emit(63)
+  CALL puts(p)
+  r = PEEK($0014) + (PEEK($0015) << 8)
+  IF r >= PROG THEN
+    IF r < progend THEN
+      CALL emit(32)
+      CALL emit(73)
+      CALL emit(78)
+      CALL emit(32)
+      CALL putn(lineno(r))
+    END IF
+  END IF
+  CALL newline()
+END SUB
+
+' puts' length-counted sibling. A heap string carries its length rather
+' than a terminator, so PRINT of one cannot go through puts -- which
+' would run on into whatever follows it in the accumulator.
+SUB putsn(p AS CARD, n AS INT)
+  DIM k AS BYTE
+  k = 0
+  DO WHILE k < n
+    CALL emit(PEEK(p + k))
+    k = k + 1
+  LOOP
+END SUB
 
 SUB errmsg(n AS INT)
   DIM p AS CARD
@@ -1525,6 +1655,10 @@ SUB docommand()
     CALL fsmount()
     RETURN
   END IF
+  IF idx = 12 THEN                      ' RUN
+    CALL dorun()
+    RETURN
+  END IF
   CALL errmsg(0)
 END SUB
 
@@ -1737,6 +1871,34 @@ CMDTAB:
         .byte 3, "E","R","A"
         .byte 7, "C","O","M","P","A","C","T"
         .byte 5, "D","R","I","V","E"
+; Appended, never inserted: docommand branches on the positional idx, so
+; RUN is 12 and no existing arm moves.
+        .byte 3, "R","U","N"
+        .byte 0
+
+; ---- the interpreter's errors, indexed by ERR.
+;
+; Deliberately not ERRTAB: that is the editor's list and the codes do
+; not line up. `errmsg(1)` is OUT OF MEMORY where `ERR = 1` is a syntax
+; error, so sharing one table would report the wrong fault confidently.
+RUNTAB:
+        .asciz "SYNTAX ERROR"
+        .asciz "TOO MANY FORS ERROR"
+        .asciz "NEXT WITHOUT FOR ERROR"
+        .asciz "FORMULA TOO COMPLEX ERROR"
+        .asciz "OUT OF MEMORY ERROR"
+        .asciz "TOO MANY VARIABLES ERROR"
+        .asciz "SUBSCRIPT ERROR"
+        .asciz "STRING TOO LONG ERROR"
+        .asciz "TYPE MISMATCH ERROR"
+        .asciz "SYNTAX ERROR IN ASM"
+        .asciz "NO SUCH INSTRUCTION"
+        .asciz "UNDEFINED SYMBOL"
+        .asciz "ERROR"
+        .asciz "BRANCH OUT OF RANGE"
+        .asciz "DIVISION BY ZERO ERROR"
+        .asciz "LOOP ERROR"
+        .asciz "CALL ERROR"
         .byte 0
 
 ; ---- errors. C64-shaped: a ? , the fault, and ERROR.
@@ -1776,4 +1938,16 @@ BANNERTAB:
 ; ---- the filesystem, whole. Its state lives at $0074, in page 0 with
 ; ---- the interpreter's, so that page 1 is the CPU stack alone.
         .include "fs.asm"
+
+; ---- the interpreter and the on-machine assembler. Both are written
+; ---- without .org for exactly this: every address in the image is
+; ---- relative and nothing hardcodes one, so joining them here shifts
+; ---- everything and breaks nothing.
+;
+; zp.asm comes first and exactly once. Neither of the two includes it,
+; because in the built system both are present and a second copy would
+; redefine every name.
+        .include "zp.asm"
+        .include "interp.asm"
+        .include "asm.asm"
 END ASM

@@ -160,7 +160,8 @@ s_newline:
 ; A heap string is length-counted, so this is puts' sibling: address
 ; then length. It records what was printed so a case can assert on it
 ; without a screen, the same way s_putn does.
-s_puts: LD   R0,[SP+2]
+s_putsn:
+        LD   R0,[SP+2]
         MOV  XL,R0
         LD   R0,[SP+3]
         MOV  XH,R0
