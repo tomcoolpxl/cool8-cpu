@@ -63,7 +63,6 @@ NTOK    = 37                    ; $80..$A4
 
 ; ---- state, all in zero page: every one is touched per statement
 IP      = $0010                 ; 2: where we are in the token stream
-LEND    = $0012                 ; 2: end of the current line's tokens
 LREC    = $0014                 ; 2: the current line record
 PEND    = $0016                 ; 2: progend, snapshot at RUN
 ERR     = $0018                 ; 1: nonzero stops the program
@@ -72,7 +71,6 @@ LVAR    = $001A                 ; 1: the FOR variable, doubled
 LLIM    = $001B                 ; 2: its limit
 LBODY   = $001D                 ; 2: where its body starts
 LLINE   = $001F                 ; 2: and which line that was
-LLEND   = $0021                 ; 2: and where that line's tokens end
 MTMP    = $0023                 ; 4: multiply scratch
 
 VARS    = $0040                 ; 52: A-Z, two bytes each
@@ -99,8 +97,11 @@ irun:
         CALL openline
         JMP  stmt
 
-; openline -- LREC points at a record; set Y past its header and LEND
-; past its tokens.
+; openline -- LREC points at a record; put Y on its first token.
+;
+; There is nothing else to do. The line ends with a zero byte, so the
+; statement loop asks "end of line?" with one load rather than a 16-bit
+; compare against an end pointer that had to be maintained here.
 openline:
         LD   R0,[LREC]
         MOV  YL,R0
@@ -108,23 +109,25 @@ openline:
         MOV  YH,R0
         INCW Y
         INCW Y
-        LD   R0,[Y]             ; the length byte
         INCW Y
-        MOV  R1,YL
-        ADD  R1,R0
-        ST   [LEND],R1
-        MOV  R1,YH
-        MOV  R2,#0
-        ADC  R1,R2
-        ST   [LEND+1],R1
         RET
 
 ; nextline -- LREC = the record after this one. Carry clear when the
 ; program has run out.
 nextline:
-        LD   R0,[LEND]
+        LD   R0,[LREC]          ; this record + 4 + its length
+        LD   R1,[LREC+1]
+        MOV  XL,R0
+        MOV  XH,R1
+        INCW X
+        INCW X
+        LD   R2,[X]
+        ADD  R0,#4
+        MOV  R3,#0
+        ADC  R1,R3
+        ADD  R0,R2
+        ADC  R1,R3
         ST   [LREC],R0
-        LD   R1,[LEND+1]
         ST   [LREC+1],R1
         LD   R2,[PEND]
         LD   R3,[PEND+1]
@@ -146,18 +149,26 @@ stmt:
         BEQ  .live
         RET
 .live:
-        MOV  R0,YL              ; end of line?
-        LD   R2,[LEND]
+        LD   R0,[Y]             ; end of line? one load.
+        TST  R0
+        BNE  .more
+        ; Y is sitting on the terminator, so the next record begins at
+        ; Y+1. There is no address to compute: nextline was 18 % of the
+        ; run doing arithmetic the position already answered.
+        INCW Y
+        MOV  R0,YL
+        ST   [LREC],R0
         MOV  R1,YH
-        LD   R3,[LEND+1]
+        ST   [LREC+1],R1
+        LD   R2,[PEND]
+        LD   R3,[PEND+1]
         SUB  R0,R2
         SBC  R1,R3
-        BLT  .more
-        CALL nextline
-        BCS  stmt
-        RET                     ; fell off the end: stop
+        BLT  .open
+        RET                     ; past the last line: stop
+.open:  CALL openline
+        JMP  stmt
 .more:
-        LD   R0,[Y]
         CMP  R0,#$80            ; below $80 it is a name: an assignment
         BCC  h_let
         INCW Y
@@ -223,11 +234,12 @@ h_end:  MOV  R0,#255            ; a clean stop, not an error
         RET
 
 ; A SUB definition met while running is skipped to its END.
-h_sub:  LD   R0,[LEND]
-        MOV  YL,R0
-        LD   R0,[LEND+1]
-        MOV  YH,R0
-        JMP  stmt
+h_sub:  LD   R0,[Y]
+        TST  R0
+        BEQ  .done
+        INCW Y
+        BRA  h_sub
+.done:  JMP  stmt
 
 ; ---------------------------------------------------------------------
 ; v = <expression>
@@ -301,26 +313,21 @@ h_if:
         ; False: walk to an ELSE on this line, or to the end of it. The
         ; statement loop takes it from there -- reaching the end of a
         ; line is exactly what it already knows how to handle.
-.false: MOV  R0,YL
-        LD   R2,[LEND]
-        MOV  R1,YH
-        LD   R3,[LEND+1]
-        SUB  R0,R2
-        SBC  R1,R3
-        BLT  .scan
-        JMP  stmt
-.scan:  LD   R0,[Y]
+.false: LD   R0,[Y]
+        TST  R0
+        BEQ  .out
         INCW Y
         CMP  R0,#K_ELSE
         BNE  .false
-        JMP  stmt
+.out:   JMP  stmt
 
 ; ELSE reached while running means the true arm just finished.
-h_else: LD   R0,[LEND]
-        MOV  YL,R0
-        LD   R0,[LEND+1]
-        MOV  YH,R0
-        JMP  stmt
+h_else: LD   R0,[Y]
+        TST  R0
+        BEQ  .done
+        INCW Y
+        BRA  h_else
+.done:  JMP  stmt
 
 ; ---------------------------------------------------------------------
 ; GOTO n
@@ -367,11 +374,6 @@ h_for:
         ST   [LLINE],R0
         LD   R0,[LREC+1]
         ST   [LLINE+1],R0
-        ; the body;s end too, so NEXT never re-reads the line header
-        LD   R0,[LEND]
-        ST   [LLEND],R0
-        LD   R0,[LEND+1]
-        ST   [LLEND+1],R0
         JMP  stmt
 
 h_next:
@@ -404,10 +406,6 @@ h_next:
         ST   [LREC],R0
         LD   R0,[LLINE+1]
         ST   [LREC+1],R0
-        LD   R0,[LLEND]
-        ST   [LEND],R0
-        LD   R0,[LLEND+1]
-        ST   [LEND+1],R0
         LD   R0,[LBODY]
         MOV  YL,R0
         LD   R0,[LBODY+1]

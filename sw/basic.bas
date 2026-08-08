@@ -556,8 +556,12 @@ FUNCTION linelen(p AS CARD) AS INT
   RETURN PEEK(p + 2)
 END FUNCTION
 
+' A record is lineno(2) len(1) tokens(len) and then a zero, so the
+' interpreter can ask "end of line?" with one load instead of a 16-bit
+' compare against a maintained end pointer. The terminator is not
+' counted in len, so LIST and the memmoves are unchanged.
 FUNCTION nextline(p AS CARD) AS CARD
-  RETURN p + 3 + linelen(p)
+  RETURN p + 4 + linelen(p)
 END FUNCTION
 
 ' The first line with a number >= n, or progend.
@@ -643,12 +647,12 @@ SUB storeline(n AS INT)
   old = 0
   IF p < progend THEN
     IF lineno(p) = n THEN
-      old = 3 + linelen(p)
+      old = 4 + linelen(p)
     END IF
   END IF
   need = 0
   IF tlen > 0 THEN
-    need = 3 + tlen
+    need = 4 + tlen
   END IF
   IF progend - old + need > MEMTOP THEN
     CALL errmsg(1)
@@ -670,6 +674,7 @@ SUB storeline(n AS INT)
     POKE p + 3 + k, tbuf(k)
     k = k + 1
   LOOP
+  POKE p + 3 + tlen, 0          ' the end-of-line marker
 END SUB
 
 ' ---------------------------------------------------------------------

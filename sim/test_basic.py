@@ -160,7 +160,7 @@ class Machine:
             n = self.m.bus.mem[p] | (self.m.bus.mem[p + 1] << 8)
             ln = self.m.bus.mem[p + 2]
             out.append((n, bytes(self.m.bus.mem[p + 3:p + 3 + ln])))
-            p += 3 + ln
+            p += 4 + ln   # tokens, then the end-of-line zero
         return out
 
 
@@ -284,7 +284,7 @@ def files(code, syms):
     v = M.vol()
     e = v.find("TEST.BAS")
     check(e is not None and len(v.get("TEST.BAS")) ==
-          sum(3 + len(b) for _, b in wrote),
+          sum(4 + len(b) for _, b in wrote),
           "SAVE writes the program, and the PC tool reads it back",
           f"entry {e}")
 
@@ -304,7 +304,7 @@ def files(code, syms):
           and live[0]["page"] > dead[0]["page"],
           "SAVE again appends a new version and marks the old deleted",
           f"{len(live)} live, {len(dead)} deleted")
-    want = b"".join(bytes((n & 255, n >> 8, len(b))) + b
+    want = b"".join(bytes((n & 255, n >> 8, len(b))) + b + bytes(1)
                     for n, b in M.prog())
     check(v.get("TEST.BAS") == want,
           "and the live one is the newer program, byte for byte",

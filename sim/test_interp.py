@@ -58,7 +58,7 @@ def line(n, *parts):
     for p in parts:
         toks += p if isinstance(p, list) else [ord(p)] if isinstance(p, str) \
             and len(p) == 1 else name(p)
-    return [n & 0xFF, n >> 8, len(toks)] + toks
+    return [n & 0xFF, n >> 8, len(toks)] + toks + [0]
 
 
 def program(*lines):
@@ -126,9 +126,10 @@ s_findline:
         SBC  R1,R3
         OR   R0,R1
         BEQ  .hit
-        LD   R0,[X]             ; skip its tokens
+        LD   R0,[X]             ; skip its tokens and the zero
         INCW X
         ADDW X,R0
+        INCW X
         BRA  .fl
 .hit:   DECW X
         DECW X
