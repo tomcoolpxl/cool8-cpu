@@ -135,6 +135,10 @@ HARNESS = """
         ST   [$002A],R0
         MOV  R0,#$7F
         ST   [$002B],R0
+        MOV  R0,#$00            ; SACC = $5F00, below the name table
+        ST   [$0033],R0
+        MOV  R0,#$5F
+        ST   [$0034],R0
         CALL irun
         HALT
 
@@ -149,6 +153,24 @@ s_putn: LD   R0,[SP+2]          ; remember the last number printed
         RET
 s_newline:
         RET
+; A heap string is length-counted, so this is puts' sibling: address
+; then length. It records what was printed so a case can assert on it
+; without a screen, the same way s_putn does.
+s_puts: LD   R0,[SP+2]
+        MOV  XL,R0
+        LD   R0,[SP+3]
+        MOV  XH,R0
+        LD   R1,[SP+4]
+        ST   [printlen],R1
+        LDW  Y,#printed
+        TST  R1
+        BEQ  .pd
+.pc:    LD   R0,[X]
+        INCW X
+        ST   [Y+],R0
+        SUB  R1,#1
+        BNE  .pc
+.pd:    RET
 s_findline:
         LDW  X,#prog
 .fl:    LD   R0,[X]             ; this record's line number
@@ -172,7 +194,8 @@ s_findline:
         MOV  R1,XH
         RET
 
-printed:  .word 0
+printed:  .space 40
+printlen: .byte 0
 nprint:   .byte 0
         .include "zp.asm"
         .include "interp.asm"
@@ -329,9 +352,9 @@ CASES = [
      {0: 5}),
 
     # POKE's comma and PEEK's parentheses each had a blind INCW Y.
-    ("spaced: POKE 768,65 : A = PEEK(768)",
-     program(spaced(10, [K["POKE"]], num(768), ",", num(65)),
-             spaced(20, name("A"), "=", [K["PEEK"]], "(", num(768), ")"),
+    ("spaced: POKE $2000,65 : A = PEEK($2000)",
+     program(spaced(10, [K["POKE"]], num(0x2000), ",", num(65)),
+             spaced(20, name("A"), "=", [K["PEEK"]], "(", num(0x2000), ")"),
              line(30, [K["END"]])),
      {0: 65}),
 
@@ -458,6 +481,80 @@ CASES = [
              line(30, [K["END"]])),
      {0: 7}),
 
+    # ---- strings. The `$` is the type, so `A` and `A$` are different
+    # names and nothing needs a type field.
+    ("A$ = \"HI\" : B$ = A$",
+     program(spaced(10, name("A$"), "=", name('"HI"')),
+             spaced(20, name("B$"), "=", name("A$")),
+             spaced(30, [K["PRINT"]], name("B$")),
+             line(40, [K["END"]])),
+     {}, "HI"),
+
+    ("concatenation, which the accumulator gets for nothing",
+     program(spaced(10, name("A$"), "=", name('"AB"')),
+             spaced(20, name("B$"), "=", name('"CD"')),
+             spaced(30, name("C$"), "=", name("A$"), "+", name("B$"),
+                    "+", name('"EF"')),
+             spaced(40, [K["PRINT"]], name("C$")),
+             line(50, [K["END"]])),
+     {}, "ABCDEF"),
+
+    ("a string variable and an integer of the same letter coexist",
+     program(spaced(10, name("A"), "=", num(42)),
+             spaced(20, name("A$"), "=", name('"X"')),
+             spaced(30, [K["PRINT"]], name("A$")),
+             line(40, [K["END"]])),
+     {0: 42}, "X"),
+
+    ("reassignment that fits reuses the space it already has",
+     program(spaced(10, name("A$"), "=", name('"LONGER"')),
+             spaced(20, name("A$"), "=", name('"AB"')),
+             spaced(30, [K["PRINT"]], name("A$")),
+             line(40, [K["END"]])),
+     {}, "AB"),
+
+    ("an empty string is a string",
+     program(spaced(10, name("A$"), "=", name('""')),
+             spaced(20, [K["PRINT"]], name("A$"), "+", name('"Z"')),
+             line(30, [K["END"]])),
+     {}, "Z"),
+
+    ("LEN, and it does not disturb what it measures",
+     program(spaced(10, name("A$"), "=", name('"HELLO"')),
+             spaced(20, name("A"), "=", name("LEN"), "(", name("A$"), ")"),
+             spaced(30, name("B"), "=", name("LEN"), "(", name("A$"), "+",
+                    name('"XY"'), ")"),
+             spaced(40, name("C$"), "=", name("A$"), "+", name('"!"')),
+             spaced(50, [K["PRINT"]], name("C$")),
+             line(60, [K["END"]])),
+     {0: 5, 1: 7}, "HELLO!"),
+
+    # Comparing in place is the other half of what the accumulator
+    # buys: neither side was ever copied to the heap.
+    ("string equality, which allocates nothing",
+     program(spaced(10, name("A$"), "=", name('"YES"')),
+             spaced(20, name("A"), "=", name("A$"), "=", name('"YES"')),
+             spaced(30, name("B"), "=", name("A$"), "=", name('"NO"')),
+             spaced(40, name("C"), "=", name("A$"), "<>", name('"NO"')),
+             spaced(50, name("D"), "=", name("A$"), "<>", name('"YES"')),
+             line(60, [K["END"]])),
+     {0: 0xFFFF, 1: 0, 2: 0xFFFF, 3: 0}),
+
+    ("a different length is never equal",
+     program(spaced(10, name("A$"), "=", name('"AB"')),
+             spaced(20, name("A"), "=", name("A$"), "=", name('"ABC"')),
+             line(30, [K["END"]])),
+     {0: 0}),
+
+    ("IF on a string, which is what the comparison is for",
+     program(spaced(10, name("A$"), "=", name('"Y"')),
+             spaced(20, [K["IF"]], name("A$"), "=", name('"Y"'),
+                    [K["THEN"]], name("A"), "=", num(1)),
+             spaced(30, [K["IF"]], name("A$"), "=", name('"N"'),
+                    [K["THEN"]], name("B"), "=", num(1)),
+             line(40, [K["END"]])),
+     {0: 1, 1: 0}),
+
     # ---- DIM and arrays. DIM A(10) is eleven elements, 0 to 10, which
     # is BBC BASIC's rule and Microsoft's and what every published
     # program assumes.
@@ -526,7 +623,9 @@ def main():
     code, syms = build("interp", HARNESS)
     print(f"  interpreter: {syms['prog'] - syms['irun']:,} bytes")
     print()
-    for name_, prog, want in CASES:
+    for case in CASES:
+        name_, prog, want = case[0], case[1], case[2]
+        wantstr = case[3] if len(case) > 3 else None
         m = vm.Machine()
         m.bus.mem[CODE:CODE + len(code)] = code
         at = syms["prog"]
@@ -551,7 +650,15 @@ def main():
         got = {i: m.bus.mem[VARS + 2 * i] | (m.bus.mem[VARS + 2 * i + 1] << 8)
                for i in want}
         ok = got == want
-        check(ok, name_, f"got {got}, wanted {want}" if not ok else "")
+        detail = "" if ok else f"got {got}, wanted {want}"
+        if wantstr is not None:
+            n = m.bus.mem[syms["printlen"]]
+            at2 = syms["printed"]
+            gots = bytes(m.bus.mem[at2:at2 + n]).decode("latin-1")
+            if gots != wantstr:
+                ok = False
+                detail = f"printed {gots!r}, wanted {wantstr!r}"
+        check(ok, name_, detail)
     # ---- the errors the FOR stack raises
     #
     # A bounded stack is only worth having if going over it says so. The

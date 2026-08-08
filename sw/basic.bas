@@ -453,6 +453,14 @@ SUB tokenise()
           DO WHILE isident(lbuf(i + w)) <> 0
             w = w + 1
           LOOP
+          ' A trailing $ is part of the name, not the start of a hex
+          ' literal. The suffix is the type -- it is what keeps A and A$
+          ' apart -- so it is taken here, before the $ arm below can
+          ' claim it. A bare $FE70 still parses as hex, because it does
+          ' not follow an identifier.
+          IF lbuf(i + w) = 36 THEN
+            w = w + 1
+          END IF
           ' REM starts a comment, as it does everywhere else. It is a
           ' comment and not a keyword, so nothing inside it is looked up
           ' and LIST gives back exactly what was typed.

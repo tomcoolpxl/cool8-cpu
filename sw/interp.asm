@@ -216,6 +216,13 @@ stmt:
         BEQ  .live
         RET
 .live:
+        ; Every statement starts with an empty accumulator. Doing it
+        ; here rather than in each handler is what makes a string
+        ; sub-expression safe to leave alone: `(A$ + B$)` has to go on
+        ; appending, so nothing below statement level may reset.
+        CLR  R2
+        ST   [SLEN],R2
+        ST   [STYPE],R2
         SKIPSP             ; end of line? one load, past the spaces.
         TST  R2
         BNE  .more
@@ -317,6 +324,14 @@ h_sub:  LD   R0,[Y]
 ; ---------------------------------------------------------------------
 h_let:
         CALL varidx             ; R0 = the handle, Y past the name
+        CMP  R0,#52
+        BCC  .notstr            ; resident A-Z is never a string
+        PUSH R0
+        CALL isstr
+        POP  R0
+        BCS  .notstr
+        JMP  h_lets             ; X is on its descriptor already
+.notstr:
         SKIPSP
         CMP  R2,#$28            ; '(' -- a subscripted assignment
         BNE  .scalar
@@ -363,6 +378,8 @@ h_let:
 ; same rule (sw/chars.bas), so a name the editor kept as one word is one
 ; word here too.
 nisid:  CMP  R0,#$5F            ; '_'
+        BEQ  .yes
+        CMP  R0,#$24            ; '$', which is a string name's type
         BEQ  .yes
         CMP  R0,#$30            ; '0'
         BCC  .no
@@ -417,6 +434,8 @@ varidx:
         BCS  .notname
         INCW Y
         LD   R2,[Y]             ; does the name carry on?
+        CMP  R2,#$24            ; '$' makes it a string name, not a scalar
+        BEQ  .multi
         CMP  R2,#$30            ; ' ' and every operator land here
         BCC  .single
         CMP  R2,#$3A            ; '0'-'9'
@@ -631,12 +650,28 @@ h_poke:
 ; ---------------------------------------------------------------------
 h_print:
         CALL eval
+        LD   R2,[STYPE]
+        BNE  .str
         PUSH R1
         PUSH R0
         CALL s_putn
         CALL s_newline
         POP  R0
         POP  R1
+        JMP  stmt
+        ; A heap string is length-counted, so PRINT needs a sibling of
+        ; puts that takes one rather than a NUL.
+.str:   LD   R2,[SLEN]
+        PUSH R2
+        LD   R0,[SACC+1]
+        PUSH R0
+        LD   R0,[SACC]
+        PUSH R0
+        CALL s_puts
+        POP  R0
+        POP  R0
+        POP  R0
+        CALL s_newline
         JMP  stmt
 
 ; ---------------------------------------------------------------------
@@ -979,6 +1014,8 @@ erel:
         BEQ  .sub
         BRA  .rel
 .add:   INCW Y
+        LD   R2,[STYPE]
+        BNE  .cat               ; the left was a string: append, not add
         PUSH R1
         PUSH R0
         CALL prim
@@ -989,6 +1026,10 @@ erel:
         POP  R1
         ADD  R0,R2
         ADC  R1,R3
+        BRA  .mul
+        ; Concatenation is the accumulator doing nothing special: the
+        ; operand appends where the last one stopped.
+.cat:   CALL prim
         BRA  .mul
 .sub:   INCW Y
         PUSH R1
@@ -1012,7 +1053,14 @@ erel:
         RET
 
 .req:   INCW Y
-        CALL rhs
+        LD   R2,[STYPE]
+        BEQ  .nreq
+        CALL srhs
+        CALL scmp
+        TST  R0
+        BEQ  .y1
+        JMP  false
+.nreq:  CALL rhs
         SUB  R0,R2
         SBC  R1,R3
         OR   R0,R1
@@ -1033,7 +1081,15 @@ erel:
         JMP  false
 .y2:    JMP  true
 .rne:   INCW Y
-        CALL rhs
+        LD   R2,[STYPE]
+        BEQ  .nrne
+        CALL srhs
+        CALL scmp
+        TST  R0
+        BNE  .y3n
+        JMP  false
+.y3n:   JMP  true
+.nrne:  CALL rhs
         SUB  R0,R2
         SBC  R1,R3
         OR   R0,R1
@@ -1081,6 +1137,15 @@ erel:
         JMP  false
 .y5:    JMP  true
 
+; srhs -- the right-hand side of a string relation. It appends, and the
+; split it returns in R2 is where the left one ended.
+srhs:   LD   R2,[SLEN]
+        PUSH R2
+        CALL prim
+        CALL sumrest
+        POP  R2
+        RET
+
 ; rhs -- the right-hand side of a relation, with its own * and +/-.
 ; The left side is preserved in R0:R1 across it.
 rhs:    PUSH R1
@@ -1120,6 +1185,8 @@ sumrest:
         BEQ  .s
         RET
 .a:     INCW Y
+        LD   R2,[STYPE]
+        BNE  .scat
         PUSH R1
         PUSH R0
         CALL prim
@@ -1130,6 +1197,8 @@ sumrest:
         POP  R1
         ADD  R0,R2
         ADC  R1,R3
+        BRA  sumrest
+.scat:  CALL prim
         BRA  sumrest
 .s:     INCW Y
         PUSH R1
@@ -1195,9 +1264,24 @@ prim:
         BEQ  .neg
         CMP  R2,#K_PEEK
         BEQ  .peek
+        CMP  R2,#$22            ; '"' -- a literal, stored with its quotes
+        BEQ  .lit
         ; a name -- varidx leaves X on its value, unless a '(' says
         ; the name was an array's and X has to be worked out instead
         CALL varidx
+        CMP  R0,#52
+        BCC  .notstr            ; resident A-Z: one letter, never a string
+        PUSH R0
+        CALL isstr
+        POP  R0
+        BCS  .nostr
+        JMP  sload              ; X is already on its descriptor
+.nostr: PUSH R0
+        CALL islen
+        POP  R0
+        BCS  .notstr
+        JMP  slen
+.notstr:
         SKIPSP                  ; `A (3)` is stored with the space in it
         CMP  R2,#$28            ; '('
         BEQ  .sub
@@ -1209,6 +1293,21 @@ prim:
         LD   R0,[X]
         INCW X
         LD   R1,[X]
+        RET
+        ; A literal needs no heap: tokenise keeps the quoted text
+        ; verbatim, both quotes included, so it is copied straight out
+        ; of the program into the accumulator.
+.lit:   INCW Y
+.lc:    LD   R0,[Y]
+        BEQ  .ld                ; end of line: unterminated, take what is
+        CMP  R0,#$22            ;   there rather than run off the record
+        BEQ  .lq
+        INCW Y
+        CALL sputc
+        BRA  .lc
+.lq:    INCW Y
+.ld:    MOV  R0,#1
+        ST   [STYPE],R0
         RET
 .num:   INCW Y
         LD   R0,[Y]
@@ -1539,3 +1638,249 @@ h_leta: CALL arrelem
         INCW X
         ST   [X],R1
         JMP  stmt
+
+; ---------------------------------------------------------------------
+; Strings.
+;
+; **One accumulator, and only assignment leaves it.** Every string
+; expression is built up in STRACC, which is BBC BASIC's arrangement
+; read off its disassembly, and it is what makes concatenation free:
+; the second operand appends where the first stopped, so `A$ + B$ + C$`
+; needs no code beyond not resetting the length, and no intermediate
+; ever reaches the heap. Building a heap block per sub-expression is the
+; obvious alternative and it costs an allocator call, a copy and a piece
+; of garbage for every `+` in the program.
+;
+; A variable is four bytes -- where the characters are, how many there
+; are, and how many were allocated -- in the name table's `value` and
+; `aux` fields. The third is the one that earns its place: an assignment
+; that fits in what the variable already has copies in place instead of
+; allocating again. There is no garbage collection, and BBC BASIC has
+; none either; a string that outgrows its space abandons the old bytes.
+;
+; The `$` is the type. `A` and `A$` are different names because the
+; suffix is part of the name, so nothing needs a type field and nothing
+; needs to agree about one.
+; ---------------------------------------------------------------------
+
+; sreset -- begin a string expression. The *statement* does this, not
+; the evaluator, because a parenthesised sub-expression must go on
+; appending rather than start again.
+sreset: CLR  R0
+        ST   [SLEN],R0
+        ST   [STYPE],R0
+        RET
+
+; sputc -- append R0 to the accumulator.
+sputc:  PUSHW X
+        PUSH R0
+        LD   R0,[SLEN]
+        CMP  R0,#SMAX
+        BCS  .full
+        LD   R1,[SACC]
+        MOV  XL,R1
+        LD   R1,[SACC+1]
+        MOV  XH,R1
+        ADDW X,R0
+        ADD  R0,#1
+        ST   [SLEN],R0
+        POP  R0
+        ST   [X],R0
+        POPW X
+        RET
+.full:  POP  R0
+        POPW X
+        MOV  R0,#E_STR
+        ST   [ERR],R0
+        RET
+
+; sappend -- R2 characters from R0:R1 onto the accumulator.
+sappend:
+        MOV  R3,#1
+        ST   [STYPE],R3
+        TST  R2
+        BEQ  .done
+        PUSHW Y                 ; Y is the token pointer; borrow it
+        MOV  YL,R0
+        MOV  YH,R1
+.cp:    LD   R0,[Y+]
+        PUSH R2
+        CALL sputc
+        POP  R2
+        SUB  R2,#1
+        BNE  .cp
+        POPW Y
+.done:  RET
+
+; isstr -- C clear if the name in NBUF ends with '$'. The suffix is the
+; type, so this is the whole of the type system.
+isstr:  PUSHW X
+        LD   R0,[NLEN]
+        CMP  R0,#NSIG
+        BCC  .in
+        MOV  R0,#NSIG           ; only the significant ones are kept
+.in:    TST  R0
+        BEQ  .no
+        SUB  R0,#1
+        LDW  X,#NBUF
+        ADDW X,R0
+        LD   R0,[X]
+        CMP  R0,#$24            ; '$'
+        BNE  .no
+        POPW X
+        CLC
+        RET
+.no:    POPW X
+        SEC
+        RET
+
+; sload -- the string variable whose descriptor starts at X, appended.
+sload:  LD   R0,[X]
+        INCW X
+        LD   R1,[X]
+        INCW X
+        LD   R2,[X]             ; the current length
+        JMP  sappend
+
+; sstore -- the accumulator into the descriptor at X.
+sstore: MOV  R2,#3
+        LD   R1,[X+R2]          ; how much this variable already has
+        LD   R0,[SLEN]
+        CMP  R1,R0
+        BCS  .have              ; it fits where it is: no allocation
+        PUSHW X
+        CLR  R1
+        CALL halloc
+        POPW X
+        LD   R2,[ERR]
+        BNE  .out
+        ST   [X],R0             ; the old bytes become garbage, which is
+        INCW X                  ;   the bargain BBC BASIC makes as well
+        ST   [X],R1
+        DECW X
+        LD   R0,[SLEN]
+        MOV  R2,#3
+        ST   [X+R2],R0
+.have:  LD   R0,[SLEN]
+        MOV  R2,#2
+        ST   [X+R2],R0
+        LD   R2,[X]
+        INCW X
+        LD   R3,[X]
+        MOV  XL,R2
+        MOV  XH,R3
+        PUSHW Y
+        LD   R0,[SACC]
+        MOV  YL,R0
+        LD   R0,[SACC+1]
+        MOV  YH,R0
+        LD   R2,[SLEN]
+        TST  R2
+        BEQ  .cpd
+.cp:    LD   R0,[Y+]
+        ST   [X],R0
+        INCW X
+        SUB  R2,#1
+        BNE  .cp
+.cpd:   POPW Y
+.out:   RET
+
+; h_lets -- A$ = <string expression>.
+h_lets: PUSHW X
+        SKIPSP
+        INCW Y                  ; the '='
+        CALL eval
+        POPW X
+        LD   R0,[ERR]
+        BNE  .out
+        CALL sstore
+.out:   JMP  stmt
+
+; scmp -- the accumulator holds both operands end to end, split at R2:
+; the left is [0,R2) and the right is [R2,SLEN). R0 = 0 when they are
+; equal. The accumulator is cut back to the split either way, so a
+; comparison inside a longer expression leaves nothing behind.
+;
+; Comparing in place is the other half of what the accumulator buys.
+; Neither side was ever copied to the heap, so `IF A$ = "Y"` allocates
+; nothing at all.
+scmp:   PUSH R2
+        LD   R0,[SLEN]
+        SUB  R0,R2
+        MOV  R3,R2
+        CMP  R0,R3              ; different lengths cannot be equal
+        BNE  .ne
+        PUSHW X
+        PUSHW Y
+        LD   R1,[SACC]
+        MOV  XL,R1
+        LD   R1,[SACC+1]
+        MOV  XH,R1
+        MOV  R1,XL
+        MOV  YL,R1
+        MOV  R1,XH
+        MOV  YH,R1
+        ADDW Y,R3               ; Y on the right half
+        TST  R3
+        BEQ  .same
+.c:     LD   R0,[X]
+        INCW X
+        LD   R1,[Y+]
+        SUB  R0,R1
+        BNE  .diff
+        SUB  R3,#1
+        BNE  .c
+.same:  POPW Y
+        POPW X
+        POP  R2                 ; the split, back to a number and a
+        ST   [SLEN],R2          ;   length that forgets what was compared
+        CLR  R0
+        ST   [STYPE],R0
+        CLR  R0
+        RET
+.diff:  POPW Y
+        POPW X
+.ne:    POP  R2
+        ST   [SLEN],R2
+        CLR  R0
+        ST   [STYPE],R0
+        MOV  R0,#1
+        RET
+
+; slen -- LEN(<string>). The text measured is not kept: SLEN goes back
+; to where it was, so LEN inside a concatenation does not corrupt it.
+slen:   SKIPSP
+        INCW Y                  ; the '('
+        LD   R2,[SLEN]
+        PUSH R2
+        CALL eval
+        SKIPSP
+        INCW Y                  ; the ')'
+        POP  R2
+        LD   R0,[SLEN]
+        SUB  R0,R2
+        CLR  R1
+        ST   [SLEN],R2
+        PUSH R0
+        CLR  R0
+        ST   [STYPE],R0
+        POP  R0
+        RET
+
+; islen -- C clear if NBUF is exactly the three letters LEN.
+islen:  LD   R0,[NLEN]
+        CMP  R0,#3
+        BNE  .no
+        LD   R0,[NBUF]
+        CMP  R0,#$4C            ; 'L'
+        BNE  .no
+        LD   R0,[NBUF+1]
+        CMP  R0,#$45            ; 'E'
+        BNE  .no
+        LD   R0,[NBUF+2]
+        CMP  R0,#$4E            ; 'N'
+        BNE  .no
+        CLC
+        RET
+.no:    SEC
+        RET

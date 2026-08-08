@@ -50,14 +50,32 @@ MTMP    = $0023                 ; 4: multiply scratch
 ; labels are now BASIC variables ([D45](docs/01-decisions.md)) and
 ; `.done1`/`.done2` have to stay apart.
 NSIG    = 6                     ; significant characters
-NENT    = 10                    ; type, length, NSIG name bytes, value
+NENT    = 12                    ; type, length, NSIG name bytes, value, aux
 MAXNAME = 32
+
+; A string variable's four bytes are BBC BASIC's descriptor exactly:
+; where the characters are, how many there are, and how many were
+; allocated. The last is what lets an assignment that fits reuse the
+; space instead of abandoning it -- the entry's `value` is the address
+; and `aux` is the two lengths.
 
 NTAB    = $0027                 ; 2: the table's base, fixed at RUN
 NNAME   = $0029                 ; 1: how many names are defined
 HEAP    = $002A                 ; 2: the heap floor; arrays grow down
 NBUF    = $002C                 ; 6: the identifier just scanned, folded
 NLEN    = $0032                 ; 1: how long it really was
+
+; ---- strings.
+;
+; Every string expression is built in one accumulator and only an
+; assignment copies out of it, which is BBC BASIC's STRACC and the
+; reason concatenation needs no code at all: the second operand simply
+; appends where the first stopped, and no intermediate ever reaches the
+; heap.
+SMAX    = 255                   ; as much as one byte of length allows
+SACC    = $0033                 ; 2: where the accumulator lives
+SLEN    = $0035                 ; 1: how much of it is in use
+STYPE   = $0036                 ; 1: 1 when the last value was a string
 
 VARS    = $0040                 ; 52: A-Z, two bytes each
 
@@ -104,6 +122,8 @@ E_DEEP  = 4                     ; ?FORMULA TOO COMPLEX ERROR
 E_MEM   = 5                     ; ?OUT OF MEMORY ERROR
 E_NAMES = 6                     ; ?TOO MANY VARIABLES ERROR
 E_SUBS  = 7                     ; ?SUBSCRIPT ERROR
+E_STR   = 8                     ; ?STRING TOO LONG ERROR
+E_TYPE  = 9                     ; ?TYPE MISMATCH ERROR
 E_ASYN  = 10                    ; ?SYNTAX ERROR, in an ASM line
 E_AENC  = 11                    ; no encoding for that operand shape
 E_ASYM  = 12                    ; undefined symbol
