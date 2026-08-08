@@ -154,6 +154,8 @@ irun:
         BNE  .iz
         CLR  R0
         ST   [FDEPTH],R0        ; and no FOR loop is running
+        ST   [DDEPTH],R0        ; nor a DO, which a second RUN must not
+                                ;   inherit from the first
         ST   [EDEPTH],R0        ; at statement level, not inside a paren
         ST   [NNAME],R0         ; and no long name is defined yet
         ; NTAB and HEAP are the caller's, like LREC and PEND: the table
@@ -274,15 +276,15 @@ sttab:
         .word h_for             ; $85 FOR
         .word h_next            ; $86 NEXT
         .word bad               ; $87 TO
-        .word bad               ; $88 DO
-        .word bad               ; $89 LOOP
+        .word h_do              ; $88 DO
+        .word h_loop            ; $89 LOOP
         .word bad               ; $8A WHILE
         .word bad               ; $8B UNTIL
-        .word bad               ; $8C EXIT
+        .word h_exit            ; $8C EXIT
         .word h_if              ; $8D IF
         .word bad               ; $8E THEN
         .word h_else            ; $8F ELSE
-        .word bad               ; $90 ELSEIF
+        .word h_else            ; $90 ELSEIF
         .word h_end             ; $91 END
         .word bad               ; $92 RETURN
         .word bad               ; $93 CALL
@@ -700,7 +702,10 @@ h_if:
         BEQ  .out
         CALL skiptok
         CMP  R0,#K_ELSE
+        BEQ  .out
+        CMP  R0,#K_ELSIF        ; a fresh condition, on the same line
         BNE  .false
+        JMP  h_if
 .out:   JMP  stmt
 
 ; ELSE reached while running means the true arm just finished.
@@ -1994,7 +1999,10 @@ idiv16: PUSH R3
         RET
 .go:    CALL udiv16
         LD   R2,[DSGN]
-        BTST R2,#1              ; the remainder follows the dividend
+        BTST R2,#2              ; bit 1: the remainder follows the
+                                ;   dividend. BTST takes a *mask*, not a
+                                ;   bit number, so #1 tested bit 0 and
+                                ;   MOD was right by accident.
         BEQ  .rok
         PUSH R1
         PUSH R0
@@ -2006,7 +2014,7 @@ idiv16: PUSH R3
         POP  R0
         POP  R1
 .rok:   LD   R2,[DSGN]
-        BTST R2,#0
+        BTST R2,#1              ; bit 0: and so does the quotient
         BEQ  .qok
         CALL neg16
 .qok:   RET
@@ -2079,3 +2087,155 @@ ctab:
         .byte $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
         .byte $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
         .byte $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+
+; ---------------------------------------------------------------------
+; DO ... LOOP, with an optional WHILE or UNTIL at either end.
+;
+;   DO                LOOP              runs forever
+;   DO WHILE c        LOOP              tests at the top
+;   DO                LOOP UNTIL c      tests at the bottom, always once
+;   DO UNTIL c        LOOP WHILE d      both, if anyone wants that
+;
+; The frame is where the body starts and which record that was, and the
+; body starts *at* the WHILE or UNTIL rather than after it -- so LOOP
+; jumps back to the token and the top test is re-evaluated without the
+; frame having to remember whether there was one.
+;
+; EXIT and a failed top test are the same thing: drop the frame and walk
+; forward to the matching LOOP, counting nested DOs on the way.
+; ---------------------------------------------------------------------
+
+; dofr -- X on the innermost open frame.
+dofr:   LD   R0,[DDEPTH]
+        SUB  R0,#1
+        MOV  R1,#DOFR
+        MUL  R0,R1
+        ADDW X,#DOSTK
+        RET
+
+e_dos:  MOV  R0,#E_DOS
+        ST   [ERR],R0
+        RET
+
+h_do:   LD   R0,[DDEPTH]
+        CMP  R0,#MAXDO
+        BCS  e_dos
+        ADD  R0,#1
+        ST   [DDEPTH],R0
+        CALL dofr
+        MOV  R0,YL
+        ST   [X],R0
+        INCW X
+        MOV  R0,YH
+        ST   [X],R0
+        INCW X
+        LD   R0,[LREC]
+        ST   [X],R0
+        INCW X
+        LD   R0,[LREC+1]
+        ST   [X],R0
+        SKIPSP
+        CMP  R2,#K_WHILE
+        BEQ  .w
+        CMP  R2,#K_UNTIL
+        BEQ  .u
+        JMP  stmt
+.w:     INCW Y
+        CALL eval
+        MOV  R2,R0
+        OR   R2,R1
+        BNE  .on
+        JMP  doquit
+.u:     INCW Y
+        CALL eval
+        MOV  R2,R0
+        OR   R2,R1
+        BEQ  .on
+        JMP  doquit
+.on:    JMP  stmt
+
+h_loop: LD   R0,[DDEPTH]
+        BEQ  e_dos              ; LOOP without DO
+        SKIPSP
+        CMP  R2,#K_WHILE
+        BEQ  .w
+        CMP  R2,#K_UNTIL
+        BEQ  .u
+        JMP  doback
+.w:     INCW Y
+        CALL eval
+        MOV  R2,R0
+        OR   R2,R1
+        BNE  .b
+        JMP  dopop
+.u:     INCW Y
+        CALL eval
+        MOV  R2,R0
+        OR   R2,R1
+        BEQ  .b
+        JMP  dopop
+.b:     JMP  doback
+
+; doback -- round again, from the frame.
+doback: CALL dofr
+        LD   R0,[X]
+        INCW X
+        LD   R1,[X]
+        INCW X
+        LD   R2,[X]
+        ST   [LREC],R2
+        INCW X
+        LD   R2,[X]
+        ST   [LREC+1],R2
+        MOV  YL,R0
+        MOV  YH,R1
+        JMP  stmt
+
+; dopop -- the loop is done and we are already past its LOOP.
+dopop:  LD   R0,[DDEPTH]
+        SUB  R0,#1
+        ST   [DDEPTH],R0
+        JMP  stmt
+
+; h_exit / doquit -- leave from anywhere inside, which means finding the
+; LOOP that closes this DO.
+h_exit: LD   R0,[DDEPTH]
+        BNE  doquit
+        JMP  e_dos              ; EXIT with no loop open, and out of
+                                ;   branch reach from down here
+doquit: LD   R0,[DDEPTH]
+        SUB  R0,#1
+        ST   [DDEPTH],R0
+        CLR  R0
+        ST   [DNEST],R0
+.scan:  SKIPSP
+        TST  R2
+        BEQ  .eol
+        CMP  R2,#K_DO
+        BEQ  .in
+        CMP  R2,#K_LOOP
+        BEQ  .out
+        CALL skiptok
+        BRA  .scan
+.in:    LD   R0,[DNEST]
+        ADD  R0,#1
+        ST   [DNEST],R0
+        CALL skiptok
+        BRA  .scan
+.out:   LD   R0,[DNEST]
+        BEQ  .done
+        SUB  R0,#1
+        ST   [DNEST],R0
+        CALL skiptok
+        BRA  .scan
+        ; The rest of that line belongs to the LOOP -- its WHILE or
+        ; UNTIL and their expression -- so it goes with it.
+.done:  LD   R2,[Y]
+        TST  R2
+        BEQ  .fin
+        CALL skiptok
+        BRA  .done
+.fin:   JMP  stmt
+.eol:   CALL nextline
+        BCS  .scan
+        RET                     ; the program ended inside the loop

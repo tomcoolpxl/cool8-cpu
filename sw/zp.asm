@@ -10,6 +10,7 @@
 ; mounted volume. That is the arrangement the BBC Micro used, with its
 ; filing system workspace in page 0 below the stack.
 ;
+;   $0000-$0011   DO/LOOP's own stack
 ;   $0014-$0022   the interpreter
 ;   $0023-$0026   multiply scratch
 ;   $0027-$0032   long names: the table, the heap floor, the scan buffer
@@ -23,6 +24,23 @@
 ; assume it and neither includes it, because in the built system both
 ; are present and a second copy would redefine every name.
 ; ---------------------------------------------------------------------
+
+; ---- DO/LOOP.
+;
+; A stack of its own, in the BBC Micro's shape: it gave FOR, REPEAT and
+; GOSUB one each and said so when one filled, rather than merging them
+; onto the processor stack the way BBC BASIC (86) did. The processor
+; stack here is 256 bytes shared with a recursive evaluator, so the
+; Micro is the one to copy.
+;
+; No cached innermost frame, unlike FOR. FOR pays per *iteration* and
+; the cache is most of why nesting is free; a DO pays twice per loop, at
+; the top and at the bottom, and the indexing is lost in the test.
+DOFR    = 4                     ; where the body starts, and its record
+MAXDO   = 4
+DOSTK   = $0000                 ; 16: MAXDO frames of DOFR
+DDEPTH  = $0010                 ; 1: loops open, 0 = none
+DNEST   = $0011                 ; 1: nesting seen while skipping one
 
 ; ---- the interpreter
 LREC    = $0014                 ; 2: the current line record
@@ -137,6 +155,7 @@ E_AENC  = 11                    ; no encoding for that operand shape
 E_ASYM  = 12                    ; undefined symbol
 E_ARNG  = 14                    ; branch out of range
 E_DIV0  = 15                    ; ?DIVISION BY ZERO ERROR
+E_DOS   = 16                    ; ?TOO MANY DOS / ?LOOP WITHOUT DO
 ; 13 was E_AFULL, "too many symbols". There is no symbol table to fill:
 ; a label is a BASIC variable, so running out of them is E_NAMES.
 E_DONE  = 255

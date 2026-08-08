@@ -555,6 +555,111 @@ CASES = [
              line(40, [K["END"]])),
      {0: 1, 1: 0}),
 
+    # ---- DO/LOOP, with the test at either end or both.
+    ("DO ... LOOP UNTIL, which always runs once",
+     program(spaced(10, [K["DO"]]),
+             spaced(20, name("S"), "=", name("S"), "+", num(1)),
+             spaced(30, [K["LOOP"]], [K["UNTIL"]], name("S"), "=", num(5)),
+             spaced(40, name("A"), "=", name("S")),
+             line(50, [K["END"]])),
+     {0: 5}),
+
+    ("DO WHILE tests at the top, so a false one runs the body never",
+     program(spaced(10, name("S"), "=", num(9)),
+             spaced(20, [K["DO"]], [K["WHILE"]], num(0)),
+             spaced(30, name("S"), "=", num(1)),
+             spaced(40, [K["LOOP"]]),
+             spaced(50, name("A"), "=", name("S")),
+             line(60, [K["END"]])),
+     {0: 9}),
+
+    ("LOOP WHILE tests at the bottom",
+     program(spaced(10, [K["DO"]]),
+             spaced(20, name("S"), "=", name("S"), "+", num(2)),
+             spaced(30, [K["LOOP"]], [K["WHILE"]], name("S"), "<", num(7)),
+             spaced(40, name("A"), "=", name("S")),
+             line(50, [K["END"]])),
+     {0: 8}),
+
+    ("EXIT leaves from the middle and lands past the LOOP",
+     program(spaced(10, [K["DO"]]),
+             spaced(20, name("S"), "=", name("S"), "+", num(1)),
+             spaced(30, [K["IF"]], name("S"), "=", num(3), [K["THEN"]],
+                    [K["EXIT"]]),
+             spaced(40, [K["LOOP"]]),
+             spaced(50, name("A"), "=", name("S")),
+             line(60, [K["END"]])),
+     {0: 3}),
+
+    ("a nested DO, and EXIT counts the nesting on its way out",
+     program(spaced(10, [K["DO"]]),
+             spaced(20, name("I"), "=", name("I"), "+", num(1)),
+             spaced(30, [K["DO"]]),
+             spaced(40, name("J"), "=", name("J"), "+", num(1)),
+             spaced(50, [K["LOOP"]], [K["UNTIL"]], name("J"),
+                    name("MOD"), num(3), "=", num(0)),
+             spaced(60, [K["LOOP"]], [K["UNTIL"]], name("I"), "=", num(2)),
+             spaced(70, name("A"), "=", name("I")),
+             spaced(80, name("B"), "=", name("J")),
+             line(90, [K["END"]])),
+     {0: 2, 1: 6}),
+
+    # ELSEIF reached while running means the arm above it succeeded, so
+    # it behaves as ELSE does; reached by a *false* IF it is a fresh
+    # condition on the same line.
+    ("ELSEIF picks the arm that matches",
+     program(spaced(10, name("K"), "=", num(2)),
+             spaced(20, [K["IF"]], name("K"), "=", num(1), [K["THEN"]],
+                    name("A"), "=", num(11), [K["ELSEIF"]], name("K"),
+                    "=", num(2), [K["THEN"]], name("A"), "=", num(22),
+                    [K["ELSE"]], name("A"), "=", num(33)),
+             line(30, [K["END"]])),
+     {0: 22}),
+
+    ("ELSEIF falls through to ELSE when no arm matches",
+     program(spaced(10, name("K"), "=", num(7)),
+             spaced(20, [K["IF"]], name("K"), "=", num(1), [K["THEN"]],
+                    name("A"), "=", num(11), [K["ELSEIF"]], name("K"),
+                    "=", num(2), [K["THEN"]], name("A"), "=", num(22),
+                    [K["ELSE"]], name("A"), "=", num(33)),
+             line(30, [K["END"]])),
+     {0: 33}),
+
+    ("the first arm still wins, and skips the rest of the line",
+     program(spaced(10, name("K"), "=", num(1)),
+             spaced(20, [K["IF"]], name("K"), "=", num(1), [K["THEN"]],
+                    name("A"), "=", num(11), [K["ELSEIF"]], name("K"),
+                    "=", num(1), [K["THEN"]], name("A"), "=", num(22)),
+             line(30, [K["END"]])),
+     {0: 11}),
+
+    # ---- division. One restoring pass gives the quotient and the
+    # remainder both, so MOD is the same routine read a different way.
+    ("integer division and MOD, one routine between them",
+     program(spaced(10, name("A"), "=", num(7), "/", num(2)),
+             spaced(20, name("B"), "=", num(100), "/", num(10)),
+             spaced(30, name("C"), "=", num(7), name("MOD"), num(2)),
+             spaced(40, name("D"), "=", num(100), name("MOD"), num(7)),
+             spaced(50, name("E"), "=", num(1), "/", num(2)),
+             line(60, [K["END"]])),
+     {0: 3, 1: 10, 2: 1, 3: 2, 4: 0}),
+
+    # Truncating toward zero, with the remainder taking the dividend's
+    # sign -- BBC BASIC's rule for DIV and MOD, and C's later.
+    ("negative operands truncate toward zero",
+     program(spaced(10, name("A"), "=", "-", num(7), "/", num(2)),
+             spaced(20, name("B"), "=", "-", num(7), name("MOD"), num(2)),
+             spaced(30, name("C"), "=", num(7), "/", "-", num(2)),
+             spaced(40, name("D"), "=", "-", num(8), "/", num(2)),
+             line(50, [K["END"]])),
+     {0: 0xFFFD, 1: 0xFFFF, 2: 0xFFFD, 3: 0xFFFC}),
+
+    ("division binds tighter than addition",
+     program(spaced(10, name("A"), "=", num(1), "+", num(9), "/", num(3)),
+             spaced(20, name("B"), "=", num(20), "/", num(4), "/", num(5)),
+             line(30, [K["END"]])),
+     {0: 4, 1: 1}),
+
     # ---- DIM and arrays. DIM A(10) is eleven elements, 0 to 10, which
     # is BBC BASIC's rule and Microsoft's and what every published
     # program assumes.
@@ -691,6 +796,26 @@ def main():
     err = run_err(program(line(10, [K["NEXT"]]), line(20, [K["END"]])))
     check(err == 3, "NEXT with no FOR stops with ?NEXT WITHOUT FOR",
           f"ERR was {err}, wanted 3")
+
+    # DO has a bounded stack of its own and says so when it fills,
+    # which is the BBC Micro's rule rather than BBC BASIC (86)'s.
+    nest = [line(10 + i, [K["DO"]]) for i in range(5)]
+    err = run_err(program(*nest, line(200, [K["END"]])))
+    check(err == 16, "a fifth nested DO stops with ?TOO MANY DOS",
+          f"ERR was {err}, wanted 16")
+
+    err = run_err(program(line(10, [K["LOOP"]]), line(20, [K["END"]])))
+    check(err == 16, "LOOP with no DO stops rather than jumping nowhere",
+          f"ERR was {err}, wanted 16")
+
+    err = run_err(program(line(10, [K["EXIT"]]), line(20, [K["END"]])))
+    check(err == 16, "EXIT with no DO likewise",
+          f"ERR was {err}, wanted 16")
+
+    err = run_err(program(spaced(10, name("A"), "=", num(1), "/", num(0)),
+                          line(20, [K["END"]])))
+    check(err == 15, "division by zero stops with ?DIVISION BY ZERO",
+          f"ERR was {err}, wanted 15")
 
     # ---- subscripts are checked, which BBC BASIC II does not do.
     #
