@@ -331,6 +331,69 @@ class Run:
         return self.m.bus.mem[a] | (self.m.bus.mem[a + 1] << 8)
 
 
+class Profile:
+    """Where the clocks went, by routine.
+
+    Guessing does not work. Flattening the interpreter's expression
+    evaluator from three nested calls per operand to one was an obvious
+    win on paper and moved a benchmark by 1.6 % -- because the cost was
+    somewhere else entirely. This says where.
+
+    Attribution is by nearest preceding code label, and the cost of an
+    instruction is the emulator's own cycle count for it, so the numbers
+    add up to the total rather than approximating it.
+    """
+
+    def __init__(self, syms, org, end):
+        self.org, self.end = org, end
+        # code labels only: v_ and a_ are data, and a dotted name is a
+        # local label, which is the granularity we want to keep
+        self.labels = sorted(
+            (a, n) for n, a in syms.items()
+            if org <= a < end and not n.startswith(("v_", "a_", "str_")))
+        self.by = {}
+        self.total = 0
+
+    def _who(self, pc):
+        lo = None
+        for a, n in self.labels:
+            if a <= pc:
+                lo = n
+            else:
+                break
+        return lo or f"${pc:04X}"
+
+    def run(self, m, limit=80_000_000):
+        """Step to a halt, charging each instruction to its routine."""
+        last = -1
+        for _ in range(limit):
+            pc = m.cpu.pc
+            if pc == last:
+                break
+            last = pc
+            before = m.cpu.cycles
+            m.cpu.step()
+            cost = m.cpu.cycles - before
+            who = self._who(pc)
+            self.by[who] = self.by.get(who, 0) + cost
+            self.total += cost
+        return self.total
+
+    def report(self, top=14, roll=True):
+        """Roll local labels up into the routine that owns them."""
+        rows = {}
+        for n, c in self.by.items():
+            key = n.split(".")[0] if roll else n
+            rows[key] = rows.get(key, 0) + c
+        out = [f"  {self.total:,} clocks total"]
+        for n, c in sorted(rows.items(), key=lambda kv: -kv[1])[:top]:
+            out.append(f"    {n:<22}{c:>10,}  {100*c/self.total:>5.1f}%")
+        rest = self.total - sum(sorted(rows.values(), reverse=True)[:top])
+        if rest > 0:
+            out.append(f"    {'the rest':<22}{rest:>10,}")
+        return "\n".join(out)
+
+
 # ------------------------------------------------------------- comparing
 
 def walk(buf, base, limit):

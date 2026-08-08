@@ -72,7 +72,8 @@ LVAR    = $001A                 ; 1: the FOR variable, doubled
 LLIM    = $001B                 ; 2: its limit
 LBODY   = $001D                 ; 2: where its body starts
 LLINE   = $001F                 ; 2: and which line that was
-MTMP    = $0021                 ; 4: multiply scratch
+LLEND   = $0021                 ; 2: and where that line's tokens end
+MTMP    = $0023                 ; 4: multiply scratch
 
 VARS    = $0040                 ; 52: A-Z, two bytes each
 
@@ -366,6 +367,11 @@ h_for:
         ST   [LLINE],R0
         LD   R0,[LREC+1]
         ST   [LLINE+1],R0
+        ; the body;s end too, so NEXT never re-reads the line header
+        LD   R0,[LEND]
+        ST   [LLEND],R0
+        LD   R0,[LEND+1]
+        ST   [LLEND+1],R0
         JMP  stmt
 
 h_next:
@@ -391,11 +397,17 @@ h_next:
         SUB  R0,R2              ; limit - v; go on while v <= limit
         SBC  R1,R3
         BLT  .out
-        LD   R0,[LLINE]         ; back to the body
+        ; Back to the body without re-opening the line. openline was
+        ; 16 % of the whole benchmark and half of its calls were this
+        ; one, re-deriving what FOR already knew.
+        LD   R0,[LLINE]
         ST   [LREC],R0
         LD   R0,[LLINE+1]
         ST   [LREC+1],R0
-        CALL openline
+        LD   R0,[LLEND]
+        ST   [LEND],R0
+        LD   R0,[LLEND+1]
+        ST   [LEND+1],R0
         LD   R0,[LBODY]
         MOV  YL,R0
         LD   R0,[LBODY+1]
@@ -416,8 +428,54 @@ h_next:
 ;   prim  = number | variable | ( eval ) | - prim | PEEK ( eval )
 ; ---------------------------------------------------------------------
 eval:
-        CALL sum
-        LD   R2,[Y]
+        CALL prim               ; the first operand
+        ; ---- { * operand }, highest precedence, checked inline
+.mul:   LD   R2,[Y]
+        CMP  R2,#$2A            ; '*'
+        BNE  .sum
+        INCW Y
+        PUSH R1
+        PUSH R0
+        CALL prim
+        MOV  R2,R0
+        MOV  R3,R1
+        POP  R0
+        POP  R1
+        CALL imul16
+        BRA  .mul
+        ; ---- { + operand | - operand }
+.sum:   LD   R2,[Y]
+        CMP  R2,#$2B            ; '+'
+        BEQ  .add
+        CMP  R2,#$2D            ; '-'
+        BEQ  .sub
+        BRA  .rel
+.add:   INCW Y
+        PUSH R1
+        PUSH R0
+        CALL prim
+        CALL mulrest
+        MOV  R2,R0
+        MOV  R3,R1
+        POP  R0
+        POP  R1
+        ADD  R0,R2
+        ADC  R1,R3
+        BRA  .sum
+.sub:   INCW Y
+        PUSH R1
+        PUSH R0
+        CALL prim
+        CALL mulrest
+        MOV  R2,R0
+        MOV  R3,R1
+        POP  R0
+        POP  R1
+        SUB  R0,R2
+        SBC  R1,R3
+        BRA  .sum
+        ; ---- one relation, if there is one
+.rel:   LD   R2,[Y]
         CMP  R2,#$3D            ; '='
         BEQ  .req
         CMP  R2,#$3C            ; '<'
@@ -427,137 +485,87 @@ eval:
         RET
 
 .req:   INCW Y
-        PUSH R1
-        PUSH R0
-        CALL sum
-        MOV  R2,R0
-        MOV  R3,R1
-        POP  R0
-        POP  R1
+        CALL rhs
         SUB  R0,R2
         SBC  R1,R3
         OR   R0,R1
         BEQ  .y1
         JMP  false
-.y1:   JMP  true
+.y1:    JMP  true
 
 .rlt:   INCW Y
         LD   R2,[Y]
-        CMP  R2,#$3D            ; '<='
+        CMP  R2,#$3D
         BEQ  .rle
-        CMP  R2,#$3E            ; '<>'
+        CMP  R2,#$3E
         BEQ  .rne
-        PUSH R1
-        PUSH R0
-        CALL sum
-        MOV  R2,R0
-        MOV  R3,R1
-        POP  R0
-        POP  R1
+        CALL rhs
         SUB  R0,R2
         SBC  R1,R3
         BLT  .y2
         JMP  false
-.y2:   JMP  true
+.y2:    JMP  true
 .rne:   INCW Y
-        PUSH R1
-        PUSH R0
-        CALL sum
-        MOV  R2,R0
-        MOV  R3,R1
-        POP  R0
-        POP  R1
+        CALL rhs
         SUB  R0,R2
         SBC  R1,R3
         OR   R0,R1
         BEQ  .y3
         JMP  true
-.y3:   JMP  false
+.y3:    JMP  false
 .rle:   INCW Y                  ; a <= b is b >= a
-        PUSH R1
-        PUSH R0
-        CALL sum
+        CALL rhs
+        MOV  R0,R2              ; swap: compare b - a
+        MOV  R1,R3
         POP  R2
         POP  R3
-        SUB  R0,R2
-        SBC  R1,R3
-        BGE  .y4
-        JMP  false
-.y4:   JMP  true
-
+        PUSH R3
+        PUSH R2
+        BRA  .cmpge
 .rgt:   INCW Y
         LD   R2,[Y]
-        CMP  R2,#$3D            ; '>='
+        CMP  R2,#$3D
         BEQ  .rge
-        PUSH R1                 ; a > b is b < a
-        PUSH R0
-        CALL sum
+        CALL rhs                ; a > b is b < a
+        MOV  R0,R2
+        MOV  R1,R3
         POP  R2
         POP  R3
+        PUSH R3
+        PUSH R2
         SUB  R0,R2
         SBC  R1,R3
-        BLT  .y5
+        BLT  .y4
         JMP  false
-.y5:   JMP  true
+.y4:    JMP  true
 .rge:   INCW Y
-        PUSH R1
-        PUSH R0
-        CALL sum
-        MOV  R2,R0
-        MOV  R3,R1
-        POP  R0
-        POP  R1
+        CALL rhs
         SUB  R0,R2
         SBC  R1,R3
-        BGE  .y6
+.cmpge: BGE  .y5
         JMP  false
-.y6:   JMP  true
+.y5:    JMP  true
 
-true:   MOV  R0,#1
-        CLR  R1
-        RET
-false:  CLR  R0
-        CLR  R1
-        RET
-
-sum:
-        CALL prod
-.l:     LD   R2,[Y]
-        CMP  R2,#$2B            ; '+'
-        BEQ  .add
-        CMP  R2,#$2D            ; '-'
-        BEQ  .sub
-        RET
-.add:   INCW Y
-        PUSH R1
+; rhs -- the right-hand side of a relation, with its own * and +/-.
+; The left side is preserved in R0:R1 across it.
+rhs:    PUSH R1
         PUSH R0
-        CALL prod
-        MOV  R2,R0
-        MOV  R3,R1
-        POP  R0
-        POP  R1
-        ADD  R0,R2
-        ADC  R1,R3
-        BRA  .l
-.sub:   INCW Y
-        PUSH R1
-        PUSH R0
-        CALL prod
-        MOV  R2,R0
-        MOV  R3,R1
-        POP  R0
-        POP  R1
-        SUB  R0,R2
-        SBC  R1,R3
-        BRA  .l
-
-prod:
         CALL prim
-.l:     LD   R2,[Y]
-        CMP  R2,#$2A            ; '*'
-        BEQ  .mul
+        CALL mulrest
+        CALL sumrest
+        MOV  R2,R0
+        MOV  R3,R1
+        POP  R0
+        POP  R1
         RET
-.mul:   INCW Y
+
+; mulrest -- { * operand } applied to whatever is in R0:R1.
+mulrest:
+        LD   R2,[Y]
+        CMP  R2,#$2A
+        BEQ  .go
+        RET
+.go:    INCW Y
         PUSH R1
         PUSH R0
         CALL prim
@@ -566,7 +574,47 @@ prod:
         POP  R0
         POP  R1
         CALL imul16
-        BRA  .l
+        BRA  mulrest
+
+; sumrest -- { + operand | - operand } applied to R0:R1.
+sumrest:
+        LD   R2,[Y]
+        CMP  R2,#$2B
+        BEQ  .a
+        CMP  R2,#$2D
+        BEQ  .s
+        RET
+.a:     INCW Y
+        PUSH R1
+        PUSH R0
+        CALL prim
+        CALL mulrest
+        MOV  R2,R0
+        MOV  R3,R1
+        POP  R0
+        POP  R1
+        ADD  R0,R2
+        ADC  R1,R3
+        BRA  sumrest
+.s:     INCW Y
+        PUSH R1
+        PUSH R0
+        CALL prim
+        CALL mulrest
+        MOV  R2,R0
+        MOV  R3,R1
+        POP  R0
+        POP  R1
+        SUB  R0,R2
+        SBC  R1,R3
+        BRA  sumrest
+
+true:   MOV  R0,#1
+        CLR  R1
+        RET
+false:  CLR  R0
+        CLR  R1
+        RET
 
 prim:
         LD   R0,[Y]
