@@ -18,13 +18,33 @@ compiled output at all, so the same machine gives a program **31.5 KB**.
 ```
                                  program space    speed
 compiler in a 24 KB overlay           ~12 KB       1.0x
-statement interpreter, 23.5 KB        31.5 KB      3-5x
+statement interpreter, 23.5 KB        31.5 KB      1.9x a loop
+                                                   12.6x an expression
 ```
 
-Two and a half times the room for three to five times the time, and
-`ASM` blocks cover the cases where the time matters. That is the bargain
-BBC BASIC made and it is a better one here than it was on a 6502,
-because this ISA's `CALL`/`RET` is 9 clocks and its table dispatch 38.
+Two and a half times the room, and `ASM` blocks cover the cases where
+the time matters. That is the bargain BBC BASIC made.
+
+**This table used to say 3-5x, and that number was never real.** It came
+from `sim/bench_dispatch.py` and `sim/bench_interp.py`, which measure a
+*dispatch* — 38 clocks for a table jump — against a native instruction.
+A dispatch is not a statement. A real one also skips spaces, scans a
+name, decides whether that name is subscripted or a string, walks the
+operator precedence and maintains the line machinery, and none of that
+was in the prototypes. So every honest measurement since has looked like
+a regression against a figure that had never been measured.
+
+**12.6x is where a tokenised BASIC lives.** BBC BASIC is in the same
+band for the same work, and it is *behind* on one thing this design got
+right: BBC stores a numeric literal as ASCII and re-parses it every time
+round a loop, where `$A4` and two binary bytes cost nothing per
+iteration. The loop figure, 1.9x, is the one that flatters — a single
+dispatch covers a whole iteration.
+
+**The decision does not turn on the speed figure and never did.** It was
+made on program space: 31.5 KB against ~12 KB. That is unchanged. What
+changed is that the speed column is now measured rather than projected,
+and §5 records what each feature cost.
 
 ---
 
@@ -45,7 +65,8 @@ short ones — which is exactly the habit the BBC taught.
 **Integers first.** 16-bit signed is the working type. Floats are a
 library the interpreter calls, never something it pays for by default.
 
-**`ASM` blocks.** The escape hatch, and the reason 3-5x is acceptable.
+**`ASM` blocks.** The escape hatch, and the reason the interpreted ratio
+is acceptable at all — BBC BASIC's own answer to the same question.
 Assembled at `RUN` into a buffer and called. The encodings are
 arithmetic (`docs/11-compiler.md` §3), so the assembler is small.
 
@@ -152,7 +173,7 @@ containing one pays the search once.
 | `sim/bench_dispatch.py` | token table 49 clocks/op, direct thread 30, subroutine 20, native 11 |
 | `sim/bench_interp.py` | `FOR K=1 TO 1000: NEXT` — 1.88x native, 1.48x with a tight `NEXT` |
 | `sim/bench_interp2.py` | expression 5.04x, subscript 3.11x, call 4.56x |
-| `sim/test_interp.py` | **the real interpreter, not a prototype: 11.99x on the expression case**, 2,452 bytes, and a parenthesis costs 4.0 bytes of stack |
+| `sim/test_interp.py` | **the real interpreter, not a prototype: 12.61x on the expression case**, 2,939 bytes, and a parenthesis costs 4.0 bytes of stack |
 | `sim/test_asm.py` | `sw/asm.asm` against `tools/cool8asm.py`, byte for byte: 96 single instructions, 16 multi-line cases, 7 refusals, and **every one of the 488 reachable encodings**. 2,521 bytes of code and 313 of table |
 
 The first three rows measure prototypes. The last measures
@@ -203,21 +224,43 @@ own record — executing a length byte as a token and assigning whatever
 followed. `skiptok` is now the one way to step a token, and
 `sim/test_interp.py` gates the ELSE arm being reached at all.
 
-**The open question, now live rather than speculative.** The prototype
-walker called a `term` subroutine per operand, and folding the common
-cases — a variable, a small constant — was supposed to recover much of
-the 5x. It was folded, and the real interpreter measures 8.73x. The two
-figures are not directly comparable (different benchmarks, and I2's
-carries a whole statement's line machinery), which is exactly why the
-number has to be re-measured **in a loop** at I4 before anything is
-concluded from it.
+**The open question is closed, and the answer is to accept it.** It was
+framed as a choice between a hybrid — interpret statements, compile
+expressions — and leaning on `ASM` blocks. Reading what BBC BASIC
+actually does settles it: **BBC compiles nothing.** `AEEXPR` walks the
+token stream every time, into `IACC`, and the inline assembler exists
+precisely so the 5% that matters can leave the interpreter altogether.
+The hybrid is a departure from that design, not a return to it, and this
+machine now has the assembler ([D45](docs/01-decisions.md)).
 
-If it stays there, the honest options are a hybrid — interpret
-statements, compile expressions — or accepting it and leaning on `ASM`
-blocks. That is a decision to bring back, not one to swallow. And
-`sim/prof_interp.py` decides where the time actually goes first: a round
-already went into the expression evaluator at 16% of the run while the
-line machinery was 48%.
+**What the cost is made of**, measured feature by feature rather than
+guessed at:
+
+| | ratio | what it bought |
+|---|---|---|
+| I2 | 7.63x | |
+| + spaces | 8.73x | typed lines stop being silently wrong |
+| + long names | 10.16x | one lookahead per name; a stray byte stops being a variable |
+| + arrays | 10.61x | a subscript test on every variable read |
+| + `AND`/`OR`/`XOR` | 10.98x | one operator serving logic and bits |
+| + strings | 11.99x | a type test per read, and a reset per statement |
+| + `/` and `MOD` | 12.86x | two more tests in the operator peek |
+| class table | 12.61x | one indexed load for the name lookahead |
+
+Every step but the last adds a test to the same inner loop, which is why
+the total compounds. `sim/prof_interp.py` says where it lands: `stmt`
+22.8%, `erel` 19.2%, `prim` 14.5%, `varidx` 12.2%. It is **distributed**,
+so there is no single hot spot left to attack — the class table, the
+biggest structural change available, bought 2%.
+
+`prim`'s five-way chain was measured and deliberately left alone: moving
+it onto the table saves 4 clocks on a name and costs 15 on a
+parenthesis, a `PEEK` or a literal.
+
+**Space skipping is ~10% and it stays.** Removing the test means
+crunching the stored form, and a space inside an `ASM` block is a
+separator — `MOV  R0,#5` crunched is one identifier where there were
+two. [D45](docs/01-decisions.md) records why BBC declined the same fix.
 
 ---
 
@@ -230,8 +273,8 @@ line machinery was 48%.
 | I2b | the screen to `$8000`, so the system has room for the rest; the filesystem's workspace out of the stack's page; `FOR` given a bounded stack so it nests — done |
 | I3a | long names: the name table, and `varidx` scanning an identifier. Pulled in front of the assembler by [D45](docs/01-decisions.md). The heap, `DIM` and arrays are still to come — the assembler did not need them — done |
 | I3b | `ASM` blocks. Byte-identical to `tools/cool8asm.py` across all 488 reachable encodings — done |
-| I4a | `AND`/`OR`/`XOR`, and `TRUE` becomes -1 so one implementation serves logic and bits both. The `<=` and `>` arms of the evaluator fixed � they popped the caller's return address � done |
-| I4b | strings: the `$` suffix, the accumulator, the four-byte descriptor, literals, assignment, concatenation, `LEN`, equality and `PRINT` � done |
+| I4a | `AND`/`OR`/`XOR`, and `TRUE` becomes -1 so one implementation serves logic and bits both. The `<=` and `>` arms of the evaluator fixed � they popped the caller's return address � done |
+| I4b | strings: the `$` suffix, the accumulator, the four-byte descriptor, literals, assignment, concatenation, `LEN`, equality and `PRINT` � done |
 | I4c | the rest of the statements I2 left on `bad`: `DO`/`LOOP`, `EXIT`, `ELSEIF`, `CALL`/`RETURN`, `/` and `MOD` |
 | I5 | wired to `RUN` in the editor, replacing the overlay |
 

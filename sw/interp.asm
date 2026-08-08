@@ -377,20 +377,19 @@ h_let:
 ; nisid -- C clear if R0 can appear inside a name. tokenise() uses the
 ; same rule (sw/chars.bas), so a name the editor kept as one word is one
 ; word here too.
-nisid:  CMP  R0,#$5F            ; '_'
-        BEQ  .yes
-        CMP  R0,#$24            ; '$', which is a string name's type
-        BEQ  .yes
-        CMP  R0,#$30            ; '0'
-        BCC  .no
-        CMP  R0,#$3A            ; past '9'
-        BCC  .yes
-        CALL nupper
-        CMP  R0,#$41            ; 'A'
-        BCC  .no
-        CMP  R0,#$5B            ; past 'Z'
-        BCS  .no
-.yes:   CLC
+; The same table `varidx` indexes, so there is one statement of what a
+; name may contain rather than two that have to agree. R0 comes back
+; untouched: `nscan` folds it afterwards and would be folding a class
+; byte otherwise.
+nisid:  PUSHW X
+        PUSH R0
+        LDW  X,#ctab
+        LD   R1,[X+R0]
+        POP  R0
+        POPW X
+        BTST R1,#$80
+        BEQ  .no
+        CLC
         RET
 .no:    SEC
         RET
@@ -423,45 +422,26 @@ nupper: CMP  R0,#$61            ; 'a'
 ; ---------------------------------------------------------------------
 varidx:
         LD   R0,[Y]
-        CMP  R0,#$61            ; fold case inline; nupper is a call
-        BCC  .nf
-        CMP  R0,#$7B
-        BCS  .nf
-        SUB  R0,#$20
-.nf:    CMP  R0,#$41            ; a name starts with a letter, and this
-        BCC  .notname           ;   is what a stray quote now trips on
-        CMP  R0,#$5B
-        BCS  .notname
+        LDW  X,#ctab
+        LD   R0,[X+R0]          ; folded, classified and indexed at once
+        BTST R0,#$40            ; a name starts with a letter
+        BEQ  .notname
         INCW Y
-        LD   R2,[Y]             ; does the name carry on?
-        CMP  R2,#$24            ; '$' makes it a string name, not a scalar
-        BEQ  .multi
-        CMP  R2,#$30            ; ' ' and every operator land here
-        BCC  .single
-        CMP  R2,#$3A            ; '0'-'9'
-        BCC  .multi
-        CMP  R2,#$41            ; ':' ';' '<' '=' '>' '?' '@'
-        BCC  .single
-        CMP  R2,#$5B            ; 'A'-'Z'
-        BCC  .multi
-        CMP  R2,#$5F            ; '_'
-        BEQ  .multi
-        CMP  R2,#$61
-        BCC  .single
-        CMP  R2,#$7B            ; 'a'-'z'; a token byte ends it
-        BCS  .single
-.multi: DECW Y                  ; hand the whole name to the slow path
-        BRA  vlong
+        LD   R2,[Y]
+        LD   R2,[X+R2]          ; and X is still on the table
+        BTST R2,#$80            ; does the name carry on?
+        BNE  .multi
         ; X comes back too, pointing at the value. `prim` wants it and
         ; is three of the five callers, and going back through varaddr
         ; for something varidx has already worked out cost 7 % of the
         ; benchmark.
-.single:
-        SUB  R0,#65             ; 'A'
+        AND  R0,#$3F
         SHL  R0
         LDW  X,#VARS
         ADDW X,R0
         RET
+.multi: DECW Y                  ; hand the whole name to the slow path
+        BRA  vlong
         ; Nothing that could start a name. That used to be undetectable:
         ; any token byte below $80 was taken for a variable.
 .notname:
@@ -996,16 +976,31 @@ erel:
         ; at .mul, which is where the next peek happens.
 .mul:   SKIPSP
         CMP  R2,#$2A            ; '*'
+        BEQ  .m1
+        CMP  R2,#$2F            ; '/'
+        BEQ  .d1
+        CMP  R2,#$4D            ; 'M' -- only then is MOD worth probing
+        BEQ  .m2                ;   for; the probe is three calls deep
+        CMP  R2,#$6D            ;   and every operand would pay it
         BNE  .sum
-        INCW Y
-        PUSH R1
-        PUSH R0
-        CALL prim
-        MOV  R2,R0
-        MOV  R3,R1
+.m2:    PUSH R1                 ; ismod needs R0, and R0:R1 is the value
+        PUSH R0                 ;   being accumulated. POP leaves C.
+        CALL ismod
         POP  R0
         POP  R1
+        BCS  .sum
+        CALL mdrhs
+        CALL idiv16
+        LD   R0,[DREM]          ; the same pass already produced it
+        LD   R1,[DREM+1]
+        BRA  .mul
+.m1:    INCW Y
+        CALL mdrhs
         CALL imul16
+        BRA  .mul
+.d1:    INCW Y
+        CALL mdrhs
+        CALL idiv16
         BRA  .mul
         ; ---- { + operand | - operand }
 .sum:   CMP  R2,#$2B            ; '+', on the character .mul already has
@@ -1164,16 +1159,31 @@ mulrest:
         SKIPSP
         CMP  R2,#$2A
         BEQ  .go
-        RET
-.go:    INCW Y
-        PUSH R1
+        CMP  R2,#$2F            ; '/'
+        BEQ  .dv
+        CMP  R2,#$4D            ; 'M', as in .mul above
+        BEQ  .m2
+        CMP  R2,#$6D
+        BNE  .out
+.m2:    PUSH R1
         PUSH R0
-        CALL prim
-        MOV  R2,R0
-        MOV  R3,R1
+        CALL ismod
         POP  R0
         POP  R1
+        BCS  .out
+        CALL mdrhs              ; ismod has stepped over the word
+        CALL idiv16
+        LD   R0,[DREM]
+        LD   R1,[DREM+1]
+        BRA  mulrest
+.out:   RET
+.go:    INCW Y
+        CALL mdrhs
         CALL imul16
+        BRA  mulrest
+.dv:    INCW Y
+        CALL mdrhs
+        CALL idiv16
         BRA  mulrest
 
 ; sumrest -- { + operand | - operand } applied to R0:R1.
@@ -1884,3 +1894,188 @@ islen:  LD   R0,[NLEN]
         RET
 .no:    SEC
         RET
+
+; ---------------------------------------------------------------------
+; Division, and why MOD is free.
+;
+; Restoring division: shift the dividend left a bit at a time into a
+; remainder, subtract the divisor whenever it fits, and the bit that
+; says whether it fitted is the quotient's. After sixteen passes the
+; quotient has replaced the dividend and **the remainder is simply what
+; is left** -- so `/` and `MOD` are one routine and MOD's only cost is
+; its own entry in the dispatch.
+;
+; The four registers are all spoken for -- dividend, remainder -- so the
+; divisor lives in page 0 and the counter in X, which nothing in the
+; loop touches. Two ISA details make the inner loop short: `POP Rd`
+; sets Z and N but **not C**, so the carry that decides the trial
+; subtraction survives restoring the register it borrowed; and `ADDW SP`
+; sets no flags, so the copy that was not needed is dropped without a
+; second thought.
+; ---------------------------------------------------------------------
+
+; udiv16 -- unsigned R0:R1 / R2:R3. Quotient in R0:R1, remainder in DREM.
+udiv16: ST   [DVSR],R2
+        ST   [DVSR+1],R3
+        CLR  R2                 ; the remainder
+        CLR  R3
+        LDW  X,#16
+.loop:  SHL  R0                 ; the dividend left, its top bit out
+        ROL  R1
+        ROL  R2                 ; and on into the remainder
+        ROL  R3
+        PUSH R3                 ; the trial subtraction, undone if it
+        PUSH R2                 ;   borrows
+        PUSH R1
+        LD   R1,[DVSR]
+        SUB  R2,R1
+        LD   R1,[DVSR+1]        ; LD leaves C alone, so the borrow keeps
+        SBC  R3,R1
+        POP  R1                 ; and so does POP
+        BCS  .fits
+        POP  R2                 ; it borrowed: put the remainder back
+        POP  R3
+        BRA  .next
+.fits:  ADDW SP,#2              ; it fitted: the copy is not wanted
+        ADD  R0,#1              ; and the quotient gains a bit
+.next:  DECW X
+        BNE  .loop
+        ST   [DREM],R2
+        ST   [DREM+1],R3
+        RET
+
+; neg16 -- R0:R1 = -R0:R1.
+neg16:  MOV  R2,R0
+        MOV  R3,R1
+        CLR  R0
+        CLR  R1
+        SUB  R0,R2
+        SBC  R1,R3
+        RET
+
+; idiv16 -- signed R0:R1 / R2:R3, truncating toward zero, with the
+; remainder taking the dividend's sign. That is what BBC BASIC's DIV and
+; MOD do, and what C settled on later.
+idiv16: PUSH R3
+        PUSH R2
+        CLR  R2
+        ST   [DSGN],R2
+        TST  R1
+        BPL  .dpos
+        MOV  R2,#3              ; a negative dividend flips both
+        ST   [DSGN],R2
+        CALL neg16
+.dpos:  POP  R2
+        POP  R3
+        TST  R3
+        BPL  .vpos
+        PUSH R1                 ; a negative divisor flips the quotient
+        PUSH R0                 ;   only
+        MOV  R0,R2
+        MOV  R1,R3
+        CALL neg16
+        MOV  R2,R0
+        MOV  R3,R1
+        POP  R0
+        POP  R1
+        PUSH R0                 ; DSGN needs a register and both of
+        LD   R0,[DSGN]          ;   R0:R1 are the dividend
+        XOR  R0,#1
+        ST   [DSGN],R0
+        POP  R0
+.vpos:  TST  R2
+        BNE  .go
+        TST  R3
+        BNE  .go
+        MOV  R0,#E_DIV0
+        ST   [ERR],R0
+        CLR  R0
+        CLR  R1
+        RET
+.go:    CALL udiv16
+        LD   R2,[DSGN]
+        BTST R2,#1              ; the remainder follows the dividend
+        BEQ  .rok
+        PUSH R1
+        PUSH R0
+        LD   R0,[DREM]
+        LD   R1,[DREM+1]
+        CALL neg16
+        ST   [DREM],R0
+        ST   [DREM+1],R1
+        POP  R0
+        POP  R1
+.rok:   LD   R2,[DSGN]
+        BTST R2,#0
+        BEQ  .qok
+        CALL neg16
+.qok:   RET
+
+; ismod -- C clear if MOD stands at Y, and Y stepped past it.
+;
+; MOD has no token: TOKTAB is full at 36 entries, because `lookup`
+; computes $80 + index and a 37th would be $A4, which is the numeric
+; literal. So it arrives as three characters and is recognised as three
+; characters. A second table starting at $A5 is the escape hatch if one
+; is ever really needed; it has not been.
+ismod:  LD   R0,[Y]
+        CALL nupper
+        CMP  R0,#$4D            ; 'M'
+        BNE  .no
+        INCW Y
+        LD   R0,[Y]
+        CALL nupper
+        CMP  R0,#$4F            ; 'O'
+        BNE  .b1
+        INCW Y
+        LD   R0,[Y]
+        CALL nupper
+        CMP  R0,#$44            ; 'D'
+        BNE  .b2
+        INCW Y
+        CLC
+        RET
+.b2:    DECW Y
+.b1:    DECW Y
+.no:    SEC
+        RET
+
+; mdrhs -- the operand after a * / or MOD, with the running value kept.
+mdrhs:  PUSH R1
+        PUSH R0
+        CALL prim
+        MOV  R2,R0
+        MOV  R3,R1
+        POP  R0
+        POP  R1
+        RET
+
+; ---------------------------------------------------------------------
+; ctab -- one byte per character, and the whole of what varidx needs to
+; know about one.
+;
+;   bit 7  may appear inside a name
+;   bit 6  may start one, which is to say it is a letter
+;   bits 0-5  the letter's index, already case-folded
+;
+; The fold, the letter test and the resident variable's index are one
+; indexed load between them, and the second lookup costs nothing extra
+; because X is still pointing at the table.
+; ---------------------------------------------------------------------
+ctab:
+        .byte $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+        .byte $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+        .byte $00,$00,$00,$00,$80,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+        .byte $80,$80,$80,$80,$80,$80,$80,$80,$80,$80,$00,$00,$00,$00,$00,$00
+        .byte $00,$C0,$C1,$C2,$C3,$C4,$C5,$C6,$C7,$C8,$C9,$CA,$CB,$CC,$CD,$CE
+        .byte $CF,$D0,$D1,$D2,$D3,$D4,$D5,$D6,$D7,$D8,$D9,$00,$00,$00,$00,$80
+        .byte $00,$C0,$C1,$C2,$C3,$C4,$C5,$C6,$C7,$C8,$C9,$CA,$CB,$CC,$CD,$CE
+        .byte $CF,$D0,$D1,$D2,$D3,$D4,$D5,$D6,$D7,$D8,$D9,$00,$00,$00,$00,$00
+        .byte $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+        .byte $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+        .byte $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+        .byte $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+        .byte $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+        .byte $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+        .byte $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+        .byte $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00

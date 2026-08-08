@@ -1711,6 +1711,43 @@ assembler label and a BASIC variable of the same name are one variable.
 BBC BASIC has exactly that, and it is how data crosses between an `ASM`
 block and the program around it.
 
+### BBC solved the token collision differently, and more cheaply
+
+Worth recording, because it was considered and rejected. BBC BASIC's
+`AND`, `EOR` and `OR` are both 6502 mnemonics and BASIC keywords, and
+its tokeniser **tokenises them anyway, even inside `[ ]`**. The
+assembler then intercepts the token bytes where a mnemonic is expected —
+`RDSLPT` does `CMP #tknAND / BEQ RDOPGT` and maps them straight through
+`MNEML`/`MNEMH` — and never untokenises anything.
+
+That is smaller than `agetc`. It is also narrower: it covers a *mnemonic*
+that collided and not a **label** spelled with a keyword, because the
+interception happens only at the mnemonic position. BBC can afford that
+because `LOOP`, `NEXT` and `END` are not BBC keywords. They are all
+COOL8 keywords, so `loop:` is the most ordinary label in assembly and
+the narrow trick would destroy it. The ~90 bytes of `agetc` buys every
+one of the 36 TOKTAB words in every position, and `sim/test_asm.py`
+gates `loop:`, `next:`, `end:` and `.byte` because of it.
+
+### And it settles the crunching question
+
+The same reading answers a separate question: could the tokeniser strip
+spaces, and save the interpreter the ~10% it spends testing for them?
+
+**No, and BBC declined the same fix.** Its tokeniser keeps no cross-line
+assembler state at all. There is a flag, `zpBYTESM`, but it is
+per-*line*: `ASS` sets it on entry, `STOPASM` clears it, and every line
+re-enters at `RUNTHG` which resets it to `$FF`, "not within assembler".
+So a tokeniser processing the middle of a block does not know it is in
+one.
+
+Inside an `ASM` block a space is a separator, not formatting —
+`MOV  R0,#5` crunched to `MOVR0,#5` hands the untokeniser one identifier
+where there were two. Crunching therefore needs exactly the cross-line
+state BBC judged not worth keeping, and BBC avoids needing it by not
+crunching: it stores its spaces, as [D46](#d46--the-stored-line-keeps-its-spaces-and-the-interpreter-pays-14-to-skip-them)
+does.
+
 ## D46 — The stored line keeps its spaces, and the interpreter pays 14%
 to skip them
 

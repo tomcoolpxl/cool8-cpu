@@ -77,6 +77,14 @@ SACC    = $0033                 ; 2: where the accumulator lives
 SLEN    = $0035                 ; 1: how much of it is in use
 STYPE   = $0036                 ; 1: 1 when the last value was a string
 
+; ---- division. One restoring pass gives the quotient and the
+; remainder both, so MOD costs a dispatch entry and nothing else.
+DVSR    = $0037                 ; 2: the divisor, out of the way of the
+                                ;    four registers the loop needs
+DREM    = $0039                 ; 2: what was left over
+DSGN    = $003B                 ; 1: bit 0 negates the quotient, bit 1
+                                ;    the remainder
+
 VARS    = $0040                 ; 52: A-Z, two bytes each
 
 FORFR   = 7                     ; bytes per FOR frame
@@ -128,6 +136,7 @@ E_ASYN  = 10                    ; ?SYNTAX ERROR, in an ASM line
 E_AENC  = 11                    ; no encoding for that operand shape
 E_ASYM  = 12                    ; undefined symbol
 E_ARNG  = 14                    ; branch out of range
+E_DIV0  = 15                    ; ?DIVISION BY ZERO ERROR
 ; 13 was E_AFULL, "too many symbols". There is no symbol table to fill:
 ; a label is a BASIC variable, so running out of them is E_NAMES.
 E_DONE  = 255
