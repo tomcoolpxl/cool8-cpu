@@ -152,7 +152,8 @@ containing one pays the search once.
 | `sim/bench_dispatch.py` | token table 49 clocks/op, direct thread 30, subroutine 20, native 11 |
 | `sim/bench_interp.py` | `FOR K=1 TO 1000: NEXT` — 1.88x native, 1.48x with a tight `NEXT` |
 | `sim/bench_interp2.py` | expression 5.04x, subscript 3.11x, call 4.56x |
-| `sim/test_interp.py` | **the real interpreter, not a prototype: 7.63x on the expression case**, 1,025 bytes, and a parenthesis costs 4.0 bytes of stack |
+| `sim/test_interp.py` | **the real interpreter, not a prototype: 10.61x on the expression case**, 1,862 bytes, and a parenthesis costs 4.0 bytes of stack |
+| `sim/test_asm.py` | `sw/asm.asm` against `tools/cool8asm.py`, byte for byte: 96 single instructions, 16 multi-line cases, 7 refusals, and **every one of the 488 reachable encodings**. 2,521 bytes of code and 313 of table |
 
 The first three rows measure prototypes. The last measures
 `sw/interp.asm` itself and is the one to believe.
@@ -160,10 +161,52 @@ The first three rows measure prototypes. The last measures
 The loop figure flatters: one dispatch covers a whole iteration. The
 expression figure is the real one, and it is where the work goes.
 
+**7.63x became 8.73x when the interpreter learned about spaces, and that
+is not a regression to recover.** The stored form keeps the line as it
+was typed — `sw/basic.bas:1536-1541` drops one space after the line
+number and `tokenise` copies every interior space verbatim, which is
+what makes `LIST` give back the indentation. Nothing in the interpreter
+skipped them, and no gate could see it, because every case in
+`sim/test_interp.py` built its token stream by hand with no separators.
+A space reaching `varidx` became variable `($20-'A')*2 = 190`, so a
+typed `A = 7` assigned `VARS+190 = $00FE`, which at the time was the
+assembler's symbol-table pointer, and left `ERR` at zero. Silently wrong, on the
+first line anyone would type.
+
+Keeping the spaces and skipping them at read time is BBC BASIC's
+arrangement and 6502 Microsoft BASIC's alike; the latter's `CHRGET`
+lives in page zero for exactly this reason. The cost was measured, not
+assumed: as a subroutine the skip was **17.2%** of the benchmark — 6
+clocks of `CALL` and 3 of `RET` to discover there was nothing to do — so
+it is inlined, and `eval` was restructured to peek once for `*`, `+ -`
+and the relationals together rather than three times. What is left is
++14.4%: about 14,000 token reads paying 6 clocks each to ask.
+
+**Long names cost another 16%, and it is the same shape of cost.** A
+name now has to be *scanned*, which means one lookahead: the byte after
+`K` has to be classified before `K` can be told from `KOUNT`. Written
+the obvious way — scan into a buffer, then notice it was one character
+— the benchmark went to 17.4x, because A-Z are the hot path and a loop
+counter had become a subroutine. The resident case is straight-line and
+calls nothing, `varidx` hands back the address it already computed
+rather than making `prim` ask `varaddr` for it again, and the lookahead
+tests are ordered so that a space and every operator are caught by the
+first compare. That is 10.16x, and the residue is what knowing where a
+name ends costs.
+
+Both of these are corrections, not regressions. So is a third, found
+while measuring them: **a literal is three bytes and every walk to end
+of line was treating it as one.** `$A4` carries two binary bytes and the
+high byte of any value below 256 is zero, so `h_if`'s false-arm scan
+stopped inside the number and resumed three bytes into the middle of its
+own record — executing a length byte as a token and assigning whatever
+followed. `skiptok` is now the one way to step a token, and
+`sim/test_interp.py` gates the ELSE arm being reached at all.
+
 **The open question, now live rather than speculative.** The prototype
 walker called a `term` subroutine per operand, and folding the common
 cases — a variable, a small constant — was supposed to recover much of
-the 5x. It was folded, and the real interpreter measures 7.57x. The two
+the 5x. It was folded, and the real interpreter measures 8.73x. The two
 figures are not directly comparable (different benchmarks, and I2's
 carries a whole statement's line machinery), which is exactly why the
 number has to be re-measured **in a loop** at I4 before anything is
@@ -183,16 +226,30 @@ line machinery was 48%.
 | | |
 |---|---|
 | I1 | the core: dispatch, resident variables, an inlined expression walker, `LET`, `FOR`/`NEXT`, `END`. **Gate: the same answers as native, and the expression case measured.** — done |
-| I2 | the editor's own tokens, executed: assignment, precedence, parens, unary minus, `IF`/`THEN`/`ELSE`, the six relationals, `FOR`/`NEXT`, `GOTO`, `POKE`/`PEEK`, `END`. 7.57x on the expression benchmark — done |
+| I2 | the editor's own tokens, executed: assignment, precedence, parens, unary minus, `IF`/`THEN`/`ELSE`, the six relationals, `FOR`/`NEXT`, `GOTO`, `POKE`/`PEEK`, `END`. 8.73x on the expression benchmark — done |
 | I2b | the screen to `$8000`, so the system has room for the rest; the filesystem's workspace out of the stack's page; `FOR` given a bounded stack so it nests — done |
-| I3 | `ASM` blocks |
-| I4 | strings, and the seventeen statements I2 left on `bad`: `DIM` and arrays, `DO`/`LOOP`, `EXIT`, `ELSEIF`, `CALL`/`RETURN`, `AND`/`OR`/`XOR`, `/` and `MOD`, long names |
+| I3a | long names: the name table, and `varidx` scanning an identifier. Pulled in front of the assembler by [D45](docs/01-decisions.md). The heap, `DIM` and arrays are still to come — the assembler did not need them — done |
+| I3b | `ASM` blocks. Byte-identical to `tools/cool8asm.py` across all 488 reachable encodings — done |
+| I4 | strings, and the rest of the statements I2 left on `bad`: `DO`/`LOOP`, `EXIT`, `ELSEIF`, `CALL`/`RETURN`, `AND`/`OR`/`XOR`, `/` and `MOD` |
 | I5 | wired to `RUN` in the editor, replacing the overlay |
+
+**I3 and I4 were reordered, and the seam was already there.** The
+assembler was to carry its own symbol table, its own cut-down value
+parser and its own pass driver — about 300 bytes of code and 448 of RAM
+reimplementing, worse, machinery the interpreter has. BBC BASIC's
+assembler has none of the three: a label is an assignment to a BASIC
+variable, an operand is a BASIC expression, and the two passes are a
+`FOR` loop the user writes. Taking that needs a variable namespace with
+long names, which is the first half of what I4 was going to be, and I4's
+own risk note had already named that as where it would split. So it
+splits there. [D45](docs/01-decisions.md) carries the argument and what
+it cost.
 
 I1 is the one that decides the design, so it carries the measurement.
 
 I2 shipped a subset: `DIM`, `DO`/`LOOP`, `EXIT`, `ELSEIF`, `RETURN`,
 `CALL` and the bitwise operators are still `bad` in `sttab`. They moved
-to I4 rather than getting a milestone of their own, because strings need
-a name table and a heap and so do arrays, and building that machinery
-twice would be the waste.
+out of a milestone of their own because strings need a name table and a
+heap and so do arrays, and building that machinery twice would be the
+waste. The assembler turned out to need it too, which is why the name
+table is now I3a and comes first.

@@ -1640,5 +1640,112 @@ multiplexing behave. Code whose correctness depends on the rest needs
 
 ---
 
+## D45 — The on-machine assembler borrows BASIC's variables and its
+evaluator, the way BBC BASIC's does
+
+**An `ASM` block's labels are BASIC variables and its operands are BASIC
+expressions.** There is no symbol table inside the assembler, no value
+parser, and no pass driver of its own.
+
+This is Sophie Wilson's design and it is worth stating why it is so
+small. In BBC BASIC, `.label` is a *directive that assigns `P%` to the
+variable named `label`* — forward references work because on the first
+pass the variable reads zero and `OPT` suppresses the error, and on the
+second it holds the address. Operands go to the interpreter's own
+expression evaluator, which is why `LDA #addr AND 255` works: `AND` is
+BASIC's `AND`. `P%` is an ordinary resident integer, and the two passes
+are a `FOR pass=0 TO 3 … NEXT` **the user writes**. Three of the four
+components a standalone assembler needs are things the interpreter
+already has.
+
+**What the plan had instead**, and what it cost: a 64-entry symbol table
+of five significant characters and a word (90 bytes of code, 448 of
+RAM), an `avalue` cut down to a left-to-right `+`/`-` chain with no
+precedence and no parentheses (~100 bytes), and a two-pass driver
+(~110). About 300 bytes of code and 448 of RAM to reimplement, worse,
+machinery sitting a few hundred bytes away.
+
+**The argument against, and it is real.** Labels-as-variables needs a
+variable namespace with long names and a heap. This machine had resident
+`A`–`Z` and nothing else, so taking the design meant pulling the name
+table, the heap and `DIM` — the first half of I4 — in front of I3. That
+is a milestone reordered on a design argument, and it stranded ~190
+bytes of already-written, already-assembling code in `sw/asm.asm`.
+
+It was taken anyway, because the dependency runs the right way: the name
+table is wanted for its own sake at I4, the assembler is the only thing
+waiting on it, and building a private symbol table first would mean
+building the same thing twice. The natural seam was already named — name
+table and heap first, strings second — so the reorder splits I4 where it
+was going to split regardless.
+
+**What is kept from the plan.** `agetc`, the ~90-byte untokeniser, and
+the mnemonic table: those solve a problem BBC BASIC does not have. The
+editor tokenises the inside of an `ASM` block, so `SUB` arrives as `$81`
+and a label spelled `LOOP` as `$89`, and reading characters rather than
+token bytes is what dissolves every one of those collisions at once.
+
+**And the operand evaluator is kept, which is half of this decision
+withdrawn.** "Operands are BASIC expressions" was written before the
+handoff was tried, and it does not survive it: `BRA loop` stores `loop`
+as `$89`, so `eval`'s `prim` falls through to `varidx`, meets a token
+byte and raises `?SYNTAX ERROR`. Undoing that is exactly what `agetc`
+does and nothing else can, so making `eval` read an assembler operand
+means putting the untokeniser inside `varidx` — the interpreter's
+hottest routine — to serve the one caller that is not the interpreter.
+`loop` is the most common label in assembly; this is not an edge case.
+
+So `avalue` stays, reading through `agetc`, and it costs about 100
+bytes. That is no loss against the plan, which had already cut operand
+expressions to a left-to-right `+`/`-` chain with no precedence and no
+parentheses and made `(a+b)*c` a negative test. Byte-select `<` and `>`
+stay in the assembler too, because the evaluator reads them as
+relational operators.
+
+**What is left of the decision is the part that was worth having**: no
+symbol table. A label is a BASIC variable, which costs 448 bytes of RAM
+less, makes `CALL other_block_label` work across blocks for free, and
+leaves the assembler's symbols in the name table where I5's `h_call` can
+still see them at run time. The consequence to know about is that an
+assembler label and a BASIC variable of the same name are one variable.
+BBC BASIC has exactly that, and it is how data crosses between an `ASM`
+block and the program around it.
+
+## D46 — The stored line keeps its spaces, and the interpreter pays 14%
+to skip them
+
+**`sw/basic.bas` stores the line as it was typed.** `enter` drops
+exactly one space after the line number and `tokenise` copies every
+interior space verbatim, which is what makes `LIST` give back the
+indentation — and re-entering a listed line is the editor's whole trick
+([IDE_PLAN.md](../IDE_PLAN.md)).
+
+`sw/interp.asm` did not skip them, and no gate could see it: every case
+in `sim/test_interp.py` builds its token stream by hand with no
+separators. A space reaching `varidx` became variable
+`($20-'A')*2 = 190`, so a typed `A = 7` assigned `VARS+190 = $00FE`,
+which at the time was the assembler's symbol-table pointer, and left
+`ERR` at zero. A silently wrong answer on the first line anyone would type.
+
+**The alternative was to not store them**, crunching the line at
+tokenise time. It was rejected twice over. `LIST` would stop reproducing
+what was typed, and inside an `ASM` block it is not a formatting
+question at all: `MOV  R0,#5` crunched to `MOVR0,#5` gives the
+untokeniser one identifier where there were two. BBC BASIC keeps its
+spaces for the first reason — a crunched program does not tokenise back
+— and 6502 Microsoft BASIC keeps them too, with `CHRGET` in page zero to
+make the skip cheap.
+
+**The cost is measured.** As a subroutine the skip was **17.2%** of the
+expression benchmark, on lines that hold no spaces at all: 6 clocks of
+`CALL` and 3 of `RET` to find nothing to do. Inlined as a macro — the
+same reason `CHRGOT` is inline — and with `eval` restructured to peek
+once for `*`, `+ -` and the relationals together rather than three
+times, the benchmark went 7.63x to **8.73x**. The residue is about
+14,000 token reads paying 6 clocks each to ask, and it is what
+correctness costs here.
+
+---
+
 The architecture is settled. Anything that reopens it now needs new
 evidence of the same kind: real code, measured, not an argument.

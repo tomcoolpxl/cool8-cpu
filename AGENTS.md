@@ -33,6 +33,8 @@ is the bug.
 | [06-roadmap.md](docs/06-roadmap.md) | Milestones, what each one delivers, and its gate |
 | [07-loader.md](docs/07-loader.md) | Loader wire protocol |
 | [08-assembler.md](docs/08-assembler.md) | Assembler reference |
+| [10-debugging.md](docs/10-debugging.md) | **The debug and profiling tooling, and the rules that came out of using it** |
+| [11-compiler.md](docs/11-compiler.md) | The shelved self-hosted compiler, and the size arithmetic that shelved it |
 
 `README.md` is a summary derived from those. Keep it in step, but do not
 put anything in it that is not already recorded properly somewhere else.
@@ -128,6 +130,32 @@ python tools/mkbit.py                # the bitstream: yosys, nextpnr, icepack
 minute. Run it; do not reason about whether it would pass.
 
 `sim/build/` is generated and gitignored.
+
+## Debug and measure with the tooling. Do not write a scratch script.
+
+**This is a standing rule and it has been broken more than once.** When
+software on the machine misbehaves, or you want to know where its time
+or bytes go, the answer is already written:
+
+| want | use | not |
+|---|---|---|
+| where execution went, disassembled from a label | `sim/dbg.py` — `Image`, `Run.go()` | a hand-rolled `cpu.step()` loop printing PCs |
+| the *first* structural fault, not its tenth symptom | `Run.go()`'s four invariants | reading a register dump and guessing |
+| who wrote to this address | `Run.watch(lo, hi)` and `r.hits` | narrowing it down by bisecting prints |
+| which routine the clocks go to | `sim/prof_interp.py`, `dbg.Profile` | reasoning about which loop looks hot |
+| which routine the bytes go to | `python tools/cool8asm.py <file> --pressure` | counting instructions by eye |
+| two code streams that should agree | `dbg.diff` | a byte compare, which drowns after the first length change |
+
+[docs/10-debugging.md](docs/10-debugging.md) explains what each gives
+you and why it exists. Every one of them was written *because* the
+ad-hoc version produced confident nonsense — a misaligned dump showed
+`MOV R0,#$00` six times running while the machine was executing data,
+and that reading was believed for an hour.
+
+A throwaway script also throws away the finding. If a run is worth
+tracing twice, the case belongs in the suite that already builds and
+runs the image — `sim/test_interp.py`, `sim/test_asm.py` — so the next
+regression is caught rather than re-diagnosed.
 
 ## The verification contract
 

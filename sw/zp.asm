@@ -12,6 +12,7 @@
 ;
 ;   $0014-$0022   the interpreter
 ;   $0023-$0026   multiply scratch
+;   $0027-$0032   long names: the table, the heap floor, the scan buffer
 ;   $0040-$0073   VARS, A-Z, two bytes each
 ;   $0074-$00A1   sw/fs.asm's FSVARS, 46 bytes
 ;   $00A2-$00D9   FORSTK, 8 frames of 7
@@ -40,6 +41,24 @@ EDEPTH  = $0022                 ; 1: expression nesting, 0 at statement level
 
 MTMP    = $0023                 ; 4: multiply scratch
 
+; ---- long names.
+;
+; A-Z stay resident and stay the fast path; anything longer lives in a
+; linearly-searched table of fixed 10-byte entries, so a slot number
+; times NENT is its address and no walk is needed to index one. Six
+; significant characters rather than five, because the assembler's
+; labels are now BASIC variables ([D45](docs/01-decisions.md)) and
+; `.done1`/`.done2` have to stay apart.
+NSIG    = 6                     ; significant characters
+NENT    = 10                    ; type, length, NSIG name bytes, value
+MAXNAME = 32
+
+NTAB    = $0027                 ; 2: the table's base, fixed at RUN
+NNAME   = $0029                 ; 1: how many names are defined
+HEAP    = $002A                 ; 2: the heap floor; arrays grow down
+NBUF    = $002C                 ; 6: the identifier just scanned, folded
+NLEN    = $0032                 ; 1: how long it really was
+
 VARS    = $0040                 ; 52: A-Z, two bytes each
 
 FORFR   = 7                     ; bytes per FOR frame
@@ -50,7 +69,6 @@ FORSTK  = $00A2                 ; 56: MAXFOR * FORFR, $00A2-$00D9
 ACP     = $00DA                 ; 2: where the next byte goes
 ACBASE  = $00DC                 ; 2: where this block started
 APASS   = $00DE                 ; 1: 0 = laying out, 1 = emitting
-ANSYM   = $00DF                 ; 1: symbols defined
 ACH     = $00E0                 ; 1: the character the scanner stopped on
 AKSRC   = $00E1                 ; 2: TOKTAB expansion in progress
 AKLEN   = $00E3                 ; 1: characters left in it
@@ -68,10 +86,14 @@ ANOPS   = $00F1                 ; 1: how many operands were given
 APRE    = $00F2                 ; 1: $00 or $2F
 AOPC    = $00F3                 ; 1
 AEXTRA  = $00F4                 ; 1: what trails the opcode, see asm.asm
-ANAME   = $00F5                 ; 5: the identifier, upper, space padded
-AKEY    = $00FA                 ; 3: first, second and last of it
-ANLEN   = $00FD                 ; 1: how long it really was
-ASYMS   = $00FE                 ; 2: where the symbol table lives
+AKEY    = $00F5                 ; 3: first, second and last of a name
+AVT     = $00F8                 ; 2: one operand's value, before aline
+                                ;    files it as AV0 or AV1
+ADW     = $00FA                 ; 1: .word rather than .byte
+; $00FB-$00FF is free. It held ANAME, ANLEN and ASYMS -- the assembler's
+; own copy of a name and its own symbol table -- until D45 made a label
+; a BASIC variable and left the scan in NBUF/NLEN, which is what the
+; name table already wanted.
 
 ; ---- error codes. The interpreter's caller reads ERR; 255 is a clean
 ; ---- stop and everything else is a fault.
@@ -79,9 +101,13 @@ E_SYN   = 1                     ; ?SYNTAX ERROR
 E_FORS  = 2                     ; ?TOO MANY FORS ERROR
 E_NEXT  = 3                     ; ?NEXT WITHOUT FOR ERROR
 E_DEEP  = 4                     ; ?FORMULA TOO COMPLEX ERROR
+E_MEM   = 5                     ; ?OUT OF MEMORY ERROR
+E_NAMES = 6                     ; ?TOO MANY VARIABLES ERROR
+E_SUBS  = 7                     ; ?SUBSCRIPT ERROR
 E_ASYN  = 10                    ; ?SYNTAX ERROR, in an ASM line
 E_AENC  = 11                    ; no encoding for that operand shape
 E_ASYM  = 12                    ; undefined symbol
-E_AFULL = 13                    ; too many symbols
 E_ARNG  = 14                    ; branch out of range
+; 13 was E_AFULL, "too many symbols". There is no symbol table to fill:
+; a label is a BASIC variable, so running out of them is E_NAMES.
 E_DONE  = 255

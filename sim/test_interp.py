@@ -61,6 +61,24 @@ def line(n, *parts):
     return [n & 0xFF, n >> 8, len(toks)] + toks + [0]
 
 
+SP = [0x20]
+
+# `spaced` writes the same record the *editor* would. Every case above
+# packs its tokens edge to edge, which no typed line ever is:
+# sw/basic.bas:1536-1541 drops one space after the line number and
+# tokenise() copies the rest verbatim, so `10 A = 7` is stored as
+# A ' ' = ' ' $A4 07 00. Before skipsp that assigned VARS+190 = $00FE and
+# said nothing.
+
+
+def spaced(n, *parts):
+    """One record with a space between every token, as typed."""
+    out = []
+    for p in parts:
+        out += [p, SP]
+    return line(n, *out[:-1])
+
+
 def program(*lines):
     out = []
     for ln in lines:
@@ -99,7 +117,24 @@ HARNESS = """
         ST   [$0014],R0
         MOV  R0,#>prog
         ST   [$0015],R0
-        ; $0016 (PEND) is written by the harness before the run
+        ; $0016 (PEND) is written by the harness before the run.
+        ; NTAB and HEAP are the caller's job, the same way: the name
+        ; table goes above the program and the heap comes down from
+        ; MEMTOP. Fixed addresses here, as sim/test_emit.py does.
+        MOV  R0,#$00
+        ST   [$0027],R0         ; NTAB = $6000
+        MOV  R0,#$60
+        ST   [$0028],R0
+        ; HEAP = $7F00, not MEMTOP. On the machine the stack is page 1
+        ; (sw/boot.asm sets SP to $0200) so the heap may come all the way
+        ; down from $7FFF; this harness runs the deep stack at $7FF0 that
+        ; docs/10-debugging.md prescribes, and an array allocated at the
+        ; top zeroed straight over it. That is the harness-against-machine
+        ; mismatch INTERP_PLAN.md section 3 already names.
+        MOV  R0,#$00
+        ST   [$002A],R0
+        MOV  R0,#$7F
+        ST   [$002B],R0
         CALL irun
         HALT
 
@@ -268,6 +303,166 @@ CASES = [
              line(50, [K["NEXT"]], name("I")),
              line(60, [K["END"]])),
      {0: 5, 8: 6}),
+
+    # ---- the same statements, written the way the editor stores them.
+    #
+    # Every case above is packed edge to edge and no typed line is. The
+    # interpreter read a space as a variable index, so `A = 7` assigned
+    # $00FE -- ASYMS, the assembler's symbol table pointer -- and left
+    # ERR at zero. Spaces are kept in the stored form on purpose: it is
+    # what makes LIST give back the indentation that was typed, and it
+    # is BBC BASIC's arrangement and 6502 Microsoft BASIC's alike.
+    ("spaced: A = 7",
+     program(spaced(10, name("A"), "=", num(7)),
+             line(20, [K["END"]])),
+     {0: 7}),
+
+    ("spaced: A = 2 + 3 * 4, precedence intact",
+     program(spaced(10, name("A"), "=", num(2), "+", num(3), "*", num(4)),
+             line(20, [K["END"]])),
+     {0: 14}),
+
+    ("spaced: IF 1 < 2 THEN A = 5",
+     program(spaced(10, [K["IF"]], num(1), "<", num(2), [K["THEN"]],
+                    name("A"), "=", num(5)),
+             line(20, [K["END"]])),
+     {0: 5}),
+
+    # POKE's comma and PEEK's parentheses each had a blind INCW Y.
+    ("spaced: POKE 768,65 : A = PEEK(768)",
+     program(spaced(10, [K["POKE"]], num(768), ",", num(65)),
+             spaced(20, name("A"), "=", [K["PEEK"]], "(", num(768), ")"),
+             line(30, [K["END"]])),
+     {0: 65}),
+
+    # A false IF has to step over the literal in the arm it is skipping.
+    # $A4 carries two binary bytes and the high byte of anything under
+    # 256 is zero, so a byte-at-a-time scan stopped inside the number
+    # and resumed three bytes into the middle of the record. The ELSE
+    # arm is what makes it visible: reaching it at all means the skip
+    # landed where it meant to.
+    ("a false IF skips over the literal in its own arm",
+     program(spaced(10, name("A"), "=", num(9)),
+             spaced(20, [K["IF"]], num(1), "=", num(2), [K["THEN"]],
+                    name("A"), "=", num(5), [K["ELSE"]],
+                    name("B"), "=", num(77)),
+             line(30, [K["END"]])),
+     {0: 9, 1: 77}),
+
+    # An ASM block met while running is stepped over, across records.
+    # It was assembled at RUN, before a statement executed, so there is
+    # nothing to do here -- and B proves execution resumed after END ASM
+    # rather than falling into the block or off the end.
+    ("an ASM block is skipped at run time",
+     program(spaced(10, name("A"), "=", num(1)),
+             line(20, [K["ASM"]]),
+             line(30, name("NOP")),
+             spaced(40, [K["END"]], [K["ASM"]]),
+             spaced(50, name("B"), "=", num(2)),
+             line(60, [K["END"]])),
+     {0: 1, 1: 2}),
+
+    # ---- long names. A-Z stay resident and stay the fast path; a name
+    # of two characters or more goes in the table, and `count` and `n`
+    # have to be able to sit in the same expression.
+    ("long name: COUNT = 7 : A = COUNT",
+     program(spaced(10, name("COUNT"), "=", num(7)),
+             spaced(20, name("A"), "=", name("COUNT")),
+             line(30, [K["END"]])),
+     {0: 7}),
+
+    ("long names are case-insensitive: Count and COUNT are one",
+     program(spaced(10, name("Count"), "=", num(9)),
+             spaced(20, name("A"), "=", name("cOuNt")),
+             line(30, [K["END"]])),
+     {0: 9}),
+
+    # Six significant characters, so these are two names and not one.
+    # Five would have merged them, which is why NSIG is six: the
+    # assembler's labels are BASIC variables now and .done1/.done2 have
+    # to stay apart.
+    ("six significant characters: DONE10 and DONE11 differ",
+     program(spaced(10, name("DONE10"), "=", num(3)),
+             spaced(20, name("DONE11"), "=", num(4)),
+             spaced(30, name("A"), "=", name("DONE10")),
+             spaced(40, name("B"), "=", name("DONE11")),
+             line(50, [K["END"]])),
+     {0: 3, 1: 4}),
+
+    ("an unset long name reads zero, as A-Z do",
+     program(spaced(10, name("A"), "=", name("NEVERSET"), "+", num(5)),
+             line(20, [K["END"]])),
+     {0: 5}),
+
+    ("FOR over a long name still nests and still counts",
+     program(spaced(10, [K["FOR"]], name("IDX"), "=", num(1), [K["TO"]],
+                    num(4)),
+             spaced(20, name("TOTAL"), "=", name("TOTAL"), "+",
+                    name("IDX")),
+             spaced(30, [K["NEXT"]], name("IDX")),
+             spaced(40, name("A"), "=", name("TOTAL")),
+             line(50, [K["END"]])),
+     {0: 10}),
+
+    # ---- DIM and arrays. DIM A(10) is eleven elements, 0 to 10, which
+    # is BBC BASIC's rule and Microsoft's and what every published
+    # program assumes.
+    ("DIM A(10) : A(3) = 7 : B = A(3)",
+     program(spaced(10, [K["DIM"]], name("A"), "(", num(10), ")"),
+             spaced(20, name("A"), "(", num(3), ")", "=", num(7)),
+             spaced(30, name("B"), "=", name("A"), "(", num(3), ")"),
+             line(40, [K["END"]])),
+     {1: 7}),
+
+    # A(3) and A must be different variables. BBC has one namespace and
+    # refuses the collision; A-Z are resident here, so an array called A
+    # goes in the name table under the name `A(`.
+    ("the array A and the scalar A are not the same variable",
+     program(spaced(10, [K["DIM"]], name("A"), "(", num(4), ")"),
+             spaced(20, name("A"), "=", num(99)),
+             spaced(30, name("A"), "(", num(1), ")", "=", num(5)),
+             spaced(40, name("B"), "=", name("A")),
+             spaced(50, name("C"), "=", name("A"), "(", num(1), ")"),
+             line(60, [K["END"]])),
+     {0: 99, 1: 99, 2: 5}),
+
+    ("an undimensioned element reads zero",
+     program(spaced(10, [K["DIM"]], name("SIEVE"), "(", num(20), ")"),
+             spaced(20, name("A"), "=", name("SIEVE"), "(", num(9), ")",
+                    "+", num(1)),
+             line(30, [K["END"]])),
+     {0: 1}),
+
+    ("the last element, A(10), is in range",
+     program(spaced(10, [K["DIM"]], name("A"), "(", num(10), ")"),
+             spaced(20, name("A"), "(", num(10), ")", "=", num(42)),
+             spaced(30, name("B"), "=", name("A"), "(", num(10), ")"),
+             line(40, [K["END"]])),
+     {1: 42}),
+
+    ("a whole array summed in a loop",
+     program(spaced(10, [K["DIM"]], name("V"), "(", num(5), ")"),
+             spaced(20, [K["FOR"]], name("I"), "=", num(0), [K["TO"]],
+                    num(5)),
+             spaced(30, name("V"), "(", name("I"), ")", "=", name("I"),
+                    "*", num(2)),
+             spaced(40, [K["NEXT"]], name("I")),
+             spaced(50, [K["FOR"]], name("I"), "=", num(0), [K["TO"]],
+                    num(5)),
+             spaced(60, name("S"), "=", name("S"), "+", name("V"), "(",
+                    name("I"), ")"),
+             spaced(70, [K["NEXT"]], name("I")),
+             spaced(80, name("A"), "=", name("S")),
+             line(90, [K["END"]])),
+     {0: 30}),
+
+    ("spaced: FOR I = 1 TO 3, three iterations",
+     program(spaced(10, [K["FOR"]], name("I"), "=", num(1), [K["TO"]],
+                    num(3)),
+             spaced(20, name("S"), "=", name("S"), "+", num(1)),
+             spaced(30, [K["NEXT"]], name("I")),
+             line(40, [K["END"]])),
+     {18: 3, 8: 4}),
 ]
 
 
@@ -335,6 +530,43 @@ def main():
     err = run_err(program(line(10, [K["NEXT"]]), line(20, [K["END"]])))
     check(err == 3, "NEXT with no FOR stops with ?NEXT WITHOUT FOR",
           f"ERR was {err}, wanted 3")
+
+    # ---- subscripts are checked, which BBC BASIC II does not do.
+    #
+    # It checks only at DIM, that the bound fits in fourteen bits, and
+    # does no range test when indexing. That is affordable when the
+    # running program is a separate compiled copy; here the stored
+    # program *is* the program, so an unchecked subscript writes over
+    # the source of the statement executing it.
+    err = run_err(program(spaced(10, [K["DIM"]], name("A"), "(", num(4),
+                                 ")"),
+                          spaced(20, name("A"), "(", num(5), ")", "=",
+                                 num(1)),
+                          line(30, [K["END"]])))
+    check(err == 7, "one past the end stops with ?SUBSCRIPT",
+          f"ERR was {err}, wanted 7")
+
+    err = run_err(program(spaced(10, [K["DIM"]], name("A"), "(", num(4),
+                                 ")"),
+                          spaced(20, name("B"), "=", name("A"), "(",
+                                 num(0), "-", num(1), ")"),
+                          line(30, [K["END"]])))
+    check(err == 7, "a negative subscript stops with ?SUBSCRIPT",
+          f"ERR was {err}, wanted 7")
+
+    err = run_err(program(spaced(10, name("B"), "=", name("Q"), "(",
+                                 num(0), ")"),
+                          line(20, [K["END"]])))
+    check(err == 7, "an array never DIMmed stops with ?SUBSCRIPT",
+          f"ERR was {err}, wanted 7")
+
+    # The heap comes down toward the name table and they must meet at
+    # an error rather than through each other.
+    err = run_err(program(spaced(10, [K["DIM"]], name("BIG"), "(",
+                                 num(20000), ")"),
+                          line(20, [K["END"]])))
+    check(err == 5, "a DIM that will not fit stops with ?OUT OF MEMORY",
+          f"ERR was {err}, wanted 5")
 
     # Eight deep is legal and must still run to a clean stop.
     nest8 = [line(10 + i, [K["FOR"]], name(chr(65 + i)), "=", num(1),
