@@ -158,6 +158,20 @@ irun:
                                 ;   inherit from the first
         ST   [EDEPTH],R0        ; at statement level, not inside a paren
         ST   [NNAME],R0         ; and no long name is defined yet
+        ST   [CDEPTH],R0        ; nor a call in progress
+        ; Every SUB is found now, while LREC is still the program's
+        ; first record -- the only moment that address is known without
+        ; keeping a pointer to it. A call is then a name lookup rather
+        ; than a search of the whole program.
+        LD   R0,[LREC]
+        PUSH R0
+        LD   R0,[LREC+1]
+        PUSH R0
+        CALL subscan
+        POP  R0
+        ST   [LREC+1],R0
+        POP  R0
+        ST   [LREC],R0
         ; NTAB and HEAP are the caller's, like LREC and PEND: the table
         ; starts where the program's code ends and the heap comes down
         ; from MEMTOP, and only the caller knows where those are.
@@ -286,8 +300,8 @@ sttab:
         .word h_else            ; $8F ELSE
         .word h_else            ; $90 ELSEIF
         .word h_end             ; $91 END
-        .word bad               ; $92 RETURN
-        .word bad               ; $93 CALL
+        .word h_ret             ; $92 RETURN
+        .word h_call            ; $93 CALL
         .word bad               ; $94 AS
         .word bad               ; $95 INT
         .word bad               ; $96 BYTE
@@ -309,14 +323,6 @@ sttab:
 h_end:  MOV  R0,#E_DONE         ; a clean stop, not an error
         ST   [ERR],R0
         RET
-
-; A SUB definition met while running is skipped to its END.
-h_sub:  LD   R0,[Y]
-        TST  R0
-        BEQ  .done
-        CALL skiptok
-        BRA  h_sub
-.done:  JMP  stmt
 
 ; ---------------------------------------------------------------------
 ; v = <expression>
@@ -630,20 +636,27 @@ h_poke:
 ; PRINT <expr> -- one number, then a newline. The editor's own screen
 ; routines do the work; there is no second console.
 ; ---------------------------------------------------------------------
+; Y is the token pointer and the editor's routines are compiled BASIC,
+; which uses Y freely -- `s_puts` walks it over the string it is given.
+; So it is saved around every one of them. The numeric path survived
+; without this only because `s_putn` happens not to touch it.
 h_print:
         CALL eval
         LD   R2,[STYPE]
         BNE  .str
         PUSH R1
         PUSH R0
+        PUSHW Y
         CALL s_putn
         CALL s_newline
+        POPW Y
         POP  R0
         POP  R1
         JMP  stmt
         ; A heap string is length-counted, so PRINT needs a sibling of
         ; puts that takes one rather than a NUL.
-.str:   LD   R2,[SLEN]
+.str:   PUSHW Y
+        LD   R2,[SLEN]
         PUSH R2
         LD   R0,[SACC+1]
         PUSH R0
@@ -654,6 +667,7 @@ h_print:
         POP  R0
         POP  R0
         CALL s_newline
+        POPW Y
         JMP  stmt
 
 ; ---------------------------------------------------------------------
@@ -2445,4 +2459,359 @@ btab:   .byte 3,"L","E","N"
         .word schr
         .byte 3,"A","S","C"
         .word sasc
+        .byte 4,"S","T","R","$"
+        .word sstr
+        .byte 3,"V","A","L"
+        .word sval
+        .byte 5,"I","N","S","T","R"
+        .word sinstr
         .byte 0
+
+; ---------------------------------------------------------------------
+; CALL and RETURN.
+;
+; **A SUB is found once, at RUN, not searched for at every call.** The
+; scan below walks the program before a statement executes and gives
+; each `SUB name` a name-table entry holding the record it starts at, so
+; `CALL` is the same lookup a variable is. That is also the only moment
+; the program's first record is known without keeping a pointer to it:
+; `irun` is entered with LREC on it.
+;
+; The name gets a '#' appended, the way an array's gets a '(' -- the
+; suffix is the namespace, so a SUB and a variable of the same spelling
+; are simply different names and nothing needs a type field.
+;
+; v1 takes no arguments and returns nothing; data crosses through
+; variables, which is the bargain BBC BASIC's PROC made before it grew
+; parameters.
+; ---------------------------------------------------------------------
+
+e_call: MOV  R0,#E_CALL
+        ST   [ERR],R0
+        RET
+
+; subname -- the name in NBUF becomes the SUB of that name.
+subname:
+        LD   R0,[NLEN]
+        CMP  R0,#NSIG
+        BCS  .bump
+        PUSH R0
+        LDW  X,#NBUF
+        ADDW X,R0
+        MOV  R0,#$23            ; '#'
+        ST   [X],R0
+        POP  R0
+.bump:  ADD  R0,#1
+        ST   [NLEN],R0
+        RET
+
+; cfr -- X on the frame at CDEPTH.
+cfr:    LD   R0,[CDEPTH]
+        MOV  R1,#CALLFR
+        MUL  R0,R1
+        LD   R0,[CSTK]
+        MOV  R2,XL
+        ADD  R2,R0
+        MOV  XL,R2
+        LD   R0,[CSTK+1]
+        MOV  R2,XH
+        ADC  R2,R0
+        MOV  XH,R2
+        RET
+
+; subscan -- every SUB in the program, entered into the name table.
+; Called with LREC on the first record and it leaves LREC elsewhere, so
+; the caller saves it.
+subscan:
+        CALL openline
+.each:  SKIPSP
+        CMP  R2,#K_SUB
+        BNE  .next
+        INCW Y
+        SKIPSP
+        CALL nscan
+        CALL subname
+        CALL nfind              ; X on the value
+        LD   R0,[LREC]
+        ST   [X],R0
+        INCW X
+        LD   R0,[LREC+1]
+        ST   [X],R0
+.next:  CALL nextline
+        BCS  .each
+        RET
+
+h_call: LD   R0,[CDEPTH]
+        CMP  R0,#MAXCALL
+        BCC  .room
+        JMP  e_call
+.room:  SKIPSP
+        CALL nscan
+        CALL subname
+        CALL nlook
+        BCC  .found
+        JMP  e_call             ; no SUB of that name
+.found: LD   R0,[X]
+        INCW X
+        LD   R1,[X]
+        PUSH R1                 ; where we are going
+        PUSH R0
+        CALL cfr                ; and where to come back to
+        MOV  R0,YL
+        ST   [X],R0
+        INCW X
+        MOV  R0,YH
+        ST   [X],R0
+        INCW X
+        LD   R0,[LREC]
+        ST   [X],R0
+        INCW X
+        LD   R0,[LREC+1]
+        ST   [X],R0
+        LD   R0,[CDEPTH]
+        ADD  R0,#1
+        ST   [CDEPTH],R0
+        POP  R0
+        POP  R1
+        ST   [LREC],R0
+        ST   [LREC+1],R1
+        CALL openline
+        SKIPSP
+        INCW Y                  ; the SUB token
+        SKIPSP
+        CALL nscan              ; and its name
+        JMP  stmt
+
+h_ret:  LD   R0,[CDEPTH]
+        BNE  .live
+        JMP  e_call             ; RETURN without CALL
+.live:  SUB  R0,#1
+        ST   [CDEPTH],R0
+        CALL cfr
+        LD   R0,[X]
+        INCW X
+        LD   R1,[X]
+        INCW X
+        LD   R2,[X]
+        ST   [LREC],R2
+        INCW X
+        LD   R2,[X]
+        ST   [LREC+1],R2
+        MOV  YL,R0
+        MOV  YH,R1
+        JMP  stmt
+
+
+; A SUB definition met in the flow of execution is stepped over whole.
+;
+; It lives at the end and not beside `bad` for h_asm's reason: it
+; grew from seven instructions to fifteen and put `BCC h_let`, the
+; dispatcher's hot path, four bytes out of branch range.
+; It spans records now that CALL can reach it, so this is h_asm's
+; job with a different terminator rather than a walk to end of line.
+h_sub:  CALL nextline
+        BCC  .off
+        SKIPSP
+        CMP  R2,#K_END
+        BNE  h_sub
+        INCW Y
+        SKIPSP
+        CMP  R2,#K_SUB
+        BNE  h_sub
+        INCW Y
+        JMP  stmt
+.off:   MOV  R0,#E_DONE         ; the program ended inside it
+        ST   [ERR],R0
+        RET
+
+; sstr -- STR$(n).
+;
+; `udiv16` once more: divide by ten until nothing is left and the
+; remainders are the digits, least significant first. They go on the
+; processor stack because the accumulator can only be appended to and
+; there is nowhere to build them the right way round -- so they are
+; pushed backwards and popped forwards, which costs one byte each and
+; no buffer at all.
+sstr:   CALL sopen
+        CALL eval
+        CALL sopen
+        CLR  R2
+        ST   [SDIG],R2
+        TST  R1
+        BPL  .digits
+        PUSH R1                 ; a negative wears its sign first and
+        PUSH R0                 ;   has its magnitude divided
+        MOV  R0,#$2D            ; '-'
+        CALL sputc
+        POP  R0
+        POP  R1
+        CALL neg16
+.digits:
+        MOV  R2,#10
+        CLR  R3
+        CALL udiv16
+        LD   R2,[DREM]
+        ADD  R2,#$30            ; '0'
+        PUSH R2
+        LD   R2,[SDIG]
+        ADD  R2,#1
+        ST   [SDIG],R2
+        MOV  R2,R0              ; zero divides once and prints "0"
+        OR   R2,R1
+        BNE  .digits
+.emit:  LD   R2,[SDIG]
+        TST  R2
+        BEQ  .done
+        SUB  R2,#1
+        ST   [SDIG],R2
+        POP  R0
+        CALL sputc
+        BRA  .emit
+.done:  MOV  R0,#1
+        ST   [STYPE],R0
+        RET
+
+; sval -- VAL(a$). The argument has appended itself, so this reads the
+; accumulator's tail and then forgets it again.
+sval:   CALL sopen
+        LD   R2,[SLEN]
+        PUSH R2
+        CALL eval
+        CALL sopen
+        POP  R2
+        PUSHW Y                 ; Y is the token pointer; borrow it
+        LD   R0,[SACC]
+        MOV  YL,R0
+        LD   R0,[SACC+1]
+        MOV  YH,R0
+        ADDW Y,R2
+        LD   R3,[SLEN]
+        SUB  R3,R2
+        ST   [SDIG],R3          ; characters to read
+        ST   [SLEN],R2          ; and the accumulator drops them
+        CLR  R0
+        CLR  R1
+        CLR  R3
+        ST   [DSGN],R3          ; no division here, so DSGN is spare
+        LD   R3,[SDIG]
+        TST  R3
+        BEQ  .fin
+        LD   R2,[Y]
+        CMP  R2,#$2D            ; '-'
+        BNE  .loop
+        INCW Y
+        SUB  R3,#1
+        ST   [SDIG],R3
+        MOV  R2,#1
+        ST   [DSGN],R2
+.loop:  LD   R3,[SDIG]
+        TST  R3
+        BEQ  .fin
+        LD   R2,[Y]
+        CMP  R2,#$30
+        BCC  .fin               ; anything but a digit ends it, which is
+        CMP  R2,#$3A            ;   what makes VAL("12AB") twelve
+        BCS  .fin
+        INCW Y
+        SUB  R3,#1
+        ST   [SDIG],R3
+        PUSH R2
+        MOV  R2,#10
+        CLR  R3
+        CALL imul16
+        POP  R2
+        SUB  R2,#$30
+        ADD  R0,R2
+        MOV  R2,#0
+        ADC  R1,R2
+        BRA  .loop
+.fin:   LD   R2,[DSGN]
+        BEQ  .out
+        CALL neg16
+.out:   POPW Y
+        CLR  R2
+        ST   [STYPE],R2
+        RET
+
+; ---------------------------------------------------------------------
+; sinstr -- INSTR(a$, b$): where b$ sits inside a$, counting from one,
+; or zero.
+;
+; Both arguments append, so they arrive end to end in the accumulator
+; with the split between them and nothing on the heap. The four offsets
+; live in MTMP -- the multiply scratch, which is free here because both
+; arguments are already evaluated and nothing multiplies afterwards.
+; They are byte offsets because SLEN is a byte.
+; ---------------------------------------------------------------------
+sinstr: CALL sopen
+        LD   R2,[SLEN]
+        PUSH R2                 ; where the haystack starts
+        CALL eval
+        LD   R2,[SLEN]
+        PUSH R2                 ; and where the needle does
+        CALL sopen              ; ','
+        CALL eval
+        CALL sopen              ; ')'
+        POP  R3
+        POP  R2
+        ST   [MTMP],R2          ; base -- no eval runs past here, so the
+        ST   [MTMP+2],R3        ;   multiply scratch is ours
+        MOV  R0,R3
+        SUB  R0,R2
+        ST   [MTMP+1],R0        ; the haystack's length
+        LD   R0,[SLEN]
+        SUB  R0,R3
+        ST   [MTMP+3],R0        ; the needle's
+        LD   R0,[MTMP]          ; the accumulator forgets them both and
+        ST   [SLEN],R0          ;   the answer is a number
+        CLR  R0
+        ST   [STYPE],R0
+        LD   R0,[MTMP+3]
+        BNE  .search
+        MOV  R0,#1              ; an empty needle is found at one
+        CLR  R1
+        RET
+.search:
+        CLR  R3                 ; the offset being tried
+.try:   LD   R0,[MTMP+3]
+        ADD  R0,R3
+        LD   R1,[MTMP+1]
+        CMP  R0,R1              ; does the needle still fit?
+        BEQ  .cmp
+        BCS  .none
+.cmp:   PUSHW X
+        PUSHW Y                 ; Y is the token pointer; borrow it
+        LD   R0,[SACC]
+        MOV  XL,R0
+        LD   R0,[SACC+1]
+        MOV  XH,R0
+        MOV  R0,XL
+        MOV  YL,R0
+        MOV  R0,XH
+        MOV  YH,R0
+        LD   R0,[MTMP]
+        ADDW X,R0
+        ADDW X,R3               ; X on the haystack at this offset
+        LD   R0,[MTMP+2]
+        ADDW Y,R0               ; Y on the needle
+        LD   R1,[MTMP+3]
+.c:     LD   R0,[X]
+        INCW X
+        LD   R2,[Y+]
+        SUB  R0,R2
+        BNE  .no
+        SUB  R1,#1
+        BNE  .c
+        POPW Y
+        POPW X
+        MOV  R0,R3
+        ADD  R0,#1              ; one-based, as MID$ is
+        CLR  R1
+        RET
+.no:    POPW Y
+        POPW X
+        ADD  R3,#1
+        BRA  .try
+.none:  CLR  R0
+        CLR  R1
+        RET

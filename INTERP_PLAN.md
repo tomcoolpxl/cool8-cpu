@@ -173,7 +173,7 @@ containing one pays the search once.
 | `sim/bench_dispatch.py` | token table 49 clocks/op, direct thread 30, subroutine 20, native 11 |
 | `sim/bench_interp.py` | `FOR K=1 TO 1000: NEXT` — 1.88x native, 1.48x with a tight `NEXT` |
 | `sim/bench_interp2.py` | expression 5.04x, subscript 3.11x, call 4.56x |
-| `sim/test_interp.py` | **the real interpreter, not a prototype: 12.61x on the expression case**, 3,550 bytes, and a parenthesis costs 4.0 bytes of stack |
+| `sim/test_interp.py` | **the real interpreter, not a prototype: 12.62x on the expression case**, 4,190 bytes, and a parenthesis costs 4.0 bytes of stack |
 | `sim/test_asm.py` | `sw/asm.asm` against `tools/cool8asm.py`, byte for byte: 96 single instructions, 16 multi-line cases, 7 refusals, and **every one of the 488 reachable encodings**. 2,521 bytes of code and 313 of table |
 
 The first three rows measure prototypes. The last measures
@@ -275,8 +275,21 @@ two. [D45](docs/01-decisions.md) records why BBC declined the same fix.
 | I3b | `ASM` blocks. Byte-identical to `tools/cool8asm.py` across all 488 reachable encodings — done |
 | I4a | `AND`/`OR`/`XOR`, and `TRUE` becomes -1 so one implementation serves logic and bits both. The `<=` and `>` arms of the evaluator fixed � they popped the caller's return address � done |
 | I4b | strings: the `$` suffix, the accumulator, the four-byte descriptor, literals, assignment, concatenation, `LEN`, equality and `PRINT` � done |
-| I4c | `DO`/`LOOP` with `WHILE`/`UNTIL` at either end, `EXIT`, `ELSEIF`, `/` and `MOD`, and `LEN`/`LEFT$`/`RIGHT$`/`MID$`/`CHR$`/`ASC` — done. `CALL`/`RETURN`, `STR$`, `VAL` and `INSTR` still to come |
+| I4c | `DO`/`LOOP` with `WHILE`/`UNTIL` at either end, `EXIT`, `ELSEIF`, `CALL`/`RETURN`, `/` and `MOD`, and the string functions: `LEN`, `LEFT$`, `RIGHT$`, `MID$`, `CHR$`, `ASC`, `STR$`, `VAL`, `INSTR` — done |
 | I5 | wired to `RUN` in the editor, replacing the overlay |
+
+I4 is complete, and nothing I2 deferred is still deferred. Nineteen
+`sttab` slots point at `bad`, and fourteen of them should: `TO`,
+`WHILE`, `UNTIL`, `THEN`, `AS`, `INT`, `BYTE`, `CARD`, `AT`, `PEEK`,
+`AND`, `OR`, `XOR` and `$A4` are tokens that only ever appear *inside* a
+statement, so meeting one where a statement should start is a syntax
+error and `bad` is the right answer.
+
+The five that are genuinely unimplemented are `CONST`, `EXTERN`,
+`INCLUDE`, `INLINE` and `WEND`. The middle three are compiler-era
+keywords with no meaning to an interpreter that has no separate
+compilation step, and `WEND` is the `WHILE`/`WEND` loop that
+`DO`/`LOOP` replaced. Only `CONST` is a real gap.
 
 **I3 and I4 were reordered, and the seam was already there.** The
 assembler was to carry its own symbol table, its own cut-down value

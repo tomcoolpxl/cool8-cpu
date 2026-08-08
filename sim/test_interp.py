@@ -139,6 +139,10 @@ HARNESS = """
         ST   [$0033],R0
         MOV  R0,#$5F
         ST   [$0034],R0
+        MOV  R0,#$00            ; CSTK = $5E00, the CALL stack
+        ST   [$003C],R0
+        MOV  R0,#$5E
+        ST   [$003D],R0
         CALL irun
         HALT
 
@@ -555,6 +559,114 @@ CASES = [
              line(40, [K["END"]])),
      {0: 1, 1: 0}),
 
+    ("STR$ and VAL round-trip",
+     program(spaced(10, [K["PRINT"]], name("STR$"), "(", num(1234), ")"),
+             spaced(20, name("A"), "=", name("VAL"), "(", name('"567"'),
+                    ")"),
+             line(30, [K["END"]])),
+     {0: 567}, "1234"),
+
+    ("STR$ of zero and of a negative",
+     program(spaced(10, name("A$"), "=", name("STR$"), "(", num(0), ")",
+                    "+", name('","'), "+", name("STR$"), "(", "-",
+                    num(42), ")"),
+             spaced(20, [K["PRINT"]], name("A$")),
+             line(30, [K["END"]])),
+     {}, "0,-42"),
+
+    ("VAL takes a sign and stops at the first character that is not a digit",
+     program(spaced(10, name("A"), "=", name("VAL"), "(", name('"-12"'),
+                    ")"),
+             spaced(20, name("B"), "=", name("VAL"), "(", name('"12AB"'),
+                    ")"),
+             spaced(30, name("C"), "=", name("VAL"), "(", name('"X"'),
+                    ")"),
+             line(40, [K["END"]])),
+     {0: 0xFFF4, 1: 12, 2: 0}),
+
+    ("VAL of STR$ is where it started",
+     program(spaced(10, name("A"), "=", name("VAL"), "(", name("STR$"),
+                    "(", num(9999), ")", ")"),
+             line(20, [K["END"]])),
+     {0: 9999}),
+
+    ("INSTR finds, counting from one, or answers zero",
+     program(spaced(10, name("A$"), "=", name('"HELLO WORLD"')),
+             spaced(20, name("A"), "=", name("INSTR"), "(", name("A$"),
+                    ",", name('"WORLD"'), ")"),
+             spaced(30, name("B"), "=", name("INSTR"), "(", name("A$"),
+                    ",", name('"H"'), ")"),
+             spaced(40, name("C"), "=", name("INSTR"), "(", name("A$"),
+                    ",", name('"ZZ"'), ")"),
+             spaced(50, name("D"), "=", name("INSTR"), "(", name("A$"),
+                    ",", name('"D"'), ")"),
+             line(60, [K["END"]])),
+     {0: 7, 1: 1, 2: 0, 3: 11}),
+
+    ("INSTR leaves the accumulator alone, so it composes",
+     program(spaced(10, name("A$"), "=", name('"ABCDE"')),
+             spaced(20, name("B$"), "=", name("MID$"), "(", name("A$"),
+                    ",", name("INSTR"), "(", name("A$"), ",",
+                    name('"C"'), ")", ",", num(2), ")"),
+             spaced(30, [K["PRINT"]], name("B$")),
+             line(40, [K["END"]])),
+     {}, "CD"),
+
+    # ---- CALL and RETURN. The SUBs are found once at RUN, so a call
+    # is the same lookup a variable is rather than a search.
+    ("CALL a SUB and come back to the statement after it",
+     program(spaced(10, name("A"), "=", num(1)),
+             spaced(20, [K["CALL"]], name("BUMP")),
+             spaced(30, name("B"), "=", num(9)),
+             spaced(40, [K["GOTO"]], num(99)),
+             spaced(50, [K["SUB"]], name("BUMP")),
+             spaced(60, name("A"), "=", name("A"), "+", num(41)),
+             spaced(70, [K["RETURN"]]),
+             spaced(80, [K["END"]], [K["SUB"]]),
+             line(99, [K["END"]])),
+     {0: 42, 1: 9}),
+
+    # A SUB defined *before* the code that calls it must be stepped over
+    # rather than fallen into, and it spans records now.
+    ("a SUB in the way is stepped over, not fallen into",
+     program(spaced(10, [K["SUB"]], name("SETB")),
+             spaced(20, name("B"), "=", num(7)),
+             spaced(30, [K["RETURN"]]),
+             spaced(40, [K["END"]], [K["SUB"]]),
+             spaced(50, name("A"), "=", num(1)),
+             spaced(60, [K["CALL"]], name("SETB")),
+             line(70, [K["END"]])),
+     {0: 1, 1: 7}),
+
+    ("calls nest",
+     program(spaced(10, [K["CALL"]], name("OUTER")),
+             spaced(20, [K["GOTO"]], num(99)),
+             spaced(30, [K["SUB"]], name("OUTER")),
+             spaced(40, name("A"), "=", name("A"), "+", num(1)),
+             spaced(50, [K["CALL"]], name("INNER")),
+             spaced(60, name("A"), "=", name("A"), "+", num(10)),
+             spaced(70, [K["RETURN"]]),
+             spaced(80, [K["END"]], [K["SUB"]]),
+             spaced(85, [K["SUB"]], name("INNER")),
+             spaced(90, name("A"), "=", name("A"), "+", num(100)),
+             spaced(95, [K["RETURN"]]),
+             spaced(96, [K["END"]], [K["SUB"]]),
+             line(99, [K["END"]])),
+     {0: 111}),
+
+    ("a SUB called from inside a loop",
+     program(spaced(10, [K["FOR"]], name("I"), "=", num(1), [K["TO"]],
+                    num(3)),
+             spaced(20, [K["CALL"]], name("ADDIT")),
+             spaced(30, [K["NEXT"]], name("I")),
+             spaced(40, [K["GOTO"]], num(99)),
+             spaced(50, [K["SUB"]], name("ADDIT")),
+             spaced(60, name("S"), "=", name("S"), "+", num(5)),
+             spaced(70, [K["RETURN"]]),
+             spaced(80, [K["END"]], [K["SUB"]]),
+             line(99, [K["END"]])),
+     {18: 15}),
+
     # ---- the string functions. Each one's argument has already
     # appended itself to the accumulator, so they are a length change
     # and at most a move within it -- nothing allocates.
@@ -871,6 +983,15 @@ def main():
                           line(20, [K["END"]])))
     check(err == 15, "division by zero stops with ?DIVISION BY ZERO",
           f"ERR was {err}, wanted 15")
+
+    err = run_err(program(spaced(10, [K["CALL"]], name("NOPE")),
+                          line(20, [K["END"]])))
+    check(err == 17, "CALL of a SUB that is not there stops",
+          f"ERR was {err}, wanted 17")
+
+    err = run_err(program(line(10, [K["RETURN"]]), line(20, [K["END"]])))
+    check(err == 17, "RETURN without CALL stops",
+          f"ERR was {err}, wanted 17")
 
     # ---- subscripts are checked, which BBC BASIC II does not do.
     #

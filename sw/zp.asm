@@ -104,6 +104,16 @@ DREM    = $0039                 ; 2: what was left over
 DSGN    = $003B                 ; 1: bit 0 negates the quotient, bit 1
                                 ;    the remainder
 
+; ---- CALL/RETURN. A stack of its own again, and out in the user area
+; because page 0 has no room left for eight frames -- which costs
+; nothing, since there is no zero-page addressing mode to lose (D6).
+CALLFR  = 4                     ; where to resume, and in which record
+MAXCALL = 8
+CSTK    = $003C                 ; 2: where that stack lives
+CDEPTH  = $003E                 ; 1: calls active, 0 = none
+SDIG    = $003F                 ; 1: digits STR$ has stacked, or
+                                ;    characters VAL has left
+
 VARS    = $0040                 ; 52: A-Z, two bytes each
 
 FORFR   = 7                     ; bytes per FOR frame
@@ -157,6 +167,7 @@ E_ASYM  = 12                    ; undefined symbol
 E_ARNG  = 14                    ; branch out of range
 E_DIV0  = 15                    ; ?DIVISION BY ZERO ERROR
 E_DOS   = 16                    ; ?TOO MANY DOS / ?LOOP WITHOUT DO
+E_CALL  = 17                    ; ?NO SUCH SUB / ?RETURN WITHOUT CALL
 ; 13 was E_AFULL, "too many symbols". There is no symbol table to fill:
 ; a label is a BASIC variable, so running out of them is E_NAMES.
 E_DONE  = 255
