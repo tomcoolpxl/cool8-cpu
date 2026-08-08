@@ -234,7 +234,7 @@ CASES = [
              line(20, name("B"), "=", num(9), "<", num(3)),
              line(30, name("C"), "=", num(4), ">=", num(4)),
              line(40, [K["END"]])),
-     {0: 1, 1: 0, 2: 1}),
+     {0: 0xFFFF, 1: 0, 2: 0xFFFF}),
 
     ("FOR K = 1 TO 10: NEXT K",
      program(line(10, [K["FOR"]], name("K"), "=", num(1), [K["TO"]],
@@ -403,6 +403,60 @@ CASES = [
              spaced(40, name("A"), "=", name("TOTAL")),
              line(50, [K["END"]])),
      {0: 10}),
+
+    # All six relationals, because only four of them were ever run. The
+    # `<=` and `>` arms popped the caller's return address -- `rhs` has
+    # already balanced its own pushes -- and `<=` branched past the
+    # subtraction it had just set up. Neither showed, because no case
+    # used either operator.
+    ("all six relationals, including <= and >",
+     program(spaced(10, name("A"), "=", num(1), "<", num(2)),
+             spaced(20, name("B"), "=", num(2), "<=", num(2)),
+             spaced(30, name("C"), "=", num(3), ">", num(2)),
+             spaced(40, name("D"), "=", num(2), ">=", num(3)),
+             spaced(50, name("E"), "=", num(1), "<>", num(2)),
+             spaced(60, name("F"), "=", num(1), "=", num(1)),
+             line(70, [K["END"]])),
+     {0: 0xFFFF, 1: 0xFFFF, 2: 0xFFFF, 3: 0, 4: 0xFFFF, 5: 0xFFFF}),
+
+    ("the other way round, so a true test is not just always true",
+     program(spaced(10, name("A"), "=", num(3), "<", num(2)),
+             spaced(20, name("B"), "=", num(3), "<=", num(2)),
+             spaced(30, name("C"), "=", num(1), ">", num(2)),
+             spaced(40, name("D"), "=", num(4), ">=", num(3)),
+             line(50, [K["END"]])),
+     {0: 0, 1: 0, 2: 0, 3: 0xFFFF}),
+
+    # AND, OR and XOR are bitwise, and because TRUE is -1 they are the
+    # logical operators too -- the same instruction serves both. That is
+    # BBC BASIC's reason for -1 and the whole point of copying it.
+    ("AND, OR and XOR as bit operations",
+     program(spaced(10, name("A"), "=", num(0x0F0F), [K["AND"]],
+                    num(0x00FF)),
+             spaced(20, name("B"), "=", num(0x0F00), [K["OR"]],
+                    num(0x00F0)),
+             spaced(30, name("C"), "=", num(0xFF00), [K["XOR"]],
+                    num(0x0FF0)),
+             line(40, [K["END"]])),
+     {0: 0x000F, 1: 0x0FF0, 2: 0xF0F0}),
+
+    ("the same operators as logic, which only works because TRUE is -1",
+     program(spaced(10, name("A"), "=", num(1), "<", num(2), [K["AND"]],
+                    num(3), "<", num(4)),
+             spaced(20, name("B"), "=", num(1), "<", num(2), [K["AND"]],
+                    num(4), "<", num(3)),
+             spaced(30, name("C"), "=", num(9), "<", num(2), [K["OR"]],
+                    num(3), "<", num(4)),
+             line(40, [K["END"]])),
+     {0: 0xFFFF, 1: 0, 2: 0xFFFF}),
+
+    ("IF takes a compound condition without parentheses",
+     program(spaced(10, name("K"), "=", num(5)),
+             spaced(20, [K["IF"]], name("K"), ">", num(1), [K["AND"]],
+                    name("K"), "<", num(9), [K["THEN"]], name("A"), "=",
+                    num(7)),
+             line(30, [K["END"]])),
+     {0: 7}),
 
     # ---- DIM and arrays. DIM A(10) is eleven elements, 0 to 10, which
     # is BBC BASIC's rule and Microsoft's and what every published

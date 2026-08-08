@@ -131,6 +131,27 @@ minute. Run it; do not reason about whether it would pass.
 
 `sim/build/` is generated and gitignored.
 
+## "How did BBC BASIC do it" has one source, and it is not a manual
+
+COOL8 BASIC borrows from BBC BASIC deliberately and repeatedly. When you
+need to know what it actually did, read the annotated disassembly:
+
+```
+https://raw.githubusercontent.com/ivop/bbc-basic/master/basic.s
+```
+
+Not the manuals, not BeebWiki, not a search summary. The manuals were
+wrong twice here: they implied array subscripts are range-checked at run
+time (the disassembly shows the check is only at `DIM`, that the bound
+fits fourteen bits), and they gave nothing usable on string storage,
+where the disassembly shows a four-byte descriptor — address, current
+length, maximum length — and one `STRACC` accumulator that every string
+expression builds into.
+
+It is a 16 KB ROM disassembly, so ask it a narrow question; a broad one
+gets a summary that misses the answer. If something cannot be reached,
+say it was not confirmed rather than filling it in from memory.
+
 ## Debug and measure with the tooling. Do not write a scratch script.
 
 **This is a standing rule and it has been broken more than once.** When

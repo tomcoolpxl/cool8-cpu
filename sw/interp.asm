@@ -904,7 +904,53 @@ h_next:
 ;   prod  = prim { * }
 ;   prim  = number | variable | ( eval ) | - prim | PEEK ( eval )
 ; ---------------------------------------------------------------------
-eval:
+; ---------------------------------------------------------------------
+; eval -- the whole expression, bitwise operators included.
+;
+;   eval  = erel { AND | OR | XOR  erel }
+;   erel  = sum  [ relational sum ]
+;   sum   = prod { + - }
+;   prod  = prim { * }
+;
+; AND, OR and XOR bind looser than the relationals, which is BBC BASIC's
+; order and the reason `IF a < b AND c < d` needs no parentheses. They
+; are one level rather than two -- BBC puts OR and EOR below AND -- which
+; costs `a AND b OR c` its precedence and saves a whole recursion level
+; off a 256-byte stack. Parenthesise if it matters.
+; ---------------------------------------------------------------------
+eval:   CALL erel
+.more:  SKIPSP
+        CMP  R2,#K_AND
+        BEQ  .and
+        CMP  R2,#K_OR
+        BEQ  .or
+        CMP  R2,#K_XOR
+        BEQ  .xor
+        RET
+.and:   CALL .rhs
+        AND  R0,R2
+        AND  R1,R3
+        BRA  .more
+.or:    CALL .rhs
+        OR   R0,R2
+        OR   R1,R3
+        BRA  .more
+.xor:   CALL .rhs
+        XOR  R0,R2
+        XOR  R1,R3
+        BRA  .more
+        ; the operand after the operator, with the running value kept
+.rhs:   INCW Y
+        PUSH R1
+        PUSH R0
+        CALL erel
+        MOV  R2,R0
+        MOV  R3,R1
+        POP  R0
+        POP  R1
+        RET
+
+erel:
         CALL prim               ; the first operand
         ; ---- { * operand }, highest precedence, checked inline
         ;
@@ -994,26 +1040,34 @@ eval:
         BEQ  .y3
         JMP  true
 .y3:    JMP  false
-.rle:   INCW Y                  ; a <= b is b >= a
+        ; a <= b is b >= a, so the two sides swap. `rhs` has already
+        ; balanced its own pushes, so there is nothing on the stack to
+        ; recover the left side from -- the POP/PUSH that used to be
+        ; here took the caller's return address and put it back, which
+        ; worked only because nothing between them faulted. And it
+        ; branched past the subtraction it was setting up.
+.rle:   INCW Y
         CALL rhs
-        MOV  R0,R2              ; swap: compare b - a
+        PUSH R1
+        PUSH R0
+        MOV  R0,R2
         MOV  R1,R3
         POP  R2
         POP  R3
-        PUSH R3
-        PUSH R2
+        SUB  R0,R2
+        SBC  R1,R3
         BRA  .cmpge
 .rgt:   INCW Y
         LD   R2,[Y]
         CMP  R2,#$3D
         BEQ  .rge
-        CALL rhs                ; a > b is b < a
+        CALL rhs                ; a > b is b < a, and swaps the same way
+        PUSH R1
+        PUSH R0
         MOV  R0,R2
         MOV  R1,R3
         POP  R2
         POP  R3
-        PUSH R3
-        PUSH R2
         SUB  R0,R2
         SBC  R1,R3
         BLT  .y4
@@ -1090,8 +1144,13 @@ sumrest:
         SBC  R1,R3
         BRA  sumrest
 
-true:   MOV  R0,#1
-        CLR  R1
+; TRUE is -1 and not 1, which is BBC BASIC's choice and is what makes
+; AND, OR and XOR serve as logical operators and bitwise ones with a
+; single implementation: every bit of a true is set, so `(a<b) AND (c<d)`
+; and `mask AND $0F` are the same instruction. With 1 the first works by
+; accident and stops working the moment anything is negated.
+true:   MOV  R0,#$FF
+        MOV  R1,#$FF
         RET
 false:  CLR  R0
         CLR  R1

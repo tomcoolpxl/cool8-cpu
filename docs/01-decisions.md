@@ -1747,5 +1747,28 @@ correctness costs here.
 
 ---
 
+## D47 — TRUE is -1, so one operator serves logic and bits
+
+**A relational leaves -1, every bit set, and not 1.** It is BBC BASIC's
+choice, read off the disassembly rather than a manual, and the reason is
+`AND`, `OR` and `XOR`: with -1 the same instruction is the logical
+operator and the bitwise one. `IF k > 1 AND k < 9` and `mask AND $0F`
+are the same code path, and there is no second set of operators to
+write, tokenise or document.
+
+With 1 the logical case works by accident — `1 AND 1` is 1 — and stops
+the moment anything is complemented or a mask meets a condition. C did
+the same arithmetic with 1 and needed `&&` and `&` as separate operators
+to survive it; a 24 KB system cannot afford the pair.
+
+**The cost is that `PRINT a < b` shows -1**, which surprises anyone
+coming from a BASIC that prints 1, and that three gated cases changed
+their expected value. Both were judged cheaper than two families of
+operator. `AND`, `OR` and `XOR` sit at one precedence level below the
+relationals rather than BBC's two, which costs `a AND b OR c` its
+precedence and saves a recursion level off a 256-byte stack.
+
+---
+
 The architecture is settled. Anything that reopens it now needs new
 evidence of the same kind: real code, measured, not an argument.

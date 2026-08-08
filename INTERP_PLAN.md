@@ -152,7 +152,7 @@ containing one pays the search once.
 | `sim/bench_dispatch.py` | token table 49 clocks/op, direct thread 30, subroutine 20, native 11 |
 | `sim/bench_interp.py` | `FOR K=1 TO 1000: NEXT` — 1.88x native, 1.48x with a tight `NEXT` |
 | `sim/bench_interp2.py` | expression 5.04x, subscript 3.11x, call 4.56x |
-| `sim/test_interp.py` | **the real interpreter, not a prototype: 10.61x on the expression case**, 1,862 bytes, and a parenthesis costs 4.0 bytes of stack |
+| `sim/test_interp.py` | **the real interpreter, not a prototype: 10.98x on the expression case**, 1,923 bytes, and a parenthesis costs 4.0 bytes of stack |
 | `sim/test_asm.py` | `sw/asm.asm` against `tools/cool8asm.py`, byte for byte: 96 single instructions, 16 multi-line cases, 7 refusals, and **every one of the 488 reachable encodings**. 2,521 bytes of code and 313 of table |
 
 The first three rows measure prototypes. The last measures
@@ -230,7 +230,9 @@ line machinery was 48%.
 | I2b | the screen to `$8000`, so the system has room for the rest; the filesystem's workspace out of the stack's page; `FOR` given a bounded stack so it nests — done |
 | I3a | long names: the name table, and `varidx` scanning an identifier. Pulled in front of the assembler by [D45](docs/01-decisions.md). The heap, `DIM` and arrays are still to come — the assembler did not need them — done |
 | I3b | `ASM` blocks. Byte-identical to `tools/cool8asm.py` across all 488 reachable encodings — done |
-| I4 | strings, and the rest of the statements I2 left on `bad`: `DO`/`LOOP`, `EXIT`, `ELSEIF`, `CALL`/`RETURN`, `AND`/`OR`/`XOR`, `/` and `MOD` |
+| I4a | `AND`/`OR`/`XOR`, and `TRUE` becomes -1 so one implementation serves logic and bits both. The `<=` and `>` arms of the evaluator fixed � they popped the caller's return address � done |
+| I4b | strings: the `$` suffix, `STRACC`, the four-byte descriptor, and the string functions |
+| I4c | the rest of the statements I2 left on `bad`: `DO`/`LOOP`, `EXIT`, `ELSEIF`, `CALL`/`RETURN`, `/` and `MOD` |
 | I5 | wired to `RUN` in the editor, replacing the overlay |
 
 **I3 and I4 were reordered, and the seam was already there.** The
