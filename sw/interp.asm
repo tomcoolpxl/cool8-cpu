@@ -2121,15 +2121,6 @@ udiv16: ST   [DVSR],R2
         ST   [DREM+1],R3
         RET
 
-; neg16 -- R0:R1 = -R0:R1.
-neg16:  MOV  R2,R0
-        MOV  R3,R1
-        CLR  R0
-        CLR  R1
-        SUB  R0,R2
-        SBC  R1,R3
-        RET
-
 ; idiv16 -- signed R0:R1 / R2:R3, truncating toward zero, with the
 ; remainder taking the dividend's sign. That is what BBC BASIC's DIV and
 ; MOD do, and what C settled on later.
@@ -2141,7 +2132,7 @@ idiv16: PUSH R3
         BPL  .dpos
         MOV  R2,#3              ; a negative dividend flips both
         ST   [DSGN],R2
-        CALL neg16
+        CALL negp16
 .dpos:  POP  R2
         POP  R3
         TST  R3
@@ -2150,7 +2141,7 @@ idiv16: PUSH R3
         PUSH R0                 ;   only
         MOV  R0,R2
         MOV  R1,R3
-        CALL neg16
+        CALL negp16
         MOV  R2,R0
         MOV  R3,R1
         POP  R0
@@ -2180,7 +2171,7 @@ idiv16: PUSH R3
         PUSH R0
         LD   R0,[DREM]
         LD   R1,[DREM+1]
-        CALL neg16
+        CALL negp16
         ST   [DREM],R0
         ST   [DREM+1],R1
         POP  R0
@@ -2188,7 +2179,7 @@ idiv16: PUSH R3
 .rok:   LD   R2,[DSGN]
         BTST R2,#1              ; bit 0: and so does the quotient
         BEQ  .qok
-        CALL neg16
+        CALL negp16
 .qok:   RET
 
 ; ismod -- C clear if MOD stands at Y, and Y stepped past it.
@@ -2495,9 +2486,7 @@ sleft:  CALL sopen              ; '('
         LD   R2,[SLEN]
         PUSH R2
         CALL eval               ; the string, appended where R2 says
-        CALL sopen              ; ','
-        CALL eval               ; how many
-        CALL sopen              ; ')'
+        CALL earg               ; ( expression )
         POP  R2
         CLR  R3
         JMP  strim
@@ -2506,9 +2495,7 @@ sright: CALL sopen
         LD   R2,[SLEN]
         PUSH R2
         CALL eval
-        CALL sopen
-        CALL eval
-        CALL sopen
+        CALL earg               ; ( expression )
         POP  R2
         PUSH R0
         LD   R3,[SLEN]
@@ -2529,9 +2516,7 @@ smid:   CALL sopen
         CALL sopen              ; ','
         CALL eval               ; where to start, counting from one
         PUSH R0
-        CALL sopen              ; ','
-        CALL eval               ; how many
-        CALL sopen              ; ')'
+        CALL earg               ; ( expression )
         POP  R3
         TST  R3
         BEQ  .z
@@ -2540,9 +2525,7 @@ smid:   CALL sopen
         JMP  strim
 
 ; schr -- CHR$(n). The one that makes a string out of nothing.
-schr:   CALL sopen
-        CALL eval
-        CALL sopen
+schr:   CALL earg               ; ( expression )
         CALL sputc
         MOV  R0,#1
         ST   [STYPE],R0
@@ -2621,9 +2604,7 @@ inkey:  CALL s_serialkey
 ; and $1C is the one under your left middle finger whether or not it is
 ; currently producing an A. docs/04-system.md lists the ones a game
 ; reaches for.
-ikey:   CALL sopen              ; the '('
-        CALL eval
-        CALL sopen              ; the ')'
+ikey:   CALL earg               ; ( expression )
         MOV  R1,R0
         CALL kdbit              ; X on the byte, R0 the mask
         LD   R1,[X]
@@ -2906,9 +2887,7 @@ h_sub:  CALL nextline
 ; there is nowhere to build them the right way round -- so they are
 ; pushed backwards and popped forwards, which costs one byte each and
 ; no buffer at all.
-sstr:   CALL sopen
-        CALL eval
-        CALL sopen
+sstr:   CALL earg               ; ( expression )
         CLR  R2
         ST   [SDIG],R2
         TST  R1
@@ -2919,7 +2898,7 @@ sstr:   CALL sopen
         CALL sputc
         POP  R0
         POP  R1
-        CALL neg16
+        CALL negp16
 .digits:
         MOV  R2,#10
         CLR  R3
@@ -3001,7 +2980,7 @@ sval:   CALL sopen
         BRA  .loop
 .fin:   LD   R2,[DSGN]
         BEQ  .out
-        CALL neg16
+        CALL negp16
 .out:   POPW Y
         CLR  R2
         ST   [STYPE],R2
@@ -3023,9 +3002,7 @@ sinstr: CALL sopen
         CALL eval
         LD   R2,[SLEN]
         PUSH R2                 ; and where the needle does
-        CALL sopen              ; ','
-        CALL eval
-        CALL sopen              ; ')'
+        CALL earg               ; ( expression )
         POP  R3
         POP  R2
         ST   [MTMP],R2          ; base -- no eval runs past here, so the
@@ -3381,10 +3358,7 @@ h_line: MOV  R3,#5
         MOV  R2,#$01
         MOV  R3,#$00
         BGE  .lx
-        XOR  R0,#$FF
-        XOR  R1,#$FF
-        ADD  R0,#1
-        ADC  R1,#0
+        CALL negp16
         MOV  R2,#$FF
         MOV  R3,#$FF
 .lx:    ST   [lwk],R0
@@ -3403,10 +3377,7 @@ h_line: MOV  R3,#5
         MOV  R2,#$FF
         MOV  R3,#$FF
         BLT  .ly                ; negative already is -|dy|
-        XOR  R0,#$FF
-        XOR  R1,#$FF
-        ADD  R0,#1
-        ADC  R1,#0
+        CALL negp16
         MOV  R2,#$01
         MOV  R3,#$00
 .ly:    ST   [lwk+2],R0
@@ -3498,11 +3469,25 @@ h_line: MOV  R3,#5
         ST   [garg+3],R0
 .nx:    JMP  .lp
 
+
+; earg -- "( expression )": the prologue every one-argument builtin
+; shares, ten of them. The tail call keeps sopen error handling and
+; its RET as the return.
+earg:   CALL sopen
+        CALL eval
+        JMP  sopen
+
+; negp16 -- R1:R0 negated, R2/R3 untouched (neg16 above clobbers them). The flags are the final ADC us; every caller
+; stores or falls onward, none reads them (checked site by site).
+negp16: XOR  R0,#$FF
+        XOR  R1,#$FF
+        ADD  R0,#1
+        ADC  R1,#0
+        RET
+
 ; RND(n) -- 0..n-1 from a 16-bit xorshift (7, 9, 8: full period), the
 ; remainder coming free out of udiv16. RND(0) is the raw word.
-irnd:   CALL sopen              ; the '('
-        CALL eval
-        CALL sopen              ; the ')'
+irnd:   CALL earg               ; ( expression )
         PUSH R1
         PUSH R0
         LD   R0,[rseed]
@@ -3553,9 +3538,7 @@ itimer: LD   R0,[frames]
 
 ; VPEEK(a) -- the port's prefetch is armed by the address write and the
 ; data read stalls until the byte is real, so this is exact.
-ivpeek: CALL sopen
-        CALL eval
-        CALL sopen
+ivpeek: CALL earg               ; ( expression )
         MOV  R2,R0
         MOV  R0,#1
         ST   [GVRST],R0
@@ -3638,10 +3621,7 @@ h_input:
         LD   R2,[garg+2]
         TST  R2
         BEQ  .st
-        XOR  R0,#$FF
-        XOR  R1,#$FF
-        ADD  R0,#1
-        ADC  R1,#0
+        CALL negp16
 .st:    ST   [X],R0
         INCW X
         ST   [X],R1
@@ -3747,10 +3727,7 @@ dnext:  PUSHW Y
                                 ; loop above eats spaces and commas
         TST  R2
         BEQ  .pos
-        XOR  R0,#$FF
-        XOR  R1,#$FF
-        ADD  R0,#1
-        ADC  R1,#0
+        CALL negp16
 .pos:   POPW Y
         RET
 .lend:  INCW Y                  ; this list is spent: the next record
@@ -3972,10 +3949,7 @@ ffargs: CALL sopen
         BEQ  .p0
         LD   R0,[garg]
         LD   R1,[garg+1]
-        XOR  R0,#$FF
-        XOR  R1,#$FF
-        ADD  R0,#1
-        ADC  R1,#0
+        CALL negp16
         ST   [garg],R0
         ST   [garg+1],R1
 .p0:    LD   R0,[garg+3]
@@ -3983,10 +3957,7 @@ ffargs: CALL sopen
         BEQ  .p2
         LD   R0,[garg+2]
         LD   R1,[garg+3]
-        XOR  R0,#$FF
-        XOR  R1,#$FF
-        ADD  R0,#1
-        ADC  R1,#0
+        CALL negp16
         ST   [garg+2],R0
         ST   [garg+3],R1
 .p2:    RET
@@ -3996,10 +3967,7 @@ ffargs: CALL sopen
 fsign:  LD   R2,[garg+4]
         TST  R2
         BEQ  retnum
-        XOR  R0,#$FF
-        XOR  R1,#$FF
-        ADD  R0,#1
-        ADC  R1,#0
+        CALL negp16
         ; retnum -- R0/R1 as a number: the tail every value-returning
         ; builtin needs, kept once.
 retnum: PUSH R0
@@ -4081,9 +4049,7 @@ ifdiv:  CALL ffargs
         JMP  fsign
 
 ; FIX(a) -- the integer part: an arithmetic shift right by the point.
-ifix:   CALL sopen
-        CALL eval
-        CALL sopen
+ifix:   CALL earg               ; ( expression )
         MOV  R0,R1
         CLR  R1
         MOV  R2,R0
