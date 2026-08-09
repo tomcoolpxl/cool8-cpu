@@ -21,6 +21,7 @@
     "boot": "python tools/mkboot.py sim/build/basic.bin -o sim/build/BOOT.BIN",
 
     "bit": "python tools/mkbit.py",
+    "diagram": "python tools/mkdiagram.py -o docs/img/readme-soc.svg",
     "synth": "python sim/synth.py",
     "timing": "python sim/timing.py",
     "mutate": "python sim/mutate.py",
@@ -104,6 +105,7 @@
       {"id": "board:screen", "about": "the board's text screen, read by the board itself over serial"},
       {"id": "board:ports",  "about": "which serial ports exist right now"},
       {"id": "bit",          "about": "build the bitstream: yosys, nextpnr, icepack. Needs OSS_CAD_SUITE"},
+      {"id": "diagram",      "about": "the README's SoC block diagram, out of the RTL. Needs yosys and graphviz"},
       {"id": "disk",         "about": "build a flash image with BASIC on volume 0 as BOOT.BIN. Touches no board"},
       {"id": "flash",        "about": "program the bitstream AND write BASIC. The whole board"},
       {"id": "flash:fpga",   "about": "the bitstream only, to flash offset 0, then verified"},

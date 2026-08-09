@@ -170,6 +170,16 @@ CASES = [
       "80 A = VPEEK(3 * 160 + 1)", "90 IF A <> 0 THEN PRINT 1",
       "99 END"], "1"),
 
+    # A shallow line, both directions. Slope 1 is the one case a broken
+    # Bresenham gets right -- the e2-recomputed-mid-step bug walked every
+    # line at slope 1 and never met the endpoint -- so the checks are an
+    # endpoint off that diagonal and a clean pixel on it.
+    ("LINE at a shallow slope terminates and meets its endpoint",
+     ["10 MODE 4", "20 LINE 0, 0, 319, 100, 7",
+      "30 A = VPEEK(100 * 160 + 159)", "40 B = VPEEK(150 * 160 + 75)",
+      "50 LINE 0, 100, 319, 0, 7", "60 C = VPEEK(159)",
+      "70 IF A <> 0 AND B = 0 AND C <> 0 THEN PRINT 1", "80 END"], "1"),
+
     ("a string, which needs the accumulator and the heap",
      ['10 A$ = "HELLO"', '20 B$ = A$ + " THERE"', "30 PRINT B$",
       "40 END"], "HELLO THERE"),

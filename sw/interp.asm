@@ -3434,6 +3434,8 @@ h_line: MOV  R3,#5
         LD   R1,[lwk+5]
         ADD  R0,R0
         ADC  R1,R1
+        PUSH R1                 ; both tests must see this same e2 --
+        PUSH R0                 ;   err changes between them
         LD   R2,[lwk+2]
         LD   R3,[lwk+3]
         SUB  R0,R2
@@ -3454,12 +3456,8 @@ h_line: MOV  R3,#5
         ADC  R0,R2
         ST   [garg+1],R0
 .ny:    ; if 2*err <= dx: err += dx, y0 += sy
-        LD   R0,[lwk+4]
-        LD   R1,[lwk+5]
-        ADD  R0,R0
-        ADC  R1,R1
-        MOV  R2,R0
-        MOV  R3,R1
+        POP  R2
+        POP  R3
         LD   R0,[lwk]
         LD   R1,[lwk+1]
         SUB  R0,R2
