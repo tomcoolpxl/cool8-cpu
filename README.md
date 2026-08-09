@@ -63,7 +63,7 @@ npm run emu -- --flash build/cool8.img
 
 Something to type at it:
 
-```
+```js
 10 MODE 4
 20 CLG 1
 30 GTEXT 96, 24, "COOL8 BASIC", 10
