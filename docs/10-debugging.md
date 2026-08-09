@@ -178,13 +178,25 @@ To investigate rather than assert, run without the guards by stepping
 
 ## 3. Two rules that came out of this
 
-**The stack is 256 bytes, and below it is hardware.**
+**`m.run(until=...)` advances the CPU, not the raster.** A machine run
+to a PC that way has had no vblank, no UART drain and no interrupt —
+the no-time-passes trap in a second costume. Use `run(cycles=)` or
+`tick()` when peripherals must live, and `until` only for "get me to
+this address fast".
 
-`OS_PLAN.md` puts the stack at `$FF00-$FFFF` and the I/O page directly
-below it at `$FE00-$FEFF`. A stack that grows past about 250 bytes
-therefore pushes return addresses **into hardware registers**, where
-they are silently lost — the push appears to work, and the matching
-`RET` returns to zero.
+**An armed `until` or breakpoint at the current PC returns in zero
+cycles**, forever, and a loop around it spins without the machine
+moving. Step off first — one `tick()` — or discard the breakpoint on
+each stop. Both of these were rediscovered the hard way in the same
+session; the transcript is in the direct-mode work.
+
+**The stack is 256 bytes, and running out is silent.**
+
+The machine's stack is page 1, `$0100-$01FF`, growing down from
+`$0200`. (An early map put it at `$FF00` over the I/O page — that map
+is gone; `$FF00` is the interpreter's workspace page now.) A stack
+that grows past its page walks into page 0's interpreter state, where
+pushes appear to work and the damage surfaces somewhere else entirely.
 
 The self-hosted compiler spends six frames per level of parenthesis in
 an expression, so `w - ((b + 1) + 2)` is enough to go over. It runs with

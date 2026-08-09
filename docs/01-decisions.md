@@ -1755,7 +1755,7 @@ to skip them
 exactly one space after the line number and `tokenise` copies every
 interior space verbatim, which is what makes `LIST` give back the
 indentation — and re-entering a listed line is the editor's whole trick
-([IDE_PLAN.md](../IDE_PLAN.md)).
+(the screen IS the buffer -- [13-basic.md](13-basic.md) §9).
 
 `sw/interp.asm` did not skip them, and no gate could see it: every case
 in `sim/test_interp.py` builds its token stream by hand with no
@@ -1932,3 +1932,24 @@ one of the two can be pressed.
 
 The architecture is settled. Anything that reopens it now needs new
 evidence of the same kind: real code, measured, not an argument.
+
+## D52 -- The operating system is COOL8 BASIC, and how it got that shape
+
+The OS-shape survey (once `docs/09-os-options.md`; in git history)
+weighed a monitor-plus-loader, a Forth, and several BASICs, and chose:
+the C64's screen-editor shape (one screen, a cursor, Return -- no
+modes, no panes), the fake-disk flash filesystem (16 volumes,
+append-only directories), autoboot from `$100000`, and **native
+compilation on the Action! model** -- structured, QBasic-shaped, no
+line numbers.
+
+Half of that survived contact. The editor shape, the filesystem and
+the boot path shipped as chosen. The native compiler was built,
+benchmarked, and **lost to the interpreter on size**
+([11-compiler.md](11-compiler.md) has the arithmetic that shelved it);
+the language became the line-numbered, tokenised interpreter of
+[13-basic.md](13-basic.md), and the structured compiler survives as
+`tools/cool8bas.py`, which compiles the system itself. The survey's
+other casualty: its memory map put the stack at `$FF00-$FFFF`; the
+shipped machine keeps the stack in page 1 and `$FF00` became the
+interpreter's workspace page.

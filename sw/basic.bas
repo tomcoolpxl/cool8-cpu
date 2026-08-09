@@ -17,7 +17,7 @@
 ' which is why this needs a fraction of the machinery a separate editor
 ' does.
 '
-' ## Where things live (OS_PLAN section 2.1)
+' ## Where things live (docs/04-system.md owns the map)
 '
 '   $0200-$7FFF   program text, then compiled code, variables, strings
 '   $8000-$9FFF   the screen: 128x32 cells at stride 256, 80x30 shown

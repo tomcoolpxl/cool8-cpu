@@ -11,7 +11,7 @@ which is what makes compiling fast enough that `RUN` feels interpreted.
 
 ## The code generation model
 
-**Leaf-aware accumulator**, as OS_PLAN section 4.1 specifies. The value
+**Leaf-aware accumulator.** The value
 being computed lives in `R0:R1`. When the right-hand operand of a binary
 operator is a *leaf* — a constant, a variable, a parameter — it loads
 straight into `R2:R3` and the operation is two instructions. Only a
@@ -53,8 +53,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 
 # Where compiled code starts. User programs load at $0200; the system
-# itself is compiled to $C000, where OS_PLAN's map puts the resident
-# software.
+# itself is compiled to $A000, the resident region.
 ORG = 0x0200
 
 KEYWORDS = {

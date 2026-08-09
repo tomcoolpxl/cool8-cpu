@@ -152,12 +152,10 @@ class Run:
         if src is not None:
             self.m.bus.mem[src:src + len(stored)] = stored
         self.m.cpu.pc = img.org
-        # NOT $FFF7. OS_PLAN's map gives the stack $FF00-$FFFF, and
-        # directly below it is the I/O page at $FE00-$FEFF -- so a stack
-        # that grows past 250 bytes pushes return addresses into
-        # hardware registers, where they are quietly lost. The compiler
-        # spends six frames per level of parenthesis and goes far past
-        # that. It runs with a deep stack in the user area instead.
+        # A deep stack in the user area, on purpose: the self-hosted
+        # compiler spends six frames per level of parenthesis and blows
+        # through any 256-byte page. (The machine's own stack is page 1;
+        # $FF00 is the interpreter's workspace page these days.)
         self.m.cpu.sp = sp
         self.m.romen = False
         self.out = out

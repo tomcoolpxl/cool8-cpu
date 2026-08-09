@@ -21,7 +21,7 @@
 '
 ' Floating point. `FLOAT.LIB` is meant to be loaded from flash when a
 ' program declares a REAL, and neither the type nor the library exists
-' yet -- see OS_PLAN M14. Everything here is 16-bit integer.
+' yet -- floats stay a future library (docs/11-compiler.md). Everything here is 16-bit integer.
 ' ---------------------------------------------------------------------
 
 CONST VID_MODE   = $FE10

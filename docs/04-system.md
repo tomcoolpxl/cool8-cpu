@@ -200,7 +200,7 @@ a straight run of stores with no address recomputation between them.
 
 | Addr | Name | Access | Description |
 |---|---|---|---|
-| `$FE10` | `VID_MODE` | R/W | `3:0` preset number (§5.3) — writing it loads the registers below. `7` = display enable. |
+| `$FE10` | `VID_MODE` | R/W | `3:0` preset number (§5.3) — writing it loads the registers below. `7` = display enable. Presets 7–15 are **undefined**: no bounds check, freedom and consequences. |
 | `$FE11` | `VID_CTRL` | R/W | `1:0` engine (0 text, 1 tile, 2 bitmap). `3:2` bpp (0=1, 1=2, 2=4, 3=8). `4` horizontal doubling. `5` vertical doubling. |
 | `$FE12` | `VID_BASE_L` | R/W | Display base address, low byte |
 | `$FE13` | `VID_BASE_H` | R/W | high byte |
@@ -717,10 +717,14 @@ is no half-height font.
 
 | | Cost |
 |---|---|
-| Write patterns through `VRAM_DATA` | ~70 cycles for one 8×8 4 bpp tile; ~2 ms for 256 |
-| `COPY_RECT` between VRAM regions | ~0.7 ms for an 8 KB set, CPU free |
+| Write patterns through `VRAM_DATA` | ~70 cycles for one 8×8 4 bpp tile; ~2 ms for 256 — and `STW` into the `$FEC0` alias block moves two bytes per instruction (§5.8) |
 | Repoint `PAT_BASE` | **one register write, instant** |
 | `[5:4]` pattern bank in the attribute | four sets live at once, per cell, no writes at all |
+
+(An earlier revision listed a `COPY_RECT` here. There is no blitter —
+§5.11 and [D34](01-decisions.md#d34--the-video-engine-ships-with-sprites-and-a-pixel-port-and-no-blitter)
+— and the port's prefetch makes interleaved VRAM-to-VRAM copying its
+worst case; redraw from source data instead.)
 
 Animating eight tiles per frame costs about 800 cycles out of ~200,000.
 Loading a set from SPI flash is `LD R0,[$FE8B] ; ST [$FE29],R0` at

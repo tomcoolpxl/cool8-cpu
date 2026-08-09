@@ -6,7 +6,7 @@
 Six benchmarks, written once as a tiny IR, emitted two ways, and
 measured on the real instruction set by tools/cool8emu.py.
 
-  native    leaf-aware accumulator code generation, OS_PLAN section 4.1
+  native    leaf-aware accumulator code generation, the leaf-aware model in tools/cool8bas.py
   bytecode  a stack machine with a token dispatch loop, FastBasic's model
 
 **Both emitters run the same program and must produce the same answer.**
@@ -16,7 +16,7 @@ one of them.
 
 ## Why this runs before the compiler
 
-OS_PLAN's whole shape rests on native code being worth its size, and the
+The native-code bet rested on native code being worth its size, and the
 evidence for that was one hand-written addition. This project has been
 wrong that way before: D43 was a limit asserted in a comment for two
 milestones and it was off by 60 %. So the gate runs first -- if native
@@ -191,7 +191,7 @@ INV = {'lo': 'hs', 'hs': 'lo', 'eq': 'ne', 'ne': 'eq'}
 
 
 # =====================================================================
-# 1. native -- leaf-aware accumulator, OS_PLAN section 4.1
+# 1. native -- leaf-aware accumulator, the leaf-aware model in tools/cool8bas.py
 # =====================================================================
 
 class Native:

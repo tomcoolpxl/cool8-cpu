@@ -12,8 +12,7 @@ everything the graphics and sound commands touch is
 
 | | |
 |---|---|
-| `A = expr` | assignment. `LET` does not exist |
-| `CONST name = expr` | an assignment in costume — nothing is folded and nothing is protected, which the source says honestly |
+| `A = expr` | assignment. `LET` does not exist, and neither does `CONST` any more — an interpreter folds nothing, so it was an assignment in costume and its bytes went to better use |
 | `IF e THEN … ELSE …` / `ELSEIF` | single-line only. The `THEN` arm is any one statement, including another `IF` |
 | `FOR v = a TO b [STEP s]` … `NEXT [v]` | `STEP` may be negative; eight levels deep; `NEXT i` closes inner loops the BBC way |
 | `DO [WHILE e \| UNTIL e]` … `LOOP [WHILE e \| UNTIL e]` | either end, both tested every iteration; `EXIT DO` from anywhere |
@@ -89,17 +88,14 @@ Which to pick:
   also the one you come back to — drawing over it is drawing over your
   listing.
 
-**When a program ends, errs, or is broken, the editor puts mode 0
-back** — base, scroll, sprites-off and sound-silence included. The
-palette is deliberately left as the program set it: a changed palette
-is a look, not a fault. So graphics that should stay visible must end
-in a loop:
-
-```
-80 DO
-90 VSYNC
-95 LOOP
-```
+**When a program ends, errs, or is broken, NOTHING is restored.**
+Mode, palette, scroll, sprites and sound all stay exactly as the
+program left them — the C64's deal — and the editor simply carries on
+in whatever mode it wakes up in, because it works in all of them
+(§9b). A sound left playing keeps playing until something silences it;
+`MODE 0` typed direct brings the text screen back. Graphics no longer
+need a holding loop to stay visible, though `DO`/`VSYNC`/`LOOP`
+remains the animation idiom.
 
 The bitmap surfaces all start at VRAM `$0000`. Everything above the
 surface is yours; the boot stub parks the `GTEXT` font at `$FC00`. In
@@ -244,7 +240,7 @@ change, in 1/256 steps — sub-pixel positions and speeds. Spell 2.5 as
 when `PLOT FIX(X), y, c` draws it. That is what floats are for in a
 game, at a fiftieth of their cost.
 
-## 9. The boot, the editor, storage
+## 9. The boot, direct mode, one vocabulary, storage
 
 - Power-on is mode 0, the editor. The boot stub — run-once code the
   init then wipes along with all user RAM — seeds both palette banks
@@ -252,24 +248,62 @@ game, at a fiftieth of their cost.
   included (a build-time constant: a fresh machine is empty by
   definition). None of it costs a resident byte, and none of it
   survives to be executed or LISTed over.
-- Editor commands (typed without a line number): `RUN LIST NEW FREE
-  CLS SAVE "name" LOAD "name" DIR ERA "name" COMPACT DRIVE n
-  DELETE a-b RENUMBER`. There is no immediate mode — a statement
-  without a line number is a syntax error by design.
-- `SAVE`/`LOAD`/`DIR` are the SPI-flash filesystem: the program's
-  tokenised form, named, surviving power-off.
+- **A line with no number executes on the spot** — direct mode, the
+  C64's shape with the BBC's manners. Variables persist between
+  direct statements *and across runs* (`PRINT A` after a break is the
+  whole point), a direct `GOTO n` resumes the stored program, and a
+  direct `MODE` takes effect and stays.
+- **Commands are ordinary statements** — one vocabulary: `LIST NEW
+  FREE CLS SAVE LOAD DIR ERA COMPACT DRIVE DELETE RENUMBER` all run
+  in a program or typed direct. A program can `SAVE` itself; `LOAD`
+  inside a program **chains** — the new program continues from its
+  first line with variables kept. The one direct-only statement is
+  `RUN` (a program restarting itself would stack a frame per
+  restart). No other guard exists: `DELETE` from a running program is
+  legal and self-inflicted.
+- `LOAD`'s three forms: `LOAD "N"` replaces (or chains, in a
+  program); `LOAD "N", n` merges the file's lines from `n` up;
+  `LOAD "N" AT addr` is raw bytes to memory — the BBC's `*LOAD`
+  inside the language, with `SAVE "N" AT addr, len` as its partner
+  for sprite sheets, tile sets, fonts and machine code.
+- `SAVE`/`LOAD`/`DIR` are the SPI-flash filesystem: named files on
+  fake-disk volumes, surviving power-off.
+
+## 9b. The editor: every mode, the C64's law
+
+The editor works in **all seven modes** — 80 columns in modes 0 and
+3, 40 in 1, 2 and 4, 32 in 5 and 6. The cell map at `$8000` is the
+truth in every one; what changes is the mirror (nothing in text
+modes, one map write per cell in tiles, a glyph blit in bitmaps), so
+`PRINT` output is visible wherever the machine happens to be.
+
+The keys follow the C64's KERNAL, verified against its disassembly:
+
+- **DOWN** and **RIGHT** past the edges scroll at the bottom; the
+  cursor never wraps to the top.
+- **UP** stops at row 0. **LEFT** at column 0 wraps to the previous
+  row's end. **Home** is 0,0.
+- **Logical lines are 80 characters everywhere** — one row at 80
+  columns, two at 40, three at 32, linked as on the C64. Return
+  reads the whole logical line; `DEL`, backspace (across the row
+  seam) and `INS` (opens a gap) edit it as a unit.
+- The cursor blinks character-against-reverse at the C64's rate —
+  the hardware's style 3 in text modes, a soft inverted glyph in
+  tiles and bitmaps, drawn only while the editor waits.
+
+Deviations from the C64, on purpose: forward-`DEL` and an `End` key
+exist (it had neither), there is no quote mode (PETSCII-specific),
+and insert mode is one keypress per gap rather than a sticky count.
 
 ## 10. Sizes and the ceiling
 
-The resident system is **22,856 bytes of the 24,064** below the I/O
-page — 1,208 free, after a space hunt in three acts: every workspace
-buffer (the input ring, the key bitmap, `FOR` frames, argument
-scratch, the filesystem's page buffer) moved out of the image into the
-otherwise-idle `$FF00` page and the string accumulator; a
-classification table halved because its token half was 128 zeros; and
-the boot screen — text, painting and free count — moved wholesale into
-the run-once stub, with the error messages tersed to C64 brevity and
-the editor's table unified into the interpreter's. If the ceiling
-looms again, the drop candidates in order of bytes returned against
-pain: `LINE` (~400), the fixed-point trio (~446), `GTEXT` (~232),
-`INPUT` (~198), `CLG` (~106), `SPRITE` (~120).
+The resident system is **24,024 bytes of the 24,064** below the I/O
+page — the all-modes editor spent most of what the space hunt won
+(workspace exodus to the `$FF00` page, the halved classification
+table, the boot screen exiled to the stub, C64-terse messages, the
+peephole and direct-push compiler passes, `CONST` removed). If the
+ceiling looms again, the drop candidates in order of bytes returned
+against pain: `LINE` (~400), the fixed-point trio (~446),
+`GTEXT` (~232), `INPUT` (~198), `CLG` (~106), `SPRITE` (~120) — and
+past those, spilling system data into high user RAM is the sanctioned
+escape.

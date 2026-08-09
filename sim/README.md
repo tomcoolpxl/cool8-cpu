@@ -82,7 +82,7 @@ two languages to go unnoticed.
 
 `bench_lang.py` runs no Verilog either. It is a measurement rather than
 a test: six benchmarks emitted by two code generators and counted on
-`cool8emu`, which is what OS_PLAN's M10 gate is. It exits non-zero if
+`cool8emu`, which gates the self-hosted compiler. It exits non-zero if
 native code stops being 3x the bytecode model, so a change to the
 instruction set that quietly undermined the language decision would be
 noticed.

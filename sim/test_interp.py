@@ -130,7 +130,7 @@ HARNESS = """
         ; down from $7FFF; this harness runs the deep stack at $7FF0 that
         ; docs/10-debugging.md prescribes, and an array allocated at the
         ; top zeroed straight over it. That is the harness-against-machine
-        ; mismatch INTERP_PLAN.md section 3 already names.
+        ; mismatch the stored-form contract already names.
         MOV  R0,#$00
         ST   [$002A],R0
         MOV  R0,#$7F
