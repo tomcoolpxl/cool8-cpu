@@ -180,8 +180,10 @@ class Machine:
         property to respect, not work around: so go to the bottom of the
         screen, which is blank, and type there.
         """
-        self.type("\x1b[B" * 29, chunk=3)
+        # Under the C64 key law, Home is 0,0 and DOWN at the bottom
+        # SCROLLS -- so Home first, then exactly to the bottom row.
         self.type("\x1b[H", chunk=3)
+        self.type("\x1b[B" * 29, chunk=3)
         self.type(s + "\r")
 
     def row(self, r):
@@ -260,11 +262,11 @@ def main():
     M.cmd("CLS")
     M.cmd("LIST")
     row = M.find("30 PRINT 3")
-    cy = M.m.video.cur_y
     # One escape sequence per chunk: split across chunks the machine sees
-    # a bare ESC and waits for the rest that is not there yet.
-    M.type("\x1b[A" * (cy - row), chunk=3)
-    M.type("\x1b[H", chunk=3)                  # Home: column 0
+    # a bare ESC and waits for the rest that is not there yet. Home is
+    # 0,0 under the C64 law, so: home, then down to the listed row.
+    M.type("\x1b[H", chunk=3)
+    M.type("\x1b[B" * row, chunk=3)
     before = M.row(row)
     M.type("30 PRINT 9")                       # type over it
     M.type("\r")                               # Return anywhere on the row

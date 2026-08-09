@@ -93,6 +93,29 @@ CONST T_LIT   = $A4
 DIM cx AS BYTE                  ' cursor column on screen
 DIM cy AS BYTE                  ' cursor row on screen
 DIM vtop AS BYTE                ' which map row is displayed at the top
+
+' The visible geometry, in zero page so nothing pays to ask. The cell
+' map at $8000 stays 128x32 stride 256 in every mode -- the TRUTH the
+' editor edits -- and these describe only what the current mode shows
+' and how the mirror paints it. setgeom() fills them whenever the
+' editor regains the machine.
+DIM cols AS BYTE AT $00A4       ' visible columns: 80, 40 or 32
+DIM rows AS BYTE AT $00A5       ' visible rows: 30 or 24
+DIM gkind AS BYTE AT $00A6      ' 0 text, 1 tiles, 2 bitmap
+DIM curph AS BYTE AT $00A7      ' soft-cursor blink phase, 0 = off
+DIM rpl AS BYTE AT $00A8        ' rows a full logical line spans
+DIM bpc AS BYTE AT $00A9        ' bitmap bytes per cell row (= bpp)
+DIM gbase AS CARD AT $00AA      ' bitmap display base, tracked
+DIM gs8 AS CARD AT $00AC        ' bitmap stride * 8: one cell row down
+DIM glim AS BYTE AT $00AE       ' base high byte that forces a repaint
+' Row r continues the logical line above it -- the C64's $D9 link
+' table, one byte a row instead of one bit.
+DIM cont(31) AS BYTE AT $00B0
+DIM blb AS CARD AT $00D0        ' frame count at the last blink flip
+DIM bfa AS CARD AT $00D2        ' bglyph: font row address
+DIM bva AS CARD AT $00D4        ' bglyph: framebuffer cell address
+DIM binv AS BYTE AT $00D6       ' bglyph: $FF to draw inverted
+DIM bstr AS CARD AT $00D8       ' bglyph: the mode's stride
 ' CARD, not INT: $9FFF is 40,959 and as a signed value that is
 ' negative, which makes every bounds check on an address backwards.
 DIM progend AS CARD             ' first free byte of program text
@@ -113,14 +136,170 @@ FUNCTION rowaddr(r AS INT) AS CARD
   RETURN SCREEN + (((vtop + r) AND 31) << 8)
 END FUNCTION
 
+' The geometry for whatever mode the machine is in RIGHT NOW -- called
+' whenever the editor regains control, because a program or a direct
+' MODE leaves the mode exactly as it set it. Nothing is restored any
+' more: mode, palette, sprites and sound all stay, and the editor
+' simply works wherever it wakes up.
+SUB setgeom()
+  DIM m AS BYTE
+  m = PEEK($FE10) AND 15
+  cols = 80
+  rows = 30
+  gkind = 2
+  IF m = 0 THEN
+    gkind = 0
+  END IF
+  IF m = 1 THEN
+    gkind = 0
+    cols = 40
+  END IF
+  IF m = 2 THEN
+    gkind = 1
+    cols = 40
+    CALL tilefont()
+  END IF
+  IF m = 4 THEN
+    cols = 40
+  END IF
+  IF m = 5 THEN
+    cols = 32
+    rows = 24
+  END IF
+  IF m = 6 THEN
+    cols = 32
+  END IF
+  rpl = 1
+  IF cols = 40 THEN
+    rpl = 2
+  END IF
+  IF cols = 32 THEN
+    rpl = 3
+  END IF
+  IF gkind = 0 THEN
+    POKE CUR_CTRL, $0F          ' style 3: the C64's reverse blink,
+  ELSE                          '   done by the silicon
+    POKE CUR_CTRL, 0            ' soft cursor, drawn by curdrw
+  END IF
+  IF gkind = 2 THEN
+    bpc = 4                     ' modes 4 and 5
+    IF m = 3 THEN
+      bpc = 1
+      ' mode 3's two colours: entry 1 goes white, or the editor
+      ' writes CGA blue on black -- the one palette touch setgeom
+      ' allows itself, and only on the way INTO the 1 bpp console
+      POKE $FE1E, 1
+      POKE $FE1F, $0F
+      POKE $FE1F, $FF
+    END IF
+    IF m = 6 THEN
+      bpc = 8
+    END IF
+    gbase = PEEK($FE12) + (PEEK($FE13) << 8)
+    gs8 = (PEEK($FE14) + (PEEK($FE15) << 8)) << 3
+    ' repaint when the scrolled window would reach the font at $FC00
+    glim = ($FC00 - rows * gs8) >> 8
+  END IF
+  curph = 0
+END SUB
+
+' Mode 2's console: the 96 GTEXT glyphs expanded once into 4 bpp tile
+' patterns at VRAM $1000, and palette bank 2 seeded as bank 0's
+' inverse pair so the cursor can blink by flipping one attribute
+' nibble. PAT_BASE points at the set and the map is the mirror.
+SUB tilefont()
+  DIM ch AS INT
+  DIM k AS BYTE
+  DIM fb AS BYTE
+  DIM fa AS CARD
+  POKE $FE20, 0
+  POKE $FE21, $10
+  POKE $FE26, 0
+  POKE $FE27, $10
+  ch = 0
+  DO WHILE ch < 96
+    ' the blitter does the expansion: 4 bpp straight into the
+    ' pattern slot, no inversion, stride 4 -- rows are contiguous
+    bfa = $FC00 + (ch << 3)
+    bva = $1000 + (ch << 5)
+    binv = 0
+    bstr = 4
+    bpc = 4
+    ASM
+        CALL bglyph
+    END ASM
+    ch = ch + 1
+  LOOP
+  ' bank 2 = bank 0's inverse pair: entry 32 white, entry 47 black.
+  POKE $FE1E, 32
+  POKE $FE1F, $0F
+  POKE $FE1F, $FF
+  POKE $FE1E, 47
+  POKE $FE1F, $00
+  POKE $FE1F, $00
+END SUB
+
+' The console: every write lands in the cell map (the truth), and the
+' mirror repeats it wherever the current mode actually looks -- the
+' tile map in mode 2, the framebuffer in the bitmap modes. Text modes
+' need no mirror: the engine reads the cells itself.
 SUB putat(r AS INT, c AS INT, ch AS INT, a AS INT)
   DIM p AS CARD
-  IF c > COLS - 1 THEN
+  IF c > cols - 1 THEN
     RETURN
   END IF
   p = rowaddr(r) + c + c
   POKE p, ch
   POKE p + 1, a
+  ' the mirror covers only the VISIBLE rows: the cell map's rows 30
+  ' and 31 exist for the scroll wrap, and in mode 6 their mirrored
+  ' addresses land on the font at $FC00 -- CLS ate it, once
+  IF gkind <> 0 THEN
+    IF r < rows THEN
+      IF gkind = 1 THEN
+        CALL tput(r, c, ch, 0)
+      ELSE
+        CALL bput(r, c, ch, 0)
+      END IF
+    END IF
+  END IF
+END SUB
+
+' One mode-2 map entry: the glyph as a tile, the attribute's low
+' nibble picking palette bank 0 (normal) or 2 (the inverse pair the
+' cursor blinks with). The map mirrors the cell map's circular rows.
+SUB tput(r AS INT, c AS INT, ch AS INT, inv AS INT)
+  DIM a AS CARD
+  IF ch < 32 THEN
+    ch = 32
+  END IF
+  a = (((vtop + r) AND 31) << 7) + c + c
+  POKE $FE26, a AND 255
+  POKE $FE27, a >> 8
+  POKE $FE29, ch - 32
+  POKE $FE29, inv + inv         ' bank 0 normal, bank 2 the inverse
+END SUB
+
+' One glyph into the framebuffer, expanded from the 1 bpp GTEXT font
+' at VRAM $FC00 to the mode's depth. inv draws it reversed -- the
+' cursor. Fg is the depth's brightest, bg 0, so invert is complement.
+' BASIC computes the two addresses; the row loop is hand assembly on
+' zero-page scratch, because compiled bit-twiddling was 400 bytes the
+' ceiling did not have.
+SUB bput(r AS INT, c AS INT, ch AS INT, inv AS INT)
+  IF ch < 32 THEN
+    ch = 32
+  END IF
+  bfa = $FC00 + ((ch - 32) << 3)
+  bva = gbase + r * gs8 + c * bpc
+  binv = 0
+  IF inv <> 0 THEN
+    binv = 255
+  END IF
+  bstr = gs8 >> 3
+  ASM
+        CALL bglyph
+  END ASM
 END SUB
 
 FUNCTION getat(r AS INT, c AS INT) AS INT
@@ -130,7 +309,7 @@ END FUNCTION
 SUB clearrow(r AS INT)
   DIM c AS BYTE
   c = 0
-  DO WHILE c < COLS
+  DO WHILE c < cols
     CALL putat(r, c, 32, A_TEXT)
     c = c + 1
   LOOP
@@ -138,44 +317,146 @@ END SUB
 
 SUB cls()
   DIM r AS BYTE
+  DIM k AS CARD
   r = 0
   DO WHILE r < 32
     CALL clearrow(r)
+    cont(r) = 0
     r = r + 1
   LOOP
+  ' mode 3 is the one mode taller than the cell rows: the editor's 30
+  ' cover 240 of its 480 lines, so the rest is wiped by hand
+  IF gkind = 2 THEN
+    IF bpc = 1 THEN
+      k = gbase + 19200
+      POKE $FE26, k AND 255
+      POKE $FE27, k >> 8
+      k = 0
+      DO WHILE k < 19200
+        POKE $FE29, 0
+        k = k + 1
+      LOOP
+    END IF
+  END IF
   cx = 0
   cy = 0
   CALL showcur()
 END SUB
 
-SUB showcur()
-  POKE CUR_X, cx
-  POKE CUR_Y, cy
+' The soft cursor: the cell drawn inverted, or restored. Text modes
+' never come here -- the hardware cursor's style 3 IS the C64's
+' reverse blink, in silicon.
+SUB curdrw(on AS INT)
+  IF gkind = 1 THEN
+    CALL tput(cy, cx, getat(cy, cx), on)
+  ELSE
+    CALL bput(cy, cx, getat(cy, cx), on)
+  END IF
 END SUB
 
-' One register write, and clear the row that just came into view.
+' Any movement or edit calls this with the cursor already at its new
+' place: the hardware follows in text modes, the soft cursor restarts
+' its phase elsewhere.
+SUB showcur()
+  IF gkind = 0 THEN
+    POKE CUR_X, cx
+    POKE CUR_Y, cy
+  END IF
+END SUB
+
+
+' Scroll one row: the link table shifts with the rows, then the base
+' moves -- one register write in the text and tile modes, and in the
+' bitmap modes a tracked base that repaints from the cell map when
+' the window nears the font at $FC00 (about one repaint in sixty).
 SUB scroll()
+  DIM r AS BYTE
+  DIM a AS CARD
+  r = 0
+  DO WHILE r < 31
+    cont(r) = cont(r + 1)
+    r = r + 1
+  LOOP
+  cont(31) = 0
   vtop = (vtop + 1) AND 31
-  POKE VID_BASE_H, (SCREEN >> 8) + vtop
-  CALL clearrow(ROWS - 1)
+  IF gkind = 0 THEN
+    POKE VID_BASE_H, (SCREEN >> 8) + vtop
+  ELSE
+    IF gkind = 1 THEN
+      a = vtop << 7
+    ELSE
+      gbase = gbase + gs8
+      IF (gbase >> 8) >= glim THEN
+        gbase = 0
+        CALL brepaint()
+      END IF
+      a = gbase
+    END IF
+    POKE $FE12, a AND 255
+    POKE $FE13, a >> 8
+  END IF
+  CALL clearrow(rows - 1)
+END SUB
+
+' Every cell redrawn from the truth -- the bitmap window reset.
+SUB brepaint()
+  DIM r AS BYTE
+  DIM c AS BYTE
+  r = 0
+  DO WHILE r < rows
+    c = 0
+    DO WHILE c < cols
+      CALL bput(r, c, getat(r, c), 0)
+      c = c + 1
+    LOOP
+    r = r + 1
+  LOOP
 END SUB
 
 SUB newline()
+  DIM k AS BYTE
   cx = 0
-  IF cy < ROWS - 1 THEN
+  CALL dnrow()
+  ' A new logical line starts here -- and any STALE chain hanging
+  ' below it is cut, or a later Return would drag leftover screen
+  ' text into the line it reads. (Found the classic way: break a
+  ' printing loop, type LIST, get the list and then ?SYNTAX.)
+  cont(cy) = 0
+  k = cy
+  DO WHILE k < rows - 1
+    IF cont(k + 1) = 0 THEN
+      EXIT DO
+    END IF
+    cont(k + 1) = 0
+    k = k + 1
+  LOOP
+  CALL showcur()
+END SUB
+
+' Cursor down a row, column kept -- the C64's rule: at the bottom the
+' screen scrolls, and the cursor never wraps to the top.
+SUB dnrow()
+  IF cy < rows - 1 THEN
     cy = cy + 1
   ELSE
     CALL scroll()
   END IF
-  CALL showcur()
 END SUB
 
 SUB emit(ch AS INT)
   CALL putat(cy, cx, ch, A_TEXT)
-  IF cx < COLS - 1 THEN
+  IF cx < cols - 1 THEN
     cx = cx + 1
   ELSE
-    CALL newline()
+    ' typing past the row's end: onto the next row, linked into this
+    ' logical line while it is still short of 80 characters
+    IF cy - lstart(cy) + 1 < rpl THEN
+      cx = 0
+      CALL dnrow()
+      cont(cy) = 1
+    ELSE
+      CALL newline()
+    END IF
   END IF
   CALL showcur()
 END SUB
@@ -255,7 +536,20 @@ FUNCTION getkey() AS INT
   DO
     c = serialkey()
     IF c <> 0 THEN
+      IF curph <> 0 THEN        ' any key: the soft cursor lifts off
+        CALL curdrw(0)          '   before whatever happens next
+        curph = 0
+      END IF
       RETURN c
+    END IF
+    ' the soft blink, C64-timed: 20 frames a phase, only while
+    ' waiting -- which is also the only time the C64 blinked
+    IF gkind <> 0 THEN
+      IF PEEK($FF26) + (PEEK($FF27) << 8) - blb >= 20 THEN
+        curph = 1 - curph
+        CALL curdrw(curph)
+        blb = PEEK($FF26) + (PEEK($FF27) << 8)
+      END IF
     END IF
   LOOP
 END FUNCTION
@@ -369,19 +663,76 @@ END FUNCTION
 ' character, press Return, and the line is re-entered.
 ' ---------------------------------------------------------------------
 
+' The first row of the logical line that holds row r.
+FUNCTION lstart(r AS INT) AS INT
+  DO WHILE cont(r) <> 0
+    r = r - 1
+  LOOP
+  RETURN r
+END FUNCTION
+
+' The last row of the logical line that starts at row r.
+FUNCTION lend(r AS INT) AS INT
+  DO WHILE r < rows - 1
+    IF cont(r + 1) = 0 THEN
+      RETURN r
+    END IF
+    r = r + 1
+  LOOP
+  RETURN r
+END FUNCTION
+
+' The whole logical line holding row r into lbuf, trailing spaces
+' trimmed -- the C64's Return-reads-the-logical-line, generalised.
 SUB readrow(r AS INT)
   DIM c AS BYTE
   DIM last AS BYTE
-  c = 0
+  DIM r0 AS INT
+  DIM re AS INT
+  DIM k AS BYTE
+  r0 = lstart(r)
+  re = lend(r0)
+  k = 0
   last = 0
-  DO WHILE c < COLS
-    lbuf(c) = getat(r, c)
-    IF lbuf(c) <> 32 THEN
-      last = c + 1
-    END IF
-    c = c + 1
+  DO WHILE r0 <= re
+    c = 0
+    DO WHILE c < cols
+      lbuf(k) = getat(r0, c)
+      IF lbuf(k) <> 32 THEN
+        last = k + 1
+      END IF
+      k = k + 1
+      c = c + 1
+    LOOP
+    r0 = r0 + 1
   LOOP
   llen = last
+END SUB
+
+' lbuf written back over the logical line starting at row r0, spanning
+' n rows, links maintained. The editing ops read, edit, rewrite.
+SUB writelog(r0 AS INT, n AS INT)
+  DIM c AS BYTE
+  DIM k AS BYTE
+  DIM r AS INT
+  k = 0
+  r = r0
+  DO WHILE r < r0 + n
+    c = 0
+    DO WHILE c < cols
+      IF k < llen THEN
+        CALL putat(r, c, lbuf(k), A_TEXT)
+      ELSE
+        CALL putat(r, c, 32, A_TEXT)
+      END IF
+      k = k + 1
+      c = c + 1
+    LOOP
+    IF r > r0 THEN
+      cont(r) = 1
+    END IF
+    r = r + 1
+  LOOP
 END SUB
 
 ' ---------------------------------------------------------------------
@@ -903,27 +1254,11 @@ SUB dorun()
         CALL irun
 .out:
   END ASM
-  ' Whatever mode, scroll or noise the program left behind, the editor
-  ' gets its screen and its quiet back before a word is said about how
-  ' the run ended. The palette is deliberately NOT restored -- the
-  ' default lives in the boot stub, which the first typed line
-  ' reclaimed, and a changed palette is a look, not a fault.
-  POKE $FE10, $80
-  POKE $FE2C, 0                 ' sprites off: SPRITE opened the gate,
-                                ' the editor's screen must not inherit it
-  POKE VID_BASE_L, 0
-  POKE VID_BASE_H, (SCREEN >> 8) + vtop
-  POKE $FE16, 0
-  POKE $FE17, 0
-  POKE $FE18, 0
-  POKE $FE19, 0
-  p = 4
-  DO
-  POKE $FE50, p
-  POKE $FE51, 0
-  POKE $FE51, 0
-  p = p + 8
-  LOOP WHILE p < 68
+  ' NOTHING is restored, by ruling: mode, palette, scroll, sprites and
+  ' sound all stay exactly as the program left them, and the editor
+  ' works wherever it wakes up -- the C64's deal, made livable by the
+  ' console knowing every mode. setgeom reads the world as it is.
+  CALL setgeom()
   e = PEEK($0018)
   IF e <> 255 THEN
     IF e <> 0 THEN
@@ -1716,6 +2051,8 @@ SUB dodirect()
         CALL idrct
 dirout:
   END ASM
+  ' a direct MODE just took effect: the editor follows it, here
+  CALL setgeom()
   e = PEEK($0018)
   IF e <> 255 THEN
     IF e <> 0 THEN
@@ -1729,6 +2066,8 @@ END SUB
 SUB enter(r AS INT)
   DIM n AS INT
   CALL readrow(r)
+  ' the cursor lands after the whole LOGICAL line, as on the C64
+  cy = lend(lstart(r))
   CALL newline()
   ip = 0
   CALL skipsp()
@@ -1836,8 +2175,10 @@ CALL fsmount()
 cy = 10
 cx = 0
 CALL showcur()
-POKE CUR_CTRL, $09              ' block cursor, blink rate 1 (~2 Hz),
-                                ' enabled only now that it is in place
+CALL setgeom()                  ' mode 0: the hardware cursor comes on
+                                ' here, style 3 -- the C64's reverse
+                                ' blink -- and only now that it is
+                                ' placed
 ' The boot ROM lit the green LED when it found BOOT.BIN; the system is
 ' up now, so out it goes. Its whole duration is the relocation and this
 ' startup -- a blink, with no timer anywhere.
@@ -1849,14 +2190,17 @@ DO
     CALL enter(cy)
   ELSE
     IF k = K_LEFT THEN
-      IF cx > 0 THEN
-        cx = cx - 1
-      END IF
+      CALL curleft()
       CALL showcur()
     ELSE
       IF k = K_RIGHT THEN
-        IF cx < COLS - 1 THEN
+        ' the C64's right: past the row's end, on to the next row --
+        ' and at the bottom the screen scrolls
+        IF cx < cols - 1 THEN
           cx = cx + 1
+        ELSE
+          cx = 0
+          CALL dnrow()
         END IF
         CALL showcur()
       ELSE
@@ -1867,13 +2211,12 @@ DO
           CALL showcur()
         ELSE
           IF k = K_DOWN THEN
-            IF cy < ROWS - 1 THEN
-              cy = cy + 1
-            END IF
+            CALL dnrow()
             CALL showcur()
           ELSE
             IF k = K_HOME THEN
               cx = 0
+              cy = 0
               CALL showcur()
             ELSE
               IF k = K_END THEN
@@ -1888,9 +2231,13 @@ DO
                     IF k = K_DEL THEN
                       CALL delchar()
                     ELSE
-                      IF k > 31 THEN
-                        IF k < 127 THEN
-                          CALL emit(k)
+                      IF k = K_INS THEN
+                        CALL insch()
+                      ELSE
+                        IF k > 31 THEN
+                          IF k < 127 THEN
+                            CALL emit(k)
+                          END IF
                         END IF
                       END IF
                     END IF
@@ -1907,35 +2254,82 @@ LOOP WHILE 0 = 0
 END
 
 SUB gotoend()
-  DIM c AS BYTE
-  DIM last AS BYTE
-  c = 0
-  last = 0
-  DO WHILE c < COLS
-    IF getat(cy, c) <> 32 THEN
-      last = c + 1
-    END IF
-    c = c + 1
-  LOOP
-  cx = last
-  IF cx > COLS - 1 THEN
-    cx = COLS - 1
-  END IF
-  CALL showcur()
-END SUB
+  cx = cols - 1                 ' End: the row's edge. The scan for
+  CALL showcur()                ' the last character paid 50 bytes the
+END SUB                         ' mode-3 CLS needed more
+
+' The editing ops work on the LOGICAL line: read it whole, edit the
+' buffer, write it back. Three rows of 32 columns is the worst case,
+' and one implementation covers every mode and both widths.
+FUNCTION lpos() AS INT
+  RETURN (cy - lstart(cy)) * cols + cx
+END FUNCTION
 
 SUB delchar()
-  DIM c AS BYTE
-  c = cx
-  DO WHILE c < COLS - 1
-    CALL putat(cy, c, getat(cy, c + 1), A_TEXT)
-    c = c + 1
+  DIM p AS INT
+  DIM k AS INT
+  DIM r0 AS INT
+  DIM n AS INT
+  r0 = lstart(cy)
+  n = lend(r0) - r0 + 1
+  CALL readrow(cy)
+  p = lpos()
+  IF p >= llen THEN
+    RETURN
+  END IF
+  k = p
+  DO WHILE k < llen - 1
+    lbuf(k) = lbuf(k + 1)
+    k = k + 1
   LOOP
-  CALL putat(cy, COLS - 1, 32, A_TEXT)
+  llen = llen - 1
+  CALL writelog(r0, n)
+END SUB
+
+' INS: open a one-character gap at the cursor -- the ruling's insert.
+SUB insch()
+  DIM p AS INT
+  DIM k AS INT
+  DIM r0 AS INT
+  DIM n AS INT
+  r0 = lstart(cy)
+  n = lend(r0) - r0 + 1
+  CALL readrow(cy)
+  p = lpos()
+  IF llen >= 80 THEN
+    RETURN
+  END IF
+  k = llen
+  DO WHILE k > p
+    lbuf(k) = lbuf(k - 1)
+    k = k - 1
+  LOOP
+  lbuf(p) = 32
+  llen = llen + 1
+  CALL writelog(r0, n)
+END SUB
+
+' Cursor one left, wrapping to the previous row's end -- the C64's
+' left-at-column-0, and nothing at the very home.
+SUB curleft()
+  IF cx > 0 THEN
+    cx = cx - 1
+    RETURN
+  END IF
+  IF cy > 0 THEN
+    cy = cy - 1
+    cx = cols - 1
+  END IF
 END SUB
 
 SUB backspace()
   IF cx = 0 THEN
+    IF cont(cy) = 0 THEN
+      RETURN
+    END IF
+    CALL curleft()
+    CALL delchar()
+    CALL showcur()
     RETURN
   END IF
   cx = cx - 1
@@ -1986,6 +2380,72 @@ MSGFREE:
 
 MSGKFREE:
         .asciz "K FREE"
+
+; ---- the bitmap console's glyph blitter. bfa/bva/binv/bstr in zero
+; ---- page are its arguments; bpc picks the depth. One font row is
+; ---- read through the VRAM port, complemented for the cursor, and
+; ---- written back expanded -- 1:1, two bits to a byte through
+; ---- nibtab, or one bit to a byte.
+nibtab: .byte $00,$0F,$F0,$FF
+bglyph: MOV  R3,#8              ; eight font rows
+.bg:    PUSH R3
+        LD   R0,[$00D2]         ; seek the font row
+        ST   [$FE26],R0
+        LD   R0,[$00D3]
+        ST   [$FE27],R0
+        LD   R1,[$FE29]
+        LD   R0,[$00D6]
+        XOR  R1,R0              ; the cursor's complement, or nothing
+        LD   R0,[$00D4]         ; seek the cell row
+        ST   [$FE26],R0
+        LD   R0,[$00D5]
+        ST   [$FE27],R0
+        LD   R0,[$00A9]         ; bpc: 1, 4 or 8
+        CMP  R0,#4
+        BEQ  .b4
+        CMP  R0,#8
+        BEQ  .b8
+        ST   [$FE29],R1         ; 1 bpp: the row goes in raw
+        BRA  .bnx
+.b4:    MOV  R3,#4              ; 4 bpp: two bits to a byte, four times
+.b4l:   MOV  R2,#0
+        ADD  R1,R1
+        ADC  R2,R2
+        ADD  R1,R1
+        ADC  R2,R2
+        LDW  X,#nibtab
+        LD   R0,[X+R2]
+        ST   [$FE29],R0
+        SUB  R3,#1
+        BNE  .b4l
+        BRA  .bnx
+.b8:    MOV  R3,#8              ; 8 bpp: one bit to a byte -- entry 15,
+.b8l:   MOV  R0,#0              ; the seeded white; 255 is unseeded
+        ADD  R1,R1              ; black and the text would be invisible
+        BCC  .b80
+        MOV  R0,#$0F
+.b80:   ST   [$FE29],R0
+        SUB  R3,#1
+        BNE  .b8l
+.bnx:   LD   R0,[$00D2]         ; next font row
+        ADD  R0,#1
+        ST   [$00D2],R0
+        LD   R0,[$00D3]
+        ADC  R0,#0
+        ST   [$00D3],R0
+        LD   R0,[$00D4]         ; next cell row: one stride down
+        LD   R1,[$00D8]
+        ADD  R0,R1
+        ST   [$00D4],R0
+        LD   R0,[$00D5]
+        LD   R1,[$00D9]
+        ADC  R0,R1
+        ST   [$00D5],R0
+        POP  R3
+        SUB  R3,#1
+        BEQ  .bgd               ; the body outgrew a short branch
+        JMP  .bg
+.bgd:   RET
 
 ; ---- the filesystem, whole. Its state lives at $0074, in page 0 with
 ; ---- the interpreter's, so that page 1 is the CPU stack alone.

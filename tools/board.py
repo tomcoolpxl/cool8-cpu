@@ -211,8 +211,10 @@ class Board:
         the bottom of the screen is blank, and typing over a row that
         still holds text would leave its tail behind.
         """
-        self.send("\x1b[B" * 29)
+        # Home is 0,0 and DOWN at the bottom scrolls (the C64 law), so
+        # Home first, then exactly to the bottom row.
         self.send("\x1b[H")
+        self.send("\x1b[B" * 29)
         self.send(line + "\r")
         # The expensive moment is Return: tokenise, store, scroll --
         # and the input ring is 16 bytes with no overflow check, so

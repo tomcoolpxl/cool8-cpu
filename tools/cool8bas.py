@@ -1048,7 +1048,8 @@ class Compiler:
 
             if not array:
                 # A scalar. Inside a SUB it is a local, in the frame;
-                # outside, a global.
+                # outside, a global -- or, with AT, a name over an
+                # address the caller chose: zero page, the I/O page.
                 if self.local is not None:
                     self.local[low] = Sym('local', index=self.frame,
                                           size=w, signed=sg)
@@ -1056,6 +1057,12 @@ class Compiler:
                     self.max_frame = max(self.max_frame, self.frame)
                     return
                 self.redefine_check(name)
+                if self.at('at'):
+                    self.take('at')
+                    a = self.const_expr()
+                    self.glob[low] = Sym('var', label=f"${a:04X}",
+                                         size=w, signed=sg)
+                    return
                 self.glob[low] = Sym('var', label=f"v_{low}", size=w,
                                      signed=sg)
                 self.data.append(f"v_{low}: .res {w}")

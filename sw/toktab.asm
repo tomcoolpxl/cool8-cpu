@@ -23,7 +23,10 @@ TOKTAB:
         .byte 3, "S","U","B"
         .byte 8, "F","U","N","C","T","I","O","N"
         .byte 3, "D","I","M"
-        .byte 5, "C","O","N","S","T"
+        .byte 3, "R","U","N"    ; $84 was CONST (removed: an
+                                ;   interpreter folds nothing). RUN
+                                ;   moved up from the tail so nothing
+                                ;   else renumbers.
         .byte 3, "F","O","R"
         .byte 4, "N","E","X","T"
         .byte 2, "T","O"
@@ -104,5 +107,4 @@ TOKTAB:
         .byte 3, "E","R","A"
         .byte 7, "C","O","M","P","A","C","T"
         .byte 5, "D","R","I","V","E"
-        .byte 3, "R","U","N"
         .byte 0

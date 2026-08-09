@@ -80,7 +80,7 @@ K_NUM   = $A4                   ; a binary literal: two bytes follow
 
 T_LIT   = $A4                   ; the stored-number marker, as
                                 ;   sw/basic.bas CONSTs it
-NTOK    = 70                    ; $80..$C5 -- graphics, sound, and the
+NTOK    = 69                    ; $80..$C4 -- graphics, sound, and the
                                 ; language round-out, all appended
 K_STEP  = $B3
 K_DATA  = $B0
@@ -265,7 +265,9 @@ tname:  SKIPSP
         ST   [v_llen],R0
         CLR  R0
         ST   [v_ip],R0
+        PUSHW Y
         CALL s_parsename
+        POPW Y
         TST  R0
         BEQ  .no
         SEC
@@ -276,6 +278,29 @@ tname:  SKIPSP
 esyn:   MOV  R0,#E_SYN
         ST   [ERR],R0
         RET
+
+; pshab -- garg+2:garg+3 then garg:garg+1 pushed as two stacked call
+; arguments, the shape LIST, DELETE and RENUMBER all share.
+; cnext -- where every command handler ends. A compiled core clobbers
+; X and Y both, so the walk resumes from LREC, which survives: the
+; command was its line's last statement by construction (there is no
+; ':'), and nextline already knows how to say "that was the direct
+; line" or open the next record with Y rebuilt.
+cnext:  CALL nextline
+        BCS  .cn
+        RET
+.cn:    JMP  stmt
+
+pshab:  POPW X                  ; the return address makes way
+        LD   R0,[garg+2]
+        LD   R1,[garg+3]
+        PUSH R1
+        PUSH R0
+        LD   R0,[garg]
+        LD   R1,[garg+1]
+        PUSH R1
+        PUSH R0
+        JMP  [X]
 
 ; LIST [a[-[b]]]
 h_list: CALL rangel
@@ -298,23 +323,16 @@ h_list: CALL rangel
         ST   [garg+2],R0
         MOV  R0,#$7F
         ST   [garg+3],R0
-.go:    LD   R0,[garg+2]
-        LD   R1,[garg+3]
-        PUSH R1
-        PUSH R0
-        LD   R0,[garg]
-        LD   R1,[garg+1]
-        PUSH R1
-        PUSH R0
+.go:    CALL pshab
         CALL s_list
         ADDW SP,#4
-        JMP  stmt
+        JMP  cnext
 
 ; DELETE a[-[b]]
 h_del:  CALL rangel
         BTST R3,#1
         BNE  .r1                ; no first number: nothing to do
-        JMP  stmt
+        JMP  cnext
 .r1:    BTST R3,#2
         BNE  .r2
         LD   R0,[garg]          ; DELETE n: that line
@@ -328,17 +346,10 @@ h_del:  CALL rangel
         ST   [garg+2],R0
         MOV  R0,#$7F
         ST   [garg+3],R0
-.go:    LD   R0,[garg+2]
-        LD   R1,[garg+3]
-        PUSH R1
-        PUSH R0
-        LD   R0,[garg]
-        LD   R1,[garg+1]
-        PUSH R1
-        PUSH R0
+.go:    CALL pshab
         CALL s_deleterange
         ADDW SP,#4
-        JMP  stmt
+        JMP  cnext
 
 ; RENUMBER [start [step]]
 h_renum:
@@ -364,17 +375,10 @@ h_renum:
         CALL rlit
         ST   [garg+2],R0
         ST   [garg+3],R1
-.go:    LD   R0,[garg+2]
-        LD   R1,[garg+3]
-        PUSH R1
-        PUSH R0
-        LD   R0,[garg]
-        LD   R1,[garg+1]
-        PUSH R1
-        PUSH R0
+.go:    CALL pshab
         CALL s_renumber
         ADDW SP,#4
-        JMP  stmt
+        JMP  cnext
 
 h_new:  CALL s_new              ; the program deleted itself: stop, as
         MOV  R0,#E_DONE         ; the C64 did
@@ -382,17 +386,17 @@ h_new:  CALL s_new              ; the program deleted itself: stop, as
         RET
 
 h_free: CALL s_dofree
-        JMP  stmt
+        JMP  cnext
 
 h_cls:  CALL s_cls
-        JMP  stmt
+        JMP  cnext
 
 h_dir:  CALL s_dodir
-        JMP  stmt
+        JMP  cnext
 
 h_compact:
         CALL s_docompact
-        JMP  stmt
+        JMP  cnext
 
 h_drive:
         CALL eval
@@ -400,14 +404,14 @@ h_drive:
         PUSH R0
         CALL s_drivecore
         ADDW SP,#2
-        JMP  stmt
+        JMP  cnext
 
 h_era:  CALL tname
         BCS  .nm
         JMP  esyn
 .nm:
         CALL s_eracore
-        JMP  stmt
+        JMP  cnext
 
 ; SAVE "N"            -- the program
 ; SAVE "N" AT a, l    -- l raw bytes from address a (the BBC's *SAVE)
@@ -419,7 +423,7 @@ h_save: CALL tname
         CMP  R2,#$9D            ; AT
         BEQ  .at
         CALL s_savecore
-        JMP  stmt
+        JMP  cnext
 .at:    INCW Y
         CALL eval               ; the address
         PUSH R1
@@ -434,7 +438,7 @@ h_save: CALL tname
         PUSH R2
         CALL s_savedata
         ADDW SP,#4
-        JMP  stmt
+        JMP  cnext
 
 ; LOAD "N"            -- replace; from a program, CHAIN: continue at
 ;                        the new first line with variables kept
@@ -474,22 +478,24 @@ h_load: CALL tname
         CALL lbound
         BCS  .go
         JMP  h_end              ; chained into an empty file: done
-.go:    JMP  stmt
-.done:  JMP  stmt
+.go:    JMP  stmt               ; NOT cnext: lbound just OPENED the
+                                ;   chained program's first record,
+                                ;   and cnext would walk past it
+.done:  JMP  cnext
 .mg:    INCW Y
         CALL eval
         PUSH R1
         PUSH R0
         CALL s_loadcore
         ADDW SP,#2
-        JMP  stmt
+        JMP  cnext
 .at:    INCW Y
         CALL eval
         PUSH R1
         PUSH R0
         CALL s_loaddata
         ADDW SP,#2
-        JMP  stmt
+        JMP  cnext
 
 h_run:  LD   R0,[LREC+1]        ; direct only: a program restarting
         CMP  R0,#$FF            ;   itself stacks a frame per restart
@@ -654,7 +660,8 @@ sttab:
         .word h_sub             ; $81 SUB -- a definition, skipped
         .word h_sub             ; $82 FUNCTION
         .word h_dim             ; $83 DIM
-        .word h_const           ; $84 CONST
+        .word h_run             ; $84 RUN, up from the tail when
+                                ;   CONST left
         .word h_for             ; $85 FOR
         .word h_next            ; $86 NEXT
         .word bad               ; $87 TO
@@ -719,8 +726,7 @@ sttab:
         .word h_dir             ; $C1 DIR
         .word h_era             ; $C2 ERA
         .word h_compact         ; $C3 COMPACT
-        .word h_drive           ; $C4 DRIVE
-        .word h_run             ; $C5 RUN -- direct only, see below
+        .word h_drive           ; $C4 DRIVE -- the last token
 
 h_end:  MOV  R0,#E_DONE         ; a clean stop, not an error
         ST   [ERR],R0
@@ -3455,13 +3461,6 @@ ipoll:  LD   R2,[ibreak]
         ST   [ERR],R2
 .none:  RET
 
-; CONST name = value. An interpreter has no compile step in which to
-; fold a constant, so this is an assignment -- which is what every
-; interpreted BASIC that has the keyword does. It is not write
-; protected, and saying so is better than refusing the statement.
-h_const:
-        SKIPSP                  ; the dispatcher left Y on the space
-        JMP  h_let
 
 ; =====================================================================
 ; Graphics and sound: tokens $A5-$AE, and RND/TIMER/VPEEK in btab.

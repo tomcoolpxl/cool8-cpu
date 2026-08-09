@@ -245,6 +245,14 @@ def _font8():
                 rows8[keep.index(r + 1)] |= cell[r]
         rows8.append(cell[12] | cell[13] | cell[14])
         out += bytes(rows8)
+    # Hand fix-ups where the row-drop merges features the eye needs
+    # apart: the dotted glyphs lose the gap between dot and stem.
+    for ch, rows in (("i", (0x00, 0x30, 0x00, 0x70, 0x30, 0x30,
+                            0x78, 0x00)),
+                     ("j", (0x00, 0x0C, 0x00, 0x0C, 0x0C, 0x0C,
+                            0xCC, 0x78))):
+        o = (ord(ch) - 32) * 8
+        out[o:o + 8] = bytes(rows)
     lines = []
     for i in range(0, len(out), 16):
         row = ",".join("$%02X" % b for b in out[i:i + 16])
