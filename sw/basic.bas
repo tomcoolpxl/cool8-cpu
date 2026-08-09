@@ -884,9 +884,14 @@ SUB dorun()
   POKE $00DC, progend AND 255
   POKE $00DD, progend >> 8
   ASM
-        MOV  R0,#$00            ; the assembly pass, over the whole
-        MOV  R1,#$02            ;   program, before a statement runs
-        CALL aprog
+        MOV  R0,#$00            ; ERR is cleared HERE, at the entry of
+        ST   [$0018],R0         ;   the code that reads it. aprog and
+                                ;   irun only ever SET it, so a stale
+                                ;   ?BREAK from the last run must not
+                                ;   be able to fail the fault check
+                                ;   below and skip the run
+        MOV  R1,#$02            ; the assembly pass, over the whole
+        CALL aprog              ;   program, before a statement runs
         LD   R0,[$0018]         ; did it fault?
         TST  R0
         BNE  .out

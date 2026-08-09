@@ -215,7 +215,12 @@ def run(args):
 
     pygame.init()
     w, h = vid.H_VIS * args.scale, vid.V_VIS * args.scale
-    screen = pygame.display.set_mode((w, h))
+    # SCALED: the window is a logical w x h surface and SDL scales it to
+    # whatever the real window is, aspect kept, letterboxed. It is also
+    # what makes toggle_fullscreen() work on Windows at all -- without
+    # it the toggle needs the size to be a real display mode.
+    screen = pygame.display.set_mode((w, h),
+                                     pygame.SCALED | pygame.RESIZABLE)
     pygame.display.set_caption("COOL8")
     surf = pygame.Surface((vid.H_VIS, vid.V_VIS))
     channel = pygame.mixer.Channel(0) if audio else None
@@ -293,6 +298,10 @@ def run(args):
                     if down:
                         print(save_shot(m, args.shot or 'build/cool8.png'))
                     continue
+                if name == 'return' and ev.mod & pygame.KMOD_ALT:
+                    if down:
+                        pygame.display.toggle_fullscreen()
+                    continue          # never reaches the machine as Enter
                 if args.keys == 'text':
                     # Break is Ctrl+Pause -- the SAME chord as the real
                     # board's keyboard. Windows reports that chord as
@@ -315,7 +324,13 @@ def run(args):
                                               pygame.K_SCROLLLOCK)
                                 or getattr(ev, 'scancode', 0) in (71, 72))
                     if is_pause and (ev.mod & pygame.KMOD_CTRL):
-                        if down or not pause_down:
+                        # One chord per physical press. set_repeat()
+                        # makes a held key rain KEYDOWNs, and a chord
+                        # per repeat overruns the 16-byte FIFO with
+                        # truncated sequences. pause_down is the edge:
+                        # it also lets the chord fire on the release
+                        # when SDL swallowed the press.
+                        if not pause_down:
                             m.scancode([0xE0, 0x7E, 0xE0, 0xF0, 0x7E])
                         pause_down = down
                         continue

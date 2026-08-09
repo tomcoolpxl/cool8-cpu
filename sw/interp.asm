@@ -163,7 +163,6 @@ irun:
         ST   [EDEPTH],R0        ; at statement level, not inside a paren
         ST   [NNAME],R0         ; and no long name is defined yet
         ST   [CDEPTH],R0        ; nor a call in progress
-        ST   [ibreak],R0        ; and nothing is asking it to stop
         CALL drst               ; the DATA pointer rewinds, unpositioned
         CLR  R0
         ST   [ibreak],R0        ; and nothing is asking it to stop
