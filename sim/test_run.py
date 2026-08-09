@@ -76,6 +76,34 @@ CASES = [
      ["10 K = 5", "20 IF K > 3 THEN PRINT 111 ELSE PRINT 222",
       "30 END"], "111"),
 
+    # DO WHILE and DO UNTIL test at the *top*, which means the second
+    # iteration re-enters where the first one started. That re-entry
+    # went through `stmt`, which dispatched the `WHILE` sitting after
+    # the `DO` as though it were a statement -- and `sttab[$8A]` is
+    # `bad`. So the loop ran exactly once and then said ?SYNTAX ERROR,
+    # and nothing here caught it because every case used the bottom
+    # form. Both ends, both keywords, and a nest, from now on.
+    ("DO WHILE, which is tested on re-entry and not just once",
+     ["10 A = 0", "20 DO WHILE A < 10", "30 A = A + 1", "40 LOOP",
+      "50 PRINT A", "60 END"], "10"),
+
+    ("DO UNTIL, the same at the top",
+     ["10 A = 0", "20 DO UNTIL A = 10", "30 A = A + 1", "40 LOOP",
+      "50 PRINT A", "60 END"], "10"),
+
+    ("LOOP WHILE, the form that always worked",
+     ["10 A = 0", "20 DO", "30 A = A + 1", "40 LOOP WHILE A < 10",
+      "50 PRINT A", "60 END"], "10"),
+
+    ("LOOP UNTIL",
+     ["10 A = 0", "20 DO", "30 A = A + 1", "40 LOOP UNTIL A = 10",
+      "50 PRINT A", "60 END"], "10"),
+
+    ("a DO WHILE nested inside another",
+     ["10 A = 0", "20 DO WHILE A < 2", "30 B = 0", "40 DO WHILE B < 5",
+      "50 B = B + 1", "60 LOOP", "70 A = A + 1", "80 LOOP",
+      "90 PRINT A * 5", "95 END"], "10"),
+
     ("a string, which needs the accumulator and the heap",
      ['10 A$ = "HELLO"', '20 B$ = A$ + " THERE"', "30 PRINT B$",
       "40 END"], "HELLO THERE"),

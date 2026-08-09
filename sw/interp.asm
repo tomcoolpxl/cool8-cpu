@@ -2153,7 +2153,23 @@ h_do:   LD   R0,[DDEPTH]
         INCW X
         LD   R0,[LREC+1]
         ST   [X],R0
-        SKIPSP
+        ; fall into docond
+
+; docond -- test a `DO WHILE`/`DO UNTIL` condition, if there is one.
+;
+; **Separate from h_do because the second time round is not the first.**
+; The frame keeps Y pointing just past the `DO` token, and `doback`
+; restores it -- so if that re-entered through `stmt`, `stmt` would
+; dispatch the `WHILE` sitting there as though it were a statement, and
+; `sttab[$8A]` is `bad`. The loop ran once and then said `?SYNTAX ERROR`
+; on its own second iteration. `LOOP WHILE` never showed it because
+; nothing follows the `DO` in that form.
+;
+; So the condition is a routine, entered from both ends: h_do falls into
+; it having pushed the frame, and doback jumps to it having restored
+; one. A plain `DO` finds neither keyword and goes straight to stmt,
+; which is what it did before.
+docond: SKIPSP
         CMP  R2,#K_WHILE
         BEQ  .w
         CMP  R2,#K_UNTIL
@@ -2209,7 +2225,7 @@ doback: CALL dofr
         MOV  YL,R0
         MOV  YH,R1
         CALL ipoll
-        JMP  stmt
+        JMP  docond             ; not stmt -- see docond
 
 ; dopop -- the loop is done and we are already past its LOOP.
 dopop:  LD   R0,[DDEPTH]

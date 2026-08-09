@@ -347,8 +347,22 @@ it drives share a cycle. Pipelining it is the open question in
 
 Programming is drag-and-drop: the iCELink debugger enumerates as a mass
 storage device, so copying `build/cool8.bin` onto it flashes the board.
-The `icesprog` utility in the board's repository does the same from a
-script, and there is a prebuilt `icesprog.win.exe` for Windows.
+
+**`icesprog` ships inside the OSS CAD Suite**, at `bin/icesprog` beside
+`yosys` and `iverilog` — not in a separate install of its own, and not
+only in the board's repository. So it is found the same way every other
+tool here is: `OSS_CAD_SUITE` pointing at the suite root, or the suite's
+`bin` on `PATH`. `tools/flash.py` resolves it through `sim/cosim.py`'s
+`_tool`, which also puts `bin` and `lib` on `PATH` so the DLLs beside
+the executable load.
+
+> A bare `which icesprog` in a shell that has not set that up answers
+> "no", and **"not on `PATH`" is not "not installed"**. Say which one
+> you actually checked.
+
+It is the only way to reach a flash *offset*; the drive takes the
+bitstream and nothing else. That is why writing BASIC to volume 0 needs
+it and programming the FPGA does not.
 
 > **Do not use `icesprog -e`.** Whole-chip erase, not sector erase — it
 > takes the bitstream with it. Also in

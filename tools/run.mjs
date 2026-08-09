@@ -31,6 +31,11 @@ const PKG = JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8"));
 const CFG = PKG.cool8;
 const PY = process.env.COOL8_PYTHON || CFG.python || "python";
 
+// How often to say what is still going. Ten seconds is short enough
+// that a stalled job is obvious and long enough that a normal run is
+// not buried in it.
+const HEARTBEAT_MS = Number(process.env.COOL8_HEARTBEAT_MS || 10000);
+
 const GREEN = "\x1b[32m", RED = "\x1b[31m", DIM = "\x1b[2m", OFF = "\x1b[0m";
 const ok = (s) => `${GREEN}${s}${OFF}`;
 const bad = (s) => `${RED}${s}${OFF}`;
@@ -41,8 +46,22 @@ function jobs(command, argv) {
   if (command === "build") return CFG.build;
   if (command === "bench") return CFG.bench;
 
-  const gi = argv.indexOf("--group");
-  const groups = gi >= 0 ? [argv[gi + 1]] : ["sw"];
+  // --group may be given more than once (npm run test:all), and its
+  // value is not a job name. Collecting both in one pass avoids the bug
+  // this had first: with no --group at all, `argv[gi + 1]` is
+  // `argv[0]`, so the first job named on the command line was silently
+  // dropped and `test asm interp` quietly ran only interp.
+  const groups = [];
+  const only = [];
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === "--group") {
+      groups.push(argv[++i]);
+    } else if (!argv[i].startsWith("-")) {
+      only.push(argv[i]);
+    }
+  }
+  if (!groups.length) groups.push("sw");
+
   let out = [];
   for (const g of groups) {
     if (!CFG.groups[g]) {
@@ -51,8 +70,16 @@ function jobs(command, argv) {
     }
     out = out.concat(CFG.groups[g]);
   }
-  const only = argv.filter((a) => !a.startsWith("-") && a !== argv[gi + 1]);
-  return only.length ? out.filter((j) => only.includes(j.id)) : out;
+  if (!only.length) return out;
+
+  const known = new Set(out.map((j) => j.id));
+  const missing = only.filter((n) => !known.has(n));
+  if (missing.length) {
+    console.error(`no such job: ${missing.join(", ")}. `
+      + `have: ${[...known].join(", ")}`);
+    process.exit(2);
+  }
+  return out.filter((j) => only.includes(j.id));
 }
 
 function run(job) {
@@ -94,6 +121,14 @@ async function main() {
       console.log(`\n${k}`);
       for (const j of CFG[k]) console.log(`  ${j.id.padEnd(12)} ${dim(j.about)}`);
     }
+    // Interactive and one-shot commands are npm scripts straight to
+    // Python, not jobs. The runner captures stdout to decide pass from
+    // fail, which is exactly wrong for a console or a window -- but
+    // they still belong in one list, or the list is not the vocabulary.
+    console.log(`\ndirect ${dim("(npm run <id>)")}`);
+    for (const j of CFG.direct) {
+      console.log(`  ${j.id.padEnd(12)} ${dim(j.about)}`);
+    }
     return 0;
   }
 
@@ -108,17 +143,50 @@ async function main() {
   // clock, and test_run and test_basic are minutes where most are
   // seconds.
   const order = [...list].sort((a, b) => (b.slow ? 1 : 0) - (a.slow ? 1 : 0));
-  const limit = Math.max(1, Math.min(order.length, cpus().length));
-  console.log(`${command}: ${order.length} job(s), ${limit} at a time\n`);
+
+  // **One board, one job.** Anything marked exclusive drops the whole
+  // run to a single worker, because these talk to physical hardware
+  // through one USB device and there is no lock on it. Two icesprog
+  // processes at once do not fail cleanly -- they interleave on the SPI
+  // and hand back a readback full of zeroes, which reads as a corrupt
+  // bitstream rather than as a corrupt test.
+  const exclusive = order.some((j) => j.exclusive);
+  const limit = exclusive
+    ? 1
+    : Math.max(1, Math.min(order.length, cpus().length));
+  console.log(
+    `${command}: ${order.length} job(s), ${limit} at a time` +
+      (exclusive ? dim("  (exclusive: one device)") : "") + "\n"
+  );
 
   const started = Date.now();
   const results = [];
+  const running = new Map();
   let next = 0;
+
+  // A heartbeat, for the same reason the flash tool has one: a job that
+  // says nothing for four minutes cannot be told from a job that has
+  // hung, and test_run really does take four minutes. Naming what is
+  // still going and for how long is the difference between waiting and
+  // wondering.
+  const beat = setInterval(() => {
+    if (!running.size) return;
+    const now = Date.now();
+    const who = [...running.entries()]
+      .sort((a, b) => a[1] - b[1])
+      .map(([id, t]) => `${id} ${Math.round((now - t) / 1000)}s`)
+      .join("  ");
+    console.log(dim(`        ... still running: ${who}`));
+  }, HEARTBEAT_MS);
+  beat.unref?.();
+
   await Promise.all(
     Array.from({ length: limit }, async () => {
       while (next < order.length) {
         const job = order[next++];
+        running.set(job.id, Date.now());
         const r = await run(job);
+        running.delete(job.id);
         results.push(r);
         const mark = passed(r) ? ok("PASS") : bad("FAIL");
         console.log(
@@ -127,6 +195,7 @@ async function main() {
       }
     })
   );
+  clearInterval(beat);
 
   // A test that passes has nothing to say and its output is noise. A
   // build and a benchmark are the opposite: the numbers *are* the
