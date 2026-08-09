@@ -280,6 +280,8 @@ two. [D45](docs/01-decisions.md) records why BBC declined the same fix.
 | I4c | `DO`/`LOOP` with `WHILE`/`UNTIL` at either end, `EXIT`, `ELSEIF`, `CALL`/`RETURN`, `/` and `MOD`, and the string functions: `LEN`, `LEFT$`, `RIGHT$`, `MID$`, `CHR$`, `ASC`, `STR$`, `VAL`, `INSTR` — done |
 | I5 | wired to `RUN` in the editor, replacing the overlay, with Ctrl-C stopping a running program through a vblank interrupt ([D49](docs/01-decisions.md)) — done |
 | I6 | the keyboard a program can read: `INKEY` for what was typed, `KEY(c)` for what is *held*, on the bitmap the shared decoder maintains ([D50](docs/01-decisions.md), [D51](docs/01-decisions.md)). Measured: 574 bytes of driver, 56 of interpreter — done |
+| I7 | graphics and sound: `MODE VSYNC SCROLL PALETTE SPRITE VPOKE/VPEEK SOUND HLINE PLOT LINE RND TIMER`, thin wrappers over the auto-increment ports. +996 — done |
+| I8 | the language round-out: `PRINT` separators, `INPUT`, `DATA/READ/RESTORE`, `STEP`, `<< >>`, `ON GOTO`, `TILE CLG PITCH GTEXT`, 8.8 fixed point; signed `PRINT` fixed; boot stub carries palettes, chime and the `GTEXT` font in reclaimed RAM. +~1,420, and the resident ceiling is reached: 24,057 of 24,064. Reference: [docs/13-basic.md](docs/13-basic.md) — done |
 
 I4 is complete, and nothing I2 deferred is still deferred. Nineteen
 `sttab` slots point at `bad`, and fourteen of them should: `TO`,
