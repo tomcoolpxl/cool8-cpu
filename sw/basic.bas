@@ -1782,7 +1782,7 @@ SUB banner()
     IF a = 0 THEN
       EXIT DO
     END IF
-    cx = 4
+    cx = 0
     p = p + 1
     DO WHILE PEEK(p) <> 0
       CALL putat(cy, cx, PEEK(p), a)
@@ -1792,11 +1792,11 @@ SUB banner()
     p = p + 1
     cy = cy + 1
   LOOP
-  cx = 4
+  cx = 0
   CALL putn(freebytes())
   CALL puts(MSGFREE)
   cy = cy + 2
-  cx = 4
+  cx = 0
   CALL showcur()
 END SUB
 
@@ -1839,7 +1839,6 @@ END ASM
 CALL fsmount()
 CALL cls()
 CALL banner()
-' The banner is indented four columns by design; the cursor is not.
 cx = 0
 CALL showcur()
 ' The boot ROM lit the green LED when it found BOOT.BIN; the system is
@@ -2016,21 +2015,24 @@ MSGKFREE:
 
 ; ---- the boot screen: an attribute byte, then the text, then a zero.
 ; ---- Every line here is something the machine checked.
+; The indent is data, not code: the machine vitals sit four columns in,
+; and the interpreter's own lines -- its name, the free count, and the
+; cursor that follows -- are flush left like everything typed after.
 BANNERTAB:
         .byte $0B
-        .asciz "COOL8"
+        .asciz "    COOL8"
         .byte $0F
-        .asciz "8-bit, and all of it original"
+        .asciz "    8-bit home computer"
         .byte $07
         .asciz ""
         .byte $08
-        .asciz "CPU     COOL8 @ 8.375 MHz        RAM    64K main, 64K video"
+        .asciz "    CPU     COOL8 @ 8.375 MHz        RAM    64K main, 64K video"
         .byte $08
-        .asciz "VIDEO   640x480, 32 sprites      SOUND  8 voices, 1-bit DAC"
+        .asciz "    VIDEO   640x480, 32 sprites      SOUND  8 voices, 1-bit DAC"
         .byte $07
         .asciz ""
         .byte $0E
-        .asciz "COOL8 BASIC 1.0"
+        .asciz "COOLBASIC 1.0"
         .byte 0
 
 ; ---- the filesystem, whole. Its state lives at $0074, in page 0 with

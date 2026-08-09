@@ -128,7 +128,7 @@ def main():
           "BASIC installed its own interrupt vector",
           "$%04X, wanted $%04X" % (vec, syms["iisr"]))
     check(m.kbd.irq_en, "and enabled the keyboard's interrupt")
-    check(m.shows("COOL8 BASIC 1.0"),
+    check(m.shows("COOLBASIC 1.0"),
           "it booted to its banner with nothing attached",
           " | ".join(r.strip() for r in m.text() if r.strip())[:120])
 
