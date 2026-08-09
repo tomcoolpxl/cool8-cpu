@@ -41,7 +41,7 @@ BOXES = [os.path.splitext(os.path.basename(f))[0] for f in FILES[1:]]
 LABEL = {
     "u_cpu": ("COOL8 CPU", "8-bit core, 511 encodings"),
     "u_mem": ("Memory", "64K RAM + 4K boot ROM"),
-    "u_vid": ("Video", "VGA, tiles, bitmaps, 32 sprites"),
+    "u_vid": ("Video", "VGA, 32 sprites, own 64K VRAM"),
     "u_uart": ("UART", "115200 8N1 console"),
     "u_ps2": ("PS/2", "keyboard decoder"),
     "u_snd": ("Sound", "8 voices, 1-bit DAC"),
@@ -77,10 +77,38 @@ def bits(conn):
     return [b for b in conn if isinstance(b, int)]
 
 
+def schematic(out):
+    """The ALU, gate for gate: yosys elaborates it to RTL cells and
+    netlistsvg draws the schematic -- adders, muxes and gates with
+    their real symbols. The whole core renders too but comes out
+    16,000 x 46,000 pixels of wire, which is why one block at full
+    depth is the picture and the SoC gets the block diagram above.
+    ImageMagick rasterises it: GitHub's dark theme is unreadable with
+    netlistsvg's transparent background, a PNG carries its own."""
+    tmp = os.path.join(tempfile.gettempdir(), "cool8_alu")
+    src = os.path.join(REPO, "rtl", "core", "cool8_alu.v")
+    subprocess.run([cosim._tool("yosys"), "-q", "-p",
+                    f"read_verilog {src.replace(os.sep, '/')}; "
+                    f"hierarchy -top cool8_alu; proc; opt -full; opt_clean; "
+                    f"write_json {tmp}.json".replace(os.sep, "/")],
+                   check=True)
+    subprocess.run(["npx", "--yes", "netlistsvg", tmp + ".json",
+                    "-o", tmp + ".svg"], check=True, shell=True)
+    magick = shutil.which("magick") or \
+        r"C:\Program Files\ImageMagick-7.1.2-Q16-HDRI\magick.exe"
+    subprocess.run([magick, "-background", "white", tmp + ".svg",
+                    "-resize", "1600x", out], check=True)
+    print(out)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("-o", "--out", default="docs/img/readme-soc.svg")
+    ap.add_argument("--alu", help="also draw the ALU schematic to this PNG")
     args = ap.parse_args()
+
+    if args.alu:
+        schematic(args.alu)
 
     mod = netlist()
 

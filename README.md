@@ -90,6 +90,13 @@ sound and SPI flash, each wired to its connector](docs/img/readme-soc.svg)
 and the diagram states what is actually connected, not what a drawing
 claims.*
 
+One block of it at full depth — the CPU's ALU, every gate, adder and
+mux, drawn from the same source that becomes the bitstream:
+
+![The ALU as a schematic: operands and opcode entering on the left,
+the adder and gate logic in the middle, result and the four flags
+leaving on the right](docs/img/readme-alu.png)
+
 Text mode reads main RAM; tiles, bitmaps and sprites read the separate
 video RAM through a four-way arbiter — so nothing the video engine
 fetches can stall the CPU. The full module tree and every design

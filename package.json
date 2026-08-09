@@ -21,7 +21,7 @@
     "boot": "python tools/mkboot.py sim/build/basic.bin -o sim/build/BOOT.BIN",
 
     "bit": "python tools/mkbit.py",
-    "diagram": "python tools/mkdiagram.py -o docs/img/readme-soc.svg",
+    "diagram": "python tools/mkdiagram.py -o docs/img/readme-soc.svg --alu docs/img/readme-alu.png",
     "synth": "python sim/synth.py",
     "timing": "python sim/timing.py",
     "mutate": "python sim/mutate.py",
