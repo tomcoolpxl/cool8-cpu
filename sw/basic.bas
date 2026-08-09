@@ -38,8 +38,6 @@
 
 EXTERN TOKTAB
 EXTERN CMDTAB
-EXTERN BANNERTAB
-EXTERN ERRTAB
 EXTERN RUNTAB
 EXTERN iisr
 EXTERN irring
@@ -731,7 +729,7 @@ SUB storeline(n AS INT)
     need = 4 + tlen
   END IF
   IF progend - old + need > USERTOP THEN
-    CALL errmsg(1)
+    CALL errmsg(4)
     RETURN
   END IF
   ' make the hole the right size
@@ -977,10 +975,13 @@ SUB putsn(p AS CARD, n AS INT)
   LOOP
 END SUB
 
+' One message table for the editor and the interpreter alike: n is a
+' RUNTAB index. One namespace is also what a direct mode will need --
+' a statement typed at the editor fails with the same words either way.
 SUB errmsg(n AS INT)
   DIM p AS CARD
   DIM k AS BYTE
-  p = ERRTAB
+  p = RUNTAB
   k = 0
   DO WHILE k < n
     DO WHILE PEEK(p) <> 0
@@ -1095,7 +1096,10 @@ END SUB
 
 ' ---- whole pages, for COMPACT
 
-DIM pbuf(255) AS BYTE           ' one page in transit
+' One page in transit -- laid over the string accumulator rather than
+' allocated. The two lifetimes cannot meet: SACC exists only while a
+' program runs, and every filesystem command runs from the editor.
+DIM pbuf(255) AS BYTE AT $7F00
 DIM cpage AS INT                ' the page it comes from or goes to
 
 SUB rdpage(p AS INT)
@@ -1105,7 +1109,7 @@ SUB rdpage(p AS INT)
         ST   [fspg],R0
         LD   R0,[v_cpage+1]
         ST   [fspg+1],R0
-        LDW  X,#a_pbuf
+        LDW  X,#$7F00           ; pbuf, laid over SACC
         STW  [fsbuf],X
         CALL fs_rdpg
   END ASM
@@ -1118,7 +1122,7 @@ SUB wrpage(p AS INT)
         ST   [fspg],R0
         LD   R0,[v_cpage+1]
         ST   [fspg+1],R0
-        LDW  X,#a_pbuf
+        LDW  X,#$7F00           ; pbuf, laid over SACC
         STW  [fsbuf],X
         CALL fs_wrpg
   END ASM
@@ -1272,7 +1276,7 @@ SUB dosave()
   flen = progend - PROG
   CALL fssave()
   IF fok = 0 THEN
-    CALL errmsg(3)
+    CALL errmsg(19)
     RETURN
   END IF
   IF had <> 0 THEN
@@ -1305,7 +1309,7 @@ SUB doload()
     faddr = PROG
     CALL fsload()
     IF fok = 0 THEN
-      CALL errmsg(4)
+      CALL errmsg(20)
       RETURN
     END IF
     progend = PROG + flen
@@ -1318,18 +1322,18 @@ SUB doload()
   ' go in, so the two must not meet: the worst case is the whole file.
   CALL fsfind()
   IF fok = 0 THEN
-    CALL errmsg(4)
+    CALL errmsg(20)
     RETURN
   END IF
   top = MEMTOP - flen + 1
   IF progend + flen >= top THEN
-    CALL errmsg(1)
+    CALL errmsg(4)
     RETURN
   END IF
   faddr = top
   CALL fsload()
   IF fok = 0 THEN
-    CALL errmsg(4)
+    CALL errmsg(20)
     RETURN
   END IF
   p = top
@@ -1711,7 +1715,7 @@ SUB docommand()
     END IF
     CALL fserase()
     IF fok = 0 THEN
-      CALL errmsg(4)
+      CALL errmsg(20)
     END IF
     RETURN
   END IF
@@ -1774,38 +1778,11 @@ SUB shiftlbuf()
   ip = 0
 END SUB
 
-' ---------------------------------------------------------------------
-' The boot screen: what the machine found, and how much is free.
-' ---------------------------------------------------------------------
-
-SUB banner()
-  DIM p AS CARD
-  DIM k AS BYTE
-  DIM a AS BYTE
-  p = BANNERTAB
-  cy = 1
-  DO
-    a = PEEK(p)
-    IF a = 0 THEN
-      EXIT DO
-    END IF
-    cx = 0
-    p = p + 1
-    DO WHILE PEEK(p) <> 0
-      CALL putat(cy, cx, PEEK(p), a)
-      cx = cx + 1
-      p = p + 1
-    LOOP
-    p = p + 1
-    cy = cy + 1
-  LOOP
-  cx = 0
-  CALL putn(freebytes())
-  CALL puts(MSGFREE)
-  cy = cy + 2
-  cx = 0
-  CALL showcur()
-END SUB
+' The boot screen is painted by the relocating stub -- run-once code
+' the init below wipes along with the rest of user RAM -- so neither
+' its text nor its painting costs a resident byte. tools/mkboot.py owns
+' it, free count included: a freshly booted machine is empty by
+' definition, so the number is a build-time constant.
 
 ' ---------------------------------------------------------------------
 ' The loop.
@@ -1816,10 +1793,10 @@ DIM k AS INT
 POKE VID_MODE, $80
 POKE VID_BASE_L, SCREEN AND 255
 POKE VID_BASE_H, SCREEN >> 8
-POKE CUR_CTRL, $09              ' block cursor, blink rate 1 (~2 Hz).
-                                ' $19 was rate 3 -- the hardware's
-                                ' "solid, no blink" -- by an old choice
-                                ' the machine's owner has overruled
+' The cursor is NOT enabled here: the wipe and the mount below take a
+' visible moment, and an enabled cursor would sit at the ROM's stale
+' position for all of it before snapping home. It turns on at the end
+' of init, already in place.
 vtop = 0
 progend = PROG
 fdrv = 0
@@ -1841,13 +1818,39 @@ POKE $FE1D, $20                 ' enable the vertical blank interrupt
 POKE $FE42, $11                 ' clear the keyboard FIFO and enable its
 POKE $FE42, $10                 ' interrupt -- stale codes are not input
 ASM
+        ; The workspace page. Real SPRAM powers up undefined, and the
+        ; ring heads, the key bitmap and the break flag must all start
+        ; zero -- before EI, because the ISR writes the ring.
+        LDW  X,#$FF00
+        CLR  R0
+wspz:   ST   [X],R0
+        INCW X
+        MOV  R1,XL
+        CMP  R1,#$90
+        BNE  wspz
+        MOV  R0,#1              ; a zeroed xorshift stays zero forever
+        ST   [rseed],R0
+        ; User RAM, wiped whole: the relocating stub -- and the boot
+        ; screen it painted from -- lived at $0200, and nothing of it
+        ; may survive to be executed, LISTed or LOADed over. This is
+        ; also what makes an empty program's memory actually empty.
+        LDW  X,#$0200
+        CLR  R0
+urwz:   ST   [X],R0
+        INCW X
+        MOV  R1,XH
+        CMP  R1,#$7F
+        BNE  urwz
         EI
 END ASM
 CALL fsmount()
-CALL cls()
-CALL banner()
+' The screen already shows the boot banner -- the stub painted it (and
+' was just wiped). The cursor goes under it.
+cy = 10
 cx = 0
 CALL showcur()
+POKE CUR_CTRL, $09              ' block cursor, blink rate 1 (~2 Hz),
+                                ' enabled only now that it is in place
 ' The boot ROM lit the green LED when it found BOOT.BIN; the system is
 ' up now, so out it goes. Its whole duration is the relocation and this
 ' startup -- a blink, with no timer anywhere.
@@ -1978,40 +1981,34 @@ CMDTAB:
         .byte 3, "R","U","N"
         .byte 0
 
-; ---- the interpreter's errors, indexed by ERR.
-;
-; Deliberately not ERRTAB: that is the editor's list and the codes do
-; not line up. `errmsg(1)` is OUT OF MEMORY where `ERR = 1` is a syntax
-; error, so sharing one table would report the wrong fault confidently.
+; ---- every error message, one table. Entries 0-18 are the
+; interpreter's, indexed by ERR - 1; the tail is the editor's, reached
+; through errmsg() by the same indices. One namespace, ready for a
+; direct mode where the two report through one mouth.
 RUNTAB:
-        .asciz "SYNTAX ERROR"
-        .asciz "TOO MANY FORS ERROR"
-        .asciz "NEXT WITHOUT FOR ERROR"
-        .asciz "FORMULA TOO COMPLEX ERROR"
-        .asciz "OUT OF MEMORY ERROR"
-        .asciz "TOO MANY VARIABLES ERROR"
-        .asciz "SUBSCRIPT ERROR"
-        .asciz "STRING TOO LONG ERROR"
-        .asciz "TYPE MISMATCH ERROR"
-        .asciz "SYNTAX ERROR IN ASM"
-        .asciz "NO SUCH INSTRUCTION"
-        .asciz "UNDEFINED SYMBOL"
-        .asciz "ERROR"
-        .asciz "BRANCH OUT OF RANGE"
-        .asciz "DIVISION BY ZERO ERROR"
-        .asciz "LOOP ERROR"
-        .asciz "CALL ERROR"
+        .asciz "SYNTAX"
+        .asciz "FORS"
+        .asciz "NO FOR"
+        .asciz "COMPLEX"
+        .asciz "OUT OF MEM"
+        .asciz "VARS"
+        .asciz "INDEX"
+        .asciz "STR LEN"
+        .asciz "TYPE"
+        .asciz "ASM"
+        .asciz "NO INSTR"
+        .asciz "SYMBOL"
+        .asciz "ERR"
+        .asciz "BRANCH"
+        .asciz "DIV BY 0"
+        .asciz "LOOP"
+        .asciz "CALL"
         .asciz "BREAK"
-        .asciz "OUT OF DATA ERROR"
-        .byte 0
-
-; ---- errors. C64-shaped: a ? , the fault, and ERROR.
-ERRTAB:
-        .asciz "SYNTAX ERROR"
-        .asciz "OUT OF MEMORY ERROR"
-        .asciz "UNDEF'D LINE ERROR"
-        .asciz "DISK FULL ERROR"
-        .asciz "FILE NOT FOUND ERROR"
+        .asciz "NO DATA"
+        ; ---- from here, editor-only: the tables are one. The ? is the
+        ; ---- whole ceremony; there is no ERROR suffix anywhere.
+        .asciz "DISK FULL"
+        .asciz "NO FILE"
         .byte 0
 
 MSGFREE:
@@ -2019,28 +2016,6 @@ MSGFREE:
 
 MSGKFREE:
         .asciz "K FREE"
-
-; ---- the boot screen: an attribute byte, then the text, then a zero.
-; ---- Every line here is something the machine checked.
-; The indent is data, not code: the machine vitals sit four columns in,
-; and the interpreter's own lines -- its name, the free count, and the
-; cursor that follows -- are flush left like everything typed after.
-BANNERTAB:
-        .byte $0B
-        .asciz "    COOL8"
-        .byte $0F
-        .asciz "    8-bit home computer"
-        .byte $07
-        .asciz ""
-        .byte $08
-        .asciz "    CPU     COOL8 @ 8.375 MHz        RAM    64K main, 64K video"
-        .byte $08
-        .asciz "    VIDEO   640x480, 32 sprites      SOUND  8 voices, 1-bit DAC"
-        .byte $07
-        .asciz ""
-        .byte $0E
-        .asciz "COOLBASIC 1.0"
-        .byte 0
 
 ; ---- the filesystem, whole. Its state lives at $0074, in page 0 with
 ; ---- the interpreter's, so that page 1 is the CPU stack alone.
@@ -2070,17 +2045,22 @@ BANNERTAB:
 ; will still overrun -- a person typing never will, and the harness
 ; waits for the ring to empty between chunks.
 IRSIZE  = 16
-irring: .space 16
-irhead: .byte 0
-irtail: .byte 0
+; The ring, the keyboard state and the interpreter's workspace all live
+; in $FF00-$FFFB -- the page below the vectors that nothing else in the
+; BASIC machine uses. A `.space` here would ship its zeros inside the
+; 24 KB image; an equate ships nothing, and init clears the page once
+; because real SPRAM powers up undefined.
+irring  = $FF00                 ; 16
+irhead  = $FF10
+irtail  = $FF11
 
 ; kbd.asm's state. It declares none of its own, because the same source
 ; is assembled into the boot ROM where a .byte would land in ROM and
 ; could never be written.
-kshift: .byte 0
-kbrk:   .byte 0
-kext:   .byte 0
-kdown:  .space 16
+kshift  = $FF12
+kbrk    = $FF13
+kext    = $FF14
+kdown   = $FF15                 ; 16
 
 iisr:   PUSH R0
         PUSH R1

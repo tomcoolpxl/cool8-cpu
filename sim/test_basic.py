@@ -63,7 +63,7 @@ def check(ok, what, detail=""):
 def build():
     src = os.path.join(ROOT, "sw", "basic.bas")
     with open(src, encoding="utf-8") as fh:
-        asm = bas.compile_source(fh.read(), ORG)
+        asm = bas.compile_source(fh.read(), ORG, optimize=True)
     apath = os.path.join(BUILD, "basic.asm")
     with open(apath, "w") as fh:
         fh.write(asm)
@@ -98,6 +98,11 @@ class Machine:
         # bytes, in s_rowaddr, leaving 178 spare.
         self.m.cpu.sp = 0x0200
         self.m.romen = False
+        # What every real boot guarantees before BASIC starts: the ROM
+        # or the flash stub has cleared the screen to spaces. The
+        # editor reads rows back, and a row padded with NULs instead of
+        # spaces stores as a bloated record.
+        self.m.bus.mem[0x8000:0xA000] = b"\x20\x07" * 0x1000
         # rawkey's `.rk0` is reached only when nothing is waiting, so it
         # is the one address that means "idle" rather than "busy".
         self.idle = syms["s_rawkey.rk0"]
@@ -223,12 +228,12 @@ def main():
     M.syms_progend = syms["v_progend"]
     M.settle()
 
-    # ---- 1. it boots
-    scr = M.screen()
-    check(any("COOL8" in r for r in scr) and any("BYTES FREE" in r
-                                                 for r in scr),
-          "boots to a banner with a free-memory line",
-          " | ".join(r for r in scr[:8] if r.strip())[:90])
+    # ---- 1. it boots. The banner is the flash stub's job now --
+    # sim/test_boot_basic.py checks it on the path a board takes; this
+    # harness pokes the image in with no stub, so booting means the
+    # editor is up and idle with a cursor, on a screen it did not paint.
+    check(M.m.cpu.pc == syms["s_rawkey.rk0"],
+          "boots to the editor, idle at the key loop")
 
     # ---- 2. numbered lines are stored, tokenised, in order
     M.type("20 PRINT 2\n10 PRINT 1\n30 PRINT 3\n")
@@ -382,8 +387,8 @@ def files(code, syms):
     v = M.vol()
     check(v.find("TEST.BAS") is None, "ERA removes it")
     M.cmd('LOAD "TEST"')
-    check(any("FILE NOT FOUND" in r for r in M.screen()),
-          "and loading it now gives ?FILE NOT FOUND ERROR",
+    check(any("NO FILE" in r for r in M.screen()),
+          "and loading it now gives ?NO FILE",
           " | ".join(r for r in M.screen() if r.strip())[-70:])
 
     # ---- a full volume

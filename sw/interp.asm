@@ -184,8 +184,18 @@ irun:
         ; from MEMTOP, and only the caller knows where those are.
         ; LREC and PEND are set by the caller -- the editor passes the
         ; program it is holding, and the gate passes one it built.
-        CALL openline
-        JMP  stmt
+        ;
+        ; The FIRST record gets the same bound test every later one
+        ; gets, through nextline's own tail. An empty program is
+        ; LREC = PEND, and opening record zero anyway executes
+        ; whatever is at PROG -- zeros on a harness, the relocating
+        ; stub's leftover code on every flash boot.
+        LD   R0,[LREC]
+        LD   R1,[LREC+1]
+        CALL lbound
+        BCS  .go
+        JMP  h_end              ; empty: a clean stop, nothing ran
+.go:    JMP  stmt
 
 ; openline -- LREC points at a record; put Y on its first token.
 ;
@@ -219,7 +229,10 @@ nextline:
         ADC  R1,R3
         ST   [LREC],R0
         ST   [LREC+1],R1
-        LD   R2,[PEND]
+; lbound -- R0:R1 holds LREC's value: open it if it is short of PEND
+; and return with carry set, or carry clear for "the program is over".
+; irun enters here for record zero, nextline falls through for the rest.
+lbound: LD   R2,[PEND]
         LD   R3,[PEND+1]
         SUB  R0,R2              ; LREC - progend
         SBC  R1,R3
@@ -418,7 +431,9 @@ h_let:
 ; name may contain rather than two that have to agree. R0 comes back
 ; untouched: `nscan` folds it afterwards and would be folding a class
 ; byte otherwise.
-nisid:  PUSHW X
+nisid:  BTST R0,#$80            ; a token byte is never a name char,
+        BNE  .no                ;   and ctab is 128 bytes, ASCII only
+        PUSHW X
         PUSH R0
         LDW  X,#ctab
         LD   R1,[X+R0]
@@ -459,6 +474,8 @@ nupper: CMP  R0,#$61            ; 'a'
 ; ---------------------------------------------------------------------
 varidx:
         LD   R0,[Y]
+        BTST R0,#$80            ; a token: nothing that starts a name,
+        BNE  .notname           ;   and past the 128-byte table
         LDW  X,#ctab
         LD   R0,[X+R0]          ; folded, classified and indexed at once
         BTST R0,#$40            ; a name starts with a letter
@@ -2234,14 +2251,8 @@ ctab:
         .byte $CF,$D0,$D1,$D2,$D3,$D4,$D5,$D6,$D7,$D8,$D9,$00,$00,$00,$00,$80
         .byte $00,$C0,$C1,$C2,$C3,$C4,$C5,$C6,$C7,$C8,$C9,$CA,$CB,$CC,$CD,$CE
         .byte $CF,$D0,$D1,$D2,$D3,$D4,$D5,$D6,$D7,$D8,$D9,$00,$00,$00,$00,$00
-        .byte $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
-        .byte $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
-        .byte $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
-        .byte $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
-        .byte $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
-        .byte $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
-        .byte $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
-        .byte $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+        ; 128 bytes, ASCII only: both indexers test bit 7 first, so the
+        ; token half of the old 256 was one hundred twenty-eight zeros.
 
 ; ---------------------------------------------------------------------
 ; DO ... LOOP, with an optional WHILE or UNTIL at either end.
@@ -3094,7 +3105,7 @@ sinstr: CALL sopen
 ;
 ; `sw/basic.bas` owns the interrupt that sets this. It lives here so
 ; that sim/test_interp.py, which has no editor, still links.
-ibreak: .byte 0
+ibreak  = $FF25                 ; in the workspace page, see basic.bas
 
 ; ipoll -- checked at the loop back-edges only, because those are the
 ; only places a program can spin: NEXT going round, LOOP going round,
@@ -3148,13 +3159,15 @@ GSNDD   = $FE51
 
 ; The frame counter iisr keeps (TIMER reads it, VSYNC waits on it), the
 ; random seed, and scratch for up to five parsed arguments plus LINE's
-; working set. Absolute rather than page 0: page 0 is spoken for.
-frames: .word 0
-rseed:  .word 1
-garg:   .space 10
-lwk:    .space 10               ; dx, dy, err, sx, sy -- all words
-FORSTK: .space 72               ; MAXFOR frames of FORFR -- out of page
-                                ; 0, where 8 x 9 no longer fit
+; working set. Equates into the $FF00 workspace page (see basic.bas):
+; page 0 is spoken for, and a .space would ship its zeros in the image.
+; init seeds rseed to 1 after the page clear -- a zeroed xorshift stays
+; zero forever.
+frames  = $FF26                 ; 2
+rseed   = $FF28                 ; 2
+garg    = $FF2A                 ; 10
+lwk     = $FF34                 ; 10  dx, dy, err, sx, sy -- all words
+FORSTK  = $FF3E                 ; 72  MAXFOR frames of FORFR
 
 ; gargs -- R3 comma-separated expressions into garg, low byte first.
 ; eval leaves Y on the comma (its operator scan has already skipped the

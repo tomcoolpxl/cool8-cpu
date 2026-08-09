@@ -202,13 +202,13 @@ CASES = [
 # still holding when the interpreter stops.
 ERRORS = [
     ("an undefined SUB names the line",
-     ["10 A = 1", "20 CALL NOPE", "30 END"], "?CALL ERROR IN 20"),
+     ["10 A = 1", "20 CALL NOPE", "30 END"], "?CALL IN 20"),
 
     ("a subscript past the end names the line",
-     ["10 DIM V(2)", "20 V(9) = 1", "30 END"], "?SUBSCRIPT ERROR IN 20"),
+     ["10 DIM V(2)", "20 V(9) = 1", "30 END"], "?INDEX IN 20"),
 
     ("division by zero names the line",
-     ["10 A = 1 / 0", "20 END"], "?DIVISION BY ZERO ERROR IN 10"),
+     ["10 A = 1 / 0", "20 END"], "?DIV BY 0 IN 10"),
 ]
 
 

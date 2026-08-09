@@ -21,7 +21,7 @@ everything the graphics and sound commands touch is
 | `CALL name(…)` / `SUB name` … `RETURN` | SUBs found once at RUN; no parameters, no locals |
 | `PRINT a; b$; c` | `;` butts items together, `,` inserts one space, a trailing separator holds the newline. Negative numbers print signed |
 | `INPUT v` | digits and a leading `-`, echoed as typed, ended by Return; numeric scalars only |
-| `DATA n, n, …` / `READ v, v` / `RESTORE` | numbers only (with `-`), scalar targets only; reading past the end is `?OUT OF DATA ERROR` |
+| `DATA n, n, …` / `READ v, v` / `RESTORE` | numbers only (with `-`), scalar targets only; reading past the end is `?OUT OF DATA` |
 | `POKE a, b` / `PEEK(a)` | main RAM and the I/O page |
 | `DIM v(n)` | one-dimensional arrays on the heap |
 | `ASM` … `END ASM` | the whole assembler of [08-assembler.md](08-assembler.md), labels as variables |
@@ -123,7 +123,7 @@ cannot. Pixel coordinates are the **logical** grid of the current mode
 | `PALETTE i, v` | entry `i` (0-255) = `$0RGB`, 4 bits per gun: `$0F00` is red, `$0FFF` white. Entries 0-15 are what 4-bpp modes and text use; 16-31 are bank 1. Boot seeds 0-15 with the editor's sixteen and 16-31 with the Pico-8 sixteen |
 | `TILE x, y, t, a` | one mode-2 map entry: tile index `t` (0-255) at tile column `x`, row `y`. `a`: bits 7:6 V/H flip, 5:4 pattern bank, 3:0 palette bank |
 | `VPOKE a, b` | one byte of VRAM — the master key that makes everything without a command possible |
-| `GTEXT x, y, s$, c` | 8×8-cell text in any bitmap mode: set pixels paint `c`, clear pixels paint 0 (opaque). The face is Spleen 5×8, ASCII 32-127, seeded by boot at VRAM `$FC00` — 8 bytes a glyph, so `$FC00 + (ASC(ch)-32)*8`, and `VPOKE` can restyle it |
+| `GTEXT x, y, s$, c` | 8×8-cell text in any bitmap mode: set pixels paint `c`, clear pixels paint 0 (opaque). The face is the editor's own Spleen, resampled to 8×8, ASCII 32-127, seeded by boot at VRAM `$FC00` — 8 bytes a glyph, so `$FC00 + (ASC(ch)-32)*8`, and `VPOKE` can restyle it |
 | `VSYNC` | hold until the next frame starts — **the pacing primitive**. A loop doing `VSYNC` once per pass runs at exactly 60 Hz |
 
 Mode-2 patterns: a tile is 32 bytes (8 rows × 4 bytes, 4 bpp, high
@@ -246,9 +246,12 @@ game, at a fiftieth of their cost.
 
 ## 9. The boot, the editor, storage
 
-- Power-on is mode 0, the editor. The boot stub — run-once code in
-  reclaimed RAM — seeds both palette banks and the `GTEXT` font and
-  plays the three-note chime. None of it costs a resident byte.
+- Power-on is mode 0, the editor. The boot stub — run-once code the
+  init then wipes along with all user RAM — seeds both palette banks
+  and the `GTEXT` font and paints the boot screen, free count
+  included (a build-time constant: a fresh machine is empty by
+  definition). None of it costs a resident byte, and none of it
+  survives to be executed or LISTed over.
 - Editor commands (typed without a line number): `RUN LIST NEW FREE
   CLS SAVE "name" LOAD "name" DIR ERA "name" COMPACT DRIVE n
   DELETE a-b RENUMBER`. There is no immediate mode — a statement
@@ -258,8 +261,15 @@ game, at a fiftieth of their cost.
 
 ## 10. Sizes and the ceiling
 
-The resident system is **24,052 bytes of the 24,064** below the I/O
-page. The next feature displaces an old one; the drop candidates, in
-order of bytes returned against pain: `LINE` (~400), the fixed-point
-trio (~446), `GTEXT` (~232), `INPUT` (~198), `CLG` (~106),
-`SPRITE` (~120). Everything else earns its bytes several times over.
+The resident system is **22,856 bytes of the 24,064** below the I/O
+page — 1,208 free, after a space hunt in three acts: every workspace
+buffer (the input ring, the key bitmap, `FOR` frames, argument
+scratch, the filesystem's page buffer) moved out of the image into the
+otherwise-idle `$FF00` page and the string accumulator; a
+classification table halved because its token half was 128 zeros; and
+the boot screen — text, painting and free count — moved wholesale into
+the run-once stub, with the error messages tersed to C64 brevity and
+the editor's table unified into the interpreter's. If the ceiling
+looms again, the drop candidates in order of bytes returned against
+pain: `LINE` (~400), the fixed-point trio (~446), `GTEXT` (~232),
+`INPUT` (~198), `CLG` (~106), `SPRITE` (~120).

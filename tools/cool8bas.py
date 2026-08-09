@@ -1432,8 +1432,82 @@ MUL16 = [
 ]
 
 
-def compile_source(src, org=None):
-    return Compiler(org).parse(src)
+# ---------------------------------------------------------------------
+# The peephole pass. Two rules, both classic redundancy eliminations,
+# both gated by a conservative flag-liveness scan -- the same rule every
+# small-target compiler (SDCC's peepholes, cc65) lives by: an
+# elimination may only change flags nobody downstream reads.
+#
+#   MOV Rn,#0  ->  CLR Rn        one byte shorter, but CLR is SUB Rn,Rn
+#                                and SETS CARRY, so only where no one
+#                                reads C before something rewrites it.
+#   ST [x],R0 / LD R0,[x]        the reload is free -- R0 already holds
+#                                it -- but LD sets Z/N, so only where
+#                                no one reads those first.
+#
+# The scan stops UNSAFE at any label, branch, call or return: control
+# flow out of the window means someone unseen might read the flag.
+# Measured on sw/basic.bas: the two rules return ~370 bytes.
+
+_C_READERS = {"ADC", "SBC", "BCS", "BCC", "BHS", "BLO", "BHI", "BLS"}
+_C_WRITERS = {"ADD", "ADC", "SUB", "SBC", "CMP", "CLR", "SHR", "MUL"}
+_ZN_READERS = {"BEQ", "BNE", "BMI", "BPL", "BLT", "BGE", "BGT", "BLE"}
+_ZN_WRITERS = {"ADD", "ADC", "SUB", "SBC", "CMP", "CLR", "SHR", "MUL",
+               "AND", "OR", "XOR", "TST", "BTST", "LD", "POP"}
+_FLOW = {"JMP", "CALL", "RET", "RETI", "BRA"}
+
+
+def _dead(lines, k, readers, writers):
+    """True if the flags in question are rewritten before anyone reads
+    them, looking forward from lines[k+1]. Conservative: any label or
+    change of control flow is a fail."""
+    for l in lines[k + 1:]:
+        t = l.split(";")[0].strip()
+        if not t:
+            continue
+        if t.endswith(":") or t.startswith("."):
+            return False
+        op = t.split()[0].upper()
+        if op in readers or op in _FLOW or op.startswith("B"):
+            return op not in readers and op in writers
+        if op in writers:
+            return True
+    return False
+
+
+def peephole(asm):
+    rules = os.environ.get("COOL8_PEEP", "12")
+    lines = asm.splitlines()
+    out = []
+    k = 0
+    while k < len(lines):
+        t = " ".join(lines[k].split(";")[0].split())
+        nxt = " ".join(lines[k + 1].split(";")[0].split()) \
+            if k + 1 < len(lines) else ""
+        m = re.match(r"MOV (R[0-3]),#0$", t)
+        if m and "1" in rules and _dead(lines, k, _C_READERS, _C_WRITERS):
+            out.append(f"        CLR  {m.group(1)}")
+            k += 1
+            continue
+        m = re.match(r"ST \[(.+)\],R0$", t)
+        if m and "2" in rules and k + 1 < len(lines):
+            if nxt == f"LD R0,[{m.group(1)}]" \
+                    and _dead(lines, k + 1, _ZN_READERS, _ZN_WRITERS):
+                out.append(lines[k])
+                k += 2
+                continue
+        out.append(lines[k])
+        k += 1
+    return "\n".join(out) + ("\n" if asm.endswith("\n") else "")
+
+
+def compile_source(src, org=None, optimize=False):
+    """optimize=True runs the peephole pass. It is OFF by default
+    because sim/test_emit.py holds this compiler byte-identical to the
+    self-hosted one, which has no peephole -- the system build in
+    sim/test_basic.py turns it on."""
+    asm = Compiler(org).parse(src)
+    return peephole(asm) if optimize else asm
 
 
 def main():

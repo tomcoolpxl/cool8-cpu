@@ -94,38 +94,56 @@ reloc:  LDW  X,#src
         SUB  R2,#1
         BNE  .pl
 
-        ; the chime: three rising notes on voice 0, ~60 ms each, then
-        ; silence. C5, E5, G5 as phase increments (f = inc / 2).
-        LDW  X,#chime
-.nx:    LD   R2,[X]
+        ; the boot screen. It lives here, not in the image: 400-odd
+        ; bytes of text and painting that run once and are reclaimed.
+        ; The free count is computed by mkboot.py at build time -- the
+        ; machine is empty at this moment by definition. The boot ROM
+        ; already has mode 0 up with the base at $8000.
+        ;
+        ; The ROM also left ITS cursor enabled, parked wherever its
+        ; monitor last put it. Off, before anything is painted: BASIC
+        ; turns it back on at the end of init, already in place.
+        CLR  R0
+        ST   [$FE24],R0
+        LDW  Y,#$8000           ; clear: char 32, attr $07 -- 4096
+        CLR  R2                 ; CELLS, two bytes each. $2000 here
+        MOV  R3,#$10            ; once cleared 16 KB and half of the
+                                ; relocated image with it
+.sc:    MOV  R0,#$20
+        ST   [Y],R0
+        INCW Y
+        MOV  R0,#$07
+        ST   [Y],R0
+        INCW Y
+        SUB  R2,#1
+        BCS  .sc
+        SUB  R3,#1
+        BNE  .sc
+
+        LDW  X,#btext           ; rows of: row, attr, text, 0
+.bl:    LD   R0,[X]
+        CMP  R0,#$FF
+        BEQ  .bdone
+        ADD  R0,#$80            ; row base: $8000 + row * 256
+        MOV  YH,R0
+        CLR  R0
+        MOV  YL,R0
         INCW X
-        LD   R3,[X]
+        LD   R1,[X]             ; the line's attribute
         INCW X
-        MOV  R0,R2
-        OR   R0,R3
-        BEQ  .off
-        CLR  R0
-        ST   [$FE50],R0
-        ST   [$FE51],R2
-        ST   [$FE51],R3
-        MOV  R0,#4
-        ST   [$FE50],R0
-        MOV  R0,#$06
-        ST   [$FE51],R0
-        MOV  R0,#$40
-        ST   [$FE51],R0
-        CLR  R0
-        CLR  R1
-.dl:    ADD  R0,#1
-        ADC  R1,#0
-        CMP  R1,#$C0
-        BNE  .dl
-        BRA  .nx
-.off:   MOV  R0,#4
-        ST   [$FE50],R0
-        CLR  R0
-        ST   [$FE51],R0
-        ST   [$FE51],R0
+.bc:    LD   R0,[X]
+        TST  R0
+        BEQ  .bnl
+        ST   [Y],R0
+        INCW Y
+        MOV  R0,R1
+        ST   [Y],R0
+        INCW Y
+        INCW X
+        BRA  .bc
+.bnl:   INCW X
+        BRA  .bl
+.bdone:
 
         ; GTEXT's font: 96 glyphs of 8x8, 1 bpp, seeded into VRAM at
         ; $FC00 through the port. VRAM is RAM: it survives every mode
@@ -167,24 +185,66 @@ paltab: ; bank 0 -- softened CGA, semantics preserved
         .byte $0F,$04, $0F,$A0, $0F,$E2, $00,$E3
         .byte $02,$AF, $08,$79, $0F,$7A, $0F,$CA
 
-chime:  .word 1047, 1320, 1571
-        .word 0
+btext:
+@BANNER@
+        .byte $FF
 
 src:
 """
 
+# The boot screen's text. The free count is a build-time constant: the
+# user area is $0200-$7EDF and a freshly booted machine holds nothing.
+FREE = 0x7EDF - 0x0200
+BANNER = [
+    (1, 0x0B, "    COOL8"),
+    (2, 0x0F, "    8-bit home computer"),
+    (4, 0x08, "    CPU     COOL8 @ 8.375 MHz        RAM    64K main, 64K video"),
+    (5, 0x08, "    VIDEO   640x480, 32 sprites      SOUND  8 voices, 1-bit DAC"),
+    (7, 0x0E, "COOLBASIC 1.0"),
+    (8, 0x07, f"{FREE} BYTES FREE"),
+]
+
+
+def _banner():
+    lines = []
+    for row, attr, text in BANNER:
+        lines.append(f"        .byte {row}, ${attr:02X}")
+        lines.append(f'        .asciz "{text}"')
+    return "\n".join(lines)
+
 
 def _font8():
-    """96 glyphs of 8x8, 1 bpp, from Spleen's native 5x8 -- the same
-    family at the one size its designer drew for 8-pixel cells. The
-    8x16 was resampled down here once, and it cannot be done honestly:
-    its capitals are 11 rows, and squeezing 11 into 8 mangles whichever
-    rows the merges land on -- the tops of the letters, as it played
-    out."""
+    """96 glyphs of 8x8, 1 bpp, from the bitstream's own 8x16 font --
+    the same face, so GTEXT matches the editor.
+
+    The resample leans on measured Spleen geometry rather than
+    arithmetic: caps sit on rows 2-11 with the baseline at 11, and the
+    ten rows are bars joined by *duplicate* body rows -- B is bar,
+    three identical rows, bar, four identical rows, bar. So rows 4, 7
+    and 9 are dropped, never merged, and every feature row -- cap top,
+    crossbars, baseline -- lands in the cell verbatim. Naive schemes
+    fail here precisely because they merge: OR-ing distinct rows
+    mangles the letter tops, and fixed-step sampling missed the
+    baseline entirely. A glyph that does ink a dropped row uniquely
+    (no cap does; some punctuation) keeps it by an OR into the kept
+    row below. Rows 12-14 -- the descenders -- compress into cell
+    row 7, so g, j, p, q and y keep their tails below the baseline.
+
+    (Spleen's own 5x8 was tried instead: honest pixels, but 4-wide
+    letters swim in an 8-wide cell. Chunky beat authentic.)"""
     import mkfont
-    bdf = os.path.join(ROOT, "assets", "font", "spleen-5x8.bdf")
-    img, _, _ = mkfont.build(bdf, cell_h=8)
-    out = img[32 * 8:128 * 8]
+    img, _, _ = mkfont.build(
+        os.path.join(ROOT, "assets", "font", "spleen-8x16.bdf"))
+    keep = (2, 3, 5, 6, 8, 10, 11)
+    out = bytearray()
+    for ch in range(32, 128):
+        cell = img[ch * 16:(ch + 1) * 16]
+        rows8 = [cell[r] for r in keep]
+        for r in (4, 7, 9):
+            if cell[r] and cell[r] != cell[r - 1] and cell[r] != cell[r + 1]:
+                rows8[keep.index(r + 1)] |= cell[r]
+        rows8.append(cell[12] | cell[13] | cell[14])
+        out += bytes(rows8)
     lines = []
     for i in range(0, len(out), 16):
         row = ",".join("$%02X" % b for b in out[i:i + 16])
@@ -198,6 +258,7 @@ def build(payload, dest=0xA000, org=0x0200, build_dir=None):
     os.makedirs(build_dir, exist_ok=True)
 
     text = (STUB.replace("@FONT@", _font8())
+                .replace("@BANNER@", _banner())
                 .replace("@ORG@", "%04X" % org)
                 .replace("@DEST@", "%04X" % dest)
                 .replace("@LO@", "%02X" % (len(payload) & 0xFF))
