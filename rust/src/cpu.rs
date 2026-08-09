@@ -7,6 +7,11 @@
 // Cycle costs and the page-2 assigned/reserved split come only from the
 // generated optab.rs; nothing here restates a table. Semantics are the
 // hand-written part, and the trace diff is what polices them.
+//
+// Memory goes through the Bus trait, exactly as cool8emu.Cool8 reads
+// through its Bus object: FlatBus is cosim's bare 64 KB, and
+// machine::MachineBus is the whole machine's memory map. Generic, not
+// dyn, so the flat path keeps its measured speed.
 
 use crate::optab;
 
@@ -14,6 +19,34 @@ pub const RESET_VEC: u16 = 0xFFF8;
 pub const NMI_VEC: u16 = 0xFFFA;
 pub const IRQ_VEC: u16 = 0xFFFC;
 pub const BRK_VEC: u16 = 0xFFFE;
+
+pub trait Bus {
+    fn read(&mut self, addr: u16) -> u8;
+    fn write(&mut self, addr: u16, value: u8);
+}
+
+/// 64 KB of RAM and nothing else — cool8emu.Bus with no hooks, which is
+/// exactly what sim/cosim.py's emu_trace runs against.
+pub struct FlatBus {
+    pub mem: Box<[u8; 0x10000]>,
+}
+
+impl FlatBus {
+    pub fn new() -> FlatBus {
+        FlatBus {
+            mem: vec![0u8; 0x10000].into_boxed_slice().try_into().unwrap(),
+        }
+    }
+}
+
+impl Bus for FlatBus {
+    fn read(&mut self, addr: u16) -> u8 {
+        self.mem[addr as usize]
+    }
+    fn write(&mut self, addr: u16, value: u8) {
+        self.mem[addr as usize] = value;
+    }
+}
 
 // ALU operation indices, matching the `ooo` field.
 const MOV: u8 = 0;
@@ -26,7 +59,6 @@ const OR: u8 = 6;
 const CMP: u8 = 7;
 
 pub struct Cpu {
-    pub mem: Box<[u8; 0x10000]>,
     pub r: [u8; 4],
     pub x: u16,
     pub y: u16,
@@ -47,7 +79,6 @@ pub struct Cpu {
 impl Cpu {
     pub fn new() -> Cpu {
         Cpu {
-            mem: vec![0u8; 0x10000].into_boxed_slice().try_into().unwrap(),
             r: [0; 4],
             x: 0,
             y: 0,
@@ -66,7 +97,7 @@ impl Cpu {
         }
     }
 
-    pub fn reset(&mut self) {
+    pub fn reset<B: Bus>(&mut self, bus: &mut B) {
         self.r = [0; 4];
         self.x = 0;
         self.y = 0;
@@ -76,7 +107,7 @@ impl Cpu {
         self.n = false;
         self.v = false;
         self.i = false;
-        self.pc = self.read16(RESET_VEC);
+        self.pc = self.read16(bus, RESET_VEC);
         self.cycles = 0;
         self.instructions = 0;
         self.halted = false;
@@ -106,48 +137,40 @@ impl Cpu {
 
     // ------------------------------------------------------ primitives
 
-    fn read(&self, addr: u16) -> u8 {
-        self.mem[addr as usize]
+    fn read16<B: Bus>(&mut self, bus: &mut B, addr: u16) -> u16 {
+        bus.read(addr) as u16 | (bus.read(addr.wrapping_add(1)) as u16) << 8
     }
 
-    fn write(&mut self, addr: u16, value: u8) {
-        self.mem[addr as usize] = value;
-    }
-
-    fn read16(&self, addr: u16) -> u16 {
-        self.read(addr) as u16 | (self.read(addr.wrapping_add(1)) as u16) << 8
-    }
-
-    fn fetch(&mut self) -> u8 {
-        let b = self.read(self.pc);
+    fn fetch<B: Bus>(&mut self, bus: &mut B) -> u8 {
+        let b = bus.read(self.pc);
         self.pc = self.pc.wrapping_add(1);
         b
     }
 
-    fn fetch16(&mut self) -> u16 {
-        let lo = self.fetch() as u16;
-        lo | (self.fetch() as u16) << 8
+    fn fetch16<B: Bus>(&mut self, bus: &mut B) -> u16 {
+        let lo = self.fetch(bus) as u16;
+        lo | (self.fetch(bus) as u16) << 8
     }
 
-    fn push(&mut self, v: u8) {
+    fn push<B: Bus>(&mut self, bus: &mut B, v: u8) {
         self.sp = self.sp.wrapping_sub(1);
-        self.write(self.sp, v);
+        bus.write(self.sp, v);
     }
 
-    fn pop(&mut self) -> u8 {
-        let v = self.read(self.sp);
+    fn pop<B: Bus>(&mut self, bus: &mut B) -> u8 {
+        let v = bus.read(self.sp);
         self.sp = self.sp.wrapping_add(1);
         v
     }
 
-    fn push16(&mut self, v: u16) {
-        self.push((v >> 8) as u8); // high first, so low ends up lower
-        self.push(v as u8);
+    fn push16<B: Bus>(&mut self, bus: &mut B, v: u16) {
+        self.push(bus, (v >> 8) as u8); // high first, so low ends up lower
+        self.push(bus, v as u8);
     }
 
-    fn pop16(&mut self) -> u16 {
-        let lo = self.pop() as u16;
-        lo | (self.pop() as u16) << 8
+    fn pop16<B: Bus>(&mut self, bus: &mut B) -> u16 {
+        let lo = self.pop(bus) as u16;
+        lo | (self.pop(bus) as u16) << 8
     }
 
     fn nz(&mut self, v: u8) {
@@ -222,25 +245,25 @@ impl Cpu {
 
     /// Control transfer only — the cycle cost is the caller's, so the
     /// generated table stays the single statement of every cost.
-    fn enter(&mut self, vector: u16) {
+    fn enter<B: Bus>(&mut self, bus: &mut B, vector: u16) {
         let pc = self.pc;
-        self.push16(pc);
+        self.push16(bus, pc);
         let f = self.f();
-        self.push(f);
+        self.push(bus, f);
         self.i = false;
-        self.pc = self.read16(vector);
+        self.pc = self.read16(bus, vector);
         self.halted = false;
     }
 
-    fn service_interrupts(&mut self) -> bool {
+    fn service_interrupts<B: Bus>(&mut self, bus: &mut B) -> bool {
         if self.nmi_edge {
             self.nmi_edge = false;
-            self.enter(NMI_VEC);
+            self.enter(bus, NMI_VEC);
             self.cycles += optab::INTERRUPT_CYCLES;
             return true;
         }
         if self.irq_line && self.i {
-            self.enter(IRQ_VEC);
+            self.enter(bus, IRQ_VEC);
             self.cycles += optab::INTERRUPT_CYCLES;
             return true;
         }
@@ -251,8 +274,8 @@ impl Cpu {
 
     /// Execute one instruction, exactly as cool8emu.Cool8.step does:
     /// a serviced interrupt and a halted tick are not retired.
-    pub fn step(&mut self) {
-        if self.service_interrupts() {
+    pub fn step<B: Bus>(&mut self, bus: &mut B) {
+        if self.service_interrupts(bus) {
             return;
         }
         if self.halted {
@@ -260,16 +283,16 @@ impl Cpu {
             return;
         }
 
-        let op = self.fetch();
+        let op = self.fetch(bus);
         match op {
-            0x00..=0x1F => self.alu_imm(op),
-            0x20..=0x2F => self.control(op),
-            0x30..=0x37 => self.pushpop(op),
-            0x38..=0x3F => self.ptr_quick(op),
-            0x40..=0x4F => self.ldst_ptr(op),
-            0x50..=0x5F => self.ldst_ptr_disp(op),
-            0x60..=0x6F => self.ldst_sp_abs(op),
-            0x70..=0x7F => self.branch(op),
+            0x00..=0x1F => self.alu_imm(bus, op),
+            0x20..=0x2F => self.control(bus, op),
+            0x30..=0x37 => self.pushpop(bus, op),
+            0x38..=0x3F => self.ptr_quick(bus, op),
+            0x40..=0x4F => self.ldst_ptr(bus, op),
+            0x50..=0x5F => self.ldst_ptr_disp(bus, op),
+            0x60..=0x6F => self.ldst_sp_abs(bus, op),
+            0x70..=0x7F => self.branch(bus, op),
             _ => self.alu_reg(op),
         }
         self.instructions += 1;
@@ -277,11 +300,11 @@ impl Cpu {
 
     // ---------------------------------------------------- instructions
 
-    fn alu_imm(&mut self, op: u8) {
+    fn alu_imm<B: Bus>(&mut self, bus: &mut B, op: u8) {
         // $00-$1F
         let (ooo, dd) = ((op >> 2) & 7, (op & 3) as usize);
         let a = self.r[dd];
-        let b = self.fetch();
+        let b = self.fetch(bus);
         if let Some(r) = self.alu(ooo, a, b) {
             self.r[dd] = r;
         }
@@ -299,20 +322,20 @@ impl Cpu {
         self.cycles += optab::CYCLES[op as usize] as u64;
     }
 
-    fn pushpop(&mut self, op: u8) {
+    fn pushpop<B: Bus>(&mut self, bus: &mut B, op: u8) {
         // $30-$37
         let dd = (op & 3) as usize;
         if op & 4 != 0 {
-            let v = self.pop();
+            let v = self.pop(bus);
             self.r[dd] = v;
             self.nz(v); // POP sets Z/N
         } else {
-            self.push(self.r[dd]); // PUSH sets nothing
+            self.push(bus, self.r[dd]); // PUSH sets nothing
         }
         self.cycles += optab::CYCLES[op as usize] as u64;
     }
 
-    fn ptr_quick(&mut self, op: u8) {
+    fn ptr_quick<B: Bus>(&mut self, bus: &mut B, op: u8) {
         // $38-$3F
         let which = op & 7;
         if which < 4 {
@@ -326,9 +349,9 @@ impl Cpu {
             }
         } else if which < 6 {
             let v = if which & 1 != 0 { self.y } else { self.x };
-            self.push16(v);
+            self.push16(bus, v);
         } else {
-            let v = self.pop16();
+            let v = self.pop16(bus);
             if which & 1 != 0 {
                 self.y = v;
             } else {
@@ -338,48 +361,49 @@ impl Cpu {
         self.cycles += optab::CYCLES[op as usize] as u64;
     }
 
-    fn ldst_ptr(&mut self, op: u8) {
+    fn ldst_ptr<B: Bus>(&mut self, bus: &mut B, op: u8) {
         // $40-$4F
         let dd = ((op >> 1) & 3) as usize;
         let ptr = if op & 1 != 0 { self.y } else { self.x };
-        self.memop(op & 8 != 0, dd, ptr);
+        self.memop(bus, op & 8 != 0, dd, ptr);
         self.cycles += optab::CYCLES[op as usize] as u64;
     }
 
-    fn ldst_ptr_disp(&mut self, op: u8) {
+    fn ldst_ptr_disp<B: Bus>(&mut self, bus: &mut B, op: u8) {
         // $50-$5F
-        let d = self.fetch() as i8; // signed
+        let d = self.fetch(bus) as i8; // signed
         let base = if op & 1 != 0 { self.y } else { self.x };
         let ea = base.wrapping_add(d as u16);
-        self.memop(op & 8 != 0, ((op >> 1) & 3) as usize, ea);
+        self.memop(bus, op & 8 != 0, ((op >> 1) & 3) as usize, ea);
         self.cycles += optab::CYCLES[op as usize] as u64;
     }
 
-    fn ldst_sp_abs(&mut self, op: u8) {
+    fn ldst_sp_abs<B: Bus>(&mut self, bus: &mut B, op: u8) {
         // $60-$6F
         let ea = if op & 1 != 0 {
-            self.fetch16() // absolute
+            self.fetch16(bus) // absolute
         } else {
-            let u = self.fetch() as u16;
+            let u = self.fetch(bus) as u16;
             self.sp.wrapping_add(u) // SP + unsigned
         };
-        self.memop(op & 8 != 0, ((op >> 1) & 3) as usize, ea);
+        self.memop(bus, op & 8 != 0, ((op >> 1) & 3) as usize, ea);
         self.cycles += optab::CYCLES[op as usize] as u64;
     }
 
-    fn memop(&mut self, is_store: bool, dd: usize, ea: u16) {
+    fn memop<B: Bus>(&mut self, bus: &mut B, is_store: bool, dd: usize,
+                     ea: u16) {
         if is_store {
-            self.write(ea, self.r[dd]); // stores set nothing
+            bus.write(ea, self.r[dd]); // stores set nothing
         } else {
-            let v = self.read(ea);
+            let v = bus.read(ea);
             self.r[dd] = v;
             self.nz(v); // loads set Z/N
         }
     }
 
-    fn branch(&mut self, op: u8) {
+    fn branch<B: Bus>(&mut self, bus: &mut B, op: u8) {
         // $70-$7F
-        let d = self.fetch() as i8;
+        let d = self.fetch(bus) as i8;
         if self.cond(op & 15) {
             self.pc = self.pc.wrapping_add(d as u16); // relative to next
             self.cycles += optab::CYCLES_TAKEN[op as usize] as u64;
@@ -388,26 +412,26 @@ impl Cpu {
         }
     }
 
-    fn control(&mut self, op: u8) {
+    fn control<B: Bus>(&mut self, bus: &mut B, op: u8) {
         // $20-$2F
         match op {
             0x20 => {} // NOP
             0x21 => self.halted = true,
-            0x22 => self.pc = self.pop16(),
+            0x22 => self.pc = self.pop16(bus),
             0x23 => {
-                let f = self.pop();
+                let f = self.pop(bus);
                 self.set_f(f);
-                self.pc = self.pop16();
+                self.pc = self.pop16(bus);
             }
             0x24 => self.i = true,
             0x25 => self.i = false,
             0x26 => self.c = false,
             0x27 => self.c = true,
-            0x28 => self.pc = self.fetch16(),
+            0x28 => self.pc = self.fetch16(bus),
             0x29 => {
-                let t = self.fetch16();
+                let t = self.fetch16(bus);
                 let pc = self.pc;
-                self.push16(pc);
+                self.push16(bus, pc);
                 self.pc = t;
             }
             0x2A | 0x2B => {
@@ -416,12 +440,12 @@ impl Cpu {
             0x2C | 0x2D => {
                 let t = if op & 1 != 0 { self.y } else { self.x };
                 let pc = self.pc;
-                self.push16(pc);
+                self.push16(bus, pc);
                 self.pc = t;
             }
-            0x2E => self.enter(BRK_VEC), // BRK; cost is in the table
+            0x2E => self.enter(bus, BRK_VEC), // BRK; cost is in the table
             _ => {
-                self.page2();
+                self.page2(bus);
                 return; // page 2 accounts for its own cost
             }
         }
@@ -430,12 +454,12 @@ impl Cpu {
 
     // ---------------------------------------------------------- page 2
 
-    fn page2(&mut self) {
-        let op = self.fetch();
+    fn page2<B: Bus>(&mut self, bus: &mut B) {
+        let op = self.fetch(bus);
         self.cycles += optab::P2_CYCLES[op as usize] as u64;
 
         if !optab::P2_ASSIGNED[op as usize] {
-            self.enter(BRK_VEC); // reserved -> trap
+            self.enter(bus, BRK_VEC); // reserved -> trap
             return;
         }
 
@@ -450,14 +474,14 @@ impl Cpu {
             }
             0x2C | 0x2D => {
                 // ADDW X|Y,#imm16
-                let v = self.fetch16();
+                let v = self.fetch16(bus);
                 if op & 1 != 0 {
                     self.y = self.y.wrapping_add(v); // sets no flags
                 } else {
                     self.x = self.x.wrapping_add(v);
                 }
             }
-            0x10..=0x3F => self.unary(op),
+            0x10..=0x3F => self.unary(bus, op),
             0x40..=0x4F => {
                 // MOV Rd,<half> — a MOV: no flags
                 self.r[dd] = self.half(op & 3);
@@ -467,7 +491,7 @@ impl Cpu {
                 let v = self.r[dd];
                 self.set_half(op & 3, v);
             }
-            0x60..=0x6F => self.wide(op),
+            0x60..=0x6F => self.wide(bus, op),
             0x70..=0x7F => {
                 // ADDW/SUBW X|Y,Rd — sets no flags
                 let which = (op >> 2) & 3;
@@ -483,15 +507,15 @@ impl Cpu {
                 // [X|Y + Rs]
                 let base = if (op >> 4) & 1 != 0 { self.y } else { self.x };
                 let ea = base.wrapping_add(self.r[ss] as u16);
-                self.memop(op >= 0xA0, dd, ea);
+                self.memop(bus, op >= 0xA0, dd, ea);
             }
-            0xC0..=0xDF => self.autoinc(op),
+            0xC0..=0xDF => self.autoinc(bus, op),
             0xE0 => {
                 let f = self.f();
-                self.push(f);
+                self.push(bus, f);
             }
             0xE1 => {
-                let f = self.pop();
+                let f = self.pop(bus);
                 self.set_f(f);
             }
             0xE2 => self.v = false,
@@ -507,14 +531,14 @@ impl Cpu {
         }
     }
 
-    fn unary(&mut self, op: u8) {
+    fn unary<B: Bus>(&mut self, bus: &mut B, op: u8) {
         let group = (op - 0x10) >> 2;
         let dd = (op & 3) as usize;
         let a = self.r[dd];
         match group {
             0 => {
                 // XOR Rd,#imm8
-                let b = self.fetch();
+                let b = self.fetch(bus);
                 self.r[dd] = a ^ b;
                 let v = self.r[dd];
                 self.nz(v);
@@ -563,7 +587,7 @@ impl Cpu {
             }
             _ => {
                 // 8, 9, 10: bit ops with a mask byte
-                let mask = self.fetch();
+                let mask = self.fetch(bus);
                 if group == 8 {
                     let r = a | mask;
                     self.r[dd] = r;
@@ -597,22 +621,22 @@ impl Cpu {
         }
     }
 
-    fn wide(&mut self, op: u8) {
+    fn wide<B: Bus>(&mut self, bus: &mut B, op: u8) {
         match op {
             0x60 | 0x61 => {
-                let v = self.fetch16();
+                let v = self.fetch16(bus);
                 if op & 1 != 0 { self.y = v } else { self.x = v }
             }
             0x62 | 0x63 => {
-                let a = self.fetch16();
-                let v = self.read16(a);
+                let a = self.fetch16(bus);
+                let v = self.read16(bus, a);
                 if op & 1 != 0 { self.y = v } else { self.x = v }
             }
             0x64 | 0x65 => {
-                let a = self.fetch16();
+                let a = self.fetch16(bus);
                 let v = if op & 1 != 0 { self.y } else { self.x };
-                self.write(a, v as u8);
-                self.write(a.wrapping_add(1), (v >> 8) as u8);
+                bus.write(a, v as u8);
+                bus.write(a.wrapping_add(1), (v >> 8) as u8);
             }
             0x66 => self.x = self.y,
             0x67 => self.y = self.x,
@@ -622,19 +646,19 @@ impl Cpu {
             0x6B => self.y = self.sp,
             0x6C => {
                 // ADDW SP,#d8 signed
-                let d = self.fetch() as i8;
+                let d = self.fetch(bus) as i8;
                 self.sp = self.sp.wrapping_add(d as u16);
             }
             _ => {
                 // LEA X|Y,[SP+u8]
-                let u = self.fetch() as u16;
+                let u = self.fetch(bus) as u16;
                 let v = self.sp.wrapping_add(u);
                 if op == 0x6D { self.x = v } else { self.y = v }
             }
         }
     }
 
-    fn autoinc(&mut self, op: u8) {
+    fn autoinc<B: Bus>(&mut self, bus: &mut B, op: u8) {
         let pre = op & 0x10 != 0;
         let dd = ((op >> 1) & 3) as usize;
         let use_y = op & 1 != 0;
@@ -642,7 +666,7 @@ impl Cpu {
         if pre {
             ptr = ptr.wrapping_sub(1);
         }
-        self.memop(op & 8 != 0, dd, ptr);
+        self.memop(bus, op & 8 != 0, dd, ptr);
         if !pre {
             ptr = ptr.wrapping_add(1);
         }

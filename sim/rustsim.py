@@ -172,10 +172,275 @@ def speed():
           f"   ({t_py / t_rs:.0f}x)")
 
 
+# ---------------------------------------------------------------------
+# Machine level: the whole machine of rust/src/machine.rs against
+# cool8vm.Machine, over a real boot.
+#
+# The same contract again, one level up. A stimulus script — UART bytes,
+# PS/2 scancodes, frames to run — is executed identically on both sides:
+# the Rust runner reads the file, and this driver applies the same ops
+# to the Python machine through its own API (m.type / m.scancode /
+# m.tick — never a bare cpu.step loop). The Rust trace streams over
+# stdout and is compared in lockstep, one line per retired instruction,
+# so a divergence stops the run early and no quarter-gigabyte trace
+# file is ever written. RAM, VRAM and everything said on the UART are
+# compared at the end.
+#
+# Both sides run on tick(), not run_line(): the two differ in how a
+# line boundary falls mid-instruction, and mixing them diverges the
+# interrupt timing.
+
+FMT = "%04x %02x%02x%02x%02x %04x %04x %04x %02x"
+
+
+def _state(m):
+    c = m.cpu
+    return FMT % (c.pc, c.r[0], c.r[1], c.r[2], c.r[3], c.x, c.y, c.sp, c.f)
+
+
+def _mdisasm(m, pc):
+    """Disassemble for a divergence report, without touching the live
+    bus — an I/O-page read has side effects, a report must not."""
+    import opcodes
+
+    def rd(a):
+        a &= 0xFFFF
+        if m.romen and (a & 0xF000) == 0xF000:
+            return m.rom[a & 0x0FFF]
+        return m.bus.mem[a]
+
+    try:
+        return opcodes.disassemble(rd, pc)[0]
+    except Exception:
+        return "??"
+
+
+def _script_file(tag, ops):
+    path = os.path.join(BUILD, f"{tag}.script")
+    with open(path, "w", newline="\n") as f:
+        for kind, arg in ops:
+            if kind == "frames":
+                f.write(f"frames {arg}\n")
+            else:
+                f.write(kind + " " + " ".join("%02x" % b for b in arg)
+                        + "\n")
+    return path
+
+
+def machine_pair(tag, ops, flash_path=None, sanity=None):
+    """Run one script on both machines, comparing in lockstep.
+
+    `ops` is [("type", bytes) | ("scan", bytes) | ("frames", n), ...].
+    `sanity(m)` may return an error string; it guards against the trap
+    of a workload that diverges nowhere because it silently stopped
+    doing anything.
+    """
+    import cool8vm as vm
+
+    rom, font = _rom_font()
+    rom_path = os.path.join(BUILD, "machine_rom.bin")
+    with open(rom_path, "wb") as f:
+        f.write(rom)
+    script = _script_file(tag, ops)
+
+    mem_p = os.path.join(BUILD, f"{tag}.rstmem")
+    vram_p = os.path.join(BUILD, f"{tag}.rstvram")
+    said_p = os.path.join(BUILD, f"{tag}.rstsaid")
+    cmd = [EXE, f"+rom={rom_path}", f"+script={script}", "+trace=-",
+           f"+memdump={mem_p}", f"+vramdump={vram_p}", f"+said={said_p}"]
+    if flash_path:
+        cmd.append(f"+flash={flash_path}")
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE, text=True)
+
+    m = vm.Machine(rom=rom, font=font, flash_path=flash_path)
+    idx = 0
+    fail = None
+    try:
+        for kind, arg in ops:
+            if kind == "type":
+                m.uart.feed(bytes(arg))
+            elif kind == "scan":
+                m.scancode(bytes(arg))
+            else:
+                target = m.frames + arg
+                while m.frames < target:
+                    before = m.cpu.instructions
+                    prev = m.cpu.pc
+                    m.tick()
+                    if m.cpu.instructions == before:
+                        continue
+                    idx += 1
+                    mine = _state(m)
+                    theirs = proc.stdout.readline().rstrip("\n")
+                    if mine != theirs:
+                        fail = (f"    {tag}: DIVERGED at instruction {idx}\n"
+                                f"      at      {prev:04x}  "
+                                f"{_mdisasm(m, prev)}\n"
+                                f"      py  {mine}\n"
+                                f"      rs  {theirs or '<ended>'}")
+                        raise StopIteration
+        extra = proc.stdout.readline()
+        if extra:
+            fail = (f"    {tag}: rust traced past the python machine "
+                    f"at instruction {idx + 1}: {extra.strip()}")
+    except StopIteration:
+        pass
+    finally:
+        proc.stdout.close()
+        proc.stderr.read()
+        proc.wait()
+
+    if fail:
+        print(fail)
+        return False, idx
+
+    rst_mem = cosim.read_memdump(mem_p)
+    rst_vram = cosim.read_memdump(vram_p)
+    with open(said_p, "rb") as f:
+        rst_said = f.read()
+
+    said = m.said()
+    for name, mine, theirs in (("RAM", bytes(m.bus.mem), rst_mem),
+                               ("VRAM", bytes(m.video.vram), rst_vram),
+                               ("UART", said, rst_said)):
+        if mine != theirs:
+            first = next(i for i in range(min(len(mine), len(theirs)) + 1)
+                         if i >= len(mine) or i >= len(theirs)
+                         or mine[i] != theirs[i])
+            print(f"    {tag}: {name} differs, first at ${first:04X}")
+            return False, idx
+    if sanity:
+        err = sanity(m, said)
+        if err:
+            print(f"    {tag}: workload sanity: {err}")
+            return False, idx
+    return True, idx
+
+
+_ROM_FONT = []
+
+
+def _rom_font():
+    if not _ROM_FONT:
+        import cool8vm as vm
+        _ROM_FONT.append(vm.build_rom())
+    return _ROM_FONT[0]
+
+
+def _basic_image():
+    """A flash image with BOOT.BIN on volume 0 — the path a board runs,
+    borrowed from sim/test_boot_basic.py."""
+    import cool8disk as disk
+    import mkboot
+    import test_basic as B
+
+    code, syms = B.build()
+    boot = mkboot.build(code, dest=0xA000, build_dir=BUILD)
+    img = os.path.join(BUILD, "rs_boot.img")
+    if os.path.exists(img):
+        os.remove(img)
+    image = disk.Image(img, create=True)
+    v = disk.Volume(image, 0)
+    v.format("SYSTEM")
+    p = os.path.join(BUILD, "BOOT.BIN")
+    with open(p, "wb") as fh:
+        fh.write(boot)
+    v.add(p, "BOOT.BIN")
+    image.save()
+    return img
+
+
+def _keys(text):
+    """Scancode bytes for typed text, from the real sw/keymap.asm —
+    encoded once, here, so both machines are fed identical bytes."""
+    import cool8vm as vm
+    return vm._encode_keys(text)
+
+
+def test_machine_monitor():
+    print("machine — boot ROM to the monitor, over the serial console")
+    t0 = time.time()
+    ops = [("frames", 8),
+           ("type", b"D F000\r"), ("frames", 8),
+           ("type", b"D F070\r"), ("frames", 8)]
+
+    def sanity(m, said):
+        said = said.decode("latin-1")
+        if "COOL8 monitor" not in said:
+            return "the monitor never introduced itself"
+        if "F000 2F 60 00 02" not in said:
+            return "D F000 did not answer with the reset vector"
+        return None
+
+    ok, n = machine_pair("rs_monitor", ops, sanity=sanity)
+    print(f"  24 frames, {n} instructions : {'ok' if ok else 'FAIL'} "
+          f"({time.time() - t0:.1f}s)")
+    return ok
+
+
+def test_machine_basic():
+    """Reset to BASIC off a flash image, then a program typed at the
+    PS/2 port and RUN — flash, autoboot, the relocation, ROMEN, the
+    keyboard interrupt and the video registers, all on one diff."""
+    print("machine — flash, autoboot, BASIC, a typed program")
+    t0 = time.time()
+    img = _basic_image()
+
+    ops = [("frames", 90)]
+    for ch in "10 PRINT 6 * 7\r20 END\rRUN\r":
+        ops += [("scan", _keys(ch)), ("frames", 2)]
+    ops += [("frames", 30)]
+
+    def sanity(m, _said):
+        if m.romen:
+            return "ROMEN is still on: autoboot never handed over"
+        if not m.shows("42"):
+            return "RUN never printed 42: " + " | ".join(
+                r.strip() for r in m.text() if r.strip())[:100]
+        return None
+
+    ok, n = machine_pair("rs_basic", ops, flash_path=img, sanity=sanity)
+    print(f"  {n} instructions : {'ok' if ok else 'FAIL'} "
+          f"({time.time() - t0:.1f}s)")
+    return ok
+
+
+def speed_machine():
+    """The machine-level number: the same boot, no trace being compared.
+
+    The Python figure is m.tick() alone, the discipline the parity run
+    uses; the Rust figure is the runner's own stepping time off stderr.
+    """
+    import cool8vm as vm
+
+    rom, font = _rom_font()
+    ops = [("frames", 90)]
+    script = _script_file("rs_mspeed", ops)
+    rom_path = os.path.join(BUILD, "machine_rom.bin")
+
+    m = vm.Machine(rom=rom, font=font)
+    t0 = time.time()
+    while m.frames < 90:
+        m.tick()
+    t_py = time.time() - t0
+    n = m.cpu.instructions
+
+    r = subprocess.run([EXE, f"+rom={rom_path}", f"+script={script}"],
+                       capture_output=True, text=True)
+    t_rs = float(r.stderr.strip().split()[-1].rstrip("s"))
+
+    print(f"speed — 90 frames of boot ROM, {n} instructions")
+    print(f"  python  {t_py:8.4f}s  {n / t_py / 1e6:8.2f} M instr/s")
+    print(f"  rust    {t_rs:8.4f}s  {n / t_rs / 1e6:8.2f} M instr/s"
+          f"   ({t_py / t_rs:.0f}x)")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--quick", action="store_true",
-                    help="skip the exhaustive multiply and the speed run")
+                    help="skip the exhaustive multiply, the BASIC boot "
+                         "and the speed runs")
     ap.add_argument("--seeds", type=int, default=8)
     ap.add_argument("--count", type=int, default=3000)
     args = ap.parse_args()
@@ -189,9 +454,12 @@ def main():
     ok = test_directed()
     ok &= test_random(range(1, args.seeds + 1), args.count)
     ok &= test_interrupts()
+    ok &= test_machine_monitor()
     if not args.quick:
         ok &= test_mul()
+        ok &= test_machine_basic()
         speed()
+        speed_machine()
 
     print("\n" + ("PASS" if ok else "FAIL"))
     return 0 if ok else 1

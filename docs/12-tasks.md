@@ -118,7 +118,7 @@ Neither writes anything. Both are exclusive.
 
 | | |
 |---|---|
-| `rust` | the Rust fast runner against the emulator: trace and memory parity over cosim's own programs, then the measured speed |
+| `rust` | the Rust fast runner against the emulator and the machine: trace, memory, VRAM and UART parity over cosim's programs and a real flash-to-BASIC boot, then the measured speeds |
 
 One job, its own group rather than `sw`, because it needs `cargo` and
 `npm test` must keep working on a fresh clone with only Node and Python

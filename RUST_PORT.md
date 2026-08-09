@@ -1,26 +1,33 @@
 # The Rust fast runner
 
-`rust/` is a Rust copy of the COOL8 CPU that exists for one reason:
-**the Python emulator steps at about 0.73 M instructions/s and the Rust
-runner at about 115 M instructions/s — 158× — measured on the same
-852,740-instruction multiply sweep on this machine** (2026-08,
-`python sim/rustsim.py` prints the current numbers at the end of every
-full run). Profiling showed the CPU stepping loop itself was the cost,
-and PyPy was ruled out by its numpy story, so the loop was ported rather
-than coaxed.
+`rust/` is a Rust copy of the COOL8 CPU *and of the machine around it*
+that exists for one reason: speed. Measured on this machine (2026-08;
+`python sim/rustsim.py` prints current numbers at the end of every full
+run):
+
+| level | workload | CPython | Rust | |
+|---|---|---|---|---|
+| CPU | 852,740-instruction multiply sweep | 0.73 M instr/s | 115 M instr/s | 158× |
+| machine | 90 frames of boot ROM | 0.50 M instr/s | 66 M instr/s | 132× |
+
+Profiling showed the CPU stepping loop itself was the cost, and PyPy
+was ruled out by its numpy story, so the loop was ported rather than
+coaxed.
 
 It is a runner, not a second specification. Read this file before
 touching anything under `rust/`.
 
 ## The one rule: Python is the specification, Rust is never authoritative
 
-`tools/cool8emu.py` is the executable specification of this CPU. The RTL
-is verified against it; so is this port. **When the Rust runner and the
-Python emulator disagree, the Rust runner is wrong** — by definition,
-before any investigation. If investigation then shows the emulator is
-itself wrong, `docs/02-isa.md` decides, the *emulator* gets fixed the
-normal way, and the Rust side follows it. There is no path on which
-rust/ is corrected first and the emulator "caught up".
+`tools/cool8emu.py` is the executable specification of this CPU, and
+`tools/cool8vm.py` of the machine. The RTL is verified against the
+emulator; so is this port, at both levels. **When the Rust runner and
+the Python side disagree, the Rust runner is wrong** — by definition,
+before any investigation. If investigation then shows the Python side
+is itself wrong, `docs/02-isa.md` (or `docs/04-system.md`) decides, the
+*Python model* gets fixed the normal way, and the Rust side follows it.
+There is no path on which rust/ is corrected first and the reference
+"caught up".
 
 This is the same seat the RTL sits in, and it is held there by the same
 contract.
@@ -53,7 +60,8 @@ Run it:
 
 ```
 npm run test:rust          # via the runner
-python sim/rustsim.py      # directly; --quick skips the multiply sweep
+python sim/rustsim.py      # directly; --quick skips the multiply
+                           # sweep, the BASIC boot and the speed runs
 ```
 
 The suite builds the crate itself (`cargo build --release`) and runs the
@@ -95,25 +103,63 @@ and it is diffed against the specification instruction by instruction.
 
 | file | what |
 |---|---|
-| `rust/src/cpu.rs` | the CPU: state, ALU, conditions, interrupts, the step dispatcher. A port of `cool8emu.py`, structured to match it |
+| `rust/src/cpu.rs` | the CPU: state, ALU, conditions, interrupts, the step dispatcher, and the `Bus` trait. A port of `cool8emu.py`, structured to match it |
+| `rust/src/machine.rs` | the machine: memory map, ROM overlay, UART, PS/2, flash, sound, the video register file and VRAM, and the scanline accounting. A port of `cool8vm.py`, minus rendering and the font, which no register exposes |
 | `rust/src/optab.rs` | **generated** by `tools/mkrsopc.py` — do not edit |
-| `rust/src/main.rs` | the harness: hex load, the plusarg CLI, the run loop, trace and memdump writers |
+| `rust/src/main.rs` | the harness: both CLIs, the run loops, trace, dumps |
 | `tools/mkrsopc.py` | the generator, and `--check` |
-| `sim/rustsim.py` | the parity suite and the speed measurement |
+| `sim/rustsim.py` | both parity suites and the speed measurements |
 
 `rust/target/` is gitignored; `Cargo.lock` is committed. There are no
 dependencies.
 
-The runner's CLI, shared with the RTL testbench: `+hex=` (64 K image,
-one hex byte per line, as `progen.write_hex` emits), `+trace=`,
-`+memdump=`, `+maxinstr=`, `+irqafter=`/`+irqat=`, `+nmiafter=`.
-Hardware-only plusargs (`+ws=`, `+wsrnd=`, `+maxcycles=`, `+busrq*`)
-are accepted and ignored so cosim call sites can be reused verbatim;
-anything else unknown is an error, so a typo'd `+irqafter` cannot
-silently become a run with no interrupt in it. Every run prints
-`-- N instructions, M cycles, T s`, where T is stepping time alone —
-`rustsim.py` reads it for the speed report, so process start-up and the
-hex parse flatter neither side.
+The runner has two modes, chosen by the arguments. **CPU mode**
+(`+hex=`): 64 K image, one hex byte per line as `progen.write_hex`
+emits, plus `+trace=`, `+memdump=`, `+maxinstr=`,
+`+irqafter=`/`+irqat=`, `+nmiafter=` — the RTL testbench's plusarg
+vocabulary. Hardware-only plusargs (`+ws=`, `+wsrnd=`, `+maxcycles=`,
+`+busrq*`) are accepted and ignored so cosim call sites can be reused
+verbatim; anything else unknown is an error, so a typo'd `+irqafter`
+cannot silently become a run with no interrupt in it. **Machine mode**
+(`+rom=`, a binary ROM image): `+flash=` (a raw flash image, as
+`vm.Machine(flash_path=…)` takes), `+script=`, `+trace=` (a path, or
+`-` for stdout), `+memdump=`, `+vramdump=`, `+said=`. Every run prints
+`-- N instructions, … T s` (stdout in CPU mode, stderr in machine mode,
+where stdout may be carrying the trace); T is stepping time alone, so
+process start-up and image parsing flatter neither side of the speed
+report.
+
+## The machine level
+
+Phase 2 ports `cool8vm.py`'s `Machine` — the memory map with the I/O
+page and the ROM overlay, the UART, the PS/2 port, the SPI flash with
+its floor, the eight-voice sound engine, the complete video register
+file with its VRAM port, palette latch, pixel port and sprite table,
+and the scanline accounting that makes time pass. What is deliberately
+absent: rendering (`cool8vid.py` stays the only renderer; the Rust
+machine holds VRAM and registers and never draws a frame) and the font,
+which no register exposes.
+
+The gate is the same contract one level up, in `sim/rustsim.py`:
+
+- **A stimulus script both sides execute identically** — `type <hex>`
+  (UART bytes), `scan <hex>` (PS/2 scancodes), `frames N`. The Python
+  driver applies the same ops through the machine's own API (`m.type`,
+  `m.scancode`, `m.tick` — never a bare `cpu.step` loop), and the
+  scancode bytes are encoded once, in Python, from the real
+  `sw/keymap.asm`, so the keymap stays single-sourced.
+- **The Rust trace streams over stdout** (`+trace=-`) and is compared
+  in lockstep, one line per retired instruction, so a divergence stops
+  the run early and no quarter-gigabyte trace file is ever written.
+- **RAM, VRAM and everything said on the UART are compared at the end**,
+  and a sanity callback checks the workload actually did its job — a
+  run that diverges nowhere because BASIC never booted proves nothing.
+- The two workloads: the boot ROM to the monitor over the serial
+  console, and the full board path borrowed from
+  `sim/test_boot_basic.py` — a flash image, autoboot, the relocation to
+  `$A000`, the ROMEN handover, BASIC's banner, then
+  `10 PRINT 6 * 7` typed at the PS/2 port and `RUN` printing 42.
+  8.5 M instructions, byte-identical throughout.
 
 ## Traps already hit, or designed around
 
@@ -129,6 +175,16 @@ hex parse flatter neither side.
   halted, and neither `nmi_edge` nor (`irq_line` and `I`).
 - **`+irqat=0` means "asserted from reset"**, applied before the first
   step, exactly like `emu_trace`'s `events={0: ...}`.
+- **Both sides of the machine diff must run on `tick()`, not
+  `run_line()`.** The two are not interchangeable: `run_line` runs to a
+  cycle target and drops the overshoot when an instruction crosses the
+  line boundary, while `tick` carries it in the owed-cycles
+  accumulator, so the raster — and with it every interrupt — falls on
+  different instructions. The Rust machine implements `tick` and the
+  parity driver calls `m.tick()`.
+- **`m.said()` drains the UART.** The suite compares it once and hands
+  the bytes to the sanity callback; a second read sees nothing, which
+  looked exactly like a monitor that never spoke.
 - **Page-2 `$2C/$2D` (`ADDW X|Y,#imm16`) sit inside the unary range**
   `$10–$3F` and must be matched before it, as the emulator's `elif`
   order does; `$2E/$2F` in that range are reserved and are caught by
@@ -140,35 +196,40 @@ hex parse flatter neither side.
 
 ## What this is not (yet): the scope line
 
-Phase 1 — this — is **CPU plus flat RAM**. It runs the cosim program
-suite and any bare-metal image that needs no I/O. It does **not** run
-the machine: no ROM overlay, no UART, no PS/2, no video registers, no
-raster/vblank timing, so it cannot boot BASIC and it accelerates none of
-the `vm.Machine`-based suites.
+The machine boots, runs BASIC and takes the keyboard, but three things
+are known edges:
 
-Phase 2, if the need is confirmed, ports `tools/cool8vm.py`'s
-peripherals and scanline accounting (`CYCLES_PER_LINE`, the interrupt
-flags, the sound-sample divisor — all deterministic integer math driven
-off the cycle counter) and extends the same trace contract to machine
-level: boot the real ROM on both machines, type the same script, diff
-the per-instruction traces and the memory. Rendering stays in Python —
-the fast runner would hold the VRAM and registers and never draw a
-frame. Whether tests then reach it by subprocess or through a PyO3
-wrapper around the whole machine is a phase-2 decision; the original
-idea of a Rust core under the Python `Machine` was rejected because the
-per-bus-access FFI boundary eats the speedup, and any phase-2 boundary
-must sit at machine-API granularity or coarser.
+- **No renderer, no `m.text()`.** Reading the screen, drawing frames
+  and the font stay Python-only. A workload that needs to *look* at the
+  display runs on `cool8vm.py`; the Rust machine's VRAM is compared
+  against it, not rendered.
+- **No NMI/break op in the script vocabulary** yet — add one to both
+  executors when a workload needs `press_break()`.
+- **Sound samples are generated but not diffed.** The sound engine is
+  ported (it costs one sample per 256 cycles either way) but the
+  sample stream is not part of the parity compare; nothing CPU-visible
+  reads back from it.
+
+How tests consume the fast machine is still open: today it is a
+subprocess speaking script files, which the parity suite needs anyway.
+A PyO3 wrapper around the *whole* Rust machine would also work — the
+original idea of a Rust core under the Python `Machine` was rejected
+because the per-bus-access FFI boundary eats the speedup, so any such
+boundary must sit at machine-API granularity or coarser. Build it when
+a consumer exists, not before.
 
 ## Measured
 
 2026-08, this machine, `python sim/rustsim.py`:
 
-| | multiply sweep, 852,740 instructions | rate |
-|---|---|---|
-| `cool8emu.py` (CPython 3.12) | 1.17 s | 0.73 M instr/s |
-| `cool8rs` (release, LTO) | 0.0074 s | 114.8 M instr/s |
+| | workload | CPython 3.12 | `cool8rs` (release, LTO) |
+|---|---|---|---|
+| CPU | multiply sweep, 852,740 instr | 1.17 s — 0.73 M instr/s | 0.0074 s — 115 M instr/s |
+| machine | 90 boot frames, 3,605,915 instr | 7.18 s — 0.50 M instr/s | 0.055 s — 66 M instr/s |
 
 Parity at that date: directed (511 encodings), 8 random streams of
-3000, the four interrupt programs, and the multiply sweep — traces and
-memory byte-identical throughout. Re-run the suite for current numbers
-rather than trusting these.
+3000, the four interrupt programs, the multiply sweep, the monitor
+conversation (0.98 M instructions) and the flash-to-BASIC boot with a
+typed program (8.5 M instructions) — traces, RAM, VRAM and UART output
+byte-identical throughout. Re-run the suite for current numbers rather
+than trusting these.

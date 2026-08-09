@@ -87,7 +87,7 @@
         {"id": "flash",  "run": "tools/flash.py", "args": ["verify"], "exclusive": true, "about": "both halves of the board's flash, read back and compared"}
       ],
       "rust": [
-        {"id": "rust", "run": "sim/rustsim.py", "about": "the Rust fast runner against the emulator -- trace and memory parity, plus the speed number. Needs cargo"}
+        {"id": "rust", "run": "sim/rustsim.py", "about": "the Rust fast runner against the emulator and the machine -- trace, memory, VRAM and UART parity over a real boot, plus the speed numbers. Needs cargo", "slow": true}
       ]
     },
     "check": [
