@@ -3,10 +3,7 @@
 An 8-bit home computer on a single iCE40UP5K FPGA.
 
 Everything in it is an original design, built in this repository: the
-CPU is not a 6502 or a Z80 or a derivative of either, the video chip
-answers to no existing machine, and the BASIC in ROM was written for
-this hardware. Power the board on and it boots from SPI flash into a
-full-screen BASIC editor.
+CPU is a completely new design, not a 6502 or a Z80 or a derivative of either, the video and audio chips are custom as well, and the BASIC in ROM was written for this hardware. Power the board on and it boots from SPI flash into a full-screen BASIC editor.
 
 ![The BASIC editor after boot: the banner, the machine's vitals, and a
 ten-line graphics program typed in](docs/img/readme-editor.png)

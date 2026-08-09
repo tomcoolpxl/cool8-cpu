@@ -175,8 +175,11 @@ src:
 
 
 def _font8():
-    """96 glyphs of 8x8, 1 bpp: the even rows of the bitstream's own
-    8x16 font, from the same BDF, so the two faces always agree."""
+    """96 glyphs of 8x8, 1 bpp, from the bitstream's own 8x16 font --
+    the same BDF, so the two faces always agree. Each 8x8 row is the OR
+    of a pair of 8x16 rows: taking every other row instead loses the
+    rows the face doesn't ink at even offsets -- Spleen's baseline sits
+    on an odd row, so glyphs came out with their bottom quarter blank."""
     import glob
     import mkfont
     bdf = sorted(glob.glob(os.path.join(ROOT, "assets", "font", "*.bdf")))[0]
@@ -184,7 +187,7 @@ def _font8():
     out = bytearray()
     for ch in range(32, 128):
         cell = img[ch * 16:(ch + 1) * 16]
-        out += bytes(cell[r] for r in range(0, 16, 2))
+        out += bytes(cell[r] | cell[r + 1] for r in range(0, 16, 2))
     lines = []
     for i in range(0, len(out), 16):
         row = ",".join("$%02X" % b for b in out[i:i + 16])
