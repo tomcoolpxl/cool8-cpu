@@ -1,9 +1,12 @@
 # COOL8
 
-An 8-bit home computer on a single iCE40UP5K FPGA.
+An 8-bit home computer on a single iCE40UP5K FPGA:
 
-Everything in it is an original design, built in this repository: the
-CPU is a completely new design, not a 6502 or a Z80 or a derivative of either, the video and audio chips are custom as well, and the BASIC in ROM was written for this hardware. Power the board on and it boots from SPI flash into a full-screen BASIC editor.
+- The CPU is a completely original design. Roughly the transistor count of a 6502, half that of a Z80. Better performance at equal clock speeds.
+- The video accelerator with VGA output and 8-voice audio chips are custom as well
+- COOLBASIC in ROM was written for this hardware specifically.
+
+Power on the board, or run the included custom low-level hardware emulator, and it boots from SPI flash into a full-screen BASIC editor.
 
 ![The BASIC editor after boot: the banner, the machine's vitals, and a
 ten-line graphics program typed in](docs/img/readme-editor.png)
