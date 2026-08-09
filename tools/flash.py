@@ -231,13 +231,13 @@ def cmd_fpga(args):
     because a bitstream that is 99 % right is a board that does
     nothing and gives no clue why.
     """
-    if not os.path.exists(BITSTREAM):
-        raise SystemExit("no %s -- run `npm run bit` first"
-                         % os.path.relpath(BITSTREAM, ROOT))
-    with open(BITSTREAM, "rb") as fh:
+    path = args.bitstream or BITSTREAM
+    if not os.path.exists(path):
+        raise SystemExit("no %s -- run `npm run bit` first" % path)
+    with open(path, "rb") as fh:
         want = fh.read()
     print("  bitstream %s, %d bytes -> flash offset 0"
-          % (os.path.relpath(BITSTREAM, ROOT), len(want)))
+          % (path, len(want)))
 
     if args.drive:
         # **This makes the debugger re-enumerate, and it does not always
@@ -260,11 +260,11 @@ def cmd_fpga(args):
               % drive)
         print("  the debugger will re-enumerate; the serial port may "
               "change or need a replug")
-        shutil.copyfile(BITSTREAM, os.path.join(drive, "cool8.bin"))
+        shutil.copyfile(path, os.path.join(drive, "cool8.bin"))
         time.sleep(6.0)         # let it finish before anything reads
         args.verify = False     # nothing can be read back reliably yet
     else:
-        run(["-o", "0x0", "-w", BITSTREAM])
+        run(["-o", "0x0", "-w", path])
 
     print("\n  programmed. **The boot ROM is inside the bitstream**, so this "
           "is also\n  how a change to sw/boot.asm, sw/kbd.asm or "
@@ -376,6 +376,9 @@ def main():
                              "all"))
     ap.add_argument("--image", help="a disk image to write instead of "
                                     "building one")
+    ap.add_argument("--bitstream",
+                    help="program this bitstream instead of build/cool8.bin "
+                         "-- for testing a known-good build against a new one")
     ap.add_argument("--drive", action="store_true",
                     help="program the bitstream by copying onto the iCELink "
                          "drive instead of with icesprog. Works without "

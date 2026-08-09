@@ -41,6 +41,59 @@ Pin numbers below are taken from the board's own constraint files
 Using PMOD1 as a whole PMOD costs you the USB serial console, which is
 how programs get loaded. **Only the four free pins get used.**
 
+### Trap 0 — the CPU cannot reach the SPI flash on this board, and that is unresolved
+
+**Measured on the bench, not inferred.** The FPGA's user logic cannot
+talk to the configuration flash at all — not reads, not writes:
+
+| | result |
+|---|---|
+| `icesprog` reads offset 0 and `$100000` | correct data, both |
+| The FPGA's *configuration* engine reads the flash | works — the design runs |
+| `sim/test_flash.py`, `sim/test_monitor.py`'s "L then D" | pass |
+| Monitor `L 4000 20` (read `$100000`) | **`FF FF FF …`** |
+| Monitor `L 4100 20 0` (read `$000000`) | **`FF FF FF …`** |
+| Monitor `W 4000 8 7000` (write `$700000`), read back with `icesprog` | **nothing arrived** |
+
+Both those addresses hold known non-`$FF` data, so it is not a blank
+region and not an addressing mistake. A write that leaves no trace rules
+out MISO alone: **the FPGA is not driving CS, SCK or MOSI to the chip.**
+
+Ruled out, each with evidence rather than argument:
+
+- **The pin constraints.** `flash_cs 16`, `flash_sck 15`, `flash_mosi 17`,
+  `flash_miso 14` are byte-identical to a working UP5K flash example
+  ([damdoy/ice40_ultraplus_examples](https://github.com/damdoy/ice40_ultraplus_examples)
+  `common/io.pcf`).
+- **The read opcode.** `$03` with no dummy cycles, which a W25Q64
+  supports.
+- **The boot ROM.** A bitstream built from a commit predating the
+  keyboard work behaves identically. The two bitstreams differ only in
+  bytes `0x15A4C-0x19696`, which is EBR initialisation — every byte of
+  logic and routing is the same.
+- **The flash being left in a mode by `icesprog`** (deep power-down and
+  the like): a power cycle does not change the behaviour.
+
+**The leading candidate is the board's jumper.** The iCELink debugger
+shares those four pins with the FPGA, and the Lattice breakout board
+needs jumpers set to hand the flash to the FPGA — its own example says
+so in as many words. This board has one jumper and one button, and
+**neither is documented here.** That is the next thing to establish.
+
+Until it is, treat the flash as **write-only from the host**: `icesprog`
+puts data there and the FPGA's configuration engine reads the bitstream,
+but nothing the CPU runs can see it. Autoboot therefore cannot work on
+this board — it walks 256 directory entries of `$FF`, finds no
+`BOOT.BIN`, and falls through to the monitor, which is exactly what it
+is specified to do when the flash is blank.
+
+> **This was never verified on hardware before.** [06-roadmap.md](06-roadmap.md)'s
+> bring-up table checks `--ping`, `SYSSTAT`, `UART_DIV`, `CPUDIV` and
+> `LED` — no flash read among them — and lists the flash *write* path as
+> not yet exercised. The reader is ticked off with LUT counts, which is
+> synthesis and simulation. `sim/test_autoboot.py` passes on the
+> emulator. None of that is a board.
+
 ### Not a trap — the SPI flash pins are free after configuration
 
 Pins 14–17 go to the 8 MB configuration flash and are not on any header,

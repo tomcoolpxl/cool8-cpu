@@ -58,6 +58,16 @@ set_io ps2_dat   25
 
 # The configuration flash, reused as storage once CDONE goes high. Not on
 # any header, and free — docs/05-board.md section 2.
+#
+# **These two were swapped and put back**, and the experiment is worth
+# recording so nobody repeats it. `src/advanced/icicle` in Muse Lab's
+# own repo runs code from this flash on this board and constrains
+# `flash_io0` to 14 as an output and `flash_io1` to 17 as an input,
+# which says MOSI is 14 and MISO is 17 -- the opposite of this. Swapping
+# them to match changed nothing: the CPU still read $FF at every
+# address, on the same board, in the working jumper position. So
+# whatever stops user logic reaching this flash (05-board.md, Trap 0) is
+# not the pin assignment, and these stay as they were.
 set_io flash_cs  16
 set_io flash_sck 15
 set_io flash_mosi 17
