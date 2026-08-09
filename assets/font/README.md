@@ -1,7 +1,15 @@
 # assets/font
 
-**Spleen 8x16**, by Frédéric Cambus — <https://github.com/fcambus/spleen>,
-BSD 2-clause, `LICENSE.spleen` alongside it.
+**Spleen**, by Frédéric Cambus — <https://github.com/fcambus/spleen>,
+BSD 2-clause, `LICENSE.spleen` alongside it. Two sizes of the same
+family:
+
+- `spleen-8x16.bdf` — the text engine's font, 4 KB in `cool8_rom`.
+- `spleen-5x8.bdf` — the GTEXT/sprite face the boot stub seeds into
+  VRAM at `$FC00`, native 8-pixel cell. It replaced an 8x8 derived by
+  resampling the 8x16, which cannot be done honestly: those capitals
+  are 11 rows, and squeezing 11 into 8 mangles whichever rows the
+  merges land on.
 
 Vendored rather than downloaded at build time, so a checkout builds
 without a network. `tools/mkfont.py` turns the BDF into the 4 KB image

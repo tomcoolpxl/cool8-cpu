@@ -175,29 +175,16 @@ src:
 
 
 def _font8():
-    """96 glyphs of 8x8, 1 bpp, from the bitstream's own 8x16 font --
-    the same BDF, so the two faces always agree. The face inks only a
-    band of its 16 rows (Spleen: about ten of them), so the band is
-    found first and resampled onto the 8 output rows, OR-merging where
-    two source rows land on one. Sampling fixed rows instead left the
-    glyphs' bottom quarter blank."""
-    import glob
+    """96 glyphs of 8x8, 1 bpp, from Spleen's native 5x8 -- the same
+    family at the one size its designer drew for 8-pixel cells. The
+    8x16 was resampled down here once, and it cannot be done honestly:
+    its capitals are 11 rows, and squeezing 11 into 8 mangles whichever
+    rows the merges land on -- the tops of the letters, as it played
+    out."""
     import mkfont
-    bdf = sorted(glob.glob(os.path.join(ROOT, "assets", "font", "*.bdf")))[0]
-    img, _, _ = mkfont.build(bdf)
-    inked = [r for r in range(16)
-             if any(img[ch * 16 + r] for ch in range(33, 128))]
-    lo, n = inked[0], inked[-1] - inked[0] + 1
-    out = bytearray()
-    for ch in range(32, 128):
-        cell = img[ch * 16:(ch + 1) * 16]
-        for i in range(8):
-            a = lo + (i * n) // 8
-            b = max(a + 1, lo + ((i + 1) * n) // 8)
-            acc = 0
-            for r in range(a, b):
-                acc |= cell[r]
-            out.append(acc)
+    bdf = os.path.join(ROOT, "assets", "font", "spleen-5x8.bdf")
+    img, _, _ = mkfont.build(bdf, cell_h=8)
+    out = img[32 * 8:128 * 8]
     lines = []
     for i in range(0, len(out), 16):
         row = ",".join("$%02X" % b for b in out[i:i + 16])

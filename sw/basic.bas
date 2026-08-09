@@ -912,6 +912,8 @@ SUB dorun()
   ' default lives in the boot stub, which the first typed line
   ' reclaimed, and a changed palette is a look, not a fault.
   POKE $FE10, $80
+  POKE $FE2C, 0                 ' sprites off: SPRITE opened the gate,
+                                ' the editor's screen must not inherit it
   POKE VID_BASE_L, 0
   POKE VID_BASE_H, (SCREEN >> 8) + vtop
   POKE $FE16, 0

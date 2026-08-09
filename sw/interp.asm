@@ -3137,6 +3137,7 @@ GVRST   = $FE28
 GVRD    = $FE29
 GSPRI   = $FE2A
 GSPRD   = $FE2B
+GSPREN  = $FE2C
 GPIXXL  = $FE34
 GPIXXH  = $FE35
 GPIXYL  = $FE36
@@ -3314,6 +3315,10 @@ h_sprite:
         ST   [GSPRD],R0
         CLR  R0                 ; b7: the per-sprite bank nothing reads
         ST   [GSPRD],R0
+        MOV  R0,#$01            ; the global gate: no descriptor shows
+        ST   [GSPREN],R0        ;   until it opens, and using SPRITE at
+                                ;   all is the statement that sprites
+                                ;   are wanted. dorun closes it again.
         JMP  stmt
 
 ; SOUND v,pitch,vol,noise -- pitch is the phase increment (f ~ inc/2),

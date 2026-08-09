@@ -61,8 +61,8 @@ def parse_bdf(path):
     return glyphs, fb
 
 
-def compose(bbx, rows, fb):
-    """Place one glyph's bitmap into a CELL_W x CELL_H cell.
+def compose(bbx, rows, fb, cell_h=CELL_H):
+    """Place one glyph's bitmap into a CELL_W x cell_h cell.
 
     BDF puts the glyph origin on the baseline and gives every bounding
     box as an offset from it, so a glyph smaller than the cell has to be
@@ -71,14 +71,14 @@ def compose(bbx, rows, fb):
     """
     bw, bh, bxoff, byoff = bbx
     fbw, fbh, fbxoff, fbyoff = fb
-    cell = [0] * CELL_H
+    cell = [0] * cell_h
     stride = (bw + 7) // 8
 
     for r, hexrow in enumerate(rows[:bh]):
         bits = int(hexrow, 16) if hexrow else 0
         bits <<= (stride * 8 - len(hexrow) * 4)     # left-justify short rows
         y = fbyoff + fbh - byoff - bh + r           # row inside the cell
-        if not (0 <= y < CELL_H):
+        if not (0 <= y < cell_h):
             continue
         acc = 0
         for c in range(bw):
@@ -90,9 +90,12 @@ def compose(bbx, rows, fb):
     return cell
 
 
-def build(path):
+def build(path, cell_h=CELL_H):
+    """The font image: GLYPHS x cell_h bytes. cell_h defaults to the
+    text engine's 16; the boot stub asks for 8 to build the GTEXT face
+    from Spleen's native 5x8."""
     glyphs, fb = parse_bdf(path)
-    img = bytearray(GLYPHS * CELL_H)
+    img = bytearray(GLYPHS * cell_h)
     present = 0
     for code in range(GLYPHS):
         try:
@@ -103,8 +106,8 @@ def build(path):
         if g is None:
             continue
         present += 1
-        cell = compose(g[0], g[1], fb)
-        img[code * CELL_H:(code + 1) * CELL_H] = bytes(cell)
+        cell = compose(g[0], g[1], fb, cell_h)
+        img[code * cell_h:(code + 1) * cell_h] = bytes(cell)
     return bytes(img), present, fb
 
 

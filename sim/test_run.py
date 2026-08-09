@@ -310,6 +310,44 @@ def keyboard(code, syms):
     return out
 
 
+def sprites(code, syms):
+    """SPRITE, animated the way a game animates it: the pattern VPOKEd
+    into VRAM, the descriptor rewritten once per VSYNC, one pixel per
+    frame. The frame is rendered through cool8vid -- the renderer the
+    window uses and the one test_video holds against the RTL -- so what
+    this checks is the path a person actually sees, timing included.
+    """
+    import cool8vid as vid
+    out = {}
+    M = B.Machine(code, syms)
+    M.settle()
+    # This harness boots no flash image, so the boot stub's palette
+    # never ran and every entry is black -- the program states its own
+    # colour, which puts PALETTE's visible effect under test as well.
+    # Sprites live in raster space, undoubled: descriptor (x, 120) is
+    # screen (x, 120) and eight pixels are eight pixels, whatever the
+    # playfield mode is doing.
+    for ln in ["10 MODE 4", "20 CLG 0", "25 PALETTE 14, $0FFF",
+               "30 FOR J = 0 TO 31", "40 VPOKE 64000 + J, $EE",
+               "50 NEXT J", "60 X = 20",
+               "70 DO", "80 VSYNC", "90 SPRITE 0, X, 120, 2000, 64",
+               "94 X = X + 1", "97 LOOP"]:
+        M.cmd(ln)
+    M.m.type("RUN\r")
+    M.m.run(cycles=8_000_000)
+
+    def find(frame):
+        row = frame[124 * 640:125 * 640]
+        bg = row[0]
+        xs = [x for x, v in enumerate(row) if v != bg]
+        return (xs[0], xs[-1]) if xs else None
+
+    out["first"] = find(vid.render_np(M.m).reshape(-1).tolist())
+    M.m.run(cycles=4_000_000)
+    out["later"] = find(vid.render_np(M.m).reshape(-1).tolist())
+    return out
+
+
 def main():
     print("  I5 -- RUN, typed at the editor")
     print()
@@ -345,6 +383,20 @@ def main():
     check(k["char"], "a key on the PS/2 port reaches a running program")
     check(k["named"], "and a cursor key arrives as K_UP, not as a keypad 8")
     check(k["esc"], "a lone Escape returns 27 rather than blocking")
+
+    print()
+    s = sprites(code, syms)
+    check(s["first"] is not None, "an animated SPRITE is on the frame")
+    if s["first"]:
+        w = s["first"][1] - s["first"][0] + 1
+        check(w == 8, "eight sprite pixels wide, raster space", "span %d" % w)
+        check(s["later"] is not None and s["later"][0] > s["first"][0],
+              "and VSYNC carries it rightward",
+              "%s -> %s" % (s["first"], s["later"]))
+        if s["later"]:
+            d = s["later"][0] - s["first"][0]
+            check(25 <= d <= 33, "at one pixel per frame -- VSYNC pacing",
+                  "%d px in ~29 frames" % d)
 
     # INPUT blocks mid-run, so the harness types the answer while the
     # program is waiting -- which is the whole point of the command.
