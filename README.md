@@ -38,6 +38,7 @@ The whole machine exists in software: the CPU model is checked
 instruction-for-instruction against the Verilog, the renderer is
 compared against frames dumped from the gates on all 307,200 pixels of
 every mode, and the sound model against samples of the running engine.
+
 What the window shows is what the silicon does.
 
 You need Python 3.12+ and Node 18+, then:
