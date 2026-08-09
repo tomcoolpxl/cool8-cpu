@@ -1120,13 +1120,14 @@ oscillated, and produced a machine taking NMIs continuously. Every
 simulation of a floating pin is a decision about what to drive it with.
 
 Not yet exercised on hardware: video (no VGA PMOD), the keyboard (no
-level shifter), sound (no RC filter), and the flash *write* path — which
-should be tried at a high address with the bitstream backed up. The
-flash **read** path and autoboot are exercised now: the board boots
-BASIC off volume 0's `BOOT.BIN`, once the deep-power-down wake-up of
-[05-board.md](05-board.md) Trap 0 was added. Before that the reader had
-never met real silicon, and the first time it did, it read `$FF` for a
-day.
+level shifter), and sound (no RC filter). The flash paths all are, now:
+autoboot boots BASIC off volume 0's `BOOT.BIN`, `SAVE` page-programs a
+file the host reads back with `icesprog`, `LOAD` returns it, and
+`ERA`+`COMPACT` sector-erase it away — the whole cycle on the bench,
+verified from both sides of the chip. None of it worked until the
+deep-power-down wake-up of [05-board.md](05-board.md) Trap 0 was added;
+before that the reader had never met real silicon, and the first time it
+did, it read `$FF` for a day.
 
 ## M9 — The machine without the board ✅
 
