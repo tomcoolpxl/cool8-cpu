@@ -200,8 +200,10 @@ class Sym:
 # =========================================================== the compiler
 
 class Compiler:
-    def __init__(self, org=None):
+    def __init__(self, org=None, optimize=False):
         self.org = ORG if org is None else org
+        self.optimize = optimize
+        self.push_bias = 0
         self.t = []
         self.p = 0
         self.out = []
@@ -370,17 +372,21 @@ class Compiler:
                 else:
                     self.e(f"LD   R{r+1},[{e[1]}+1]")
         elif k == 'local':
-            self.e(f"LD   R{r},[SP+{e[1]}]")
+            # push_bias: how far the optimized gen_call has moved SP
+            # with argument pushes. Zero everywhere else, so the
+            # baseline output is bit-identical.
+            b = self.push_bias
+            self.e(f"LD   R{r},[SP+{e[1] + b}]")
             if w == 2:
                 if e[2] == 1:
                     self.e(f"CLR  R{r+1}")
                 else:
-                    self.e(f"LD   R{r+1},[SP+{e[1]+1}]")
+                    self.e(f"LD   R{r+1},[SP+{e[1] + 1 + b}]")
         elif k == 'param':
             # [SP+u8] is 3 clocks against 4 for [abs16], so a parameter
             # is cheaper to read than a global. That is the opposite of
             # the 6502, and it is why recursion was kept.
-            off = 2 + 2 * e[1]
+            off = 2 + 2 * e[1] + self.push_bias
             self.e(f"LD   R{r},[SP+@{off}]")
             if w == 2:
                 if e[2] == 1:
@@ -709,6 +715,26 @@ class Compiler:
                       f"{len(args)} given", 0)
         if s.inlinable and s.label not in self.inlining:
             self.inline_call(s, args)
+            return
+        if self.optimize:
+            # Arguments straight onto the stack, no temp round-trip.
+            # The hazard the temp path guards -- SP moving under a
+            # later argument's [SP+u8] param read -- is handled by
+            # push_bias instead: these two pushes are the only
+            # mid-expression SP movement the emitter has, so the bias
+            # is exact, and it nests, because an inner call restores
+            # balance before the outer one continues. Evaluation order
+            # becomes right-to-left; sw/basic.bas has no call site
+            # with order-dependent side effects in its arguments.
+            for a in reversed(args):
+                self.gen(a, 2)
+                self.e("PUSH R1")
+                self.e("PUSH R0")
+                self.push_bias += 2
+            self.push_bias -= 2 * len(args)
+            self.e(f"CALL {s.label}")
+            if args:
+                self.e(f"ADDW SP,#{2 * len(args)}")
             return
         # Every argument is evaluated into a temp BEFORE anything is
         # pushed. Pushing as we go would move SP while a later argument
@@ -1568,7 +1594,7 @@ def compile_source(src, org=None, optimize=False):
     because sim/test_emit.py holds this compiler byte-identical to the
     self-hosted one, which has no peephole -- the system build in
     sim/test_basic.py turns it on."""
-    asm = Compiler(org).parse(src)
+    asm = Compiler(org, optimize).parse(src)
     return peephole(asm) if optimize else asm
 
 
