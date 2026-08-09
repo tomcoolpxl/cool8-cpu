@@ -78,7 +78,11 @@ K_XOR   = $9B
 K_GOTO  = $A2
 K_NUM   = $A4                   ; a binary literal: two bytes follow
 
-NTOK    = 37                    ; $80..$A4
+NTOK    = 57                    ; $80..$B8 -- graphics, sound, and the
+                                ; language round-out, all appended
+K_STEP  = $B3
+K_DATA  = $B0
+K_GOTOT = $A2                   ; GOTO's token, for ON to expect
 
 ; ---- state
 ;
@@ -160,6 +164,12 @@ irun:
         ST   [NNAME],R0         ; and no long name is defined yet
         ST   [CDEPTH],R0        ; nor a call in progress
         ST   [ibreak],R0        ; and nothing is asking it to stop
+        ST   [dptr],R0          ; the DATA pointer rewinds to the
+        MOV  R0,#$02            ;   program's first record, unpositioned
+        ST   [dptr+1],R0
+        MOV  R0,#1
+        ST   [dneed],R0
+        CLR  R0
         ST   [ibreak],R0        ; and nothing is asking it to stop
         ; Every SUB is found now, while LREC is still the program's
         ; first record -- the only moment that address is known without
@@ -262,8 +272,9 @@ stmt:
         JMP  stmt
 .more:
         CMP  R2,#$80            ; below $80 it is a name: an assignment
-        BCC  h_let
-        INCW Y
+        BCS  .tok               ; (the fifth time this branch has gone
+        JMP  h_let              ;  out of range: a JMP, once and for all)
+.tok:   INCW Y
         MOV  R0,R2
         SUB  R0,#$80
         CMP  R0,#NTOK
@@ -321,6 +332,27 @@ sttab:
         .word h_goto            ; $A2 GOTO
         .word bad               ; $A3 WEND
         .word bad               ; $A4 NUM
+        .word h_mode            ; $A5 MODE
+        .word h_vsync           ; $A6 VSYNC
+        .word h_scroll          ; $A7 SCROLL
+        .word h_palette         ; $A8 PALETTE
+        .word h_sprite          ; $A9 SPRITE
+        .word h_vpoke           ; $AA VPOKE
+        .word h_sound           ; $AB SOUND
+        .word h_hline           ; $AC HLINE
+        .word h_plot            ; $AD PLOT
+        .word h_line            ; $AE LINE
+        .word h_input           ; $AF INPUT
+        .word h_else            ; $B0 DATA -- executed, it is a line to
+                                ;   step over, which is ELSE's whole job
+        .word h_read            ; $B1 READ
+        .word h_restore         ; $B2 RESTORE
+        .word bad               ; $B3 STEP -- a clause, like TO
+        .word h_on              ; $B4 ON
+        .word h_tile            ; $B5 TILE
+        .word h_clg             ; $B6 CLG
+        .word h_pitch           ; $B7 PITCH
+        .word h_gtext           ; $B8 GTEXT
 
 h_end:  MOV  R0,#E_DONE         ; a clean stop, not an error
         ST   [ERR],R0
@@ -642,19 +674,26 @@ h_poke:
 ; which uses Y freely -- `s_puts` walks it over the string it is given.
 ; So it is saved around every one of them. The numeric path survived
 ; without this only because `s_putn` happens not to touch it.
+; PRINT items separated by ';' (butted) or ',' (one space), and a
+; trailing separator holds the newline back -- the shape every BASIC
+; taught. PRINT alone is a blank line.
 h_print:
-        CALL eval
+        SKIPSP
+        TST  R2
+        BNE  .item
+        CALL pnl
+        JMP  stmt
+.item:  CALL eval
         LD   R2,[STYPE]
         BNE  .str
         PUSHW Y                 ; saved *first*: the argument has to be
         PUSH R1                 ;   on top when the call reads [SP+2]
         PUSH R0
         CALL s_putn
-        CALL s_newline
         POP  R0
         POP  R1
         POPW Y
-        JMP  stmt
+        BRA  .sep
         ; A heap string is length-counted, so PRINT needs a sibling of
         ; puts that takes one rather than a NUL.
         ; putsn(p AS CARD, n AS INT). The compiler pushes right to left
@@ -675,9 +714,38 @@ h_print:
         POP  R0
         POP  R0
         POP  R0
+        POPW Y
+        ; spent: the next item may be a string too, and a number after
+        ; a string must not take the string path
+        CLR  R2
+        ST   [SLEN],R2
+        ST   [STYPE],R2
+.sep:   SKIPSP
+        CMP  R2,#$3B            ; ';'
+        BEQ  .semi
+        CMP  R2,#$2C            ; ','
+        BEQ  .comma
+        CALL pnl
+        JMP  stmt
+.comma: PUSHW Y
+        CLR  R0
+        PUSH R0
+        MOV  R0,#$20
+        PUSH R0
+        CALL s_emit
+        POP  R0
+        POP  R0
+        POPW Y
+.semi:  INCW Y
+        SKIPSP
+        TST  R2
+        BNE  .item
+        JMP  stmt               ; a trailing separator: no newline
+
+pnl:    PUSHW Y
         CALL s_newline
         POPW Y
-        JMP  stmt
+        RET
 
 ; ---------------------------------------------------------------------
 ; IF <expr> THEN ...
@@ -744,7 +812,7 @@ h_else: LD   R0,[Y]
 ; ---------------------------------------------------------------------
 h_goto:
         CALL eval               ; the line number
-        PUSH R1
+goton:  PUSH R1                 ; ON joins here with its pick in R0/R1
         PUSH R0
         CALL s_findline
         POP  R2
@@ -853,7 +921,20 @@ h_for:
         CALL eval
         ST   [LLIM],R0
         ST   [LLIM+1],R1
-        MOV  R0,YL
+        ; STEP, or the 1 it defaults to. Parsed before LBODY is taken,
+        ; because the body starts after the whole clause.
+        MOV  R0,#1
+        ST   [LSTEP],R0
+        CLR  R0
+        ST   [LSTEP+1],R0
+        SKIPSP
+        CMP  R2,#K_STEP
+        BNE  .nstep
+        INCW Y
+        CALL eval
+        ST   [LSTEP],R0
+        ST   [LSTEP+1],R1
+.nstep: MOV  R0,YL
         ST   [LBODY],R0
         MOV  R0,YH
         ST   [LBODY+1],R0
@@ -901,18 +982,32 @@ h_next:
         LD   R2,[X]
         INCW X
         LD   R3,[X]
-        MOV  R0,#1
+        LD   R0,[LSTEP]
         ADD  R2,R0
-        MOV  R0,#0
+        LD   R0,[LSTEP+1]
         ADC  R3,R0
         ST   [X],R3
         DECW X
         ST   [X],R2
+        ; Counting down flips the test: on while v >= limit. The sign
+        ; of the step decides which comparison is the loop's.
+        LD   R0,[LSTEP+1]
+        AND  R0,#$80
+        BNE  .down
         LD   R0,[LLIM]
         LD   R1,[LLIM+1]
         SUB  R0,R2              ; limit - v; go on while v <= limit
         SBC  R1,R3
         BLT  .out
+        BRA  .back
+.down:  LD   R0,[LLIM]
+        LD   R1,[LLIM+1]
+        SUB  R0,R2              ; limit - v; stop when it went positive,
+        SBC  R1,R3              ;   which is v < limit
+        SUB  R0,#1
+        SBC  R1,#0
+        BGE  .out
+.back:
         ; Back to the body without re-opening the line. openline was
         ; 16 % of the whole benchmark and half of its calls were this
         ; one, re-deriving what FOR already knew.
@@ -1068,13 +1163,59 @@ erel:
         SUB  R0,R2
         SBC  R1,R3
         BRA  .mul
+        ; ---- << and >>, at the same level the compiler holds them.
+        ; A lone < or > is a relation and falls through with R2 put
+        ; back the way .rel expects it.
+.shq:   INCW Y
+        LD   R2,[Y]
+        CMP  R2,#$3C
+        BEQ  .shl
+        DECW Y                  ; a lone '<': the relation it always was,
+        JMP  .rlt               ;   entered exactly as .rel entered it
+.shl:   INCW Y
+        PUSH R1
+        PUSH R0
+        CALL prim
+        CALL mulrest
+        AND  R0,#$0F
+        MOV  R2,R0
+        POP  R0
+        POP  R1
+.sll:   TST  R2
+        BEQ  .shj
+        ADD  R0,R0
+        ADC  R1,R1
+        SUB  R2,#1
+        BRA  .sll
+.srq:   INCW Y
+        LD   R2,[Y]
+        CMP  R2,#$3E
+        BEQ  .shr
+        DECW Y
+        JMP  .rgt
+.shr:   INCW Y
+        PUSH R1
+        PUSH R0
+        CALL prim
+        CALL mulrest
+        AND  R0,#$0F
+        MOV  R2,R0
+        POP  R0
+        POP  R1
+.srl:   TST  R2
+        BEQ  .shj
+        SHR  R1
+        ROR  R0
+        SUB  R2,#1
+        BRA  .srl
+.shj:   JMP  .mul
         ; ---- one relation, if there is one
-.rel:   CMP  R2,#$3D            ; '='
+.rel:   CMP  R2,#$3C            ; '<' -- or the first half of '<<'
+        BEQ  .shq
+        CMP  R2,#$3E            ; '>' -- or of '>>'
+        BEQ  .srq
+        CMP  R2,#$3D            ; '=' -- '<' and '>' were taken above
         BEQ  .req
-        CMP  R2,#$3C            ; '<'
-        BEQ  .rlt
-        CMP  R2,#$3E            ; '>'
-        BEQ  .rgt
         RET
 
 .req:   INCW Y
@@ -2560,6 +2701,18 @@ btab:   .byte 3,"L","E","N"
         .word inkey
         .byte 3,"K","E","Y"
         .word ikey
+        .byte 3,"R","N","D"
+        .word irnd
+        .byte 5,"T","I","M","E","R"
+        .word itimer
+        .byte 5,"V","P","E","E","K"
+        .word ivpeek
+        .byte 4,"F","M","U","L"
+        .word ifmul
+        .byte 4,"F","D","I","V"
+        .word ifdiv
+        .byte 3,"F","I","X"
+        .word ifix
         .byte 0
 
 ; ---------------------------------------------------------------------
@@ -2966,3 +3119,973 @@ ipoll:  LD   R2,[ibreak]
 h_const:
         SKIPSP                  ; the dispatcher left Y on the space
         JMP  h_let
+
+; =====================================================================
+; Graphics and sound: tokens $A5-$AE, and RND/TIMER/VPEEK in btab.
+;
+; **Every command is a thin wrapper over an auto-increment port.** The
+; chip does the address arithmetic -- the pixel port multiplies y by
+; the stride in a DSP and steps X by itself, the sprite, palette and
+; sound ports walk their own arrays -- so a handler here is `eval` the
+; arguments and a handful of stores. The one loop in the whole section
+; that isn't argument parsing is LINE's Bresenham, and HLINE's span is
+; one store per pixel because the hardware steps X.
+; =====================================================================
+
+GVMODE  = $FE10
+GSCRX   = $FE16                 ; four registers: X L/H then Y L/H
+GPALI   = $FE1E
+GPALD   = $FE1F
+GVRAL   = $FE26
+GVRAH   = $FE27
+GVRST   = $FE28
+GVRD    = $FE29
+GSPRI   = $FE2A
+GSPRD   = $FE2B
+GPIXXL  = $FE34
+GPIXXH  = $FE35
+GPIXYL  = $FE36
+GPIXYH  = $FE37
+GPIXD   = $FE38
+GSNDI   = $FE50
+GSNDD   = $FE51
+
+; The frame counter iisr keeps (TIMER reads it, VSYNC waits on it), the
+; random seed, and scratch for up to five parsed arguments plus LINE's
+; working set. Absolute rather than page 0: page 0 is spoken for.
+frames: .word 0
+rseed:  .word 1
+garg:   .space 10
+lwk:    .space 10               ; dx, dy, err, sx, sy -- all words
+FORSTK: .space 72               ; MAXFOR frames of FORFR -- out of page
+                                ; 0, where 8 x 9 no longer fit
+
+; gargs -- R3 comma-separated expressions into garg, low byte first.
+; eval leaves Y on the comma (its operator scan has already skipped the
+; spaces), so stepping over it is one INCW, the h_poke idiom.
+gargs:  LDW  X,#garg
+.g:     PUSHW X
+        PUSH R3
+        CALL eval
+        POP  R3
+        POPW X
+        ST   [X],R0
+        INCW X
+        ST   [X],R1
+        INCW X
+        SUB  R3,#1
+        BEQ  .done
+        INCW Y                  ; the comma
+        BRA  .g
+.done:  RET
+
+; MODE n -- the preset, with the display kept enabled. dorun puts mode
+; 0 back when the program is over, so an error in mode 4 is readable.
+h_mode: MOV  R3,#1
+        CALL gargs
+        LD   R0,[garg]
+        AND  R0,#$0F
+        OR   R0,#$80
+        ST   [GVMODE],R0
+        JMP  stmt
+
+; VSYNC -- hold until the frame counter moves. Bounded by one frame, so
+; it needs no break poll; it is the pacing primitive every game loop
+; wants and nothing else provides.
+h_vsync:
+        LD   R0,[frames]
+.vw:    LD   R1,[frames]
+        CMP  R1,R0
+        BEQ  .vw
+        JMP  stmt
+
+; SCROLL x,y -- the fine-scroll registers, and that is the entire
+; command: the engine moves where it reads, nothing moves in memory.
+h_scroll:
+        MOV  R3,#2
+        CALL gargs
+        LD   R0,[garg]
+        ST   [GSCRX],R0
+        LD   R0,[garg+1]
+        ST   [GSCRX+1],R0
+        LD   R0,[garg+2]
+        ST   [GSCRX+2],R0
+        LD   R0,[garg+3]
+        ST   [GSCRX+3],R0
+        JMP  stmt
+
+; PALETTE i,v -- entry i becomes $0RGB. The R nibble goes first because
+; that is the byte order the port commits on.
+h_palette:
+        MOV  R3,#2
+        CALL gargs
+        LD   R0,[garg]
+        ST   [GPALI],R0
+        LD   R0,[garg+3]
+        ST   [GPALD],R0
+        LD   R0,[garg+2]
+        ST   [GPALD],R0
+        JMP  stmt
+
+; VPOKE a,b / VPEEK(a) -- the VRAM port. The step is set to +1 every
+; time rather than trusted: some other user may have left it walking
+; backwards by 256.
+h_vpoke:
+        MOV  R3,#2
+        CALL gargs
+        MOV  R0,#1
+        ST   [GVRST],R0
+        LD   R0,[garg]
+        ST   [GVRAL],R0
+        LD   R0,[garg+1]
+        ST   [GVRAH],R0
+        LD   R0,[garg+2]
+        ST   [GVRD],R0
+        JMP  stmt
+
+; pixxy -- garg's first two words into the pixel port.
+pixxy:  LD   R0,[garg]
+        ST   [GPIXXL],R0
+        LD   R0,[garg+1]
+        ST   [GPIXXH],R0
+        LD   R0,[garg+2]
+        ST   [GPIXYL],R0
+        LD   R0,[garg+3]
+        ST   [GPIXYH],R0
+        RET
+
+; PLOT x,y,c -- one pixel, in the current mode's depth, masked by the
+; hardware. Five stores end to end.
+h_plot: MOV  R3,#3
+        CALL gargs
+        CALL pixxy
+        LD   R0,[garg+4]
+        ST   [GPIXD],R0
+        JMP  stmt
+
+; HLINE x,y,n,c -- n pixels rightward. One store each: the port steps X.
+h_hline:
+        MOV  R3,#4
+        CALL gargs
+        CALL pixxy
+        LD   R1,[garg+6]
+        LD   R2,[garg+4]
+        LD   R3,[garg+5]
+.hl:    MOV  R0,R2
+        OR   R0,R3
+        BEQ  .hd
+        ST   [GPIXD],R1
+        SUB  R2,#1
+        BCS  .hl                ; C is *no borrow*: the high byte holds
+        SUB  R3,#1
+        BRA  .hl
+.hd:    JMP  stmt
+
+; SPRITE n,x,y,img,a -- descriptor n, whole. `img` is the pattern in
+; 32-byte units; `a` packs what the descriptor scatters: bit 7 size,
+; 6 enable, 5 V-flip, 4 H-flip, 3 behind the background. Setup of the
+; patterns themselves is VPOKE's job, exactly as it is an assembly
+; programmer's.
+h_sprite:
+        MOV  R3,#5
+        CALL gargs
+        LD   R0,[garg]
+        ADD  R0,R0
+        ADD  R0,R0
+        ADD  R0,R0
+        ST   [GSPRI],R0
+        LD   R0,[garg+4]        ; b0: Y low
+        ST   [GSPRD],R0
+        LD   R0,[garg+8]        ; b1: size and enable, plus Y bit 8
+        AND  R0,#$C0
+        LD   R1,[garg+5]
+        AND  R1,#$01
+        OR   R0,R1
+        ST   [GSPRD],R0
+        LD   R0,[garg+2]        ; b2, b3: X
+        ST   [GSPRD],R0
+        LD   R0,[garg+3]
+        AND  R0,#$03
+        ST   [GSPRD],R0
+        LD   R0,[garg+6]        ; b4, b5: the pattern address
+        ST   [GSPRD],R0
+        LD   R0,[garg+7]
+        AND  R0,#$07
+        ST   [GSPRD],R0
+        LD   R0,[garg+8]        ; b6: flips and priority, a<<2
+        AND  R0,#$38
+        ADD  R0,R0
+        ADD  R0,R0
+        ST   [GSPRD],R0
+        CLR  R0                 ; b7: the per-sprite bank nothing reads
+        ST   [GSPRD],R0
+        JMP  stmt
+
+; SOUND v,pitch,vol,noise -- pitch is the phase increment (f ~ inc/2),
+; vol 0-15, noise picks the LFSR over the square. Silence is vol 0.
+; Two seeks because bytes 2-3 are the engine's phase and software
+; leaves them alone.
+h_sound:
+        MOV  R3,#4
+        CALL gargs
+        LD   R0,[garg]
+        ADD  R0,R0
+        ADD  R0,R0
+        ADD  R0,R0
+        ST   [GSNDI],R0
+        LD   R1,[garg+2]
+        ST   [GSNDD],R1
+        LD   R1,[garg+3]        ; the word commits on the odd byte
+        ST   [GSNDD],R1
+        ADD  R0,#4
+        ST   [GSNDI],R0
+        LD   R1,[garg+4]
+        AND  R1,#$0F
+        ST   [GSNDD],R1
+        LD   R1,[garg+6]
+        TST  R1
+        BEQ  .sq
+        MOV  R1,#$C0
+        BRA  .sn
+.sq:    MOV  R1,#$40
+.sn:    ST   [GSNDD],R1
+        JMP  stmt
+
+; LINE x0,y0,x1,y1,c -- Bresenham, about six cycles a pixel through the
+; port. The RTL cut DRAW_LINE for costing 200 LUT4; this is the same
+; algorithm paid for in bytes instead. Coordinates are at most ten
+; bits, so every quantity fits 16-bit signed arithmetic with room and
+; the sign tests below cannot overflow.
+h_line: MOV  R3,#5
+        CALL gargs
+        ; dx = |x1-x0|, sx = +-1 as a word
+        LD   R0,[garg+4]
+        LD   R1,[garg+5]
+        LD   R3,[garg]
+        SUB  R0,R3
+        LD   R3,[garg+1]
+        SBC  R1,R3
+        MOV  R2,#$01
+        MOV  R3,#$00
+        BGE  .lx
+        XOR  R0,#$FF
+        XOR  R1,#$FF
+        ADD  R0,#1
+        ADC  R1,#0
+        MOV  R2,#$FF
+        MOV  R3,#$FF
+.lx:    ST   [lwk],R0
+        ST   [lwk+1],R1
+        MOV  R0,R2
+        ST   [lwk+6],R0
+        MOV  R0,R3
+        ST   [lwk+7],R0
+        ; dy = -|y1-y0|, sy = +-1
+        LD   R0,[garg+6]
+        LD   R1,[garg+7]
+        LD   R3,[garg+2]
+        SUB  R0,R3
+        LD   R3,[garg+3]
+        SBC  R1,R3
+        MOV  R2,#$FF
+        MOV  R3,#$FF
+        BLT  .ly                ; negative already is -|dy|
+        XOR  R0,#$FF
+        XOR  R1,#$FF
+        ADD  R0,#1
+        ADC  R1,#0
+        MOV  R2,#$01
+        MOV  R3,#$00
+.ly:    ST   [lwk+2],R0
+        ST   [lwk+3],R1
+        MOV  R0,R2
+        ST   [lwk+8],R0
+        MOV  R0,R3
+        ST   [lwk+9],R0
+        ; err = dx + dy
+        LD   R0,[lwk]
+        LD   R1,[lwk+1]
+        LD   R2,[lwk+2]
+        LD   R3,[lwk+3]
+        ADD  R0,R2
+        ADC  R1,R3
+        ST   [lwk+4],R0
+        ST   [lwk+5],R1
+.lp:    CALL pixxy              ; garg 0..3 are the walking x0,y0
+        LD   R0,[garg+8]
+        ST   [GPIXD],R0
+        ; the last pixel is drawn before the walk is tested
+        LD   R0,[garg]
+        LD   R2,[garg+4]
+        XOR  R0,R2
+        MOV  R1,R0
+        LD   R0,[garg+1]
+        LD   R2,[garg+5]
+        XOR  R0,R2
+        OR   R1,R0
+        LD   R0,[garg+2]
+        LD   R2,[garg+6]
+        XOR  R0,R2
+        OR   R1,R0
+        LD   R0,[garg+3]
+        LD   R2,[garg+7]
+        XOR  R0,R2
+        OR   R1,R0
+        BNE  .go
+        JMP  stmt
+.go:    ; if 2*err >= dy: err += dy, x0 += sx
+        LD   R0,[lwk+4]
+        LD   R1,[lwk+5]
+        ADD  R0,R0
+        ADC  R1,R1
+        LD   R2,[lwk+2]
+        LD   R3,[lwk+3]
+        SUB  R0,R2
+        SBC  R1,R3
+        BLT  .ny
+        LD   R0,[lwk+4]
+        ADD  R0,R2
+        ST   [lwk+4],R0
+        LD   R0,[lwk+5]
+        ADC  R0,R3
+        ST   [lwk+5],R0
+        LD   R0,[garg]
+        LD   R2,[lwk+6]
+        ADD  R0,R2
+        ST   [garg],R0
+        LD   R0,[garg+1]
+        LD   R2,[lwk+7]
+        ADC  R0,R2
+        ST   [garg+1],R0
+.ny:    ; if 2*err <= dx: err += dx, y0 += sy
+        LD   R0,[lwk+4]
+        LD   R1,[lwk+5]
+        ADD  R0,R0
+        ADC  R1,R1
+        MOV  R2,R0
+        MOV  R3,R1
+        LD   R0,[lwk]
+        LD   R1,[lwk+1]
+        SUB  R0,R2
+        SBC  R1,R3
+        BLT  .nx
+        LD   R2,[lwk]
+        LD   R0,[lwk+4]
+        ADD  R0,R2
+        ST   [lwk+4],R0
+        LD   R2,[lwk+1]
+        LD   R0,[lwk+5]
+        ADC  R0,R2
+        ST   [lwk+5],R0
+        LD   R0,[garg+2]
+        LD   R2,[lwk+8]
+        ADD  R0,R2
+        ST   [garg+2],R0
+        LD   R0,[garg+3]
+        LD   R2,[lwk+9]
+        ADC  R0,R2
+        ST   [garg+3],R0
+.nx:    JMP  .lp
+
+; RND(n) -- 0..n-1 from a 16-bit xorshift (7, 9, 8: full period), the
+; remainder coming free out of udiv16. RND(0) is the raw word.
+irnd:   CALL sopen              ; the '('
+        CALL eval
+        CALL sopen              ; the ')'
+        PUSH R1
+        PUSH R0
+        LD   R0,[rseed]
+        LD   R1,[rseed+1]
+        MOV  R2,R0
+        MOV  R3,R1
+        ADD  R2,R2              ; s ^= s << 7
+        ADC  R3,R3
+        ADD  R2,R2
+        ADC  R3,R3
+        ADD  R2,R2
+        ADC  R3,R3
+        ADD  R2,R2
+        ADC  R3,R3
+        ADD  R2,R2
+        ADC  R3,R3
+        ADD  R2,R2
+        ADC  R3,R3
+        ADD  R2,R2
+        ADC  R3,R3
+        XOR  R0,R2
+        XOR  R1,R3
+        MOV  R2,R1              ; s ^= s >> 9
+        SHR  R2
+        XOR  R0,R2
+        XOR  R1,R0              ; s ^= s << 8
+        ST   [rseed],R0
+        ST   [rseed+1],R1
+        POP  R2                 ; n, the divisor
+        POP  R3
+        PUSH R0
+        MOV  R0,R2
+        OR   R0,R3
+        BEQ  .raw
+        POP  R0
+        CALL udiv16             ; remainder in R2/R3
+        MOV  R0,R2
+        MOV  R1,R3
+        BRA  .rd
+.raw:   POP  R0
+.rd:    PUSH R0
+        CLR  R0
+        ST   [STYPE],R0
+        POP  R0
+        RET
+
+; TIMER -- frames since power-on, wrapping at 65536: eighteen minutes,
+; which is a game's whole afternoon. No parentheses, like INKEY.
+itimer: LD   R0,[frames]
+        LD   R1,[frames+1]
+        PUSH R0
+        CLR  R0
+        ST   [STYPE],R0
+        POP  R0
+        RET
+
+; VPEEK(a) -- the port's prefetch is armed by the address write and the
+; data read stalls until the byte is real, so this is exact.
+ivpeek: CALL sopen
+        CALL eval
+        CALL sopen
+        MOV  R2,R0
+        MOV  R0,#1
+        ST   [GVRST],R0
+        ST   [GVRAL],R2
+        ST   [GVRAH],R1
+        LD   R0,[GVRD]
+        CLR  R1
+        PUSH R0
+        CLR  R0
+        ST   [STYPE],R0
+        POP  R0
+        RET
+
+; =====================================================================
+; The language round-out: INPUT, DATA/READ/RESTORE, ON GOTO, and the
+; last of the graphics -- TILE, CLG, PITCH, GTEXT -- plus 8.8 fixed
+; point as three functions. Scalar variables only for READ and INPUT;
+; an array element is a place a program can copy to afterwards.
+; =====================================================================
+
+dptr:   .word 0                 ; where the next DATA item is
+dneed:  .byte 1                 ; ...or 1: dptr is a record to scan from
+
+; INPUT var -- digits echoed until Return, minus sign honoured,
+; everything else ignored. Numeric scalars only.
+h_input:
+        SKIPSP
+        CALL varidx
+        PUSHW X
+        PUSHW Y                 ; the editor's routines use Y freely
+        CLR  R2
+        ST   [garg],R2
+        ST   [garg+1],R2
+        ST   [garg+2],R2
+.k:     CALL s_getkey
+        TST  R1
+        BNE  .k                 ; a named key is not a digit
+        CMP  R0,#$0D
+        BEQ  .cr
+        CMP  R0,#$2D
+        BNE  .dg
+        MOV  R2,#1
+        ST   [garg+2],R2
+        BRA  .echo
+.dg:    CMP  R0,#$30
+        BCC  .k
+        CMP  R0,#$3A
+        BCS  .k
+        PUSH R0
+        LD   R2,[garg]          ; value = value * 10 + digit
+        LD   R3,[garg+1]
+        ADD  R2,R2
+        ADC  R3,R3
+        MOV  R0,R2
+        MOV  R1,R3
+        ADD  R2,R2
+        ADC  R3,R3
+        ADD  R2,R2
+        ADC  R3,R3
+        ADD  R2,R0
+        ADC  R3,R1
+        POP  R0
+        PUSH R0
+        SUB  R0,#$30
+        ADD  R2,R0
+        ADC  R3,#0              ; NOT `CLR R0 / ADC R3,R0`: CLR is
+                                ; SUB Rd,Rd, and C is *no borrow*, so
+                                ; CLR always leaves C set -- a phantom
+                                ; +256 on every digit
+        ST   [garg],R2
+        ST   [garg+1],R3
+        POP  R0
+.echo:  PUSH R1
+        PUSH R0
+        CALL s_emit
+        POP  R0
+        POP  R1
+        BRA  .k
+.cr:    CALL pnl
+        POPW Y
+        POPW X
+        LD   R0,[garg]
+        LD   R1,[garg+1]
+        LD   R2,[garg+2]
+        TST  R2
+        BEQ  .st
+        XOR  R0,#$FF
+        XOR  R1,#$FF
+        ADD  R0,#1
+        ADC  R1,#0
+.st:    ST   [X],R0
+        INCW X
+        ST   [X],R1
+        JMP  stmt
+
+h_restore:
+        MOV  R0,#1
+        ST   [dneed],R0
+        CLR  R0
+        ST   [dptr],R0
+        MOV  R0,#$02
+        ST   [dptr+1],R0
+        JMP  stmt
+
+; READ a, b, c -- each target takes the next DATA item.
+h_read: SKIPSP
+        CALL varidx
+        PUSHW X
+        CALL dnext
+        POPW X
+        LD   R2,[ERR]
+        TST  R2
+        BEQ  .ok
+        JMP  stmt               ; stmt sees ERR and stops
+.ok:    ST   [X],R0
+        INCW X
+        ST   [X],R1
+        SKIPSP
+        CMP  R2,#$2C
+        BNE  .done
+        INCW Y
+        BRA  h_read
+.done:  JMP  stmt
+
+; dnext -- the next DATA value into R0/R1, or ?OUT OF DATA. The walk is
+; token-wise through the stored records: a byte-wise scan would read the
+; binary halves of literals as line ends, the skiptok lesson over again.
+dnext:  PUSHW Y
+        LDW  Y,[dptr]
+        LD   R0,[dneed]
+        BNE  .rec
+        BRA  .at
+.rec:   LD   R2,[PEND]          ; past the program: out of data
+        LD   R3,[PEND+1]
+        MOV  R0,YL
+        MOV  R1,YH
+        SUB  R0,R2
+        SBC  R1,R3
+        BLT  .in
+        MOV  R0,#E_DATA
+        ST   [ERR],R0
+        POPW Y
+        RET
+.in:    INCW Y                  ; lineno, length
+        INCW Y
+        INCW Y
+.tw:    LD   R0,[Y]
+        TST  R0
+        BEQ  .nrec
+        CMP  R0,#K_DATA
+        BEQ  .fnd
+        CALL skiptok
+        BRA  .tw
+.nrec:  INCW Y
+        BRA  .rec
+.fnd:   INCW Y
+        CLR  R0
+        ST   [dneed],R0
+        BRA  .val
+.at:
+.val:   LD   R0,[Y]             ; spaces are stored, commas separate,
+        CMP  R0,#$20            ; and either may follow the other
+        BEQ  .adv
+        CMP  R0,#$2C
+        BNE  .v1
+.adv:   INCW Y
+        BRA  .val
+.v1:    TST  R0
+        BEQ  .lend
+        CLR  R2
+        CMP  R0,#$2D
+        BNE  .v2
+        MOV  R2,#1
+        INCW Y
+        LD   R0,[Y]
+.v2:    CMP  R0,#K_NUM
+        BEQ  .lit
+        MOV  R0,#E_SYN          ; something in a DATA list that is not
+        ST   [ERR],R0           ;   a number
+        POPW Y
+        RET
+.lit:   INCW Y
+        LD   R0,[Y]
+        INCW Y
+        LD   R1,[Y]
+        INCW Y
+        STW  [dptr],Y           ; parked on whatever follows; the entry
+                                ; loop above eats spaces and commas
+        TST  R2
+        BEQ  .pos
+        XOR  R0,#$FF
+        XOR  R1,#$FF
+        ADD  R0,#1
+        ADC  R1,#0
+.pos:   POPW Y
+        RET
+.lend:  INCW Y                  ; this list is spent: the next record
+        STW  [dptr],Y
+        MOV  R0,#1
+        ST   [dneed],R0
+        BRA  .rec
+
+; ON n GOTO l1, l2, ... -- the nth number in the list, or fall through.
+; The list is numbers, not expressions, which is what makes walking it
+; without evaluating it possible.
+h_on:   CALL eval
+        ST   [garg],R0
+        SKIPSP
+        INCW Y                  ; the GOTO
+.on1:   SKIPSP
+        CMP  R2,#K_NUM
+        BNE  .off
+        LD   R0,[garg]
+        SUB  R0,#1
+        ST   [garg],R0
+        BEQ  .take
+        INCW Y
+        INCW Y
+        INCW Y
+        SKIPSP
+        CMP  R2,#$2C
+        BNE  .off
+        INCW Y
+        BRA  .on1
+.take:  INCW Y
+        LD   R0,[Y]
+        INCW Y
+        LD   R1,[Y]
+        JMP  goton
+.off:   JMP  h_else             ; no pick: the rest of the line is a
+                                ;   thing to step over
+
+; TILE x,y,t,a -- one map entry in mode 2: the map is stride 128 at the
+; bottom of VRAM, an entry is index then attribute.
+h_tile: MOV  R3,#4
+        CALL gargs
+        MOV  R0,#1
+        ST   [GVRST],R0
+        LD   R0,[garg+2]        ; y*128: hi = y>>1, lo = (y&1)<<7
+        MOV  R1,R0
+        SHR  R1
+        AND  R0,#$01
+        MOV  R2,#$00
+        TST  R0
+        BEQ  .t0
+        MOV  R2,#$80
+.t0:    LD   R0,[garg]          ; + x*2
+        ADD  R0,R0
+        ADD  R2,R0
+        ADC  R1,#0
+        ST   [GVRAL],R2
+        ST   [GVRAH],R1
+        LD   R0,[garg+4]
+        ST   [GVRD],R0
+        LD   R0,[garg+6]
+        ST   [GVRD],R0
+        JMP  stmt
+
+; CLG c -- the whole surface to one colour, straight through the VRAM
+; port: 240 rows of stride bytes from VID_BASE. The byte pattern is the
+; colour replicated to the mode's depth, and the replication is a
+; multiply: c*$FF at 1 bpp, c*$55 at 2, c*$11 at 4, c*$01 at 8.
+h_clg:  MOV  R3,#1
+        CALL gargs
+        LD   R0,[$FE11]         ; bpp out of VID_CTRL
+        SHR  R0
+        SHR  R0
+        AND  R0,#$03
+        LDW  X,#clgm
+        ADDW X,R0
+        LD   R1,[X]
+        LD   R2,[garg]
+        AND  R2,R1
+        ADDW X,#4
+        LD   R1,[X]
+        MUL  R2,R1              ; the pattern lands in XL
+        MOV  R2,XL
+        MOV  R0,#1
+        ST   [GVRST],R0
+        LD   R0,[$FE12]
+        ST   [GVRAL],R0
+        LD   R0,[$FE13]
+        ST   [GVRAH],R0
+        MOV  R3,#240
+.row:   LD   R1,[$FE14]         ; stride low; 0 means 256, and the
+.col:   ST   [GVRD],R2          ;   store-first loop makes that true
+        SUB  R1,#1
+        BNE  .col
+        SUB  R3,#1
+        BNE  .row
+        JMP  stmt
+clgm:   .byte $01,$03,$0F,$FF
+        .byte $FF,$55,$11,$01
+
+; PITCH v,p -- the two pitch bytes and nothing else: slides and vibrato
+; without re-stating the volume.
+h_pitch:
+        MOV  R3,#2
+        CALL gargs
+        LD   R0,[garg]
+        ADD  R0,R0
+        ADD  R0,R0
+        ADD  R0,R0
+        ST   [GSNDI],R0
+        LD   R0,[garg+2]
+        ST   [GSNDD],R0
+        LD   R0,[garg+3]
+        ST   [GSNDD],R0
+        JMP  stmt
+
+; GTEXT x,y,s$,c -- 8x8 text in any bitmap mode, opaque, from the 1bpp
+; font the boot stub seeds at VRAM $FC00 (8 bytes a glyph, from space).
+; Set bits paint c, clear bits paint 0, and the pixel port streams each
+; row -- so a character is 8 VRAM reads and 64 pixel writes.
+h_gtext:
+        MOV  R3,#2
+        CALL gargs
+        INCW Y                  ; the comma before the string
+        CALL eval               ; the string, into the accumulator
+        INCW Y                  ; ...and the one after it
+        CLR  R0
+        ST   [STYPE],R0         ; the colour is a number
+        CALL eval
+        ST   [garg+4],R0
+        CLR  R0
+        ST   [garg+6],R0        ; the index along the string
+.ch:    LD   R0,[garg+6]
+        LD   R1,[SLEN]
+        CMP  R0,R1
+        BCC  .chgo
+        JMP  stmt
+.chgo:  LD   R2,[SACC]
+        MOV  XL,R2
+        LD   R2,[SACC+1]
+        MOV  XH,R2
+        LD   R2,[X+R0]          ; the character
+        SUB  R2,#$20
+        MOV  R1,R2              ; glyph address: $FC00 + g*8
+        SHR  R1
+        SHR  R1
+        SHR  R1
+        SHR  R1
+        SHR  R1
+        ADD  R1,#$FC
+        MOV  R0,R2
+        ADD  R0,R0
+        ADD  R0,R0
+        ADD  R0,R0
+        MOV  R2,#1
+        ST   [GVRST],R2
+        ST   [GVRAL],R0
+        ST   [GVRAH],R1
+        CLR  R3                 ; the row
+.grow:  LD   R2,[GVRD]          ; its eight bits, MSB leftmost
+        LD   R0,[garg]
+        ST   [GPIXXL],R0
+        LD   R0,[garg+1]
+        ST   [GPIXXH],R0
+        LD   R0,[garg+2]
+        ADD  R0,R3
+        ST   [GPIXYL],R0
+        LD   R0,[garg+3]
+        ADC  R0,#0
+        ST   [GPIXYH],R0
+        PUSH R3
+        MOV  R3,#8
+.gbit:  CLR  R0
+        ADD  R2,R2              ; the top bit into C
+        BCC  .g0
+        LD   R0,[garg+4]
+.g0:    ST   [GPIXD],R0
+        SUB  R3,#1
+        BNE  .gbit
+        POP  R3
+        ADD  R3,#1
+        CMP  R3,#8
+        BNE  .grow
+        LD   R0,[garg]          ; x += 8, on to the next character
+        ADD  R0,#8
+        ST   [garg],R0
+        LD   R0,[garg+1]
+        ADC  R0,#0
+        ST   [garg+1],R0
+        LD   R0,[garg+6]
+        ADD  R0,#1
+        ST   [garg+6],R0
+        JMP  .ch
+
+; ---------------------------------------------------------------------
+; 8.8 fixed point, as three functions. A value cell is 16 bits on this
+; machine, so the fraction that fits it is 8.8: -128..127 and change,
+; 1/256 steps -- sub-pixel positions and speeds, which is what games
+; want a fraction for. + and - already work; FMUL and FDIV carry the
+; point; FIX drops it. F(2.5) is spelled 640, or 2*256+128.
+; ---------------------------------------------------------------------
+
+; ffargs -- (a, b) parsed, signs folded into garg+4, both made positive.
+ffargs: CALL sopen
+        CALL eval
+        ST   [garg],R0
+        ST   [garg+1],R1
+        INCW Y
+        CALL eval
+        CALL sopen
+        ST   [garg+2],R0
+        ST   [garg+3],R1
+        LD   R2,[garg+1]
+        XOR  R2,R1
+        AND  R2,#$80
+        ST   [garg+4],R2
+        LD   R0,[garg+1]
+        AND  R0,#$80
+        BEQ  .p0
+        LD   R0,[garg]
+        LD   R1,[garg+1]
+        XOR  R0,#$FF
+        XOR  R1,#$FF
+        ADD  R0,#1
+        ADC  R1,#0
+        ST   [garg],R0
+        ST   [garg+1],R1
+.p0:    LD   R0,[garg+3]
+        AND  R0,#$80
+        BEQ  .p2
+        LD   R0,[garg+2]
+        LD   R1,[garg+3]
+        XOR  R0,#$FF
+        XOR  R1,#$FF
+        ADD  R0,#1
+        ADC  R1,#0
+        ST   [garg+2],R0
+        ST   [garg+3],R1
+.p2:    RET
+
+; fsign -- the R0/R1 result negated if the folded sign says so, then
+; the usual number-return dance.
+fsign:  LD   R2,[garg+4]
+        TST  R2
+        BEQ  .fp
+        XOR  R0,#$FF
+        XOR  R1,#$FF
+        ADD  R0,#1
+        ADC  R1,#0
+.fp:    PUSH R0
+        CLR  R0
+        ST   [STYPE],R0
+        POP  R0
+        RET
+
+; FMUL(a,b) -- (a*b) >> 8, by four hardware multiplies. MUL leaves the
+; product in X and its operands alone, which is what makes this short.
+ifmul:  CALL ffargs
+        LD   R0,[garg]
+        LD   R1,[garg+2]
+        MUL  R0,R1              ; al*bl -- only its high byte survives
+        MOV  R2,XH
+        CLR  R3
+        LD   R0,[garg]
+        LD   R1,[garg+3]
+        MUL  R0,R1              ; al*bh
+        MOV  R0,XL
+        ADD  R2,R0
+        MOV  R0,XH
+        ADC  R3,R0
+        LD   R0,[garg+1]
+        LD   R1,[garg+2]
+        MUL  R0,R1              ; ah*bl
+        MOV  R0,XL
+        ADD  R2,R0
+        MOV  R0,XH
+        ADC  R3,R0
+        LD   R0,[garg+1]
+        LD   R1,[garg+3]
+        MUL  R0,R1              ; ah*bh, shifted left eight
+        MOV  R0,XL
+        ADD  R3,R0
+        MOV  R0,R2
+        MOV  R1,R3
+        JMP  fsign
+
+; FDIV(a,b) -- (a<<8)/b: the integer quotient takes the high byte and
+; eight more restoring steps make the fraction, on the remainder udiv16
+; hands back with the divisor still parked in DVSR.
+ifdiv:  CALL ffargs
+        LD   R0,[garg+2]
+        LD   R1,[garg+3]
+        MOV  R2,R0
+        OR   R2,R1
+        BNE  .go
+        MOV  R0,#E_DIV0
+        ST   [ERR],R0
+        RET
+.go:    MOV  R2,R0
+        MOV  R3,R1
+        LD   R0,[garg]
+        LD   R1,[garg+1]
+        CALL udiv16             ; q in R0/R1, remainder in R2/R3
+        ST   [garg],R0          ; q's low byte becomes the high byte
+        CLR  R0                 ; the fraction, a bit at a time
+        MOV  R1,#8
+.fd:    ADD  R2,R2
+        ADC  R3,R3
+        ADD  R0,R0
+        PUSH R1
+        LD   R1,[DVSR]
+        SUB  R2,R1
+        LD   R1,[DVSR+1]
+        SBC  R3,R1
+        BCS  .yes               ; C is *no borrow*: it fitted
+        LD   R1,[DVSR]
+        ADD  R2,R1
+        LD   R1,[DVSR+1]
+        ADC  R3,R1
+        BRA  .nf
+.yes:   ADD  R0,#1
+.nf:    POP  R1
+        SUB  R1,#1
+        BNE  .fd
+        LD   R1,[garg]
+        JMP  fsign
+
+; FIX(a) -- the integer part: an arithmetic shift right by the point.
+ifix:   CALL sopen
+        CALL eval
+        CALL sopen
+        MOV  R0,R1
+        CLR  R1
+        MOV  R2,R0
+        AND  R2,#$80
+        BEQ  .fx
+        MOV  R1,#$FF
+.fx:    PUSH R0
+        CLR  R0
+        ST   [STYPE],R0
+        POP  R0
+        RET

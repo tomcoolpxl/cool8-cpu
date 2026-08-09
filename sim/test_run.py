@@ -104,6 +104,72 @@ CASES = [
       "50 B = B + 1", "60 LOOP", "70 A = A + 1", "80 LOOP",
       "90 PRINT A * 5", "95 END"], "10"),
 
+    # The language round-out.
+    ("PRINT separators butt items and a trailing one holds the newline",
+     ['10 PRINT 1; 2; "X"', "20 PRINT 3;", "30 PRINT 4", "40 END"], "34"),
+
+    ("FOR counts down when STEP is negative",
+     ["10 S = 0", "20 FOR I = 10 TO 1 STEP -2", "30 S = S + I",
+      "40 NEXT I", "50 PRINT S", "60 END"], "30"),
+
+    ("shifts, both directions, at the compiler's precedence",
+     ["10 PRINT (5 << 4) + (256 >> 6)", "20 END"], "84"),
+
+    ("DATA is read, RESTORE rewinds, minus signs survive",
+     ["10 DATA 7, -3, 100", "20 READ A, B", "30 RESTORE", "40 READ C",
+      "50 PRINT A + B + C", "60 END"], "11"),
+
+    ("ON picks the nth target",
+     ["10 ON 2 GOTO 40, 60", "20 PRINT 0", "30 END",
+      "40 PRINT 40", "50 END", "60 PRINT 99", "70 END"], "99"),
+
+    ("8.8 fixed point: FMUL, FDIV and FIX agree",
+     ["10 PRINT FMUL(640, 384); FDIV(768, 512); FIX(1000)",
+      "20 END"], "9603843"),
+
+    ("TILE writes the map entry where the mode 2 engine looks",
+     ["10 TILE 3, 2, 65, 7", "20 PRINT VPEEK(262); VPEEK(263)",
+      "30 END"], "657"),
+
+    # CLG's fill is read back beside the glyph, and GTEXT's glyph comes
+    # from a font row the program itself poked -- the stub seeds the
+    # real font only on a flash boot, which this harness is not.
+    ("CLG fills and GTEXT draws through the seeded font",
+     ["10 MODE 4", "20 CLG 3", "30 VPOKE $FC08, $FF", "40 PITCH 0, 500",
+      "50 GTEXT 0, 0, \"!\", 9", "60 PRINT VPEEK(0); VPEEK(200)",
+      "70 END"], "15351"),
+
+    # Graphics and sound. Every check that can be is made by the
+    # machine itself: VPEEK reads back what PLOT and LINE drew through
+    # the pixel port, so the whole path -- parse, eval, port, VRAM --
+    # is in the assertion. The screen the editor prints on is mode 0 in
+    # main RAM, so drawing in mode 4 never disturbs the row the answer
+    # lands on -- and dorun's restore is itself under test here, since
+    # reading that row back needs VID_BASE pointed at $8000 again.
+    ("VPOKE and VPEEK round-trip the VRAM port",
+     ["10 VPOKE $1234, 77", "20 PRINT VPEEK($1234)", "30 END"], "77"),
+
+    ("RND stays in range and is not stuck",
+     ["10 A = 0", "20 B = 1", "30 FOR I = 1 TO 20", "40 C = RND(10)",
+      "50 IF C > 9 THEN B = 0", "60 IF C < 0 THEN B = 0",
+      "70 A = A + C", "80 NEXT I", "90 IF A = 0 THEN B = 0",
+      "95 PRINT B", "99 END"], "1"),
+
+    ("TIMER advances across two VSYNCs",
+     ["10 A = TIMER", "20 VSYNC", "30 VSYNC", "40 B = TIMER - A",
+      "50 IF B >= 2 THEN PRINT 1", "60 END"], "1"),
+
+    ("MODE 4 and PLOT put a pixel where VPEEK finds it",
+     ["10 MODE 4", "20 PLOT 10, 3, 15", "30 A = VPEEK(3 * 160 + 5)",
+      "40 IF A <> 0 THEN PRINT 1", "50 END"], "1"),
+
+    ("SCROLL, PALETTE, SPRITE, SOUND, HLINE and LINE all execute",
+     ["10 MODE 4", "20 SCROLL 0, 0", "30 PALETTE 17, $0F00",
+      "40 SPRITE 0, 100, 50, 4, 64", "50 SOUND 0, 881, 0, 0",
+      "60 HLINE 0, 0, 8, 3", "70 LINE 0, 0, 7, 7, 5",
+      "80 A = VPEEK(3 * 160 + 1)", "90 IF A <> 0 THEN PRINT 1",
+      "99 END"], "1"),
+
     ("a string, which needs the accumulator and the heap",
      ['10 A$ = "HELLO"', '20 B$ = A$ + " THERE"', "30 PRINT B$",
       "40 END"], "HELLO THERE"),
@@ -269,6 +335,19 @@ def main():
     check(k["char"], "a key on the PS/2 port reaches a running program")
     check(k["named"], "and a cursor key arrives as K_UP, not as a keypad 8")
     check(k["esc"], "a lone Escape returns 27 rather than blocking")
+
+    # INPUT blocks mid-run, so the harness types the answer while the
+    # program is waiting -- which is the whole point of the command.
+    M = B.Machine(code, syms)
+    M.settle()
+    for ln in ["10 INPUT A", "20 PRINT A + 1", "30 END"]:
+        M.cmd(ln)
+    M.m.type("RUN\r")
+    M.m.run(cycles=3_000_000)
+    M.m.type("41\r")
+    M.m.run(cycles=8_000_000)
+    check(shows(M, "42"), "INPUT takes a number typed at a waiting program",
+          " | ".join(r.strip() for r in M.screen() if r.strip())[:100])
 
     print()
     print("PASS" if not FAILS else f"FAIL -- {len(FAILS)}")

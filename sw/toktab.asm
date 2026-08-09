@@ -58,4 +58,35 @@ TOKTAB:
         .byte 6, "I","N","L","I","N","E"
         .byte 4, "G","O","T","O"
         .byte 4, "W","E","N","D"
+; ---- $A4 is T_LIT, the stored literal's marker -- a token with no
+; ---- keyword. The slot below exists only to keep every later entry's
+; ---- position honest, and it can never be typed: '?' is punctuation,
+; ---- and only identifiers are looked up here. Leaving it out shifted
+; ---- MODE onto T_LIT itself, and the first `MODE 4` ever typed was
+; ---- stored as half a number.
+        .byte 1, "?"
+; ---- graphics and sound, appended in one block: $A5-$AE. RND, TIMER
+; ---- and VPEEK are btab functions, not keywords -- they match as
+; ---- identifiers the way LEN and INKEY do, so they cost no tokens.
+        .byte 4, "M","O","D","E"
+        .byte 5, "V","S","Y","N","C"
+        .byte 6, "S","C","R","O","L","L"
+        .byte 7, "P","A","L","E","T","T","E"
+        .byte 6, "S","P","R","I","T","E"
+        .byte 5, "V","P","O","K","E"
+        .byte 5, "S","O","U","N","D"
+        .byte 5, "H","L","I","N","E"
+        .byte 4, "P","L","O","T"
+        .byte 4, "L","I","N","E"
+; ---- the language round-out: $AF-$B8
+        .byte 5, "I","N","P","U","T"
+        .byte 4, "D","A","T","A"
+        .byte 4, "R","E","A","D"
+        .byte 7, "R","E","S","T","O","R","E"
+        .byte 4, "S","T","E","P"
+        .byte 2, "O","N"
+        .byte 4, "T","I","L","E"
+        .byte 3, "C","L","G"
+        .byte 5, "P","I","T","C","H"
+        .byte 5, "G","T","E","X","T"
         .byte 0

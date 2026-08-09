@@ -199,6 +199,14 @@ SUB putn(v AS CARD)
   DIM d AS CARD
   DIM q AS BYTE
   DIM lead AS BYTE
+  ' An INT arrives as its bit pattern, so the top bit is its sign: say
+  ' minus, then print the magnitude -- which in CARD arithmetic is
+  ' exactly 0 - v, and -32768 comes out right for free. Nothing prints
+  ' a true CARD above 32767: FREE's ceiling is 31967.
+  IF v >= 32768 THEN
+    CALL emit(45)
+    v = 0 - v
+  END IF
   d = 10000
   lead = 0
   DO
@@ -893,6 +901,25 @@ SUB dorun()
         CALL irun
 .out:
   END ASM
+  ' Whatever mode, scroll or noise the program left behind, the editor
+  ' gets its screen and its quiet back before a word is said about how
+  ' the run ended. The palette is deliberately NOT restored -- the
+  ' default lives in the boot stub, which the first typed line
+  ' reclaimed, and a changed palette is a look, not a fault.
+  POKE $FE10, $80
+  POKE VID_BASE_L, 0
+  POKE VID_BASE_H, (SCREEN >> 8) + vtop
+  POKE $FE16, 0
+  POKE $FE17, 0
+  POKE $FE18, 0
+  POKE $FE19, 0
+  p = 4
+  DO
+    POKE $FE50, p
+    POKE $FE51, 0
+    POKE $FE51, 0
+    p = p + 8
+  LOOP WHILE p < 68
   e = PEEK($0018)
   IF e <> 255 THEN
     IF e <> 0 THEN
@@ -1963,6 +1990,7 @@ RUNTAB:
         .asciz "LOOP ERROR"
         .asciz "CALL ERROR"
         .asciz "BREAK"
+        .asciz "OUT OF DATA ERROR"
         .byte 0
 
 ; ---- errors. C64-shaped: a ? , the fault, and ERROR.
@@ -2044,6 +2072,12 @@ iisr:   PUSH R0
         PUSHW X
         MOV  R0,#$22            ; acknowledge vblank, keep it enabled
         ST   [$FE1D],R0
+        LD   R0,[frames]        ; the tick TIMER reads and VSYNC waits on
+        ADD  R0,#1
+        ST   [frames],R0
+        LD   R0,[frames+1]      ; LD leaves C alone, so the carry rides
+        ADC  R0,#0
+        ST   [frames+1],R0
 .more:  LD   R0,[$FE70]         ; UART_STAT: anything waiting?
         BTST R0,#$01
         BEQ  .kbd

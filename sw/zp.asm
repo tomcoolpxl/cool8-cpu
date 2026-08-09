@@ -55,8 +55,16 @@ LVAR    = $001A                 ; 1: the FOR variable, doubled
 LLIM    = $001B                 ; 2: its limit
 LBODY   = $001D                 ; 2: where its body starts
 LLINE   = $001F                 ; 2: and which line that was
-FDEPTH  = $0021                 ; 1: FOR loops active, 0 = none
-EDEPTH  = $0022                 ; 1: expression nesting, 0 at statement level
+LSTEP   = $0021                 ; 2: the step, 1 unless STEP said otherwise.
+                                ;    Contiguous with the four above: fpush
+                                ;    block-copies the frame, so the frame
+                                ;    is an address range, not a struct.
+FDEPTH  = $00A2                 ; 1: FOR loops active, 0 = none. Moved
+EDEPTH  = $00A3                 ; 1: expression nesting -- STEP took their
+                                ;    old $21-$22, and $12-$13 is BENT's,
+                                ;    which the first draft of this move
+                                ;    sat on. They live in FORSTK's old
+                                ;    ground; $00A4-$00D9 stays free.
 
 MTMP    = $0023                 ; 4: multiply scratch
 
@@ -116,9 +124,12 @@ SDIG    = $003F                 ; 1: digits STR$ has stacked, or
 
 VARS    = $0040                 ; 52: A-Z, two bytes each
 
-FORFR   = 7                     ; bytes per FOR frame
-MAXFOR  = 8                     ; nesting levels
-FORSTK  = $00A2                 ; 56: MAXFOR * FORFR, $00A2-$00D9
+FORFR   = 9                     ; bytes per FOR frame, STEP included
+MAXFOR  = 8                     ; nesting levels, as it always was
+; FORSTK left page 0 when STEP made the frame nine bytes: eight frames
+; is 72 and the page had 56. It lives with the interpreter's other
+; absolutes in sw/interp.asm now, and **$00A2-$00D9 is free** -- the
+; first 56 bytes page 0 has ever gained back.
 
 ; ---- the assembler
 ACP     = $00DA                 ; 2: where the next byte goes
@@ -169,6 +180,7 @@ E_DIV0  = 15                    ; ?DIVISION BY ZERO ERROR
 E_DOS   = 16                    ; ?TOO MANY DOS / ?LOOP WITHOUT DO
 E_CALL  = 17                    ; ?NO SUCH SUB / ?RETURN WITHOUT CALL
 E_STOP  = 18                    ; ?BREAK -- the user stopped it
+E_DATA  = 19                    ; ?OUT OF DATA -- READ past the last DATA
 ; 13 was E_AFULL, "too many symbols". There is no symbol table to fill:
 ; a label is a BASIC variable, so running out of them is E_NAMES.
 E_DONE  = 255

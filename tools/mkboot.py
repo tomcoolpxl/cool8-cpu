@@ -72,11 +72,124 @@ reloc:  LDW  X,#src
         ; once the ROM stops answering for them.
 .go:    CLR  R0
         ST   [SYSCTRL],R0
+
+        ; ------------------------------------------------- the dressing
+        ; One-shot initialisation that costs ZERO resident bytes: this
+        ; stub lives at $0200 in user RAM and the first line typed into
+        ; the editor is stored on top of it. So the default palettes and
+        ; the startup chime live here, run once, and are reclaimed --
+        ; the machine's whole make-up ritual in memory it gives back.
+
+        ; palette bank 0: the editor's sixteen, CGA slot meanings kept
+        ; so attribute nibbles stay true, values softened. Bank 1: the
+        ; Pico-8 sixteen, quantised to RGB444 -- a designed game
+        ; palette for sprites and tiles to point at.
+        CLR  R0
+        ST   [$FE1E],R0
+        LDW  X,#paltab
+        MOV  R2,#64
+.pl:    LD   R0,[X]
+        ST   [$FE1F],R0
+        INCW X
+        SUB  R2,#1
+        BNE  .pl
+
+        ; the chime: three rising notes on voice 0, ~60 ms each, then
+        ; silence. C5, E5, G5 as phase increments (f = inc / 2).
+        LDW  X,#chime
+.nx:    LD   R2,[X]
+        INCW X
+        LD   R3,[X]
+        INCW X
+        MOV  R0,R2
+        OR   R0,R3
+        BEQ  .off
+        CLR  R0
+        ST   [$FE50],R0
+        ST   [$FE51],R2
+        ST   [$FE51],R3
+        MOV  R0,#4
+        ST   [$FE50],R0
+        MOV  R0,#$06
+        ST   [$FE51],R0
+        MOV  R0,#$40
+        ST   [$FE51],R0
+        CLR  R0
+        CLR  R1
+.dl:    ADD  R0,#1
+        ADC  R1,#0
+        CMP  R1,#$C0
+        BNE  .dl
+        BRA  .nx
+.off:   MOV  R0,#4
+        ST   [$FE50],R0
+        CLR  R0
+        ST   [$FE51],R0
+        ST   [$FE51],R0
+
+        ; GTEXT's font: 96 glyphs of 8x8, 1 bpp, seeded into VRAM at
+        ; $FC00 through the port. VRAM is RAM: it survives every mode
+        ; switch, so this happens once, here, in reclaimed memory.
+        MOV  R0,#1
+        ST   [$FE28],R0
+        CLR  R0
+        ST   [$FE26],R0
+        MOV  R0,#$FC
+        ST   [$FE27],R0
+        LDW  X,#font8
+        CLR  R2                 ; 768 bytes, the autoboot count idiom
+        MOV  R3,#3
+.fc:    MOV  R0,R2
+        OR   R0,R3
+        BEQ  .fdone
+        LD   R0,[X]
+        ST   [$FE29],R0
+        INCW X
+        SUB  R2,#1
+        BCS  .fc
+        SUB  R3,#1
+        BRA  .fc
+.fdone:
         LDW  X,#$@DEST@
         JMP  [X]
 
+font8:
+@FONT@
+
+paltab: ; bank 0 -- softened CGA, semantics preserved
+        .byte $00,$00, $01,$2B, $01,$A4, $02,$AB
+        .byte $0B,$32, $0A,$3A, $0B,$72, $0B,$BC
+        .byte $05,$56, $05,$9F, $06,$E7, $07,$EE
+        .byte $0F,$66, $0E,$7E, $0F,$D5, $0F,$FF
+        ; bank 1 -- Pico-8, quantised to RGB444
+        .byte $00,$00, $01,$23, $07,$25, $00,$85
+        .byte $0A,$53, $05,$55, $0C,$CC, $0F,$FE
+        .byte $0F,$04, $0F,$A0, $0F,$E2, $00,$E3
+        .byte $02,$AF, $08,$79, $0F,$7A, $0F,$CA
+
+chime:  .word 1047, 1320, 1571
+        .word 0
+
 src:
 """
+
+
+def _font8():
+    """96 glyphs of 8x8, 1 bpp: the even rows of the bitstream's own
+    8x16 font, from the same BDF, so the two faces always agree."""
+    import glob
+    import mkfont
+    bdf = sorted(glob.glob(os.path.join(ROOT, "assets", "font", "*.bdf")))[0]
+    img, _, _ = mkfont.build(bdf)
+    out = bytearray()
+    for ch in range(32, 128):
+        cell = img[ch * 16:(ch + 1) * 16]
+        out += bytes(cell[r] for r in range(0, 16, 2))
+    lines = []
+    for i in range(0, len(out), 16):
+        row = ",".join("$%02X" % b for b in out[i:i + 16])
+        lines.append("        .byte " + row)
+    return "\n".join(lines)
 
 
 def build(payload, dest=0xA000, org=0x0200, build_dir=None):
@@ -84,7 +197,8 @@ def build(payload, dest=0xA000, org=0x0200, build_dir=None):
     build_dir = build_dir or os.path.join(ROOT, "sim", "build")
     os.makedirs(build_dir, exist_ok=True)
 
-    text = (STUB.replace("@ORG@", "%04X" % org)
+    text = (STUB.replace("@FONT@", _font8())
+                .replace("@ORG@", "%04X" % org)
                 .replace("@DEST@", "%04X" % dest)
                 .replace("@LO@", "%02X" % (len(payload) & 0xFF))
                 .replace("@HI@", "%02X" % (len(payload) >> 8))

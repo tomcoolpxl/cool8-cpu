@@ -167,6 +167,14 @@ s_findline:
 ; when interp.asm is assembled on its own. Stubbed rather than pulled
 ; in, because this file tests the interpreter and not the keyboard --
 ; sim/test_run.py drives the real ones on the whole system.
+; INPUT and PRINT separators reach the editor's console; standalone,
+; a getkey answers Return at once so INPUT terminates, and emit
+; swallows the byte -- the caller pops its own arguments.
+s_emit: RET
+s_getkey:
+        MOV  R0,#$0D
+        CLR  R1
+        RET
 s_serialkey:
         CLR  R0
         CLR  R1
@@ -289,6 +297,14 @@ s_findline:
 ; when interp.asm is assembled on its own. Stubbed rather than pulled
 ; in, because this file tests the interpreter and not the keyboard --
 ; sim/test_run.py drives the real ones on the whole system.
+; INPUT and PRINT separators reach the editor's console; standalone,
+; a getkey answers Return at once so INPUT terminates, and emit
+; swallows the byte -- the caller pops its own arguments.
+s_emit: RET
+s_getkey:
+        MOV  R0,#$0D
+        CLR  R1
+        RET
 s_serialkey:
         CLR  R0
         CLR  R1
