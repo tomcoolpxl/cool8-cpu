@@ -59,19 +59,32 @@ set_io ps2_dat   25
 # The configuration flash, reused as storage once CDONE goes high. Not on
 # any header, and free — docs/05-board.md section 2.
 #
-# **These two were swapped and put back**, and the experiment is worth
-# recording so nobody repeats it. `src/advanced/icicle` in Muse Lab's
-# own repo runs code from this flash on this board and constrains
-# `flash_io0` to 14 as an output and `flash_io1` to 17 as an input,
-# which says MOSI is 14 and MISO is 17 -- the opposite of this. Swapping
-# them to match changed nothing: the CPU still read $FF at every
-# address, on the same board, in the working jumper position. So
-# whatever stops user logic reaching this flash (05-board.md, Trap 0) is
-# not the pin assignment, and these stay as they were.
+# **MOSI is 14 and MISO is 17**, and they were the other way round.
+# Both of Muse Lab's own designs that read this flash agree, and one of
+# them -- picosoc -- was run on this board to check:
+#
+#   picosoc  flash_clk 15  flash_csb 16  flash_io0 14  flash_io1 17
+#   icicle   flash_clk 15  flash_csn 16  flash_io0 14  flash_io1 17
+#
+# io0 is the master's output and io1 its input, so 14 is MOSI and 17 is
+# MISO. Swapping these *alone* changed nothing, because the pins were
+# also never being driven -- see the SB_IO instantiation in
+# rtl/soc/cool8_top.v. Two faults, one symptom, and fixing either on its
+# own looks like fixing neither.
 set_io flash_cs  16
 set_io flash_sck 15
-set_io flash_mosi 17
-set_io flash_miso 14
+set_io flash_mosi 14
+set_io flash_miso 17
+
+# **/WP and /HOLD, and leaving them out was fatal.** The chip is a
+# W25Q64: IO2 is write-protect and IO3 is hold, both active low, and a
+# floating /HOLD freezes the part -- it ignores the clock entirely, so
+# nothing reads and nothing writes while configuration carries on
+# working, because the configuration engine drives all four. Not
+# constraining a pin does not leave it safe, it leaves it floating.
+# picosoc and icicle both constrain these; we did not.
+set_io flash_wp   12
+set_io flash_hold 13
 
 # audio — sigma-delta out, P1_3, into the RC low-pass
 set_io audio      3

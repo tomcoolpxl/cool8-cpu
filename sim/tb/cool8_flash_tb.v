@@ -64,6 +64,11 @@ module cool8_flash_tb;
     reg          d_miso;
     reg          d_bad;                  // an opcode this part does not have
     reg          d_floor;                // ...or a write inside the bitstream
+    // **The part starts asleep**, because that is how the iCE40 hands it
+    // over: deep power-down after configuration, deaf to everything but
+    // $AB. A model that started awake is how the controller shipped
+    // without a wake-up and read $FF on the bench for ever.
+    reg          d_awake;
     reg          d_wel;                  // write-enable latch
     integer      ei;
 
@@ -98,6 +103,22 @@ module cool8_flash_tb;
     always @(posedge spi_sck) if (!spi_cs_n) begin
         d_sr  = {d_sr[6:0], spi_mosi};
         d_bit = d_bit + 1;
+        if (!d_awake) begin
+            // Asleep: $AB wakes it, $FF (exit continuous read) is the
+            // other frame picosoc sends first and is tolerated in
+            // silence. Anything else to a sleeping part is a master
+            // that has not learned the wake-up, and fails here rather
+            // than on a bench.
+            if (d_bit == 8) begin
+                d_op = d_sr;
+                if (d_op === 8'hAB) d_awake = 1'b1;
+                else if (d_op !== 8'hFF) begin
+                    d_bad = 1'b1;
+                    $display("FAIL %02h sent to a part that is asleep (t=%0t)",
+                             d_op, $time);
+                end
+            end
+        end else
         case (d_bit)
             8: begin
                 d_op = d_sr;
@@ -160,10 +181,10 @@ module cool8_flash_tb;
     // anything.
     // RDSR answers from bit 8 onwards, and this model is never busy, so
     // the status is zero and one poll is always enough.
-    always @(negedge spi_sck) if (!spi_cs_n && d_op === 8'h05 && d_bit >= 8)
+    always @(negedge spi_sck) if (!spi_cs_n && d_awake && d_op === 8'h05 && d_bit >= 8)
         d_miso = 1'b0;
 
-    always @(negedge spi_sck) if (!spi_cs_n && d_op === 8'h03 && d_bit >= 32) begin
+    always @(negedge spi_sck) if (!spi_cs_n && d_awake && d_op === 8'h03 && d_bit >= 32) begin
         d_miso = d_out[7];
         d_out  = {d_out[6:0], 1'b0};
         if (((d_bit - 32) % 8) == 7) begin
@@ -265,6 +286,7 @@ module cool8_flash_tb;
         io_a = 8'h00; io_wdata = 8'h00; io_rd = 1'b0; io_we = 1'b0;
         d_bit = 0; d_sr = 8'h00; d_out = 8'h00; d_miso = 1'b1;
         d_op = 8'h00; d_bad = 1'b0; d_floor = 1'b0; d_wel = 1'b0;
+        d_awake = 1'b0;
         d_a = 24'h000000;
         cap = 8'h00; got = 8'h00;
 
@@ -279,7 +301,14 @@ module cool8_flash_tb;
 
         repeat (4) @(posedge clk);
         rst_n = 1'b1;
+
+        // The wake-up runs before anything else may: $FF, $AB, then the
+        // tRES1 wait. Nothing real asks the part for anything this
+        // early -- the boot ROM clears RAM for tens of milliseconds
+        // first -- so the harness waits the same way.
+        wait (dut.init_done);
         repeat (4) @(posedge clk);
+        check(d_awake, "the part was woken: $AB reached it while asleep");
 
         // ---------------------------------------------------- the decode
         io_a = 8'h88; #1; check(o_sel, "$FE88 claimed");

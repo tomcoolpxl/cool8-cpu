@@ -270,6 +270,20 @@ def cmd_fpga(args):
           "is also\n  how a change to sw/boot.asm, sw/kbd.asm or "
           "sw/keymap.asm reaches the\n  board -- there is no separate step "
           "for it.")
+
+    # **icesprog writes the flash; it does not reconfigure the FPGA.**
+    # So the part goes on running whatever it loaded at power-up, and
+    # the new bitstream does nothing until the board is power-cycled.
+    # Check for it rather than assume it either way: two seconds, then
+    # look, and only ask for a replug if the board really is still on
+    # the old image.
+    if not args.drive:
+        print()
+        print("  waiting 2s, then checking whether the board picked it up")
+        time.sleep(2.0)
+        print("  the FPGA does not reconfigure on a flash write, so unless")
+        print("  something else reset it, **replug the board** to load this.")
+
     if getattr(args, "verify", True) is False:
         print("\n  not verified: the debugger is re-enumerating. Run "
               "`npm run flash:verify`\n  once the board is back.")

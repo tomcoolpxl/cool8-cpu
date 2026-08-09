@@ -41,7 +41,22 @@ Pin numbers below are taken from the board's own constraint files
 Using PMOD1 as a whole PMOD costs you the USB serial console, which is
 how programs get loaded. **Only the four free pins get used.**
 
-### Trap 0 — the CPU cannot reach the SPI flash on this board, and that is unresolved
+### Trap 0 — the flash comes out of configuration asleep, and the CPU must wake it
+
+**Resolved on the bench: autoboot boots BASIC from flash on the board.**
+The iCE40 leaves the SPI flash in deep power-down when it finishes
+configuring, and a sleeping W25Q64 ignores every command except `$AB`.
+`cool8_flash.v` now opens with the same two frames picosoc's
+`spimemio.v` sends on every reset (states 0–3): **`$FF`** (exit
+continuous-read mode, in case a previous master left the part there)
+and **`$AB`** (release from power-down), each under its own chip
+select, then ~490 µs of settling for tRES1 before anything else may
+run. `sim/tb/cool8_flash_tb.v`'s model now **starts asleep** and
+refuses everything but that wake-up, so a controller without it fails
+in simulation instead of on a bench.
+
+The investigation record below is kept because every wrong turn in it
+cost a session, and each is the kind that gets repeated.
 
 **Measured on the bench, not inferred.** The FPGA's user logic cannot
 talk to the configuration flash at all — not reads, not writes:
@@ -74,11 +89,107 @@ Ruled out, each with evidence rather than argument:
 - **The flash being left in a mode by `icesprog`** (deep power-down and
   the like): a power cycle does not change the behaviour.
 
-**The leading candidate is the board's jumper.** The iCELink debugger
-shares those four pins with the FPGA, and the Lattice breakout board
-needs jumpers set to hand the flash to the FPGA — its own example says
-so in as many words. This board has one jumper and one button, and
-**neither is documented here.** That is the next thing to establish.
+**The board is not at fault, and this is proven rather than argued.**
+Muse Lab's own `demo/picorv32.bin` — a 1 MB image, bitstream at 0 and
+firmware padded out to `$100000` — was programmed onto this board with
+the same `icesprog`, in the same jumper position, and it **runs**:
+
+```
+  ____  _          ____         ____
+ |  _ \(_) ___ ___/ ___|  ___  / ___|
+ | |_) | |/ __/ _ \___ \ / _ \| |
+ |  __/| | (_| (_) |__) | (_) | |___
+ |_|   |_|\___\___/____/ \___/ \____|
+```
+
+PicoSoC executes its firmware *out of the SPI flash*. So user logic can
+reach this chip on this board, and what is broken is ours.
+
+Also ruled out along the way, each on the bench:
+
+- **The jumper.** Closed is the working position — the silkscreen reads
+  `0 Prog Flash` / `1 Prog iCE`, and with it open the FPGA does not
+  configure at all, even from a freshly written flash. It gates
+  configuration, not runtime access.
+- **`icesprog` versus drag-and-drop.** PicoSoC was programmed with
+  `icesprog` and works, so the programming route is not the difference.
+- **The pin assignment.** `icicle` in the vendor's own repo constrains
+  `flash_io0` to 14 as an output and `flash_io1` to 17 as an input,
+  which says our `flash_mosi 17` / `flash_miso 14` is backwards.
+  Swapping them changed nothing — still `$FF` at every address — so it
+  is not that either, and they were put back.
+
+### What has been tried, and what it cost
+
+**Still unsolved.** Recorded so the same ground is not covered twice.
+
+| tried | result |
+|---|---|
+| `flash_mosi`/`flash_miso` swapped to 14/17 | no change |
+| `SB_IO` pads with explicit enables, as picosoc | no change |
+| `/WP` and `/HOLD` constrained and driven high | no change |
+| A minimal top: damdoy's `spi_master.v`, an LED, nothing else | flash silent |
+| The same, with `SB_IO` and the pin fix as well | flash silent |
+| **A minimal top around picosoc's `spimemio.v`** | **reads the flash** |
+| picosoc's `$FF`+`$AB` wake-up added to `cool8_flash.v` | **BASIC boots from flash** |
+
+**That last row localises the fault.** `spimemio.v` unmodified, its
+`SB_IO` instantiation copied from `icesugar.v`, all four io lines, `csb`
+and `clk` as plain outputs, one word read from `$100000` — and the LED
+goes solid. So the pads, the constraints, the pin numbers, the clock and
+the board are all fine, and **what is wrong is inside
+`rtl/soc/cool8_flash.v`**: the command sequence it puts on the wire.
+
+Do not build another bring-up test on `damdoy/ice40_ultraplus_examples`.
+It targets the Lattice breakout board, needs jumpers this board does not
+have, and its `spi_master.v` never drives `SPI_SS` at all — yosys
+reports the port as undriven. Two rounds went into it. picosoc is the
+only design confirmed to read this flash on this board, so it is the
+reference.
+
+**`$AB` was the answer, and it was nearly thrown away.** damdoy's
+example carries the wake-up as dead code — its comment says "not needed
+when only reading", which is true only on a board where nothing put the
+part to sleep — and a test built on that example produced a false
+negative that discredited the right theory for a round. picosoc sends
+`$FF` then `$AB` on every reset and demonstrably works here. The
+lesson, worth the price paid for it: **when one demo works and another
+does not, diff the working one.** The wrong example cost two bench
+rounds; reading `spimemio.v`'s state machine end to end found the fix
+in one.
+
+### Two facts about this board that cost time to learn
+
+**`icesprog` writing flash *does* reconfigure the FPGA.** No replug is
+needed; the new bitstream is running by the time the write returns. The
+opposite was assumed for most of a session and every test was preceded
+by an unnecessary power cycle.
+
+**The RGB LED is the design's.** A blink seen right after programming is
+the bitstream that was just written, not the debugger — which follows
+from the line above, and was briefly and wrongly written down here as
+the opposite. The two facts are one fact: `icesprog` reconfigures, so
+what the LED does after a write is *always* the new design.
+
+### The gap that let this through
+
+`sim/tb`'s flash model answered a bare `$03` immediately, because a
+model only refuses what it was written to refuse — and the reader had
+never been run against real silicon: [06-roadmap.md](06-roadmap.md)'s
+bring-up table has no flash read in it, and the reader is ticked off
+with LUT counts, which is synthesis. **Closed**: the model now powers up
+asleep, ignores everything but `$AB`, and the testbench waits out the
+controller's wake-up before its first request — 65 checks, and a
+controller that skips the wake-up fails the first one.
+
+Of the changes shotgunned before the cause was found, the honest
+accounting: the **pin swap was a real second bug** — `flash_mosi 17` /
+`flash_miso 14` was backwards against both vendor designs, and with the
+pins crossed no wake-up could ever have helped. The `SB_IO` pads and
+`/WP`/`/HOLD` driven high match picosoc and stay, though neither was
+proven individually necessary. The four-clocks-per-bit shifter stays for
+margin; it halves SCK to 2.09 MHz, so a 64 KB load is ~250 ms instead
+of ~125.
 
 Until it is, treat the flash as **write-only from the host**: `icesprog`
 puts data there and the FPGA's configuration engine reads the bitstream,

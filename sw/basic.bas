@@ -1809,6 +1809,10 @@ END ASM
 CALL fsmount()
 CALL cls()
 CALL banner()
+' The boot ROM lit the green LED when it found BOOT.BIN; the system is
+' up now, so out it goes. Its whole duration is the relocation and this
+' startup -- a blink, with no timer anywhere.
+POKE $FE03, 0
 
 DO
   k = getkey()

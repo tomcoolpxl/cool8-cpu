@@ -111,9 +111,32 @@ module cool8_flash (
 
     reg [31:0] sr;                     // command out, or data in on the low 8
     reg [5:0]  n;                      // bits left in the current shift
-    reg        phase;                  // 0 = drive, 1 = sample
+    reg [1:0]  phase;                 // four clocks a bit, see the shifter
+    reg        miso_q;                // MISO, sampled mid-high
     reg        busy;
     reg        cmd;                    // this shift is the 32-bit command
+
+    // ---- the wake-up, once, at reset
+    //
+    // **The iCE40 leaves the flash asleep, and a bare $03 to a sleeping
+    // chip is silence for ever.** picosoc -- the one design proven to
+    // read this flash on this board -- sends two frames before its
+    // first read, on every reset: $FF (exit continuous-read mode, in
+    // case a previous master left the part there) and $AB (release from
+    // deep power-down), each under its own chip select. spimemio.v
+    // states 0-3. This controller went straight to $03 and read $FF at
+    // every address on the bench while passing every testbench, because
+    // the model flash starts awake.
+    //
+    // I_WAIT covers tRES1, the recovery after $AB: 3 us on a W25Q64,
+    // given 4095 clocks here (~490 us at 8.375 MHz) because it happens
+    // once and margin is free.
+    localparam [1:0] I_FF = 2'd0, I_AB = 2'd1, I_WAIT = 2'd2,
+                     I_DONE = 2'd3;
+    reg  [1:0]  ist;
+    reg         i_cs;
+    reg  [11:0] iwait;
+    wire        init_done = (ist == I_DONE);
 
     reg [7:0]  pf;                     // the byte at `addr`
     reg        pf_valid;
@@ -149,7 +172,7 @@ module cool8_flash (
     // it low for as long as it is open; a write holds it low for exactly
     // one command. Two drivers is what the first attempt at this had, and
     // the commands ran together with no edge between them.
-    assign spi_cs_n = ~(open_r | w_run);
+    assign spi_cs_n = ~(open_r | w_run | i_cs);
 
     assign spi_mosi = sr[31];
 
@@ -184,9 +207,13 @@ module cool8_flash (
     wire ask_erase = wctrl_we & io_wdata[1] & ~io_wdata[0];
     wire below     = (addr < FLOOR);
 
+    // Gated on the wake-up: an open or close arriving in the first
+    // ~490 us after reset is dropped rather than allowed to seize a
+    // shifter the init frames are using. Nothing real asks that early
+    // -- the boot ROM spends tens of milliseconds clearing RAM first.
     wire ctrl_we = io_we & (io_a == A_CTRL);
-    wire opening = ctrl_we &  io_wdata[0] & ~open_r;
-    wire closing = ctrl_we & ~io_wdata[0];
+    wire opening = ctrl_we &  io_wdata[0] & ~open_r & init_done;
+    wire closing = ctrl_we & ~io_wdata[0] & init_done;
 
     always @(posedge clk) begin
         if (!rst_n) begin
@@ -195,7 +222,7 @@ module cool8_flash (
             spi_sck  <= 1'b0;
             sr       <= 32'd0;
             n        <= 6'd0;
-            phase    <= 1'b0;
+            phase    <= 2'd0;
             busy     <= 1'b0;
             cmd      <= 1'b0;
             pf       <= 8'h00;
@@ -208,6 +235,9 @@ module cool8_flash (
             w_denied <= 1'b0;
             status   <= 8'h00;
             wbuf     <= 8'h00;
+            ist      <= I_FF;
+            i_cs     <= 1'b0;
+            iwait    <= 12'd0;
         // Closing is written as its own branch rather than as one more
         // `if` in the sequence below, and that is not tidiness. A shift
         // in progress assigns `sr`, `n` and `spi_sck` from further down
@@ -223,7 +253,7 @@ module cool8_flash (
             busy     <= 1'b0;
             cmd      <= 1'b0;
             n        <= 6'd0;
-            phase    <= 1'b0;
+            phase    <= 2'd0;
             pf_valid <= 1'b0;
             pf_want  <= 1'b0;
             rd_hold  <= 1'b0;
@@ -231,6 +261,47 @@ module cool8_flash (
             w_run    <= 1'b0;
         end else begin
             rd_hold <= rd_wait;
+
+            // ---- the wake-up frames, through the ordinary shifter.
+            //      Each command is: drop CS, shift eight bits, raise CS
+            //      -- its own frame, exactly as spimemio does it. `cmd`
+            //      is set so the shifter keeps nothing. Nothing else
+            //      can be running: open and close are gated on
+            //      init_done and the write machine is idle.
+            case (ist)
+                I_FF: if (!busy) begin
+                    if (!i_cs) begin
+                        i_cs  <= 1'b1;
+                        sr    <= {8'hFF, 24'h0};
+                        n     <= 6'd8;
+                        phase <= 2'd0;
+                        busy  <= 1'b1;
+                        cmd   <= 1'b1;
+                    end else begin
+                        i_cs <= 1'b0;
+                        ist  <= I_AB;
+                    end
+                end
+                I_AB: if (!busy) begin
+                    if (!i_cs) begin
+                        i_cs  <= 1'b1;
+                        sr    <= {8'hAB, 24'h0};
+                        n     <= 6'd8;
+                        phase <= 2'd0;
+                        busy  <= 1'b1;
+                        cmd   <= 1'b1;
+                    end else begin
+                        i_cs  <= 1'b0;
+                        iwait <= 12'd0;
+                        ist   <= I_WAIT;
+                    end
+                end
+                I_WAIT: begin
+                    iwait <= iwait + 12'd1;
+                    if (&iwait) ist <= I_DONE;
+                end
+                default: ;
+            endcase
 
             // ---- the write registers
             if (io_we && io_a == A_WDATA) wbuf <= io_wdata;
@@ -259,7 +330,7 @@ module cool8_flash (
                 open_r   <= 1'b1;
                 sr       <= {OP_READ, addr};
                 n        <= 6'd32;
-                phase    <= 1'b0;
+                phase    <= 2'd0;
                 busy     <= 1'b1;
                 cmd      <= 1'b1;
                 pf_valid <= 1'b0;
@@ -282,13 +353,17 @@ module cool8_flash (
             //      device's setup time is a whole system clock rather
             //      than a routing delay.
             if (busy) begin
-                if (!phase) begin
-                    spi_sck <= 1'b1;
-                    phase   <= 1'b1;
+                if (phase != 2'd3) begin
+                    // 0: raise SCK.  1: sample MISO in the middle of the
+                    // high half.  2: lower SCK.  3: shift, which moves
+                    // MOSI -- after the falling edge, never before it.
+                    if (phase == 2'd0) spi_sck <= 1'b1;
+                    if (phase == 2'd1) miso_q  <= spi_miso;
+                    if (phase == 2'd2) spi_sck <= 1'b0;
+                    phase <= phase + 2'd1;
                 end else begin
-                    spi_sck <= 1'b0;
-                    phase   <= 1'b0;
-                    sr      <= {sr[30:0], spi_miso};
+                    phase   <= 2'd0;
+                    sr      <= {sr[30:0], miso_q};
                     n       <= n - 6'd1;
                     if (n == 6'd1) begin
                         busy <= 1'b0;
@@ -297,20 +372,20 @@ module cool8_flash (
                         // in this same cycle, so the byte has to be
                         // named as the value that is landing.
                         if (!cmd) begin
-                            pf       <= {sr[6:0], spi_miso};
+                            pf       <= {sr[6:0], miso_q};
                             pf_valid <= 1'b1;
                             pf_want  <= 1'b0;
                         end
                         // Only RDSR's answer is ever looked at, and only
                         // in W_PGAP, so capturing it for every write
                         // command costs nothing and needs no condition.
-                        if (w_run) status <= {sr[6:0], spi_miso};
+                        if (w_run) status <= {sr[6:0], miso_q};
                     end
                 end
             end else if (open_r && pf_want && !pf_valid) begin
                 busy  <= 1'b1;
                 n     <= 6'd8;
-                phase <= 1'b0;
+                phase <= 2'd0;
                 cmd   <= 1'b0;
             end
 
@@ -319,7 +394,7 @@ module cool8_flash (
             // when nine bits remain, the next eight are the byte. This
             // must land *after* the shift above, which is why it is here
             // and not inside it.
-            if (w_run && busy && phase && w_prog && (n == 6'd9))
+            if (w_run && busy && (phase == 2'd3) && w_prog && (n == 6'd9))
                 sr[31:24] <= wbuf;
 
             // ---- the write machine
@@ -329,7 +404,7 @@ module cool8_flash (
             // GAP states that follow are the rising edge of chip select
             // that makes the part act on what it was just sent.
             case (wst)
-                W_IDLE: if (ask_prog | ask_erase) begin
+                W_IDLE: if ((ask_prog | ask_erase) && init_done) begin
                     if (below) begin
                         // Refused, and nothing happens: no enable, no
                         // opcode, no chip select. The flag is how software
@@ -340,7 +415,7 @@ module cool8_flash (
                         w_run  <= 1'b1;
                         sr     <= {OP_WREN, 24'd0};
                         n      <= 6'd8;
-                        phase  <= 1'b0;
+                        phase  <= 2'd0;
                         busy   <= 1'b1;
                         cmd    <= 1'b1;
                         wst    <= W_WREN;
@@ -356,7 +431,7 @@ module cool8_flash (
                     w_run <= 1'b1;
                     sr    <= w_prog ? {OP_PP, addr} : {OP_SE, addr};
                     n     <= w_prog ? 6'd40 : 6'd32;
-                    phase <= 1'b0;
+                    phase <= 2'd0;
                     busy  <= 1'b1;
                     cmd   <= 1'b1;
                     wst   <= W_CMD;
@@ -375,7 +450,7 @@ module cool8_flash (
                         w_run <= 1'b1;
                         sr    <= {OP_RDSR, 24'd0};
                         n     <= 6'd16;
-                        phase <= 1'b0;
+                        phase <= 2'd0;
                         busy  <= 1'b1;
                         cmd   <= 1'b1;
                         wst   <= W_POLL;

@@ -68,10 +68,19 @@ module cool8_top #(
     // The configuration flash, pins 14-17. The iCE40 hands these to user
     // logic once CDONE goes high, so nothing here drives them while the
     // bitstream is still loading — see docs/05-board.md section 2.
+    // The data pins are `inout` and go through SB_IO below, which is not
+    // optional on this part -- see the instantiation for why. Chip
+    // select and the clock are ordinary outputs, exactly as picosoc has
+    // them.
     output wire flash_cs,
     output wire flash_sck,
-    output wire flash_mosi,
-    input  wire flash_miso
+    inout  wire flash_mosi,
+    inout  wire flash_miso,
+
+    // /WP and /HOLD on the W25Q64, both active low and both driven
+    // high. They are not optional: floating, /HOLD freezes the chip.
+    inout  wire flash_wp,
+    inout  wire flash_hold
 );
 
     // ------------------------------------------------------- the clocks
@@ -202,6 +211,51 @@ module cool8_top #(
     assign ps2_clk = ps2_clk_oe ? 1'b0 : 1'bz;
     assign ps2_dat = ps2_dat_oe ? 1'b0 : 1'bz;
 
+    // ------------------------------------------------- the flash's pins
+    //
+    // **These four are the configuration pins and they need SB_IO by
+    // hand.** Declared as a plain `output`/`input` pair the design
+    // builds, meets timing, passes every testbench -- and drives
+    // nothing at all on the board: every read comes back $FF because
+    // the input floats, and every write vanishes because the output was
+    // never driven. That is what this machine did from the day the
+    // flash reader was written until the day someone finally read a
+    // directory off a real chip.
+    //
+    // Both of the vendor's own designs that use this flash do it this
+    // way and neither leaves it to inference:
+    //
+    //   picosoc  SB_IO #(.PIN_TYPE(6'b1010_01), .PULLUP(0))
+    //            over {flash_io3, flash_io2, flash_io1, flash_io0}
+    //   icicle   io0_en / io1_en carried out to the top level
+    //
+    // `1010_01` is a simple (unregistered) output with its enable under
+    // control, and a simple input. We only ever drive MOSI and only
+    // ever read MISO, so the enables are constants -- but they have to
+    // exist, because it is the *primitive* that claims the pin.
+    //
+    // Chip select and the clock are ordinary outputs; picosoc leaves
+    // those inferred too.
+    // All four, exactly as picosoc drives them: io0 out, io1 in, and
+    // **io2/io3 driven high**. /WP and /HOLD are active low on a
+    // W25Q64, and a floating /HOLD stops the chip responding at all --
+    // which is what this machine did, in both directions, for as long
+    // as the flash reader has existed.
+    wire [3:0] flash_io_i;
+    wire       flash_mosi_o;
+
+    SB_IO #(
+        .PIN_TYPE(6'b1010_01),
+        .PULLUP(1'b0)
+    ) u_flash_io [3:0] (
+        .PACKAGE_PIN({flash_hold, flash_wp, flash_miso, flash_mosi}),
+        .OUTPUT_ENABLE({1'b1, 1'b1, 1'b0, 1'b1}),
+        .D_OUT_0({1'b1, 1'b1, 1'b0, flash_mosi_o}),
+        .D_IN_0(flash_io_i)
+    );
+
+    wire flash_miso_i = flash_io_i[1];
+
     cool8_soc #(.LOADER(LOADER)) u_soc (
         .clk(sclk), .rst_n(rst_n),
         .pclk(pclk), .prst_n(prst_n),
@@ -209,7 +263,7 @@ module cool8_top #(
         .ps2_clk_i(ps2_clk), .ps2_dat_i(ps2_dat),
         .ps2_clk_oe(ps2_clk_oe), .ps2_dat_oe(ps2_dat_oe),
         .spi_cs_n(flash_cs), .spi_sck(flash_sck),
-        .spi_mosi(flash_mosi), .spi_miso(flash_miso),
+        .spi_mosi(flash_mosi_o), .spi_miso(flash_miso_i),
         .rgb(rgb), .hsync_n(vga_hs), .vsync_n(vga_vs),
         .audio(audio),
         .led(led),

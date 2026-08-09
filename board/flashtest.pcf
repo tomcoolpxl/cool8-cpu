@@ -1,0 +1,18 @@
+# Constraints for rtl/soc/cool8_flashtest.v -- the flash bring-up top.
+#
+# The 12 MHz oscillator straight into the fabric, no PLL. The flash pins
+# are the ones picosoc and icicle use and which are known to work on
+# this board, and the serial port is the iCELink's CDC.
+
+set_io clk        35
+
+set_io uart_tx     6
+
+set_io flash_cs   16
+set_io flash_sck  15
+set_io flash_mosi 14
+set_io flash_miso 17
+set_io flash_wp   12
+set_io flash_hold 13
+
+set_io led_g      41

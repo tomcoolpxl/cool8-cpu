@@ -271,8 +271,9 @@ autoboot:
 
 .ab5:   CLR  R0
         ST   [FLS_CTRL],R0
-        MOV  R0,#$07                    ; all three LEDs: booted
-        ST   [LED],R0
+        MOV  R0,#$02                    ; green: booted from flash. BASIC
+        ST   [LED],R0                   ; turns it off once it is up, so
+                                        ; the blink is the boot itself
         LDW  X,#$0200
         JMP  [X]
 
