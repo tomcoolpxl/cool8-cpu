@@ -89,4 +89,20 @@ TOKTAB:
         .byte 3, "C","L","G"
         .byte 5, "P","I","T","C","H"
         .byte 5, "G","T","E","X","T"
+; ---- the editor's former commands, now ordinary statements: $B9-$C5.
+; ---- One vocabulary, as the C64 and the BBC always had it -- a
+; ---- program can SAVE itself and LOAD its sequel.
+        .byte 4, "L","I","S","T"
+        .byte 3, "N","E","W"
+        .byte 4, "F","R","E","E"
+        .byte 8, "R","E","N","U","M","B","E","R"
+        .byte 6, "D","E","L","E","T","E"
+        .byte 3, "C","L","S"
+        .byte 4, "S","A","V","E"
+        .byte 4, "L","O","A","D"
+        .byte 3, "D","I","R"
+        .byte 3, "E","R","A"
+        .byte 7, "C","O","M","P","A","C","T"
+        .byte 5, "D","R","I","V","E"
+        .byte 3, "R","U","N"
         .byte 0

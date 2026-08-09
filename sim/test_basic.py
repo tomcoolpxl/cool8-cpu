@@ -286,6 +286,20 @@ def main():
           f"the cursor is where the typing is (row {cy}, col {cx})",
           f"row {cy} = {M.row(cy)[:40]!r}")
 
+    # ---- 5b. direct mode: a statement with no number runs on the
+    # spot, and variables survive between statements -- the C64's
+    # direct mode with the BBC's manners (one dispatch, no refusals).
+    M.cmd("PRINT 314 + 1")
+    check(any(r.strip() == "315" for r in M.screen()),
+          "a direct PRINT executes on the spot")
+    M.cmd("Q = 21")
+    M.cmd("PRINT Q * 2")
+    check(any(r.strip() == "42" for r in M.screen()),
+          "and variables persist between direct lines")
+    M.cmd("FOO 9")
+    check(any(r.strip() == "?SYNTAX" for r in M.screen()),
+          "junk is still ?SYNTAX, with no line number")
+
     # ---- 6. commands
     M.type("\r")                               # abandon that line
     M.cmd("DELETE 20")
@@ -296,6 +310,19 @@ def main():
           f"{sorted(dict(M.prog()))}")
     M.cmd("NEW")
     check(M.prog() == [], "NEW empties it")
+
+    # ---- 6b. direct mode against a program: persistence and resume
+    M.cmd("10 W = 123")
+    M.cmd("20 PRINT 777")
+    M.cmd("30 END")
+    M.cmd("RUN")
+    M.cmd("PRINT W")
+    check(any(r.strip() == "123" for r in M.screen()),
+          "a variable the program set survives into direct mode")
+    M.cmd("GOTO 20")
+    n = sum(1 for r in M.screen() if r.strip() == "777")
+    check(n >= 2, "and a direct GOTO resumes the program", f"saw {n}")
+    M.cmd("NEW")
 
     print()
     files(code, syms)
@@ -502,6 +529,36 @@ def compact(code, syms):
           and M.vol().find("FOUR.BAS")["page"] == 18,
           "a SAVE after COMPACT lands in the reclaimed space",
           f"{[(e['name'], e['page']) for e in M.vol().files()]}")
+
+    # ---- the AT forms: raw bytes, the BBC's *SAVE and *LOAD inside
+    # the language. A poked marker, saved, zeroed, loaded back.
+    M.cmd("POKE $6000, 201")
+    M.cmd('SAVE "RAW" AT $6000, 8')
+    M.cmd("POKE $6000, 0")
+    M.cmd('LOAD "RAW" AT $6000')
+    M.cmd("PRINT PEEK($6000)")
+    check(any(r.strip() == "201" for r in M.screen()),
+          "SAVE AT / LOAD AT round-trips raw bytes through flash")
+
+    # ---- chaining: LOAD inside a running program replaces it and
+    # continues at the new first line, variables kept.
+    M.cmd("NEW")
+    M.cmd("10 PRINT 4442")
+    M.cmd("20 END")
+    M.cmd('SAVE "PT2"')
+    M.cmd("NEW")
+    M.cmd("10 V = 66")
+    M.cmd("20 PRINT 4441")
+    M.cmd('30 LOAD "PT2"')
+    M.cmd("40 PRINT 4449")
+    M.cmd("RUN")
+    scr = [r.strip() for r in M.screen()]
+    check("4441" in scr and "4442" in scr and "4449" not in scr,
+          "a program LOAD chains into the new program",
+          " | ".join(r for r in scr if r.startswith("444")))
+    M.cmd("PRINT V")
+    check(any(r.strip() == "66" for r in M.screen()),
+          "with variables carried across the chain")
 
 
 if __name__ == "__main__":

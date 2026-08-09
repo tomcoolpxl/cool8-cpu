@@ -78,7 +78,9 @@ K_XOR   = $9B
 K_GOTO  = $A2
 K_NUM   = $A4                   ; a binary literal: two bytes follow
 
-NTOK    = 57                    ; $80..$B8 -- graphics, sound, and the
+T_LIT   = $A4                   ; the stored-number marker, as
+                                ;   sw/basic.bas CONSTs it
+NTOK    = 70                    ; $80..$C5 -- graphics, sound, and the
                                 ; language round-out, all appended
 K_STEP  = $B3
 K_DATA  = $B0
@@ -197,6 +199,339 @@ irun:
         JMP  h_end              ; empty: a clean stop, nothing ran
 .go:    JMP  stmt
 
+; ---------------------------------------------------------------------
+; The former editor commands, as statements. Thin token-side parsers
+; over the same compiled cores the editor always used -- one
+; vocabulary, so a program can SAVE itself, LOAD its sequel, CLS, or
+; ask FREE, exactly as on the machines this one descends from. No
+; guards and no ILLEGAL DIRECT: DELETE from a running program is legal
+; and self-inflicted. The one exception is RUN, direct-only by ruling:
+; a program restarting itself would stack a frame per restart.
+; ---------------------------------------------------------------------
+
+; rangel -- [lit ['-' [lit]]] into garg+0 and garg+2, presence in R3:
+; bit 0 first number, bit 1 dash, bit 2 second number.
+rangel: CLR  R3
+        SKIPSP
+        CMP  R2,#T_LIT
+        BNE  .dash
+        CALL rlit
+        ST   [garg],R0
+        ST   [garg+1],R1
+        MOV  R3,#1
+.dash:  SKIPSP
+        CMP  R2,#$2D
+        BNE  .out
+        INCW Y
+        OR   R3,#2
+        SKIPSP
+        CMP  R2,#T_LIT
+        BNE  .out
+        CALL rlit
+        ST   [garg+2],R0
+        ST   [garg+3],R1
+        OR   R3,#4
+.out:   RET
+
+; rlit -- Y on T_LIT: the two bytes into R0:R1, Y past.
+rlit:   INCW Y
+        LD   R0,[Y]
+        INCW Y
+        LD   R1,[Y]
+        INCW Y
+        RET
+
+; tname -- a quoted 8.3 name at Y into the editor's line buffer and
+; through its own parsename, which owns the .EXT and padding rules.
+; Carry set on success.
+tname:  SKIPSP
+        CMP  R2,#34
+        BNE  .no
+        INCW Y
+        CLR  R3
+.cp:    LD   R0,[Y]
+        TST  R0
+        BEQ  .no                ; the line ended inside the quotes
+        CMP  R0,#34
+        BEQ  .end
+        LDW  X,#a_lbuf
+        ADDW X,R3
+        ST   [X],R0
+        INCW Y
+        ADD  R3,#1
+        BRA  .cp
+.end:   INCW Y
+        MOV  R0,R3
+        ST   [v_llen],R0
+        CLR  R0
+        ST   [v_ip],R0
+        CALL s_parsename
+        TST  R0
+        BEQ  .no
+        SEC
+        RET
+.no:    CLC
+        RET
+
+esyn:   MOV  R0,#E_SYN
+        ST   [ERR],R0
+        RET
+
+; LIST [a[-[b]]]
+h_list: CALL rangel
+        TST  R3
+        BNE  .some
+        CLR  R0                 ; bare LIST: everything
+        ST   [garg],R0
+        ST   [garg+1],R0
+        BRA  .all
+.some:  CMP  R3,#1
+        BNE  .dash
+        LD   R0,[garg]          ; one number: that line alone
+        ST   [garg+2],R0
+        LD   R0,[garg+1]
+        ST   [garg+3],R0
+        BRA  .go
+.dash:  CMP  R3,#7
+        BEQ  .go
+.all:   MOV  R0,#$FF            ; open-ended: to 32767
+        ST   [garg+2],R0
+        MOV  R0,#$7F
+        ST   [garg+3],R0
+.go:    LD   R0,[garg+2]
+        LD   R1,[garg+3]
+        PUSH R1
+        PUSH R0
+        LD   R0,[garg]
+        LD   R1,[garg+1]
+        PUSH R1
+        PUSH R0
+        CALL s_list
+        ADDW SP,#4
+        JMP  stmt
+
+; DELETE a[-[b]]
+h_del:  CALL rangel
+        BTST R3,#1
+        BNE  .r1                ; no first number: nothing to do
+        JMP  stmt
+.r1:    BTST R3,#2
+        BNE  .r2
+        LD   R0,[garg]          ; DELETE n: that line
+        ST   [garg+2],R0
+        LD   R0,[garg+1]
+        ST   [garg+3],R0
+        BRA  .go
+.r2:    BTST R3,#4
+        BNE  .go
+        MOV  R0,#$FF            ; DELETE n-: to the end
+        ST   [garg+2],R0
+        MOV  R0,#$7F
+        ST   [garg+3],R0
+.go:    LD   R0,[garg+2]
+        LD   R1,[garg+3]
+        PUSH R1
+        PUSH R0
+        LD   R0,[garg]
+        LD   R1,[garg+1]
+        PUSH R1
+        PUSH R0
+        CALL s_deleterange
+        ADDW SP,#4
+        JMP  stmt
+
+; RENUMBER [start [step]]
+h_renum:
+        MOV  R0,#10
+        ST   [garg],R0
+        ST   [garg+2],R0
+        CLR  R0
+        ST   [garg+1],R0
+        ST   [garg+3],R0
+        SKIPSP
+        CMP  R2,#T_LIT
+        BNE  .go
+        CALL rlit
+        ST   [garg],R0
+        ST   [garg+1],R1
+        SKIPSP
+        CMP  R2,#$2C            ; RENUMBER 100,5 and RENUMBER 100 5
+        BNE  .st
+        INCW Y
+        SKIPSP
+.st:    CMP  R2,#T_LIT
+        BNE  .go
+        CALL rlit
+        ST   [garg+2],R0
+        ST   [garg+3],R1
+.go:    LD   R0,[garg+2]
+        LD   R1,[garg+3]
+        PUSH R1
+        PUSH R0
+        LD   R0,[garg]
+        LD   R1,[garg+1]
+        PUSH R1
+        PUSH R0
+        CALL s_renumber
+        ADDW SP,#4
+        JMP  stmt
+
+h_new:  CALL s_new              ; the program deleted itself: stop, as
+        MOV  R0,#E_DONE         ; the C64 did
+        ST   [ERR],R0
+        RET
+
+h_free: CALL s_dofree
+        JMP  stmt
+
+h_cls:  CALL s_cls
+        JMP  stmt
+
+h_dir:  CALL s_dodir
+        JMP  stmt
+
+h_compact:
+        CALL s_docompact
+        JMP  stmt
+
+h_drive:
+        CALL eval
+        PUSH R1
+        PUSH R0
+        CALL s_drivecore
+        ADDW SP,#2
+        JMP  stmt
+
+h_era:  CALL tname
+        BCS  .nm
+        JMP  esyn
+.nm:
+        CALL s_eracore
+        JMP  stmt
+
+; SAVE "N"            -- the program
+; SAVE "N" AT a, l    -- l raw bytes from address a (the BBC's *SAVE)
+h_save: CALL tname
+        BCS  .nm
+        JMP  esyn
+.nm:
+        SKIPSP
+        CMP  R2,#$9D            ; AT
+        BEQ  .at
+        CALL s_savecore
+        JMP  stmt
+.at:    INCW Y
+        CALL eval               ; the address
+        PUSH R1
+        PUSH R0
+        CALL sopen              ; the comma
+        CALL eval               ; the length
+        POP  R2                 ; address back: lo then hi
+        POP  R3
+        PUSH R1                 ; args right to left: length first,
+        PUSH R0                 ;   address nearest SP
+        PUSH R3
+        PUSH R2
+        CALL s_savedata
+        ADDW SP,#4
+        JMP  stmt
+
+; LOAD "N"            -- replace; from a program, CHAIN: continue at
+;                        the new first line with variables kept
+; LOAD "N", n         -- merge the file's lines from n up
+; LOAD "N" AT a       -- raw bytes to address a (the BBC's *LOAD)
+h_load: CALL tname
+        BCS  .nm
+        JMP  esyn
+.nm:
+        SKIPSP
+        CMP  R2,#$9D            ; AT
+        BEQ  .at
+        CMP  R2,#$2C            ; , merge
+        BEQ  .mg
+        MOV  R0,#$FF            ; replace: from = -1
+        MOV  R1,#$FF
+        PUSH R1
+        PUSH R0
+        CALL s_loadcore
+        ADDW SP,#2
+        LD   R0,[LREC+1]        ; typed direct: the staged line just
+        CMP  R0,#$FF            ;   ends, and the editor is back
+        BEQ  .done
+        LD   R0,[v_fok]         ; from a program, and it loaded:
+        TST  R0                 ;   chain into the new program
+        BEQ  .done
+        LD   R0,[v_progend]     ; the walk's bound is the NEW end
+        ST   [PEND],R0
+        LD   R0,[v_progend+1]
+        ST   [PEND+1],R0
+        CLR  R0
+        ST   [LREC],R0
+        MOV  R0,#$02
+        ST   [LREC+1],R0
+        LD   R0,[LREC]
+        LD   R1,[LREC+1]
+        CALL lbound
+        BCS  .go
+        JMP  h_end              ; chained into an empty file: done
+.go:    JMP  stmt
+.done:  JMP  stmt
+.mg:    INCW Y
+        CALL eval
+        PUSH R1
+        PUSH R0
+        CALL s_loadcore
+        ADDW SP,#2
+        JMP  stmt
+.at:    INCW Y
+        CALL eval
+        PUSH R1
+        PUSH R0
+        CALL s_loaddata
+        ADDW SP,#2
+        JMP  stmt
+
+h_run:  LD   R0,[LREC+1]        ; direct only: a program restarting
+        CMP  R0,#$FF            ;   itself stacks a frame per restart
+        BEQ  .ok
+        JMP  esyn
+.ok:
+        CALL s_dorun
+        MOV  R0,#E_DONE
+        ST   [ERR],R0
+        RET
+
+; idrct -- the staged record at DIRBUF, run with the machine's state
+; LEFT ALONE. This is irun minus the variable clear: A-Z, arrays and
+; the heap survive from the last run, which is what a direct PRINT A
+; after a break is FOR -- the C64's direct mode with the BBC's manners.
+; The caller (dodirect) has run the same preflight RUN gets, so a
+; direct CALL reaches assembled ASM blocks and scanned SUB names, and
+; PEND is progend: a direct GOTO lands in the program and simply keeps
+; walking -- resume falls out of the record machinery.
+idrct:  CLR  R0
+        ST   [FDEPTH],R0        ; statement level, fresh
+        ST   [DDEPTH],R0
+        ST   [EDEPTH],R0
+        ST   [NNAME],R0
+        ST   [CDEPTH],R0
+        CALL drst               ; READ starts at the first DATA
+        CLR  R0
+        ST   [ibreak],R0
+        LD   R0,[LREC]          ; subscan walks the program (LREC is
+        PUSH R0                 ;   PROG here) exactly as irun's does
+        LD   R0,[LREC+1]
+        PUSH R0
+        CALL subscan
+        POP  R0
+        POP  R0
+        MOV  R0,#$88            ; then the record is the staged one
+        ST   [LREC],R0
+        MOV  R0,#$FF
+        ST   [LREC+1],R0
+        CALL openline
+        JMP  stmt
+
 ; openline -- LREC points at a record; put Y on its first token.
 ;
 ; There is nothing else to do. The line ends with a zero byte, so the
@@ -214,8 +549,18 @@ openline:
 
 ; nextline -- LREC = the record after this one. Carry clear when the
 ; program has run out.
+;
+; A record living at $FFxx is the staged direct line (DIRBUF): it has
+; no next record by construction, and its address is the whole mark --
+; the BBC's immediate-mode test was address-based too, and for the
+; same reason: nothing else can be there.
 nextline:
-        LD   R0,[LREC]          ; this record + 4 + its length
+        LD   R0,[LREC+1]
+        CMP  R0,#$FF
+        BNE  .adv
+        CLC
+        RET
+.adv:   LD   R0,[LREC]          ; this record + 4 + its length
         LD   R1,[LREC+1]
         MOV  XL,R0
         MOV  XH,R1
@@ -270,12 +615,14 @@ stmt:
         ST   [LREC],R0
         MOV  R1,YH
         ST   [LREC+1],R1
+        CMP  R1,#$FF            ; a record at $FFxx is the staged
+        BEQ  .stop              ;   direct line: it has no next
         LD   R2,[PEND]
         LD   R3,[PEND+1]
         SUB  R0,R2
         SBC  R1,R3
         BLT  .open
-        RET                     ; past the last line: stop
+.stop:  RET                     ; past the last line: stop
 .open:  CALL openline
         JMP  stmt
 .more:
@@ -361,6 +708,19 @@ sttab:
         .word h_clg             ; $B6 CLG
         .word h_pitch           ; $B7 PITCH
         .word h_gtext           ; $B8 GTEXT
+        .word h_list            ; $B9 LIST -- the former editor
+        .word h_new             ; $BA NEW     commands, one vocabulary
+        .word h_free            ; $BB FREE    now: every one runs in a
+        .word h_renum           ; $BC RENUMBER  program or typed direct
+        .word h_del             ; $BD DELETE
+        .word h_cls             ; $BE CLS
+        .word h_save            ; $BF SAVE
+        .word h_load            ; $C0 LOAD
+        .word h_dir             ; $C1 DIR
+        .word h_era             ; $C2 ERA
+        .word h_compact         ; $C3 COMPACT
+        .word h_drive           ; $C4 DRIVE
+        .word h_run             ; $C5 RUN -- direct only, see below
 
 h_end:  MOV  R0,#E_DONE         ; a clean stop, not an error
         ST   [ERR],R0
@@ -3145,6 +3505,9 @@ rseed   = $FF28                 ; 2
 garg    = $FF2A                 ; 10
 lwk     = $FF34                 ; 10  dx, dy, err, sx, sy -- all words
 FORSTK  = $FF3E                 ; 72  MAXFOR frames of FORFR
+DIRBUF  = $FF88                 ; the staged direct line: a whole
+                                ;   record -- $FFFF, len, tokens, 0 --
+                                ;   built fresh by dodirect each time
 
 ; gargs -- R3 comma-separated expressions into garg, low byte first.
 ; eval leaves Y on the comma (its operator scan has already skipped the

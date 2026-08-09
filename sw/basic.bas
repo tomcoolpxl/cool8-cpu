@@ -37,7 +37,6 @@
 ' ---------------------------------------------------------------------
 
 EXTERN TOKTAB
-EXTERN CMDTAB
 EXTERN RUNTAB
 EXTERN iisr
 EXTERN irring
@@ -1251,12 +1250,57 @@ FUNCTION parsename() AS INT
   RETURN 1
 END FUNCTION
 
-SUB dosave()
-  DIM had AS BYTE
-  IF parsename() = 0 THEN
-    CALL errmsg(0)
+' The command cores. fname, where one is needed, is already set: the
+' interpreter's tname bridge read the quoted name out of the token
+' stream into lbuf and ran the same parsename the editor always used.
+SUB dofree()
+  CALL putn(freebytes())
+  CALL puts(MSGFREE)
+  CALL newline()
+END SUB
+
+SUB drivecore(n AS INT)
+  IF n < 0 THEN
+    n = 0
+  END IF
+  fdrv = n AND 15
+  CALL fsmount()
+END SUB
+
+SUB eracore()
+  CALL fserase()
+  IF fok = 0 THEN
+    CALL errmsg(20)
+  END IF
+END SUB
+
+' SAVE "N" AT a, l -- l raw bytes from a: sprite sheets, tile sets,
+' fonts, machine code. The BBC's *SAVE, brought inside the language.
+SUB savedata(a AS CARD, l AS CARD)
+  faddr = a
+  flen = l
+  CALL fssave()
+  IF fok = 0 THEN
+    CALL errmsg(19)
+  END IF
+END SUB
+
+' LOAD "N" AT a -- the file's bytes to address a, no line stitching.
+SUB loaddata(a AS CARD)
+  CALL fsfind()
+  IF fok = 0 THEN
+    CALL errmsg(20)
     RETURN
   END IF
+  faddr = a
+  CALL fsload()
+  IF fok = 0 THEN
+    CALL errmsg(20)
+  END IF
+END SUB
+
+SUB savecore()
+  DIM had AS BYTE
   ' Write first, delete second -- the order matters twice over.
   '
   ' Deleting first would drop the old file out of the scan that derives
@@ -1295,15 +1339,9 @@ SUB fetchline(p AS CARD)
   LOOP
 END SUB
 
-SUB doload()
-  DIM from AS INT
+SUB loadcore(from AS INT)
   DIM p AS CARD
   DIM top AS CARD
-  IF parsename() = 0 THEN
-    CALL errmsg(0)
-    RETURN
-  END IF
-  from = number()
   IF from < 0 THEN
     CALL new()
     faddr = PROG
@@ -1592,151 +1630,98 @@ SUB dodir()
 END SUB
 
 ' Does lbuf at ip start with the word at table entry `idx`?
-FUNCTION iscmd(p AS CARD) AS INT
-  DIM m AS BYTE
+
+
+' Direct mode. The line is tokenised into tbuf as any stored line
+' would be, staged as a record at DIRBUF ($FF88) with the sentinel
+' line number $FFFF -- no legal line is 65535, and runerr's own
+' bounds check already prints a bare ?FAULT for a record outside the
+' program -- and executed by idrct with the same preflight RUN gets.
+' What is deliberately NOT done: no variable clear (state survives,
+' PRINT A after a break works), and none of dorun's mode/sound
+' restore -- a direct MODE 3 takes effect and STAYS, which is the
+' whole point and exactly the C64's freedom. MODE 0 typed blind
+' brings the editor back.
+SUB dodirect()
   DIM k AS BYTE
-  m = PEEK(p)
+  DIM q AS BYTE
+  DIM e AS BYTE
+  CALL shiftlbuf()
+  CALL tokenise()
+  ' a direct ASM statement has nothing behind it -- the assembler
+  ' pass covers the stored program, not this buffer
+  q = 0
   k = 0
-  DO WHILE k < m
-    IF upper(lbuf(ip + k)) <> PEEK(p + 1 + k) THEN
-      RETURN 0
+  DO WHILE k < tlen
+    IF tbuf(k) = 34 THEN
+      q = 1 - q
+    END IF
+    IF q = 0 THEN
+      IF tbuf(k) = $9E THEN
+        CALL errmsg(9)
+        RETURN
+      END IF
     END IF
     k = k + 1
   LOOP
-  ip = ip + m
-  RETURN 1
-END FUNCTION
-
-SUB docommand()
-  DIM p AS CARD
-  DIM idx AS BYTE
-  DIM a AS INT
-  DIM b AS INT
-  CALL skipsp()
-  IF ip >= llen THEN
-    RETURN
-  END IF
-  p = CMDTAB
-  idx = 0
-  DO WHILE PEEK(p) <> 0
-    IF iscmd(p) <> 0 THEN
-      EXIT DO
-    END IF
-    p = p + PEEK(p) + 1
-    idx = idx + 1
+  POKE $FF88, 255
+  POKE $FF89, 255
+  POKE $FF8A, tlen
+  k = 0
+  DO WHILE k < tlen
+    POKE $FF8B + k, tbuf(k)
+    k = k + 1
   LOOP
-  IF PEEK(p) = 0 THEN
-    CALL errmsg(0)
-    RETURN
-  END IF
-
-  IF idx = 0 THEN                       ' LIST
-    a = number()
-    IF a < 0 THEN
-      a = 0
+  POKE $FF8B + tlen, 0
+  ' dorun's preflight, verbatim: frame constants, the assembler pass
+  ' over the program, the name table, then idrct instead of irun.
+  ASM
+        MOV  R0,#$00            ; LREC = PROG, the first record
+        ST   [$0014],R0
+        MOV  R0,#$02
+        ST   [$0015],R0
+        MOV  R0,#$7F            ; SACC = $7F00
+        ST   [$0034],R0
+        MOV  R0,#$00
+        ST   [$0033],R0
+        MOV  R0,#$E0            ; CSTK = $7EE0
+        ST   [$003C],R0
+        MOV  R0,#$7E
+        ST   [$003D],R0
+        MOV  R0,#$DF            ; HEAP comes down from $7EDF
+        ST   [$002A],R0
+        MOV  R0,#$7E
+        ST   [$002B],R0
+  END ASM
+  POKE $0016, progend AND 255
+  POKE $0017, progend >> 8
+  POKE $00DC, progend AND 255
+  POKE $00DD, progend >> 8
+  ASM
+        MOV  R0,#$00            ; ERR cleared at the entry of the
+        ST   [$0018],R0         ;   code that reads it, as in dorun
+        MOV  R1,#$02
+        CALL aprog
+        LD   R0,[$0018]
+        TST  R0
+        BNE  dirout
+        LD   R0,[$00DA]
+        ST   [$0027],R0
+        LD   R0,[$00DB]
+        ST   [$0028],R0
+        MOV  R0,#$00            ; LREC back to PROG for subscan
+        ST   [$0014],R0
+        MOV  R0,#$02
+        ST   [$0015],R0
+        CALL idrct
+dirout:
+  END ASM
+  e = PEEK($0018)
+  IF e <> 255 THEN
+    IF e <> 0 THEN
+      CALL runerr(e)
     END IF
-    CALL skipsp()
-    b = 32767
-    IF ip < llen THEN
-      IF lbuf(ip) = 45 THEN
-        ip = ip + 1
-        b = number()
-        IF b < 0 THEN
-          b = 32767
-        END IF
-      ELSE
-        b = a
-      END IF
-    END IF
-    CALL list(a, b)
-    RETURN
   END IF
-  IF idx = 1 THEN                       ' NEW
-    CALL new()
-    RETURN
-  END IF
-  IF idx = 2 THEN                       ' FREE
-    CALL putn(freebytes())
-    CALL puts(MSGFREE)
-    CALL newline()
-    RETURN
-  END IF
-  IF idx = 3 THEN                       ' RENUMBER
-    a = number()
-    IF a < 0 THEN
-      a = 10
-    END IF
-    b = number()
-    IF b < 0 THEN
-      b = 10
-    END IF
-    CALL renumber(a, b)
-    RETURN
-  END IF
-  IF idx = 4 THEN                       ' DELETE
-    a = number()
-    IF a < 0 THEN
-      RETURN
-    END IF
-    CALL skipsp()
-    b = a
-    IF ip < llen THEN
-      IF lbuf(ip) = 45 THEN
-        ip = ip + 1
-        b = number()
-        IF b < 0 THEN
-          b = 32767
-        END IF
-      END IF
-    END IF
-    CALL deleterange(a, b)
-    RETURN
-  END IF
-  IF idx = 5 THEN                       ' CLS
-    CALL cls()
-    RETURN
-  END IF
-  IF idx = 6 THEN                       ' SAVE
-    CALL dosave()
-    RETURN
-  END IF
-  IF idx = 7 THEN                       ' LOAD
-    CALL doload()
-    RETURN
-  END IF
-  IF idx = 8 THEN                       ' DIR
-    CALL dodir()
-    RETURN
-  END IF
-  IF idx = 9 THEN                       ' ERA
-    IF parsename() = 0 THEN
-      CALL errmsg(0)
-      RETURN
-    END IF
-    CALL fserase()
-    IF fok = 0 THEN
-      CALL errmsg(20)
-    END IF
-    RETURN
-  END IF
-  IF idx = 10 THEN                      ' COMPACT
-    CALL docompact()
-    RETURN
-  END IF
-  IF idx = 11 THEN                      ' DRIVE
-    a = number()
-    IF a < 0 THEN
-      a = 0
-    END IF
-    fdrv = a AND 15
-    CALL fsmount()
-    RETURN
-  END IF
-  IF idx = 12 THEN                      ' RUN
-    CALL dorun()
-    RETURN
-  END IF
-  CALL errmsg(0)
 END SUB
 
 
@@ -1763,7 +1748,9 @@ SUB enter(r AS INT)
     CALL storeline(n)
     RETURN
   END IF
-  CALL docommand()
+  ' No line number: execute. Commands are ordinary statements now, so
+  ' this one branch is the whole grammar -- the BBC's exact shape.
+  CALL dodirect()
 END SUB
 
 ' Slide lbuf down so the line body starts at 0.
@@ -1963,23 +1950,6 @@ ASM
         .include "toktab.asm"
 
 ; ---- commands, in the order docommand tests them
-CMDTAB:
-        .byte 4, "L","I","S","T"
-        .byte 3, "N","E","W"
-        .byte 4, "F","R","E","E"
-        .byte 8, "R","E","N","U","M","B","E","R"
-        .byte 6, "D","E","L","E","T","E"
-        .byte 3, "C","L","S"
-        .byte 4, "S","A","V","E"
-        .byte 4, "L","O","A","D"
-        .byte 3, "D","I","R"
-        .byte 3, "E","R","A"
-        .byte 7, "C","O","M","P","A","C","T"
-        .byte 5, "D","R","I","V","E"
-; Appended, never inserted: docommand branches on the positional idx, so
-; RUN is 12 and no existing arm moves.
-        .byte 3, "R","U","N"
-        .byte 0
 
 ; ---- every error message, one table. Entries 0-18 are the
 ; interpreter's, indexed by ERR - 1; the tail is the editor's, reached
