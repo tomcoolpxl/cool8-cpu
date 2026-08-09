@@ -1497,7 +1497,7 @@ def _reg_dead(lines, k, reg):
 
 
 def peephole(asm):
-    rules = os.environ.get("COOL8_PEEP", "12345")
+    rules = os.environ.get("COOL8_PEEP", "123456")
     lines = asm.splitlines()
     out = []
     k = 0
@@ -1534,6 +1534,15 @@ def peephole(asm):
                 k += 2
                 continue
             out.append("        TST  R0")
+            k += 2
+            continue
+        # Two adjacent stack cleanups become one. ADDW touches no
+        # flags, so the merge is free of liveness questions.
+        ma = re.match(r"ADDW SP,#(\d+)$", t)
+        mb = re.match(r"ADDW SP,#(\d+)$", nxt)
+        if "6" in rules and ma and mb:
+            total = int(ma.group(1)) + int(mb.group(1))
+            out.append(f"        ADDW SP,#{total}")
             k += 2
             continue
         # MOV R0,#a / MOV R1,#b / MOV R0,R1 / CLR R1 -- a constant's
