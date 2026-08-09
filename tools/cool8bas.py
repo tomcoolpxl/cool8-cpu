@@ -1475,8 +1475,29 @@ def _dead(lines, k, readers, writers):
     return False
 
 
+def _reg_dead(lines, k, reg):
+    """True if `reg` is written before it is read, forward from
+    lines[k+1]. Same conservatism as _dead: labels and control flow
+    are a fail."""
+    wr = re.compile(r"(MOV|LD|CLR|POP) %s\b" % reg)
+    for l in lines[k + 1:]:
+        t = " ".join(l.split(";")[0].split())
+        if not t:
+            continue
+        if t.endswith(":") or t.startswith("."):
+            return False
+        op = t.split()[0].upper()
+        if op in _FLOW or op.startswith("B") and op not in _ZN_WRITERS:
+            return False
+        if wr.match(t):
+            return True
+        if reg in t:
+            return False
+    return False
+
+
 def peephole(asm):
-    rules = os.environ.get("COOL8_PEEP", "12")
+    rules = os.environ.get("COOL8_PEEP", "12345")
     lines = asm.splitlines()
     out = []
     k = 0
@@ -1490,11 +1511,43 @@ def peephole(asm):
             k += 1
             continue
         m = re.match(r"ST \[(.+)\],R0$", t)
-        if m and "2" in rules and k + 1 < len(lines):
-            if nxt == f"LD R0,[{m.group(1)}]" \
-                    and _dead(lines, k + 1, _ZN_READERS, _ZN_WRITERS):
+        if m and k + 1 < len(lines) and nxt == f"LD R0,[{m.group(1)}]":
+            # R0 already holds the value. If nobody reads Z/N the load
+            # goes entirely; otherwise TST R0 sets the same Z/N and,
+            # like LD, leaves C untouched (02-isa.md: TST = OR Rd,Rd).
+            if "2" in rules and _dead(lines, k + 1, _ZN_READERS,
+                                      _ZN_WRITERS):
                 out.append(lines[k])
                 k += 2
+                continue
+            if "3" in rules:
+                out.append(lines[k])
+                out.append("        TST  R0")
+                k += 2
+                continue
+        # MOV R2,#$FF / AND R0,R2 -- an 8-bit no-op. Needs R2 dead;
+        # AND's flags are TST's flags (N/Z from R0, C untouched), so
+        # the pair becomes nothing or a TST.
+        if "4" in rules and re.match(r"MOV R2,#(\$FF|255)$", t) \
+                and nxt == "AND R0,R2" and _reg_dead(lines, k + 1, "R2"):
+            if _dead(lines, k + 1, _ZN_READERS, _ZN_WRITERS):
+                k += 2
+                continue
+            out.append("        TST  R0")
+            k += 2
+            continue
+        # MOV R0,#a / MOV R1,#b / MOV R0,R1 / CLR R1 -- a constant's
+        # high byte, reached the long way round.
+        if "5" in rules and re.match(r"MOV R0,#\S+$", t):
+            n2 = " ".join(lines[k + 2].split(";")[0].split()) \
+                if k + 2 < len(lines) else ""
+            n3 = " ".join(lines[k + 3].split(";")[0].split()) \
+                if k + 3 < len(lines) else ""
+            mb = re.match(r"MOV R1,#(\S+)$", nxt)
+            if mb and n2 == "MOV R0,R1" and n3 == "CLR R1":
+                out.append(f"        MOV  R0,#{mb.group(1)}")
+                out.append("        CLR  R1")
+                k += 4
                 continue
         out.append(lines[k])
         k += 1
