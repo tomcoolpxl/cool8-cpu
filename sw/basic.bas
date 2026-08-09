@@ -915,10 +915,10 @@ SUB dorun()
   POKE $FE19, 0
   p = 4
   DO
-    POKE $FE50, p
-    POKE $FE51, 0
-    POKE $FE51, 0
-    p = p + 8
+  POKE $FE50, p
+  POKE $FE51, 0
+  POKE $FE51, 0
+  p = p + 8
   LOOP WHILE p < 68
   e = PEEK($0018)
   IF e <> 255 THEN
@@ -1809,7 +1809,10 @@ DIM k AS INT
 POKE VID_MODE, $80
 POKE VID_BASE_L, SCREEN AND 255
 POKE VID_BASE_H, SCREEN >> 8
-POKE CUR_CTRL, $19
+POKE CUR_CTRL, $09              ' block cursor, blink rate 1 (~2 Hz).
+                                ' $19 was rate 3 -- the hardware's
+                                ' "solid, no blink" -- by an old choice
+                                ' the machine's owner has overruled
 vtop = 0
 progend = PROG
 fdrv = 0
@@ -1836,6 +1839,9 @@ END ASM
 CALL fsmount()
 CALL cls()
 CALL banner()
+' The banner is indented four columns by design; the cursor is not.
+cx = 0
+CALL showcur()
 ' The boot ROM lit the green LED when it found BOOT.BIN; the system is
 ' up now, so out it goes. Its whole duration is the relocation and this
 ' startup -- a blink, with no timer anywhere.

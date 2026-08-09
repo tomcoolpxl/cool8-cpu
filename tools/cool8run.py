@@ -51,6 +51,7 @@ import os
 import sys
 import time
 import wave
+from collections import deque
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -225,13 +226,65 @@ def run(args):
     t0 = time.time()
     shown = 0
 
+    # ------------------------------------------------ typed characters
+    #
+    # In `text` mode every printable character -- typed or pasted --
+    # goes through one queue and out via Machine.key(), which builds
+    # the make, the break and any shift from sw/keymap.asm itself. The
+    # OS has already applied the user's layout, so a Belgian keyboard's
+    # quote arrives as a quote instead of whatever sits on that key in
+    # the US table below. One character leaves per frame, and only when
+    # the PS/2 FIFO is empty, so nothing can overrun -- a paste is just
+    # a long queue.
+    #
+    # The keys that produce no text -- Return, Backspace, Escape, the
+    # cursors, Home and friends -- still go as physical make/break.
+    typing = deque()
+    pause_down = False
+    # pygame ships with key repeat OFF: a held Backspace deletes one
+    # character, a held cursor key moves one cell, and it feels dead.
+    # PC-keyboard rates; the raw ps2 mode is immune, its handler
+    # ignores repeat KEYDOWNs via the `pressed` set.
+    pygame.key.set_repeat(400, 40)
+    TEXT_SPECIALS = {
+        'return', 'backspace', 'tab', 'escape', 'up', 'down', 'left',
+        'right', 'home', 'end', 'delete', 'insert', 'page up',
+        'page down', 'pause', 'break',
+    }
+
+    def clipboard():
+        try:
+            import tkinter
+            root = tkinter.Tk()
+            root.withdraw()
+            text = root.clipboard_get()
+            root.destroy()
+            return text
+        except Exception:
+            return ""
+
     while running:
         for ev in pygame.event.get():
             if ev.type == pygame.QUIT:
                 running = False
+            elif (ev.type == pygame.MOUSEBUTTONDOWN and ev.button == 3
+                    and args.keys == 'text'):
+                # Right click pastes: the clipboard joins the same queue
+                # typing uses, so pacing and layout are already solved.
+                for ch in clipboard().replace('\r\n', '\r') \
+                                     .replace('\n', '\r'):
+                    typing.append(ch)
+            elif ev.type == pygame.TEXTINPUT and args.keys == 'text':
+                for ch in ev.text:
+                    typing.append(ch)
             elif ev.type in (pygame.KEYDOWN, pygame.KEYUP):
                 name = pygame.key.name(ev.key)
                 down = ev.type == pygame.KEYDOWN
+                if args.debug_keys:
+                    print("%s name=%r key=%d scancode=%d mod=%04x"
+                          % ('DOWN' if down else 'UP  ', name, ev.key,
+                             getattr(ev, 'scancode', -1), ev.mod),
+                          flush=True)
                 if name == 'f11':
                     if down:
                         m.press_break()
@@ -239,6 +292,46 @@ def run(args):
                 if name == 'f12':
                     if down:
                         print(save_shot(m, args.shot or 'build/cool8.png'))
+                    continue
+                if args.keys == 'text':
+                    # Break is Ctrl+Pause -- the SAME chord as the real
+                    # board's keyboard. Windows reports that chord as
+                    # VK_CANCEL ('break'), not 'pause', and some SDL
+                    # builds deliver the Pause key only on RELEASE -- so
+                    # the match is by name, keycode and HID scancode,
+                    # and fires on the release too if the press never
+                    # arrived. It goes straight into the port, ahead of
+                    # any queued typing. Ctrl+C is the serial spelling.
+                    # Measured on the bench, not assumed: Windows
+                    # delivers plain Pause as name 'break'/scancode 72,
+                    # and Ctrl+Pause as name 'scroll lock'/scancode 71
+                    # -- a different key entirely. Both identities are
+                    # matched; the ctrl test below keeps plain Pause
+                    # (and real Scroll Lock, unchorded) inert.
+                    is_pause = (name in ('pause', 'break', 'cancel',
+                                         'scroll lock')
+                                or ev.key in (pygame.K_PAUSE,
+                                              pygame.K_BREAK,
+                                              pygame.K_SCROLLLOCK)
+                                or getattr(ev, 'scancode', 0) in (71, 72))
+                    if is_pause and (ev.mod & pygame.KMOD_CTRL):
+                        if down or not pause_down:
+                            m.scancode([0xE0, 0x7E, 0xE0, 0xF0, 0x7E])
+                        pause_down = down
+                        continue
+                    if down and name == 'c' and (ev.mod & pygame.KMOD_CTRL):
+                        m.uart.feed(b'\x03')
+                        continue
+                    # Printables arrive as TEXTINPUT above; feeding them
+                    # here as well would double every keystroke.
+                    if name in TEXT_SPECIALS and down:
+                        typing.append({'return': '\r', 'backspace': '\x08',
+                                       'tab': '\t', 'escape': '\x1b',
+                                       'up': 'K_UP', 'down': 'K_DOWN',
+                                       'left': 'K_LEFT', 'right': 'K_RIGHT',
+                                       'home': 'K_HOME', 'end': 'K_END',
+                                       'delete': 'K_DEL', 'insert': 'K_INS',
+                                       }.get(name, ''))
                     continue
                 code = SET2.get(name)
                 if code is not None and args.keys in ('ps2', 'both'):
@@ -255,6 +348,17 @@ def run(args):
                     ch = ascii_for(name, ev.mod & pygame.KMOD_SHIFT)
                     if ch:
                         m.uart.feed(ch.encode('latin-1'))
+
+        # One queued character per frame, and only into an empty FIFO:
+        # a paste of a whole program cannot overrun anything, it just
+        # types fast.
+        if typing and not m.kbd.q:
+            item = typing.popleft()
+            if item:
+                try:
+                    m.key([item])
+                except KeyError:
+                    pass                # no such key on this machine
 
         m.run_frame()
 
@@ -314,10 +418,18 @@ def main():
     ap.add_argument("--flash", help="a file used as the 8 MB flash")
     ap.add_argument("--wav", help="record the sound engine's output")
     ap.add_argument("--shot", help="where F12 writes, or the headless shot")
-    ap.add_argument("--keys", default="ps2",
-                    choices=("ps2", "uart", "both"),
-                    help="where typing goes; the monitor reads both")
+    ap.add_argument("--keys", default="text",
+                    choices=("text", "ps2", "uart", "both"),
+                    help="text (default): what you type is what arrives, "
+                         "on any keyboard layout -- printable characters "
+                         "come from the OS as text and are encoded with "
+                         "the machine's own keymap; specials go physical. "
+                         "ps2 is the raw US-position path games may want "
+                         "for held keys; uart/both are the serial console")
     ap.add_argument("--no-audio", action="store_true")
+    ap.add_argument("--debug-keys", action="store_true",
+                    help="print every key event: name, keycode, "
+                         "scancode, modifiers")
     ap.add_argument("--headless", action="store_true",
                     help="no window: run, then dump the screen and console")
     ap.add_argument("--frames", type=int, default=0,

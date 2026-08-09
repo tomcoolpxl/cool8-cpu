@@ -164,11 +164,7 @@ irun:
         ST   [NNAME],R0         ; and no long name is defined yet
         ST   [CDEPTH],R0        ; nor a call in progress
         ST   [ibreak],R0        ; and nothing is asking it to stop
-        ST   [dptr],R0          ; the DATA pointer rewinds to the
-        MOV  R0,#$02            ;   program's first record, unpositioned
-        ST   [dptr+1],R0
-        MOV  R0,#1
-        ST   [dneed],R0
+        CALL drst               ; the DATA pointer rewinds, unpositioned
         CLR  R0
         ST   [ibreak],R0        ; and nothing is asking it to stop
         ; Every SUB is found now, while LREC is still the program's
@@ -3530,23 +3526,15 @@ irnd:   CALL sopen              ; the '('
         CALL udiv16             ; remainder in R2/R3
         MOV  R0,R2
         MOV  R1,R3
-        BRA  .rd
+        JMP  retnum
 .raw:   POP  R0
-.rd:    PUSH R0
-        CLR  R0
-        ST   [STYPE],R0
-        POP  R0
-        RET
+        JMP  retnum
 
 ; TIMER -- frames since power-on, wrapping at 65536: eighteen minutes,
 ; which is a game's whole afternoon. No parentheses, like INKEY.
 itimer: LD   R0,[frames]
         LD   R1,[frames+1]
-        PUSH R0
-        CLR  R0
-        ST   [STYPE],R0
-        POP  R0
-        RET
+        JMP  retnum
 
 ; VPEEK(a) -- the port's prefetch is armed by the address write and the
 ; data read stalls until the byte is real, so this is exact.
@@ -3560,11 +3548,7 @@ ivpeek: CALL sopen
         ST   [GVRAH],R1
         LD   R0,[GVRD]
         CLR  R1
-        PUSH R0
-        CLR  R0
-        ST   [STYPE],R0
-        POP  R0
-        RET
+        JMP  retnum
 
 ; =====================================================================
 ; The language round-out: INPUT, DATA/READ/RESTORE, ON GOTO, and the
@@ -3649,13 +3633,18 @@ h_input:
         JMP  stmt
 
 h_restore:
-        MOV  R0,#1
+        CALL drst
+        JMP  stmt
+
+; drst -- DATA rewound to the program's first record, unpositioned.
+; RUN does the same thing at the same address, so it is one routine.
+drst:   MOV  R0,#1
         ST   [dneed],R0
         CLR  R0
         ST   [dptr],R0
         MOV  R0,#$02
         ST   [dptr+1],R0
-        JMP  stmt
+        RET
 
 ; READ a, b, c -- each target takes the next DATA item.
 h_read: SKIPSP
@@ -3991,12 +3980,14 @@ ffargs: CALL sopen
 ; the usual number-return dance.
 fsign:  LD   R2,[garg+4]
         TST  R2
-        BEQ  .fp
+        BEQ  retnum
         XOR  R0,#$FF
         XOR  R1,#$FF
         ADD  R0,#1
         ADC  R1,#0
-.fp:    PUSH R0
+        ; retnum -- R0/R1 as a number: the tail every value-returning
+        ; builtin needs, kept once.
+retnum: PUSH R0
         CLR  R0
         ST   [STYPE],R0
         POP  R0
@@ -4084,8 +4075,4 @@ ifix:   CALL sopen
         AND  R2,#$80
         BEQ  .fx
         MOV  R1,#$FF
-.fx:    PUSH R0
-        CLR  R0
-        ST   [STYPE],R0
-        POP  R0
-        RET
+.fx:    JMP  retnum

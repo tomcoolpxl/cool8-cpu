@@ -214,6 +214,13 @@ class Board:
         self.send("\x1b[B" * 29)
         self.send("\x1b[H")
         self.send(line + "\r")
+        # The expensive moment is Return: tokenise, store, scroll --
+        # and the input ring is 16 bytes with no overflow check, so
+        # typing on while the editor is busy silently eats characters.
+        # This pause is what the VM harness's settle() does, priced in
+        # wall clock. Diagnosed the hard way: sessions died after any
+        # ?BREAK, because its print-and-scroll is exactly such a moment.
+        time.sleep(0.25)
 
     def program(self, lines):
         for ln in lines:
