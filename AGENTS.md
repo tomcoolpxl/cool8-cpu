@@ -50,6 +50,7 @@ between sessions, it is worth a commit.
 | [08-assembler.md](docs/08-assembler.md) | Assembler reference |
 | [10-debugging.md](docs/10-debugging.md) | **The debug and profiling tooling, and the rules that came out of using it** |
 | [11-compiler.md](docs/11-compiler.md) | The shelved self-hosted compiler, and the size arithmetic that shelved it |
+| [12-tasks.md](docs/12-tasks.md) | **Every command, and the runner that names them.** What each job proves, the gates, and how to add one |
 
 `README.md` is a summary derived from those. Keep it in step, but do not
 put anything in it that is not already recorded properly somewhere else.
@@ -114,38 +115,14 @@ a broken shell.
 
 ## Commands
 
-```bash
-python tools/opcodes.py --check      # opcode map coverage and doc examples
-python tools/cool8emu.py --selftest  # ISA semantics
-python sim/test_corpus.py            # the software corpus, end to end
+`npm test`, `npm run build`, `npm run check`, `npm run list`. Every
+command is named in `package.json` and run by `tools/run.mjs`, which
+fans the suites out in parallel and gives each its own build directory.
 
-python sim/cosim.py all              # RTL vs emulator: directed, random,
-                                     #   interrupts, ASIC bus, SPRAM
-python sim/cosim.py mul              # exhaustive multiply (~2.5 min)
-python sim/test_loader.py            # UART and loader, over a bit-banged wire
-python sim/test_spram.py             # SPRAM controller against a byte array
-python sim/test_boot.py              # boot ROM, overlay, a cold boot
-python sim/test_soc.py               # the I/O page, and the whole machine
-python sim/test_load.py              # the host loader, against the RTL
-python sim/test_video.py             # every mode, every visible pixel, and
-                                     #   pictures. --refresh updates docs/img/
-python sim/test_vram.py              # video RAM and its four-way arbiter
-python sim/test_vport.py             # the CPU's indirect VRAM port
-python sim/test_ps2.py               # the keyboard port, against a keyboard
-python sim/test_flash.py             # the SPI reader, against a flash
-python sim/test_run.py               # RUN, typed at the editor over the UART
-python sim/test_monitor.py           # M6's gate: type at it and it answers
-python sim/mutate.py                 # break the RTL on purpose; require a fail
-python sim/synth.py                  # hygiene, LUT/FF count, gate estimate
-python sim/timing.py                 # measured clocks per encoding
-
-python tools/mkbit.py                # the bitstream: yosys, nextpnr, icepack
-```
-
-`sim/cosim.py all` is the gate for any RTL change. It takes about a
-minute. Run it; do not reason about whether it would pass.
-
-`sim/build/` is generated and gitignored.
+**[docs/12-tasks.md](docs/12-tasks.md) is normative for all of it** --
+what each job proves, the RTL tests that are deliberately not in the
+runner, and how to add one. `sim/cosim.py all` is the gate for any RTL
+change: run it, do not reason about whether it would pass.
 
 ## "How did BBC BASIC do it" has one source, and it is not a manual
 

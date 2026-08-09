@@ -128,8 +128,23 @@ async function main() {
     })
   );
 
+  // A test that passes has nothing to say and its output is noise. A
+  // build and a benchmark are the opposite: the numbers *are* the
+  // result, and hiding them behind a green PASS makes the command
+  // useless for the thing it exists to do.
+  const loud = command === "build" || command === "bench";
+  if (loud) {
+    for (const r of results.sort((a, b) =>
+      order.indexOf(a.job) - order.indexOf(b.job)
+    )) {
+      console.log(`\n${dim("--- " + r.job.id)}`);
+      console.log(r.out.trimEnd());
+    }
+  }
+
   const failed = results.filter((r) => !passed(r));
   for (const r of failed) {
+    if (loud) continue;                     // already printed in full
     console.log(`\n${bad("--- " + r.job.run)} (exit ${r.code})`);
     console.log(r.out.trimEnd().split("\n").slice(-25).join("\n"));
   }

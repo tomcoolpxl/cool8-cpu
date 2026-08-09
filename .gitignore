@@ -1,4 +1,24 @@
+# Python
 __pycache__/
 *.pyc
+
+# Generated artifacts. sim/build/ also covers the per-job subdirectories
+# tools/run.mjs makes -- sim/build/interp, sim/build/basic and so on --
+# so thirteen suites can compile basic.bin at once without racing.
 sim/build/
 build/
+
+# Node is the task runner only (package.json + tools/run.mjs); there are
+# no dependencies, so there is nothing here to commit. package-lock.json
+# is deliberately *not* ignored: if a dependency ever appears, its lock
+# belongs in the tree.
+node_modules/
+npm-debug.log*
+.npm/
+
+# Editors and OS
+.DS_Store
+Thumbs.db
+*.swp
+.vscode/
+.idea/
