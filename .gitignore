@@ -8,6 +8,10 @@ __pycache__/
 sim/build/
 build/
 
+# The Rust fast runner's build output. Cargo.lock is committed;
+# rust/src/optab.rs is generated but committed, gated by mkrsopc --check.
+rust/target/
+
 # Node is the task runner only (package.json + tools/run.mjs); there are
 # no dependencies, so there is nothing here to commit. package-lock.json
 # is deliberately *not* ignored: if a dependency ever appears, its lock

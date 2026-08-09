@@ -1,0 +1,11 @@
+[package]
+name = "cool8rs"
+version = "0.1.0"
+edition = "2021"
+description = "COOL8 fast runner. Never authoritative: tools/cool8emu.py is the executable specification, and sim/rustsim.py holds this to its trace. See RUST_PORT.md."
+
+[dependencies]
+
+[profile.release]
+lto = true
+codegen-units = 1

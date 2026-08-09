@@ -114,6 +114,17 @@ npm run timing                 # measured clocks per encoding
 
 Neither writes anything. Both are exclusive.
 
+### `rust` — `npm run test:rust`
+
+| | |
+|---|---|
+| `rust` | the Rust fast runner against the emulator: trace and memory parity over cosim's own programs, then the measured speed |
+
+One job, its own group rather than `sw`, because it needs `cargo` and
+`npm test` must keep working on a fresh clone with only Node and Python
+present. Everything about the runner — what it is for, what is
+generated, what the gate proves — is in [RUST_PORT.md](../RUST_PORT.md).
+
 **What the board phase cannot check** is that the machine boots to a
 picture. `LOADER` defaults to 0 ([D40](01-decisions.md)) so there is no
 way to read the framebuffer over the wire, and BASIC writes to the video
@@ -195,9 +206,9 @@ shell that has not set that up says "no" and means nothing.
 
 ### `check` and `build`
 
-`check` runs `opcodes --check`, `mkasmtab --check` and the emulator's
-self-test — the three that verify a generated table still matches what
-generated it.
+`check` runs `opcodes --check`, `mkasmtab --check`, `mkrsopc --check`
+and the emulator's self-test — the ones that verify a generated table
+still matches what generated it.
 
 `build` produces the boot ROM and the system image and **prints the
 sizes**, because the system has to stay inside `$A000-$FDFF` and nothing

@@ -8,6 +8,7 @@
     "test:sw": "node tools/run.mjs test --group sw",
     "test:rtl": "node tools/run.mjs test --group rtl",
     "test:board": "node tools/run.mjs test --group board",
+    "test:rust": "node tools/run.mjs test --group rust",
     "test:all": "node tools/run.mjs test --group sw --group rtl",
     "check": "node tools/run.mjs check",
     "build": "node tools/run.mjs build",
@@ -84,11 +85,15 @@
       "board": [
         {"id": "probe",  "run": "tools/flash.py", "args": ["probe"],  "exclusive": true, "about": "the board answers at all: SPI flash identified"},
         {"id": "flash",  "run": "tools/flash.py", "args": ["verify"], "exclusive": true, "about": "both halves of the board's flash, read back and compared"}
+      ],
+      "rust": [
+        {"id": "rust", "run": "sim/rustsim.py", "about": "the Rust fast runner against the emulator -- trace and memory parity, plus the speed number. Needs cargo"}
       ]
     },
     "check": [
       {"id": "opcodes", "run": "tools/opcodes.py",   "args": ["--check"],    "about": "the encoding table against the documented examples"},
       {"id": "asmtab",  "run": "tools/mkasmtab.py",  "args": ["--check"],    "about": "sw/asmtab.asm is current"},
+      {"id": "rsopc",   "run": "tools/mkrsopc.py",   "args": ["--check"],    "about": "rust/src/optab.rs is current"},
       {"id": "emu",     "run": "tools/cool8emu.py",  "args": ["--selftest"], "about": "the CPU model's self-test"}
     ],
     "build": [
