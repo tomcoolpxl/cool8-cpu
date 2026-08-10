@@ -257,6 +257,16 @@ each.)
   the PS/2 typematic repeat a held key really produces. `raw` is all
   physical US-layout scancodes; `both` echoes characters to the UART
   for a machine with no keyboard driver yet.
+- **F9 restarts the machine warm and F10 cold** — they send the raw
+  scancodes of the machine's own Ctrl+Esc and Ctrl+Shift+Esc
+  ([D54](docs/01-decisions.md)), which the keyboard block decodes
+  before software sees them. The chords themselves cannot be used
+  here: Windows keeps Ctrl+Esc for the Start menu and Ctrl+Shift+Esc
+  for the task manager and never delivers either to an application.
+  On the board, where nothing stands between the keyboard and the
+  machine, the real chords work. Injecting the scancodes rather than
+  performing the restart keeps the emulator on the same path the
+  hardware takes — the machine cannot tell which keyboard it is.
 - **F11** (and Ctrl+Pause, the board's own chord) is the break button
   — an NMI, as SW[0] is. **F12** writes the screen to a PNG.
   **Alt+Enter** toggles aspect-ratio-scaled fullscreen. **Right

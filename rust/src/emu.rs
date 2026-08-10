@@ -38,12 +38,20 @@
 //
 // ## The emulator's own keys
 //
+//     F9          warm restart — the scancodes for the machine's
+//                 Ctrl+Esc, which Windows keeps for the Start menu
+//     F10         cold restart — Ctrl+Shift+Esc, likewise claimed by
+//                 the host for its task manager
 //     F11         the break button, SW[0] — an NMI, as the board's is
 //     Ctrl+Pause  the same; SDL reports the chord as Cancel and both
 //                 spellings are handled
 //     F12         write the screen to a PNG in the cwd
 //     Alt+Enter   fullscreen, SDL's own desktop mode
 //     right click paste the clipboard, typed through the keymap
+//
+// F9 and F10 send the chord's raw scancodes rather than doing the
+// restart themselves, so what the machine sees is a keyboard and the
+// path under test is the real one.
 
 use crate::machine::Machine;
 use crate::render::{Renderer, H_VIS, V_VIS};
@@ -340,6 +348,30 @@ pub fn run(args: &Args) {
                         (Some(Keycode::F11), _) if !repeat => {
                             m.cpu.pulse_nmi();
                         }
+                        // **The restart chords, on keys the host will
+                        // let us have.** The machine's own chords are
+                        // Ctrl+Esc and Ctrl+Shift+Esc (D54), decoded in
+                        // cool8_ps2 before software sees anything --
+                        // which is exactly right on the board, where no
+                        // operating system stands between the keyboard
+                        // and the machine, and impossible here, because
+                        // Windows claims both for the Start menu and
+                        // the task manager and never delivers them.
+                        //
+                        // So the scancodes are injected instead of the
+                        // chord being changed: the machine receives the
+                        // same bytes a real keyboard would send and
+                        // cannot tell the difference, and the hardware
+                        // keeps a convention chosen for the hardware
+                        // rather than one bent around a host.
+                        (Some(Keycode::F9), _) if !repeat => {
+                            m.bus.kbd.feed(&[0x14, 0x76, 0xF0, 0x76,
+                                             0xF0, 0x14]);
+                        }
+                        (Some(Keycode::F10), _) if !repeat => {
+                            m.bus.kbd.feed(&[0x14, 0x12, 0x76, 0xF0, 0x76,
+                                             0xF0, 0x12, 0xF0, 0x14]);
+                        }
                         (Some(Keycode::F12), _) if !repeat => {
                             shot += 1;
                             let p = format!("cool8-shot-{}.png", shot);
@@ -370,6 +402,14 @@ pub fn run(args: &Args) {
 
                 Event::KeyUp { scancode: Some(sc), .. } => {
                     if keys_mode != "raw" && is_char_key(sc) {
+                        continue;
+                    }
+                    // The keys this front end keeps for itself never
+                    // reached the machine as a make, so they must not
+                    // arrive as a break either -- an unpaired release
+                    // is a key the decoder never saw go down.
+                    if matches!(sc, Scancode::F9 | Scancode::F10
+                                  | Scancode::F11 | Scancode::F12) {
                         continue;
                     }
                     if let Some((code, ext)) = set2(sc) {
