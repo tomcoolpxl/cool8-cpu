@@ -212,14 +212,27 @@ def main():
     print()
     print("  The machines these were written for (published seconds):")
     print()
+    # One table, ordered by BM7 -- the longest benchmark and the one
+    # that exercises the most of an interpreter. This machine appears
+    # three times: as measured, and at the two clocks the others ran
+    # at, so its place in the order can be read rather than computed.
+    rows = [("COOL8 BASIC  measured", "COOL8", 8.375, True, mine),
+            ("COOL8 BASIC  at 2 MHz", "COOL8", 2.0, True,
+             [s * 8.375 / 2.0 for s in mine]),
+            ("COOL8 BASIC  at 1 MHz", "COOL8", 1.0, True,
+             [s * 8.375 for s in mine])] + list(REF)
+    rows.sort(key=lambda r: r[4][6])
+
     print(f"  {'':<26}{'CPU':>6}{'MHz':>6}" +
           "".join(f"{n:>8}" for n in ("BM1", "BM2", "BM3", "BM4",
                                       "BM5", "BM6", "BM7")))
-    for name, cpu, mhz, integer, times in REF:
+    for name, cpu, mhz, integer, times in rows:
         mark = " *" if integer else "  "
         print(f"  {name:<26}{cpu:>6}{mhz:6.2f}" +
               "".join(f"{t:8.1f}" for t in times) + mark)
     print("    * integer BASIC: the only rows that compare like for like")
+    print("      COOL8's 1 and 2 MHz rows are the measured work scaled,")
+    print("      not a machine that was built or run at those clocks")
 
     # The headline, against every integer BASIC in the set, with the
     # clock taken out of it -- one of them a Z80 at 3 MHz, which is the

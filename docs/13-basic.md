@@ -363,23 +363,33 @@ D32's 8.375 MHz, and the body only: each is run again with the loop
 removed and the difference taken, which is what a stopwatch between
 the `S` and the `E` measured too.
 
+Ordered by BM7, the longest of them. This machine appears three
+times: as measured, and the same measured work at the two clocks the
+others actually ran at, so its place in the order can be read off
+rather than worked out. Those two are arithmetic on the cycle counts
+— no COOL8 was built or clocked at 1 or 2 MHz.
+
 | | BM1 | BM2 | BM3 | BM4 | BM5 | BM6 | BM7 |
 |---|---|---|---|---|---|---|---|
-| COOL8 @ 8.375 MHz | 0.05 | 0.26 | 0.54 | 0.50 | 0.70 | 1.06 | 1.77 |
-| the same work @ 2 MHz | 0.21 | 1.11 | 2.28 | 2.09 | 2.94 | 4.45 | 7.40 |
-| the same work @ 1 MHz | 0.41 | 2.21 | 4.56 | 4.18 | 5.87 | 8.90 | 14.80 |
-| **Apple II Integer BASIC**, 6502 1 MHz | 1.3 | 3.1 | 7.2 | 7.2 | 8.8 | 18.5 | 28.0 |
+| **COOL8 @ 8.375 MHz** | 0.05 | 0.26 | 0.54 | 0.50 | 0.70 | 1.06 | 1.77 |
+| **COOL8 @ 2 MHz** (scaled) | 0.21 | 1.11 | 2.28 | 2.09 | 2.94 | 4.45 | 7.40 |
 | **Luxor ABC 80 integer**, Z80 3 MHz | 0.3 | 1.1 | 3.5 | 3.5 | 3.6 | 5.8 | 9.3 |
-| BBC BASIC, 6502 2 MHz | 0.8 | 3.1 | 8.1 | 8.7 | 9.0 | 13.9 | 21.1 |
-| Applesoft, 6502 1 MHz | 1.3 | 8.5 | 16.0 | 17.8 | 19.1 | 28.6 | 44.8 |
-| Commodore 64, 6510 1 MHz | 1.2 | 9.3 | 17.6 | 19.5 | 21.0 | 29.5 | 47.5 |
+| **COOL8 @ 1 MHz** (scaled) | 0.41 | 2.21 | 4.56 | 4.18 | 5.87 | 8.90 | 14.80 |
 | ABC 800 single, Z80 3 MHz | 0.9 | 1.8 | 6.0 | 5.9 | 6.3 | 11.6 | 19.6 |
+| BBC BASIC, 6502 2 MHz | 0.8 | 3.1 | 8.1 | 8.7 | 9.0 | 13.9 | 21.1 |
+| **Apple II Integer BASIC**, 6502 1 MHz | 1.3 | 3.1 | 7.2 | 7.2 | 8.8 | 18.5 | 28.0 |
 | IBM PC BASICA, 8088 4.77 MHz | 1.5 | 5.2 | 12.1 | 12.6 | 13.6 | 23.5 | 37.4 |
-| Apple III, 6502B 2 MHz | 1.7 | 7.2 | 13.5 | 14.5 | 16.0 | 27.0 | 42.5 |
-| VIC-20, 6502 1.108 MHz | 1.4 | 8.3 | 15.5 | 17.1 | 18.3 | 27.2 | 42.7 |
-| ZX Spectrum, Z80 3.58 MHz | 4.4 | 8.2 | 20.0 | 19.2 | 23.1 | 53.4 | 77.6 |
 | ZX80, Z80 3.25 MHz | 1.5 | 4.7 | 9.2 | 9.0 | 12.7 | 25.9 | 39.2 |
 | Spectravideo SV-328, Z80 3.6 MHz | 1.6 | 5.4 | 17.9 | 19.6 | 20.6 | 30.7 | 42.2 |
+| Apple III, 6502B 2 MHz | 1.7 | 7.2 | 13.5 | 14.5 | 16.0 | 27.0 | 42.5 |
+| VIC-20, 6502 1.108 MHz | 1.4 | 8.3 | 15.5 | 17.1 | 18.3 | 27.2 | 42.7 |
+| Applesoft, 6502 1 MHz | 1.3 | 8.5 | 16.0 | 17.8 | 19.1 | 28.6 | 44.8 |
+| Commodore 64, 6510 1 MHz | 1.2 | 9.3 | 17.6 | 19.5 | 21.0 | 29.5 | 47.5 |
+| ZX Spectrum, Z80 3.58 MHz | 4.4 | 8.2 | 20.0 | 19.2 | 23.1 | 53.4 | 77.6 |
+
+**Bold is integer.** At 2 MHz this machine still finishes BM7 ahead of
+every row in the table; at 1 MHz it is beaten only by ABC 80's integer
+mode on a 3 MHz Z80, and still ahead of the 4.77 MHz IBM PC by 2.5×.
 
 **Read the two integer rows first.** Applesoft, Commodore's MS BASIC,
 BBC BASIC and the Sinclair and MS Z80 interpreters all evaluate in
