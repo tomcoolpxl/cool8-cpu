@@ -96,6 +96,20 @@ module cool8_mon_tb;
     end
 
     always #5 clk = ~clk;
+    // **The pixel clock stays at its real rate, and this test is the
+    // reason to leave it alone.** Nothing here looks at a pixel, so
+    // slowing it looks free: at a quarter of the system clock the run
+    // drops from 220s to 160s and every check still passes. Measured,
+    // it also stops catching the receive-FIFO duplicate -- put
+    // `rx_settle <= rx_pop | rx_push` back and the slow-raster version
+    // says PASS where this one fails on "D 0500 -> A5 5A".
+    //
+    // The display fetch contends with the CPU for main RAM on every
+    // scanline, and that contention is what walks the CPU's timing
+    // across the one cycle in which a byte arriving during a read is
+    // dropped. Take the contention away and the coincidence never
+    // happens. A full-system test is worth what it reproduces, so the
+    // 27 % is not for sale.
     always #2.39 pclk = ~pclk;
 
     cool8_soc #(.UART_DIV(DIV0[15:0])) u_soc (
