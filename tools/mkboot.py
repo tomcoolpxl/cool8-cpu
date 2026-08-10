@@ -168,11 +168,37 @@ reloc:  LDW  X,#src
         SUB  R3,#1
         BRA  .fc
 .fdone:
+        ; ...and the same 96 glyphs at 8x16, verbatim from the face the
+        ; text modes read out of their ROM, seeded below the 8x8 set at
+        ; $F600. Mode 3's console blits these: its cells are 16 raster
+        ; lines with no doubling, and this is what fills them at text
+        ; mode's own quality. The step register still holds 1.
+        CLR  R0
+        ST   [$FE26],R0
+        MOV  R0,#$F6
+        ST   [$FE27],R0
+        LDW  X,#font16
+        CLR  R2                 ; 1536 bytes
+        MOV  R3,#6
+.gc:    MOV  R0,R2
+        OR   R0,R3
+        BEQ  .gdone
+        LD   R0,[X]
+        ST   [$FE29],R0
+        INCW X
+        SUB  R2,#1
+        BCS  .gc
+        SUB  R3,#1
+        BRA  .gc
+.gdone:
         LDW  X,#$@DEST@
         JMP  [X]
 
 font8:
 @FONT@
+
+font16:
+@FONT16@
 
 paltab: ; bank 0 -- softened CGA, semantics preserved
         .byte $00,$00, $01,$2B, $01,$A4, $02,$AB
@@ -260,12 +286,28 @@ def _font8():
     return "\n".join(lines)
 
 
+def _font16():
+    """96 glyphs of 8x16, 1 bpp, verbatim from the bitstream's font —
+    no resampling at all: mode 3's console shows the exact pixels text
+    mode does."""
+    import mkfont
+    img, _, _ = mkfont.build(
+        os.path.join(ROOT, "assets", "font", "spleen-8x16.bdf"))
+    out = bytes(img[32 * 16:128 * 16])
+    lines = []
+    for i in range(0, len(out), 16):
+        row = ",".join("$%02X" % b for b in out[i:i + 16])
+        lines.append("        .byte " + row)
+    return "\n".join(lines)
+
+
 def build(payload, dest=0xA000, org=0x0200, build_dir=None):
     """The stub for `payload`, assembled, with the payload after it."""
     build_dir = build_dir or os.path.join(ROOT, "sim", "build")
     os.makedirs(build_dir, exist_ok=True)
 
     text = (STUB.replace("@FONT@", _font8())
+                .replace("@FONT16@", _font16())
                 .replace("@BANNER@", _banner())
                 .replace("@ORG@", "%04X" % org)
                 .replace("@DEST@", "%04X" % dest)

@@ -115,6 +115,7 @@ DIM blb AS CARD AT $00D0        ' frame count at the last blink flip
 DIM bfa AS CARD AT $00D2        ' bglyph: font row address
 DIM bva AS CARD AT $00D4        ' bglyph: framebuffer cell address
 DIM binv AS BYTE AT $00D6       ' bglyph: $FF to draw inverted
+DIM grow AS BYTE AT $00D7       ' bglyph: font rows per glyph, 8 or 16
 DIM bstr AS CARD AT $00D8       ' bglyph: the mode's stride
 ' CARD, not INT: $9FFF is 40,959 and as a signed value that is
 ' negative, which makes every bounds check on an address backwards.
@@ -147,6 +148,7 @@ SUB setgeom()
   cols = 80
   rows = 30
   gkind = 2
+  grow = 8
   IF m = 0 THEN
     gkind = 0
   END IF
@@ -185,6 +187,12 @@ SUB setgeom()
     bpc = 4                     ' modes 4 and 5
     IF m = 3 THEN
       bpc = 1
+      ' Mode 3 is the one bitmap mode without line doubling, so its
+      ' cells are 16 raster lines and the console uses the 8x16 font
+      ' the boot stub seeds at $F600 -- the same Spleen face text
+      ' mode reads from its ROM, at full height. 30 rows x 16 = 480:
+      ' the whole screen, where 8-line cells covered half of it.
+      grow = 16
       ' mode 3's two colours: entry 1 goes white, or the editor
       ' writes CGA blue on black -- the one palette touch setgeom
       ' allows itself, and only on the way INTO the 1 bpp console
@@ -197,8 +205,10 @@ SUB setgeom()
     END IF
     gbase = PEEK($FE12) + (PEEK($FE13) << 8)
     gs8 = (PEEK($FE14) + (PEEK($FE15) << 8)) << 3
-    ' repaint when the scrolled window would reach the font at $FC00
-    glim = ($FC00 - rows * gs8) >> 8
+    IF m = 3 THEN gs8 = gs8 + gs8
+    ' repaint when the scrolled window would reach the fonts, whose
+    ' floor is the 8x16 set at $F600
+    glim = ($F600 - rows * gs8) >> 8
   END IF
   curph = 0
 END SUB
@@ -290,7 +300,13 @@ SUB bput(r AS INT, c AS INT, ch AS INT, inv AS INT)
   IF ch < 32 THEN
     ch = 32
   END IF
-  bfa = $FC00 + ((ch - 32) << 3)
+  ' grow picks the font with the row count: the 8x16 set at $F600 for
+  ' mode 3's undoubled cells, the 8x8 at $FC00 everywhere else
+  IF grow = 16 THEN
+    bfa = $F600 + ((ch - 32) << 4)
+  ELSE
+    bfa = $FC00 + ((ch - 32) << 3)
+  END IF
   bva = gbase + r * gs8 + c * bpc
   binv = 0
   IF inv <> 0 THEN
@@ -317,27 +333,12 @@ END SUB
 
 SUB cls()
   DIM r AS BYTE
-  DIM k AS CARD
   r = 0
   DO WHILE r < 32
     CALL clearrow(r)
     cont(r) = 0
     r = r + 1
   LOOP
-  ' mode 3 is the one mode taller than the cell rows: the editor's 30
-  ' cover 240 of its 480 lines, so the rest is wiped by hand
-  IF gkind = 2 THEN
-    IF bpc = 1 THEN
-      k = gbase + 19200
-      POKE $FE26, k AND 255
-      POKE $FE27, k >> 8
-      k = 0
-      DO WHILE k < 19200
-        POKE $FE29, 0
-        k = k + 1
-      LOOP
-    END IF
-  END IF
   cx = 0
   cy = 0
   CALL showcur()
@@ -2387,7 +2388,7 @@ MSGKFREE:
 ; ---- written back expanded -- 1:1, two bits to a byte through
 ; ---- nibtab, or one bit to a byte.
 nibtab: .byte $00,$0F,$F0,$FF
-bglyph: MOV  R3,#8              ; eight font rows
+bglyph: LD   R3,[$00D7]         ; grow: 8 font rows, or mode 3's 16
 .bg:    PUSH R3
         LD   R0,[$00D2]         ; seek the font row
         ST   [$FE26],R0

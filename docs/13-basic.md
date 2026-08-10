@@ -98,9 +98,14 @@ need a holding loop to stay visible, though `DO`/`VSYNC`/`LOOP`
 remains the animation idiom.
 
 The bitmap surfaces all start at VRAM `$0000`. Everything above the
-surface is yours; the boot stub parks the `GTEXT` font at `$FC00`. In
-mode 4 that leaves `$9600`–`$FBFF` (25.5 KB) free for patterns and
-buffers.
+surface is yours; the boot stub parks two fonts at the top — the
+`GTEXT` 8×8 at `$FC00`, and the 8×16 the mode 3 console blits at
+`$F600`, the text modes' own face at full height (mode 3's cells are
+16 undoubled lines, and 30 such rows are the whole screen). In mode 4
+that leaves `$9600`–`$F5FF` (24 KB) free for patterns and buffers.
+Scribbling over `$F600`–`$FEFF` costs `GTEXT` and the mode 3 console
+their glyphs until the next boot, and the editor's scrolled bitmap
+window repaints before it would reach them.
 
 ## 5. Graphics commands
 
