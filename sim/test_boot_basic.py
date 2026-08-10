@@ -145,6 +145,9 @@ def main():
     check(m.bus.read(0xFE10) & 0x0F == 0,
           "Ctrl+Esc puts the editor back in mode 0",
           "VID_MODE=$%02X" % m.bus.read(0xFE10))
+    check(not any(r.strip() for r in m.text()),
+          "...and the screen it left behind is cleared",
+          " | ".join(r.strip() for r in m.text() if r.strip())[:120])
     key(m, syms, "LIST\r")
     check(any("PRINT 6 * 7" in r for r in m.text()),
           "...and the warm restart kept the program",
