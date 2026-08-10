@@ -257,7 +257,7 @@ each.)
   the PS/2 typematic repeat a held key really produces. `raw` is all
   physical US-layout scancodes; `both` echoes characters to the UART
   for a machine with no keyboard driver yet.
-- **F9 restarts the machine warm and F10 cold** — they send the raw
+- **F1 restarts the machine warm and F10 cold** — they send the raw
   scancodes of the machine's own Ctrl+Esc and Ctrl+Shift+Esc
   ([D54](docs/01-decisions.md)), which the keyboard block decodes
   before software sees them. The chords themselves cannot be used

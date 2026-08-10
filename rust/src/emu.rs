@@ -38,7 +38,7 @@
 //
 // ## The emulator's own keys
 //
-//     F9          warm restart — the scancodes for the machine's
+//     F1          warm restart — the scancodes for the machine's
 //                 Ctrl+Esc, which Windows keeps for the Start menu
 //     F10         cold restart — Ctrl+Shift+Esc, likewise claimed by
 //                 the host for its task manager
@@ -364,7 +364,7 @@ pub fn run(args: &Args) {
                         // cannot tell the difference, and the hardware
                         // keeps a convention chosen for the hardware
                         // rather than one bent around a host.
-                        (Some(Keycode::F9), _) if !repeat => {
+                        (Some(Keycode::F1), _) if !repeat => {
                             m.bus.kbd.feed(&[0x14, 0x76, 0xF0, 0x76,
                                              0xF0, 0x14]);
                         }
@@ -408,7 +408,7 @@ pub fn run(args: &Args) {
                     // reached the machine as a make, so they must not
                     // arrive as a break either -- an unpaired release
                     // is a key the decoder never saw go down.
-                    if matches!(sc, Scancode::F9 | Scancode::F10
+                    if matches!(sc, Scancode::F1 | Scancode::F10
                                   | Scancode::F11 | Scancode::F12) {
                         continue;
                     }
