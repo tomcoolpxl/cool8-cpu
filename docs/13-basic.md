@@ -39,6 +39,33 @@ logic and bits with one implementation ([D47](01-decisions.md)).
 `IF A > 0 AND B > 0` works exactly as it reads. Strings compare with
 `=` and `<>` only.
 
+### What the arithmetic does at the edges
+
+Everything is 16-bit two's complement, −32768 to 32767. Measured on the
+machine, not inferred:
+
+| | | |
+|---|---|---|
+| `-7 / 2` | **−3** | division truncates **towards zero** |
+| `-7 MOD 2` | **−1** | the remainder takes the sign of the **dividend**… |
+| `7 MOD -2` | **1** | …and ignores the sign of the divisor |
+| `-8 >> 1` | **32764** | **`>>` is a *logical* shift — it fills with zero** |
+| `30000 + 30000` | **−5536** | overflow wraps silently. There is no check |
+| `300 * 300` | **24464** | so does the product: 16×16 keeps the low 16 |
+| `-32768 / -1` | **−32768** | the one division that overflows, and it wraps too |
+| `1 / 0` | `?DIV BY 0` | `/` and `MOD` both error, as `FDIV` does |
+
+**`>>` is the trap.** Values are signed everywhere else in this
+language, so `-8 >> 1` giving 32764 rather than −4 is the one place the
+signedness quietly stops applying — `SHR`/`ROR` at
+[`sw/interp.asm`](../sw/interp.asm) shifts a zero into the top. Use `/ 2`
+where you meant an arithmetic shift; the divide is slower but it is
+signed. `INT` *is* an arithmetic shift, by 8 — see §8.
+
+**Overflow is silent by design**, not by omission: a check costs bytes
+on every operation and the size ceiling in §12 is the reason there is
+none.
+
 ## 3. Functions
 
 `LEN LEFT$ RIGHT$ MID$ CHR$ ASC STR$ VAL INSTR` — strings, BBC-shaped:
@@ -51,7 +78,7 @@ one accumulator, four-byte descriptors, no garbage collection.
 | `INKEY` | the next typed key, or 0 if none is waiting. No parentheses. Ordinary keys are ASCII (`Z` is 90, Esc is 27, Return 13); named keys are `K_UP` 256, `K_DOWN` 257, `K_LEFT` 258, `K_RIGHT` 259, `K_HOME` 260, `K_END` 261, `K_DEL` 262, `K_INS` 263 |
 | `KEY(sc)` | -1 while the key with raw Set 2 scancode `sc` is **held right now** — as many keys at once as you like, which is what a game needs and `INKEY`'s queue cannot say. §6 has the codes |
 | `VPEEK(a)` | one byte of video RAM |
-| `FMUL(a,b) FDIV(a,b) FIX(a)` | 8.8 fixed point, §8 |
+| `FMUL(a,b) FDIV(a,b) INT(a)` | 8.8 fixed point, §8. `INT` floors |
 
 ## 4. The screen modes
 
@@ -240,10 +267,34 @@ change, in 1/256 steps — sub-pixel positions and speeds. Spell 2.5 as
 | `a + b`, `a - b` | already correct — fixed add is integer add |
 | `FMUL(a, b)` | (a×b) >> 8, signed |
 | `FDIV(a, b)` | (a<<8) / b, signed; division by zero errors |
-| `FIX(a)` | the integer part, sign preserved |
+| `INT(a)` | drops the fraction, **flooring**: an arithmetic shift right by 8 |
+
+**`INT` rounds towards minus infinity, not towards zero.** `INT(-384)` —
+that is −1.5 — is **−2**, not −1. It is the high byte with the sign
+extended into the low ([`sw/interp.asm`](../sw/interp.asm) `iint`),
+which is a floor, and it is BBC BASIC's `INT`.
+
+**Flooring is the right rounding here, and the reason is motion.** Every
+value gets a cell of equal width, so a constant velocity gives constant
+pixel steps. Truncation towards zero would give the origin a
+double-width cell and stall an object crossing it for a frame. If you
+genuinely want truncation — and `IF` is a statement here, not an
+expression:
+
+```
+IF X < 0 THEN T = -INT(-X) ELSE T = INT(X)
+```
+
+> **This function was called `FIX` until it was renamed, and the name was
+> the bug.** `FIX` means truncate-towards-zero wherever a dialect carries
+> both names, so the reference described the function the name promised
+> rather than the one the machine implements, and the two disagreed for
+> every negative argument. The behaviour was always right and did not
+> change; only the spelling did. Programs saved before the rename call a
+> name that no longer resolves.
 
 `X = X + V` with `V = FDIV(3, 2)` moves one-and-a-half pixels a frame
-when `PLOT FIX(X), y, c` draws it. That is what floats are for in a
+when `PLOT INT(X), y, c` draws it. That is what floats are for in a
 game, at a fiftieth of their cost.
 
 ## 9. The boot, direct mode, one vocabulary, storage
@@ -302,15 +353,76 @@ Deviations from the C64, on purpose: forward-`DEL` and an `End` key
 exist (it had neither), there is no quote mode (PETSCII-specific),
 and insert mode is one keypress per gap rather than a sticky count.
 
+## 9c. Speed: the Rugg/Feldman benchmarks
+
+BM1–BM7 (Kilobaud, June 1977 — the set *Personal Computer World* ran
+on everything for a decade), typed at the editor and RUN. `poe bench`
+measures them; `sim/bench_bm.py` carries the listings and the
+adaptations. Measured in cycles, so the seconds are arithmetic at
+D32's 8.375 MHz, and the body only: each is run again with the loop
+removed and the difference taken, which is what a stopwatch between
+the `S` and the `E` measured too.
+
+| | BM1 | BM2 | BM3 | BM4 | BM5 | BM6 | BM7 |
+|---|---|---|---|---|---|---|---|
+| COOL8 @ 8.375 MHz | 0.05 | 0.26 | 0.54 | 0.50 | 0.70 | 1.06 | 1.77 |
+| the same work @ 2 MHz | 0.21 | 1.11 | 2.28 | 2.09 | 2.94 | 4.45 | 7.40 |
+| the same work @ 1 MHz | 0.41 | 2.21 | 4.56 | 4.18 | 5.87 | 8.90 | 14.80 |
+| Apple II Integer BASIC, 1 MHz | 1.3 | 3.1 | 7.2 | 7.2 | 8.8 | 18.5 | 28.0 |
+| BBC BASIC, 2 MHz | 0.8 | 3.1 | 8.1 | 8.7 | 9.0 | 13.9 | 21.1 |
+| Applesoft, 1 MHz | 1.3 | 8.5 | 16.0 | 17.8 | 19.1 | 28.6 | 44.8 |
+| Commodore 64, 1 MHz | 1.2 | 9.3 | 17.6 | 19.5 | 21.0 | 29.5 | 47.5 |
+
+**Read the Integer BASIC row first.** Applesoft, Commodore's MS BASIC
+and BBC BASIC evaluate in floating point, which is most of what
+BM3–BM7 measure, so beating them says little about this interpreter.
+Wozniak's Integer BASIC is the only other integer implementation in
+the published set, and clock for clock this is **1.4× to 3.1×** faster
+than it.
+
+**BM8 is not run and no number is quoted for it.** It is `K^2`, `LOG`
+and `SIN` — a float-library benchmark, and §8 is the whole of the
+arithmetic here.
+
+**BM4 is faster than BM3, and everywhere else it is slower.** On the
+Apple, the BBC and the 64 the constants in `K/2*3+4-5` cost *more*
+than the variables in `K/K*K+K-K`, because those interpreters re-parse
+a decimal literal from ASCII on every pass. This one stores a literal
+as `T_LIT` and two binary bytes when the line is typed (§1), so a
+constant is cheaper than a variable rather than dearer — the
+inversion in that column is the tokeniser's decision, showing up as a
+measurement.
+
 ## 10. Sizes and the ceiling
 
-The resident system is **24,024 bytes of the 24,064** below the I/O
-page — the all-modes editor spent most of what the space hunt won
-(workspace exodus to the `$FF00` page, the halved classification
-table, the boot screen exiled to the stub, C64-terse messages, the
-peephole and direct-push compiler passes, `CONST` removed). If the
-ceiling looms again, the drop candidates in order of bytes returned
-against pain: `LINE` (~400), the fixed-point trio (~446),
-`GTEXT` (~232), `INPUT` (~198), `CLG` (~106), `SPRITE` (~120) — and
-past those, spilling system data into high user RAM is the sanctioned
-escape.
+`python sim/build_basic.py` is the measurement, and it prints the free
+count rather than leaving it to arithmetic:
+
+```
+  basic.bin   24,043 bytes  $A000-$FDEA
+  BOOT.BIN    26,805 bytes  (2762 of relocating stub)
+  free            21 bytes  to $FDFF
+```
+
+**Twenty-one bytes, of 24,064.** The ceiling is not looming, it is
+here: the resident system fills 99.91 % of the space between `$A000`
+and the I/O page at `$FE00`. The all-modes editor spent most of what
+the space hunt won (workspace exodus to the `$FF00` page, the halved
+classification table, the boot screen exiled to the stub, C64-terse
+messages, the peephole and direct-push compiler passes, `CONST`
+removed).
+
+**Nothing further fits.** A `btab` entry alone is six bytes — a length,
+the name, a handler word — before the handler exists, so even `ABS`,
+which is a sign test and a negate, is most of what is left, and `SGN`
+beside it does not fit at all. **Any new feature now costs an old one**,
+and the drop candidates in order of bytes returned against pain are
+`LINE` (~400), the fixed-point trio (~446), `GTEXT` (~232), `INPUT`
+(~198), `SPRITE` (~120), `CLG` (~106). Past those, spilling system data
+into high user RAM is the sanctioned escape.
+
+The `INT` rename cost **+5 bytes** (24,038 → 24,043): a `CMP`/`BNE`/`JMP`
+in `prim` against the six-byte `btab` entry it replaced, and the inverted
+branch is two of those five. This entry read 24,024 before it was
+measured again, so treat any number here as stale unless
+`sim/build_basic.py` just printed it.

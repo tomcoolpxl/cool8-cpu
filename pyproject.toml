@@ -274,6 +274,11 @@ run = "sim/build_basic.py"
 about = "basic.bin and BOOT.BIN, with the sizes"
 
 [[tool.cool8.jobs.bench]]
+id = "bm"
+run = "sim/bench_bm.py"
+about = "Rugg/Feldman BM1-BM7 in BASIC, beside the machines they were written for"
+
+[[tool.cool8.jobs.bench]]
 id = "lang"
 run = "sim/bench_lang.py"
 about = "the language benchmark, and the size trade -- carries the bytecode VM, the language's second implementation"

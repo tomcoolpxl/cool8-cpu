@@ -63,10 +63,63 @@ def step(name, argv, cwd=BUILD):
     return out
 
 
+def fmax(pnr):
+    """{clock name: MHz} from nextpnr's *final* report.
+
+    nextpnr reports twice, after placement and after routing, and only
+    the second is the answer. Taking the last line rather than the last
+    *pass* is how you end up quoting the placement estimate for whichever
+    clock happens to print last, so the whole block is re-collected and
+    later entries overwrite earlier ones by name.
+    """
+    out = {}
+    for line in pnr.splitlines():
+        m = re.search(r"Max frequency for clock\s+'([^']+)':\s+"
+                      r"([\d.]+)\s*MHz", line)
+        if m:
+            out[m.group(1)] = float(m.group(2))
+    return out
+
+
+def cells(pnr):
+    """The device utilisation table, as printed lines."""
+    out = []
+    for line in pnr.splitlines():
+        m = re.search(r"(SB_LUT4|SB_DFF\w*|SB_CARRY|SB_RAM40_4K|"
+                      r"SB_SPRAM256KA|ICESTORM_LC|ICESTORM_RAM|"
+                      r"ICESTORM_SPRAM|SB_IO):\s+(\d+)/\s*(\d+)\s+(\d+)%",
+                      line)
+        if m:
+            out.append(f"    {m.group(1):<16} {m.group(2):>5} / "
+                       f"{m.group(3):<5} {m.group(4):>3}%")
+    return out
+
+
+def clock_of(fm, want):
+    """Fmax for the clock whose name contains `want`, or None.
+
+    nextpnr decorates names — `sclk_$glb_clk`, `clk$SB_IO_IN` — so an
+    exact match finds nothing and a substring is what works.
+    """
+    for k, v in fm.items():
+        if want in k:
+            return v
+    return None
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--freq", type=float, default=8.375,
                     help="the constraint to close against, in MHz")
+    ap.add_argument("--seed", type=int, default=None,
+                    help="nextpnr placer seed")
+    ap.add_argument("--seeds", type=int, default=0, metavar="N",
+                    help="sweep seeds 1..N and report Fmax per clock, "
+                         "instead of building. Placement is the only "
+                         "seeded step, so yosys runs once. Use this "
+                         "rather than one run: D32 and D38 both measured "
+                         "a ~6%% spread, and D38 is the cautionary tale "
+                         "of a single-seed result that was noise.")
     args = ap.parse_args()
 
     os.makedirs(BUILD, exist_ok=True)
@@ -87,28 +140,52 @@ def main():
     step("yosys  ", [T.tool("yosys"), "-q", "-p",
                      f"{read}; synth_ice40 -dsp -top cool8_top -json cool8.json"])
 
-    pnr = step("nextpnr", [T.tool("nextpnr-ice40"),
-                           "--up5k", "--package", "sg48",
-                           "--pcf", PCF, "--json", "cool8.json",
-                           "--asc", "cool8.asc", "--freq", str(args.freq)])
+    def nextpnr(seed=None):
+        argv = [T.tool("nextpnr-ice40"), "--up5k", "--package", "sg48",
+                "--pcf", PCF, "--json", "cool8.json",
+                "--asc", "cool8.asc", "--freq", str(args.freq)]
+        if seed is not None:
+            argv += ["--seed", str(seed)]
+        return step("nextpnr" if seed is None else f"seed {seed:<2}", argv)
+
+    if args.seeds:
+        rows, util = [], []
+        for s in range(1, args.seeds + 1):
+            pnr = nextpnr(s)
+            rows.append((s, fmax(pnr)))
+            util = util or cells(pnr)     # placement-invariant, take one
+        print()
+        for line in util:
+            print(line)
+        names = sorted({k for _, fm in rows for k in fm})
+        print()
+        print(f"  {'seed':>4}  " + "  ".join(f"{n:>22}" for n in names))
+        for s, fm in rows:
+            print(f"  {s:>4}  " + "  ".join(
+                f"{fm.get(n, float('nan')):>18.2f} MHz" for n in names))
+        print()
+        for n in names:
+            v = [fm[n] for _, fm in rows if n in fm]
+            if not v:
+                continue
+            mean = sum(v) / len(v)
+            print(f"    {n:<24} mean {mean:6.2f}  min {min(v):6.2f}  "
+                  f"max {max(v):6.2f}  spread "
+                  f"{(max(v) - min(v)) / mean * 100:4.1f}%")
+        print()
+        return 0
+
+    pnr = nextpnr(args.seed)
 
     step("icepack", [T.tool("icepack"), "cool8.asc", "cool8.bin"])
 
-    for line in pnr.splitlines():
-        m = re.search(r"(SB_LUT4|SB_DFF\w*|SB_CARRY|SB_RAM40_4K|"
-                      r"SB_SPRAM256KA|ICESTORM_LC|ICESTORM_RAM|"
-                      r"ICESTORM_SPRAM|SB_IO):\s+(\d+)/\s*(\d+)\s+(\d+)%",
-                      line)
-        if m:
-            print(f"    {m.group(1):<16} {m.group(2):>5} / {m.group(3):<5} "
-                  f"{m.group(4):>3}%")
-    # nextpnr reports twice, after placement and after routing. Only the
-    # second is the answer, and it is a constraint check rather than a
-    # number to admire: nextpnr fails the run if it is not met, so
-    # reaching here at all means the design closed at --freq.
-    fmax = [l for l in pnr.splitlines() if "Max frequency for clock" in l]
-    if fmax:
-        print("    " + fmax[-1].split("Info: ")[-1].strip())
+    for line in cells(pnr):
+        print(line)
+    # A constraint check rather than a number to admire: nextpnr fails the
+    # run if --freq is not met, so reaching here means the design closed.
+    # One seed is not a measurement of Fmax, though — use --seeds for that.
+    for n, v in sorted(fmax(pnr).items()):
+        print(f"    Fmax {n:<24} {v:7.2f} MHz")
 
     size = os.path.getsize(os.path.join(BUILD, "cool8.bin"))
     print(f"\n  build/cool8.bin, {size} bytes")

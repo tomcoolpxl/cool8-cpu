@@ -154,6 +154,36 @@ poe synth                  # hygiene, LUT/FF count, gate estimate
 poe timing                 # measured clocks per encoding
 ```
 
+### Two that answer a question rather than gate a change
+
+Neither is a test and neither belongs in the runner. Both exist because
+a decision was resting on a guess.
+
+```bash
+python sim/cpi.py              # cycles per instruction, and what it
+                               # costs to add one. ~1 min
+python tools/mkbit.py --seeds 6   # Fmax per clock across placer seeds
+                               # ~70 s for the first, ~40 s each after
+```
+
+**`sim/cpi.py`** measures CPI on three code shapes — native, bytecode
+and the real interpreter — and turns it into the break-even clock for
+any change that adds a cycle to the fetch. It priced
+[D59](01-decisions.md#d59--cpi-is-259-and-pipelining-the-fetch-is-a-bet-rather-than-an-optimisation)
+in minutes, against a question that had been open for four milestones.
+Re-run it whenever the cycle table moves: **at CPI 2.59 one added cycle
+per instruction is a 39 % penalty**, which is what makes
+per-instruction overheads so expensive on this machine.
+
+**`--seeds N`** is the honest way to read Fmax. One nextpnr run is not a
+measurement — the placer spread is around 6 %, and
+[D38](01-decisions.md#d38--the-fetch-path-next-state-is-decoded-flat-and-it-bought-area-rather-than-speed)
+is the write-up of a single-seed result that was noise and was believed
+for a round. Synthesis is deterministic, so yosys runs once and only
+placement repeats. It reports `sclk` and `pclk` separately, which the
+plain build did not: it used to print whichever clock nextpnr mentioned
+last.
+
 ### `board` — `poe test-board`
 
 | | |

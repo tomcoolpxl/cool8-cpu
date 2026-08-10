@@ -18,12 +18,19 @@ Pin numbers below are taken from the board's own constraint files
 | Clock | 12 MHz on pin 35, supplied by the on-board iCELink debugger |
 | Flash | 8 MB SPI |
 | Debugger | iCELink (ARM Mbed DAPLink) — drag-and-drop bitstream, USB CDC serial, JTAG |
-| Connectors | PMOD1, PMOD2, PMOD3 (8 signals each), PMOD4 (4 pins) |
-| I/O voltage | 3.3 V LVCMOS. **Not 5 V tolerant.** |
+| Connectors | PMOD1, PMOD2, PMOD3 (8 signals each), PMOD4 (4 signals), and **J7** — see §2 |
+| I/O voltage | 3.3 V LVCMOS. **Not 5 V tolerant.** PMOD `VCC` is 3.3 V on all four headers; the only 5 V on this board is `5V_USB`, and J7 is where you reach it |
+
+**The schematics are published and they answer most of this.**
+[`wuxx/icesugar/schematic/`](https://github.com/wuxx/icesugar/tree/master/schematic)
+holds `iCESugar-v1.5.pdf` and one PDF per PMOD. They are **not** in
+`doc/`, which is where a search for them naturally goes and where they
+are not; a round went into that. Everything below that says "confirmed
+on the schematic" was read there rather than inferred.
 
 ---
 
-## 2. The pin budget, and its two traps
+## 2. The pin budget, its traps, and the header that rescues it
 
 ### Trap 1 — PMOD1 overlaps the USB and serial pins
 
@@ -119,9 +126,10 @@ Also ruled out along the way, each on the bench:
   Swapping them changed nothing — still `$FF` at every address — so it
   is not that either, and they were put back.
 
-### What has been tried, and what it cost
+### What was tried, and what it cost
 
-**Still unsolved.** Recorded so the same ground is not covered twice.
+**The last row is the fix.** Everything above it is recorded so the same
+ground is not covered twice.
 
 | tried | result |
 |---|---|
@@ -133,12 +141,12 @@ Also ruled out along the way, each on the bench:
 | **A minimal top around picosoc's `spimemio.v`** | **reads the flash** |
 | picosoc's `$FF`+`$AB` wake-up added to `cool8_flash.v` | **BASIC boots from flash** |
 
-**That last row localises the fault.** `spimemio.v` unmodified, its
+**The picosoc row is what localised it.** `spimemio.v` unmodified, its
 `SB_IO` instantiation copied from `icesugar.v`, all four io lines, `csb`
 and `clk` as plain outputs, one word read from `$100000` — and the LED
-goes solid. So the pads, the constraints, the pin numbers, the clock and
-the board are all fine, and **what is wrong is inside
-`rtl/soc/cool8_flash.v`**: the command sequence it puts on the wire.
+went solid. So the pads, the constraints, the pin numbers, the clock and
+the board were all fine, and **what was wrong was inside
+`rtl/soc/cool8_flash.v`**: the command sequence it put on the wire.
 
 Do not build another bring-up test on `damdoy/ice40_ultraplus_examples`.
 It targets the Lattice breakout board, needs jumpers this board does not
@@ -191,19 +199,19 @@ proven individually necessary. The four-clocks-per-bit shifter stays for
 margin; it halves SCK to 2.09 MHz, so a 64 KB load is ~250 ms instead
 of ~125.
 
-Until it is, treat the flash as **write-only from the host**: `icesprog`
-puts data there and the FPGA's configuration engine reads the bitstream,
-but nothing the CPU runs can see it. Autoboot therefore cannot work on
-this board — it walks 256 directory entries of `$FF`, finds no
-`BOOT.BIN`, and falls through to the monitor, which is exactly what it
-is specified to do when the flash is blank.
+**The flash is readable and writable from the CPU on this board**, and
+the whole filesystem cycle has been run from both sides of the chip —
+[06-roadmap.md](06-roadmap.md) "Hardware status". The commands live in
+[04-system.md §4.8](04-system.md#48-spi-flash--fe88).
 
-> **This was never verified on hardware before.** [06-roadmap.md](06-roadmap.md)'s
-> bring-up table checks `--ping`, `SYSSTAT`, `UART_DIV`, `CPUDIV` and
-> `LED` — no flash read among them — and lists the flash *write* path as
-> not yet exercised. The reader is ticked off with LUT counts, which is
-> synthesis and simulation. `sim/test_autoboot.py` passes on the
-> emulator. None of that is a board.
+> Two paragraphs stood here saying the opposite — that the flash was
+> write-only from the host and autoboot could not work — and they
+> survived the fix that made them wrong. They are deleted rather than
+> annotated, which is the rule this file states and briefly stopped
+> following: **a measurement replaces the estimate it supersedes rather
+> than sitting next to it.** Anyone reading Trap 0 top to bottom met
+> "Resolved on the bench", then "Still unsolved", then "autoboot cannot
+> work", and had no way to tell which was current.
 
 ### Not a trap — the SPI flash pins are free after configuration
 
@@ -215,11 +223,45 @@ budget — see [04-system.md §4.8](04-system.md#48-spi-flash--fe88).
 The design must not drive them during configuration; `nextpnr` and
 `icepack` handle that, since user logic only comes alive after `CDONE`.
 
-### Trap 2 — PMOD4 is the four tactile switches
+### Not a trap — J7 carries 5 V and the four free PMOD1 pins
 
-`P4_1…P4_4` are pins 21, 20, 19, 18, which are `SW[3]…SW[0]`. Fine as
-buttons, unavailable as a PMOD. **`SW[0]` is spoken for** as the NMI
-break button, and it needs `set_io -pullup yes` — see above.
+The board's README does not mention it and it is easy to miss on the
+silkscreen. **`J7` is a six-pin header carrying `5V_USB`, `GND`,
+`P1M3`, `P1M4`, `P1M9`, `P1M10`** — the USB rail straight off `F1`, and
+exactly the four PMOD1 signals Trap 1 leaves usable.
+
+That is very nearly the whole external interface this machine needs, on
+one connector. `audio` lives on `P1_3` and is on this header; the
+keyboard's 5 V comes from here rather than from a wire soldered to the
+USB connector, which was the assumption before the schematic was read.
+
+`5V_USB` is the *input* side of the AMS1117-3.3, so anything drawn from
+J7 shares the USB port's budget with the board itself and with the audio
+amplifier. §4.1 does that arithmetic.
+
+### Trap 2 — PMOD4 is a DIP switch, and it does not spring back
+
+`P4_1…P4_4` are pins 21, 20, 19, 18, which are `SW[3]…SW[0]`.
+Unavailable as a PMOD. **`SW[0]` is spoken for** as the NMI break
+button, and it needs `set_io -pullup yes` — see above.
+
+**`S1` is a four-way DIP switch, not four tactile buttons** — confirmed
+on `iCESugar-v1.5.pdf`, which names the part `SW DIP-4`. The break logic
+in `cool8_top.v` survives that unharmed, because it already requires the
+line to be continuously low for 2 ms and then fires exactly one NMI that
+cannot repeat until release. What changes is the gesture: a DIP switch
+latches, so breaking into the monitor is *flip on*, and breaking a second
+time means flipping off and on again rather than pressing twice.
+
+The schematic also shows **R27–R30, 4.7 kΩ, on those four lines**. The
+rendering does not make it unambiguous whether they pull up to 3V3 or
+down to GND, and that matters, because the comment above the break logic
+records a real board taking NMIs continuously from a floating input —
+which a fitted pull-up should have prevented. One of the two
+observations is incomplete. A meter settles it in ten seconds and
+argument does not, so it is recorded here rather than resolved. The
+`.pcf` pull-up costs nothing in parallel with 4.7 kΩ and stays either
+way.
 
 ### The result
 
@@ -230,18 +272,25 @@ signals. What's left is exactly enough, and no more:
 |---|---|---|
 | `PS2_CLK` | 27 | `P3_3` |
 | `PS2_DAT` | 25 | `P3_4` |
-| `audio` | 3 | `P1_3` — one pin, mono, 1-bit sigma-delta |
-| spare | 48, 47, 2 | `P1_4`, `P1_9`, `P1_10` |
+| `audio` | 3 | `P1_3` — one pin, mono, 1-bit sigma-delta. **Also on J7** |
+| spare | 48, 47, 2 | `P1_4`, `P1_9`, `P1_10` — **all three on J7** |
+
+All four of those PMOD1 signals come out on J7 beside `5V_USB` and
+`GND`, so nothing here needs the PMOD1 header itself and the USB serial
+console stays intact.
 
 **Sound is one pin, not two.** [D41](01-decisions.md#d41--the-sound-engine-is-one-datapath-walked-eight-times-not-four-dividers)'s
 engine mixes its eight voices to a single signed sample, so a stereo pair
 would mean two mixers rather than two pins. `P1_4` is free again.
 
 **`SW[0]` is an input now, with a pull-up.** Pin 18, `P4_4`, the break
-button of [§6](04-system.md). The pull-up is in the `.pcf` and is not
-optional — nothing on the board holds that pin, a floating iCE40 input
-oscillates, and the first version of this produced a machine taking NMIs
-continuously. See [D40](01-decisions.md#d40--the-hardware-loader-is-a-build-option-and-it-is-off).
+button of [§6](04-system.md). The pull-up is in the `.pcf` and stays: a
+floating iCE40 input oscillates, and the first version of this produced
+a machine taking NMIs continuously. Whether that pin was ever really
+floating is now in doubt — the schematic shows 4.7 kΩ on the line, see
+Trap 2 — but the pull-up costs nothing either way and the observation
+that put it there was made on a board. See
+[D40](01-decisions.md#d40--the-hardware-loader-is-a-build-option-and-it-is-off).
 
 ---
 
@@ -377,9 +426,42 @@ Gate to +3.3 V, source to the 5 V (keyboard) side, drain to the 3.3 V
 (FPGA) side, 10 kΩ pull-up on each side to its own rail. Two of these,
 one for `PS2_CLK` and one for `PS2_DAT`.
 
-**The keyboard also needs 5 V at up to ~300 mA, and the PMOD `VCC` pins
-on this board are 3.3 V.** Take 5 V from the board's USB VBUS or from a
-separate supply, with grounds tied together.
+**A four-channel BSS138 breakout is in hand**, which is this circuit
+four times over with the pull-ups already fitted. Two channels are used
+and two are spare, so nothing here needs building — only wiring.
+
+**The socket is a passive breakout**: a mini-DIN 6 on a small PCB with
+the pins brought out, no active parts on it. It supplies the connector
+of the table below and nothing else. If it carries pull-ups of its own
+they go to *its* `VCC` pin, which is the 5 V side — that makes the
+shifter more necessary, never less.
+
+#### The 5 V rail, and whether the port can carry it
+
+**The keyboard needs 5 V at up to ~300 mA, and all four PMOD `VCC` pins
+are 3.3 V** — confirmed on `iCESugar-v1.5.pdf`. Take 5 V from **J7**
+(§2). It is USB VBUS behind `F1`, so no wire has to be soldered to the
+USB connector, which is what this section used to recommend for want of
+a schematic.
+
+The budget works, with less room than it first looks like:
+
+| | |
+|---|---|
+| USB 2.0 port, after enumeration | 500 mA |
+| UP5K at 95 % occupancy, iCELink STM32, VGA ladder into 75 Ω | ~120–170 mA |
+| PS/2 keyboard, typical / worst case | 50–100 / 300 mA |
+| PMOD-AUDIO into a speaker at volume (§4.2) | up to ~300 mA |
+
+Keyboard and board together land near 250 mA typical and 450 mA worst
+case. Add a speaker driven hard and it goes over. **The audio amplifier
+and the keyboard are on the same rail**, because `5V_USB` feeds the
+AMS1117-3.3 that feeds every PMOD `VCC`.
+
+If anything browns out, the fix is a separate 5 V supply with grounds
+tied to the board. A 100 µF bulk capacitor at the keyboard's 5 V pin is
+worth fitting regardless: hot-plug inrush that dips the 3.3 V regulator
+resets the FPGA, and that presents as a random crash with no cause.
 
 PS/2 mini-DIN female, looking into the socket:
 
@@ -408,52 +490,94 @@ pin ([D41](01-decisions.md#d41--the-sound-engine-is-one-datapath-walked-eight-ti
 `P1_4` is free.
 
 ```
-   P1_3 ──┬── 1k ──┬── 1k ──┬── 10µF ──┬──── tip (line out)
-          │        │        │          │
-        10nF     10nF      ---        10k
-          │        │                   │
-         GND      GND                 GND
+   P1_3 ──┬── 1k ──┬── 1k ──┬──── IL and IR, PMOD-AUDIO
+   (J7)   │        │        │
+        10nF     10nF       └──── its own 1µF blocks the DC
+          │        │
+         GND      GND
 ```
 
 Two RC stages at 1 kΩ / 10 nF — `fc = 1/(2πRC) ≈ 16 kHz` each — which is
 above anything the machine can play and two and a half decades below the
 switching rate, so the carrier is gone and the treble is not.
 
-**The coupling capacitor is not optional.** The modulator cannot emit a
-negative voltage, so the sample is offset to the middle of the range and
-**silence sits at 1.65 V**, not at zero. The series capacitor is what
-turns that into 0 V at the far end, which is what a line input expects.
-The 10 kΩ drains it when nothing is plugged in.
-
-**Do not** connect headphones or a speaker directly to an FPGA pin —
-that is a short across an output driver. For a speaker, feed the filter
-into a PAM8302 module with its own supply and decoupling.
+**Something must block the DC, and here the amplifier does it.** The
+modulator cannot emit a negative voltage, so the sample is offset to the
+middle of the range and **silence sits at 1.65 V**, not at zero. Feeding
+the PMOD-AUDIO, its own 1 µF input capacitor and 50 kΩ to ground do that
+job, so the 10 µF coupling capacitor and 10 kΩ drain this section used to
+call for are **not needed**. Driving a line input directly instead of the
+amplifier, they come back.
 
 If it sounds thin, raise the capacitors to 22 nF and lose a little top
 end for more carrier rejection. If it hisses, the corner is too high or
 the ground return is poor.
 
+#### The amplifier is the PMOD-AUDIO board, and it is not a DAC
+
+`PMOD-AUDIO v1.2` is a **PAM8403** — a class-D stereo power amplifier
+with *analogue* inputs, running from 3V3. Per channel the input network
+is 50 kΩ to ground (the volume control), a 1 µF coupling capacitor and a
+22 kΩ series resistor into `INL`/`INR`. Only PMOD pins **1 and 2** carry
+signal; 5 and 11 are GND, 6 and 12 are 3V3.
+
+**It replaces the power amplifier, not the filter above.** That input
+network is a 7 Hz high-pass and does nothing whatever about an 8.375 MHz
+carrier. Give it the reconstructed signal or it amplifies the modulator.
+The PAM8302 this section used to name is superseded by it.
+
+**It cannot plug into a PMOD slot on this machine.** PMOD2 and PMOD3 are
+the VGA board, and PMOD1 pins 1 and 2 — exactly where `IL` and `IR`
+sit — are `USB_DP` and the iCELink `TX` (Trap 1), so plugging it in
+would amplify the serial console. Wire it instead: `P1_3` from J7,
+through the filter, to `IL` and `IR` **tied together**, with GND and 3V3
+from any PMOD header. One pin drives both channels because the engine
+has one channel.
+
+Two cautions. The outputs are **bridge-tied** — never ground an `OUT_N`,
+and do not take headphones from them. And into a speaker at volume the
+amp pulls up to ~300 mA from 3V3, which arrives through the regulator
+from the same USB port feeding the keyboard; §4.1 is where that budget
+is counted.
+
+**Unresolved: which way the 3.5 mm jack faces.** It sits on the same
+`IL`/`IR` nets as the PMOD pins, so it is either a line *input* — the
+board used as a speaker amplifier for something else — or an output tap
+ahead of the amplifier. `pmod-audio-v1.2.pdf` does not disambiguate it
+and the physical board will. It decides whether there is a line output
+at all, or only the two-pin speaker header `J2`.
+
+**Do not** connect headphones or a speaker directly to an FPGA pin —
+that is a short across an output driver, and it is what the amplifier
+exists to avoid.
+
 ---
 
 ## 5. Bill of materials
 
-| Ref | Part | Qty | Notes |
+| Ref | Part | Qty | Status |
 |---|---|---|---|
 | — | iCESugar v1.5 | 1 | Have it |
-| — | MuseLab PMOD-VGA (12-bit) | 1 | Buy. Sold alongside the board. |
-| — | VGA cable + monitor | 1 | Have it |
 | — | PS/2 keyboard | 1 | Have it |
-| Q1, Q2 | BSS138 (or a 2-channel BSS138 level-shifter breakout) | 2 | |
-| R1–R4 | 10 kΩ | 4 | Level shifter pull-ups |
-| R5, R6 | 1 kΩ | 2 | Audio filter — **this is the DAC**, see §4.2 |
-| R7 | 10 kΩ | 1 | Audio bias drain |
-| C1, C2 | 10 nF ceramic | 2 | Audio filter |
-| C3 | 10 µF electrolytic | 1 | Audio coupling — watch polarity |
-| J1 | PS/2 mini-DIN 6 socket | 1 | |
-| J2 | 3.5 mm jack | 1 | Mono; the engine has one channel |
-| — | PAM8302 module | 1 | Optional, for a speaker |
+| — | VGA cable + monitor | 1 | Have it |
+| — | 4-channel BSS138 level-shifter breakout | 1 | **Have it** — two channels used, §4.1 |
+| — | PMOD-VGA (12-bit R-2R) | 1 | Ordered |
+| — | PMOD-AUDIO v1.2 (PAM8403) | 1 | Ordered — an amplifier, **not** a DAC, §4.2 |
+| J1 | PS/2 mini-DIN 6 socket breakout | 1 | Ordered — passive, socket only |
+| R5, R6 | 1 kΩ | 2 | **Outstanding.** Audio filter — this is the DAC, §4.2 |
+| C1, C2 | 10 nF ceramic | 2 | **Outstanding.** Audio filter |
 
-Everything except the VGA PMOD is a few euro of passives.
+**Two resistors and two capacitors are the entire remaining list.**
+
+What left it, and why:
+
+- **Q1, Q2 and R1–R4** are on the four-channel level-shifter breakout,
+  pull-ups fitted. Nothing to build.
+- **C3 (10 µF) and R7 (10 kΩ)** are gone. They coupled and drained the
+  1.65 V offset; the PAM8403's own 1 µF and 50 kΩ do it instead. They
+  come back only if the filter drives a line input directly.
+- **The PAM8302** is superseded by the PMOD-AUDIO, which also brings its
+  own 3.5 mm jack and volume control.
 
 ---
 
@@ -474,14 +598,19 @@ than reports.
 
 | | |
 |---|---|
-| Logic cells | 5022 / 5280 — 95 % |
+| Logic cells | 5164 / 5280 — 97 % |
 | EBR | 28 / 30 — boot ROM, font, palette, line buffers, sprites, sound, two FIFOs |
 | SPRAM | 4 / 4 — 64 KB main RAM and 64 KB video RAM |
 | DSP | 1 / 8 — `y × stride` for the pixel port |
 | PLL | 1 / 1 |
-| I/O | 28 / 39 — `audio` and `sw0` are the two M7 added |
-| Timing | closes at 8.375 MHz, `sclk` Fmax 11.2 |
+| I/O | 30 / 39 |
+| Timing | closes at 8.375 MHz. `sclk` Fmax **11.91 mean**, 11.71–12.15 across six placer seeds; `pclk` 18.17 mean |
 | Bitstream | 104 KB |
+
+**Read Fmax from a sweep, never from one run** — `python tools/mkbit.py
+--seeds 6`. The figures above replace 5022 cells and an Fmax of 11.2,
+which had drifted: the design grew and got faster and the table did not
+follow.
 
 **The clock is 8.375 MHz and not 12, and the part decided that.** The
 single PLL's reference is a pad, and on the SG48 that pad is pin 35 —
@@ -542,6 +671,13 @@ co-simulation against the reference emulator.
 
 - [wuxx/icesugar](https://github.com/wuxx/icesugar) — board repository,
   `src/common/io.pcf` for the pin map
+- [`schematic/`](https://github.com/wuxx/icesugar/tree/master/schematic) —
+  **the board and PMOD schematics, and the first place to look.**
+  `iCESugar-v1.5.pdf` settled J7, the DIP switch, the 3V3 PMOD rails and
+  where 5 V lives; `pmod-audio-v1.2.pdf` settled that the audio board is
+  a power amplifier rather than a converter. They are in `schematic/`,
+  **not** `doc/` — `doc/` holds display datasheets and board photos, and
+  a round went into concluding from it that no schematic was published.
 - [iCESugar README](https://github.com/wuxx/icesugar/blob/master/README_en.md)
 - [MuseLab on Tindie](https://www.tindie.com/products/johnnywu/icesugar-fpga-development-board/)
 - Lattice `FPGA-TN-02022` — iCE40 SPRAM usage guide

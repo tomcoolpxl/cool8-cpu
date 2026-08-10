@@ -70,6 +70,12 @@ K_ELSIF = $90
 K_END   = $91
 K_RET   = $92
 K_CALL  = $93
+; $95 is INT. It is in toktab as the compiled dialect's type name, so
+; the editor tokenises it before the interpreter can look it up, and a
+; btab entry spelled "INT" could never be reached -- the token byte
+; never spells itself. It is a builtin here instead, dispatched in
+; `prim` the way PEEK is. $94 (AS) and $96 (BYTE) are still unused.
+K_INT   = $95
 K_PEEK  = $97
 K_POKE  = $98
 K_AND   = $99
@@ -1851,7 +1857,13 @@ prim:
         BEQ  .neg
         CMP  R2,#K_PEEK
         BEQ  .peek
-        CMP  R2,#$22            ; '"' -- a literal, stored with its quotes
+        ; A keyword token, not a btab name -- see K_INT. The arm is past
+        ; a conditional branch's +-127, so the test is inverted and a JMP
+        ; carries the distance, the way sw/disasm.asm's macros do it.
+        CMP  R2,#K_INT
+        BNE  .nint
+        JMP  .int
+.nint:  CMP  R2,#$22            ; '"' -- a literal, stored with its quotes
         BEQ  .lit
         ; a name -- varidx leaves X on its value, unless a '(' says
         ; the name was an array's and X has to be worked out instead
@@ -1945,6 +1957,11 @@ prim:
         LD   R0,[X]
         CLR  R1
         RET
+        ; INT(a). `iint` is `earg` then the shift then `retnum`, which is
+        ; the same tail every btab function returns through, so this is a
+        ; tail call and costs two instructions over a table entry.
+.int:   INCW Y                  ; over the token; earg takes the '('
+        JMP  iint
         ; Refused. The value is never used -- stmt stops on ERR before
         ; the statement that would have consumed it completes.
 .deep:  CLR  R0
@@ -3092,8 +3109,6 @@ btab:   .byte 3,"L","E","N"
         .word ifmul
         .byte 4,"F","D","I","V"
         .word ifdiv
-        .byte 3,"F","I","X"
-        .word ifix
         .byte 0
 
 ; ---------------------------------------------------------------------
@@ -4317,7 +4332,7 @@ h_gtext:
 ; machine, so the fraction that fits it is 8.8: -128..127 and change,
 ; 1/256 steps -- sub-pixel positions and speeds, which is what games
 ; want a fraction for. + and - already work; FMUL and FDIV carry the
-; point; FIX drops it. F(2.5) is spelled 640, or 2*256+128.
+; point; INT drops it. F(2.5) is spelled 640, or 2*256+128.
 ; ---------------------------------------------------------------------
 
 ; ffargs -- (a, b) parsed, signs folded into garg+4, both made positive.
@@ -4438,8 +4453,18 @@ ifdiv:  CALL ffargs
         LD   R1,[garg]
         JMP  fsign
 
-; FIX(a) -- the integer part: an arithmetic shift right by the point.
-ifix:   CALL earg               ; ( expression )
+; INT(a) -- an arithmetic shift right by the point, so it **floors**:
+; INT(-384), which is -1.5, is -2. That is BBC BASIC's INT and it is the
+; right rounding for motion -- every value gets a cell of equal width, so
+; a constant velocity gives constant pixel steps. Truncation towards zero
+; would give the origin a double-width cell and stall an object crossing
+; it for a frame.
+;
+; It was called FIX until the rename, which was the bug: FIX means
+; truncate-towards-zero wherever both names exist, and the reference
+; described the function the name promised rather than the one here.
+; The behaviour never changed; only the spelling did.
+iint:   CALL earg               ; ( expression )
         MOV  R0,R1
         CLR  R1
         MOV  R2,R0

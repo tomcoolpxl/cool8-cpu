@@ -39,16 +39,57 @@ serial), break and recovery, the whole flash filesystem cycle from
 both sides of the chip. None of it worked until the deep-power-down
 wake-up of [05-board.md](05-board.md) Trap 0 was added.
 
-**Not yet exercised on hardware, blocked on bench parts, not code:**
+**Not yet exercised on hardware. No longer blocked on parts:**
 
-| needs | for |
-|---|---|
-| PS/2 level shifter | the physical keyboard |
-| VGA PMOD (12-bit R-2R) | a visible picture |
-| RC filter + jack | audible sound |
+| needs | for | status |
+|---|---|---|
+| PS/2 socket + level shifter | the physical keyboard | socket ordered; a 4-channel BSS138 breakout is in hand |
+| PMOD-VGA (12-bit R-2R) | a visible picture | ordered |
+| RC filter + PMOD-AUDIO | audible sound | amplifier ordered; **two 1 kΩ and two 10 nF outstanding** |
 
-That is the whole remaining hardware list. Each is a small solder job
-described in [05-board.md](05-board.md).
+Four passives are the whole remaining shopping list. Each job is a small
+one and [05-board.md](05-board.md) describes it — but the audio one is
+not wiring, it is the digital-to-analogue conversion itself (§4.2), and
+the board that arrives with it is an amplifier that expects an already
+reconstructed signal.
+
+Reading the board schematic closed two questions that were open here on
+guesswork: **J7 brings out `5V_USB` and all four usable PMOD1 signals**,
+so powering the keyboard needs no soldering to the USB connector, and
+`S1` is a DIP switch rather than a momentary button, which changes how
+the break key is used but not the logic behind it.
+
+## Open, with the next step already named
+
+**Pipelining the fetch — one ten-minute experiment, not a week of work.**
+
+The arithmetic is done and lives in
+[D59](01-decisions.md#d59--cpi-is-259-and-pipelining-the-fetch-is-a-bet-rather-than-an-optimisation).
+CPI is 2.59, so registering the opcode costs 39 % more cycles and pays
+only if the result closes at 12.5625 MHz — the sole rung above 8.375,
+because [D32](01-decisions.md) makes `sclk` a division of the pixel
+clock. Above that line it is +8 %; below it the machine is **28 %
+slower**. Today's design closes at 11.91 mean, 12.15 best.
+
+**Do not start with the rewrite.** Register the opcode in `S_FETCH` and
+change nothing else — no cycle counts, no emulator, no timing table. It
+will be functionally wrong and fail co-simulation, and synthesis does
+not care:
+
+```bash
+python tools/mkbit.py --seeds 6      # read sclk
+```
+
+Clears 12.5625 with margin → the rewrite is justified before a line of
+it is written. Lands at 12.2 → delete the hack and the question is
+closed for good. Either way it costs one afternoon's compute and no
+commitment.
+
+**The thing that is not worth trying again** is reshaping the SPRAM read
+path: measured, both variants, six seeds each, and the baseline won —
+[D60](01-decisions.md#d60--narrowing-the-spram-read-path-earlier-and-replicating-its-select-bought-nothing-and-was-reverted).
+At 97 % occupancy the placer's freedom is the constraint, so only
+removing logic will move Fmax.
 
 ## Shelved: TinyTapeout
 

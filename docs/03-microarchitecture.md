@@ -643,8 +643,10 @@ a second timing model.
 loader, keyboard, flash and the video subsystem — and decodes
 `$FE00-$FEFF` on the **bus**, ahead of `cool8_mem` and whoever the
 master is. **3754 LUT4 and 1577 flip-flops** for the whole SoC, with 28
-EBR, 4 SPRAM and one DSP block — **5022 logic cells of the 5280 the part
-has**, closing at 11.2 MHz. It was 1636 LUT4 and 8 EBR before M5.
+EBR, 4 SPRAM and one DSP block — **5164 logic cells of the 5280 the part
+has**, `sclk` Fmax 11.91 MHz mean across six placer seeds
+(`python tools/mkbit.py --seeds 6`). It was 1636 LUT4 and 8 EBR before
+M5.
 
 That is with the hardware loader out
 ([D40](01-decisions.md#d40--the-hardware-loader-is-a-build-option-and-it-is-off))

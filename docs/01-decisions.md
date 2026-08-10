@@ -1518,36 +1518,14 @@ proposal, attacks logic depth on a path whose first term is a wire.
 Replicating `blk_r` and `byte_r` so each consumer has a local copy is the
 cheaper thing to try, and it is untried.
 
-### Should the core's fetch path be pipelined?
+### Should the core's fetch path be pipelined? — priced, still open
 
-The machine closes at 11.2 MHz and runs at 8.375 — it was 10.81 before
-M7, and [D38](#d38--the-fetch-path-next-state-is-decoded-flat-and-it-bought-area-rather-than-speed)
-and the loader coming out account for the difference. **The next rung is
-12.5625 MHz, half the pixel clock**, and it is 1.4 MHz away rather than
-1.75. The gap is one critical path: SPRAM read data, through the block and byte selects, the
-boot ROM's mux and the I/O page's, the instruction decode, and into the
-next state — **37 levels of logic, 87 ns**. It is not congestion; the
-spread across six placer seeds is under 6 %.
-
-It is [D23](#d23--no-memory-address-register) showing up. The core has
-no memory address register and its decoder reads the opcode straight off
-the bus during a fetch, which is what made the RTL a cycle or two faster
-than the provisional table everywhere. The cost is that the byte and the
-decision it drives are in the same cycle.
-
-Registering the opcode would break the cone in two and should roughly
-halve it. It costs a cycle per fetch, so every number in
-[02-isa.md §8](02-isa.md#8-timing-model) changes, and
-`tools/opcodes.py`, the emulator and `sim/timing.py` change with them.
-Whether the machine comes out ahead is arithmetic nobody has done yet:
-a 50 % clock gain against a cycle-count loss that depends on the
-instruction mix, which `sim/test_corpus.py` can measure.
-
-Two things make it worth attempting now rather than never.
-[D33](#d33--the-asic-path-is-shelved-the-target-is-the-fpga) means the
-cycle counts are free to change, and `sim/cosim.py` compares full
-architectural state on all 511 encodings — so the change is verifiable
-by construction rather than by reading.
+The arithmetic this question was waiting on has been done. **CPI is
+2.59, so the upside is +8 % and it is collected only if the pipelined
+design closes at 12.5625 MHz; below that the machine is 28 % slower.**
+What settles it is a ten-minute synthesis probe, not a rewrite —
+[D59](#d59--cpi-is-259-and-pipelining-the-fetch-is-a-bet-rather-than-an-optimisation)
+describes it.
 
 ### `MOV Rd,<pp>` and the flags
 
@@ -2331,3 +2309,195 @@ throwaway script. A private copy is not a shortcut — it is a second
 implementation nobody is checking, which is how `test_lib` came to
 measure two programs against a third, private model of the I/O page
 and report 1.00x for a year.
+
+## D59 — CPI is 2.59, and pipelining the fetch is a bet rather than an optimisation
+
+**Answers the arithmetic the open question was waiting on**, and the
+answer is smaller and riskier than the question assumed. Registering the
+opcode was the standing candidate for the next big speed-up. Measured,
+the upside is **+8 %** — and it is collected only if the pipelined
+design closes at 12.5625 MHz exactly. If it closes anywhere below that,
+the machine is **28 % slower** than it is today.
+
+This entry does not decide to abandon it. It prices it, and it names a
+ten-minute experiment that settles the bet before any of the expensive
+work is done.
+
+### The measurement
+
+`python sim/cpi.py` runs three code shapes on the machine and counts
+retired instructions beside cycles. Three shapes, because CPI is a
+property of code and not of a CPU:
+
+| | cycles | instructions | CPI |
+|---|---|---|---|
+| native, six benchmarks | 4,208,529 | 1,324,927 | **3.10–3.64** |
+| bytecode, the same six | 28,189,181 | 11,220,922 | **2.50–2.58** |
+| the real BASIC interpreter | 1,184,077 | 410,740 | **2.88** |
+| **all workloads** | **33,581,787** | **12,956,589** | **2.59** |
+
+The native and bytecode programs come from `sim/bench_lang.py` rather
+than being restated — a second copy of a benchmark is a second
+benchmark. The interpreter runs the loop `sim/prof_interp.py` profiles,
+and it is the one that decides, because that is the resident system.
+
+### The arithmetic
+
+Every instruction passes through `S_FETCH` exactly once, so registering
+the opcode costs one cycle per instruction. The page-2 escape (`$2F` —
+`MUL`, `XOR`, the bit operations, `ADDW X|Y,#imm16`) passes through
+`S_FETCH` *and* `S_FETCH2`, both of which decode off the bus, so those
+cost two. The report brackets the penalty `p` at 1.0 and 1.2 and the
+conclusion holds at both, which is the only reason it is a conclusion.
+
+    speedup      = (f_new / f_old) x  CPI / (CPI + p)
+    f_breakeven  =  f_old x (CPI + p) / CPI
+
+| | CPI | break-even | gain at 12.5625 MHz |
+|---|---|---|---|
+| interpreter, `p`=1.0 | 2.88 | 11.28 MHz | 1.11x |
+| interpreter, `p`=1.2 | 2.88 | 11.86 MHz | 1.06x |
+| all workloads, `p`=1.0 | 2.59 | 11.61 MHz | 1.08x |
+| all workloads, `p`=1.2 | 2.59 | **12.25 MHz** | **1.03x** |
+
+### The clock is quantised, and that is what makes it a bet
+
+[D32](#d32--the-system-clock-is-8375-mhz-a-third-of-the-pixel-clock)
+makes `sclk` a division of the pixel clock, and there is one PLL. So the
+only rungs are 8.375 and 12.5625 MHz — **there is nothing in between,
+and a design that closes at 12.4 runs at 8.375.** The added cycle is
+paid either way:
+
+| pipelined design closes at | runs at | CPI | against today |
+|---|---|---|---|
+| ≥ 12.5625 MHz | 12.5625 | 3.59 | **+8 %** |
+| 11.7 – 12.5 MHz | 8.375 | 3.59 | **−28 %** |
+
+That asymmetry, not the size of the upside, is the reason to be careful.
+The measured baseline is 11.91 MHz mean and 12.15 best across six seeds
+(`python tools/mkbit.py --seeds 6`), so pipelining has to find another
+0.4–0.65 MHz beyond where the design already is. Halving an 87 ns cone
+plausibly does that. Plausibly is not a number.
+
+Against the +8 %: every entry in [02-isa.md §8](02-isa.md#8-timing-model)
+changes, and `tools/opcodes.py`, the emulator and `sim/timing.py` change
+with them — and the assembler's listings read `cycles()`, so a stale
+table is a wrong listing. `sim/cosim.py` would verify the result on all
+511 encodings, so the change is *safe*; it is merely expensive, and its
+payoff is conditional on a number nobody has measured.
+
+### The experiment that settles it, and it is cheap
+
+**Do not do the rewrite to find out.** Register the opcode in `S_FETCH`
+and change nothing else — no cycle counts, no emulator, no timing table.
+The result is functionally wrong and will fail co-simulation, which does
+not matter, because synthesis does not care whether a design is correct:
+
+```bash
+python tools/mkbit.py --seeds 6      # look at sclk
+```
+
+- clears **12.5625 MHz with margin** → the rewrite is justified, and you
+  know it before writing a line of it
+- lands at **12.2** → the whole exercise is saved, and the hack is
+  deleted
+
+Ten minutes of compute against a week of work, on a question that has
+been open for four milestones. That this was never done is the finding
+here, more than the CPI number is.
+
+### What was wrong with the intuition
+
+The question assumed a 50 % clock gain against a small cycle-count loss.
+Both halves were off. The clock gain caps at 50 % only if the pipelined
+design reaches the next rung exactly, and the cycle-count loss is not
+small: **at CPI 2.59, one added cycle is a 39 % penalty.** A machine
+that averages two and a half cycles an instruction has almost nothing
+between it and one cycle of overhead. The break-even CPI for any gain at
+all at 12.5625 MHz is 2.0, and this machine is at 2.59 — close enough to
+the wall that the arithmetic decides it rather than the RTL.
+
+That is the transferable lesson, and it is
+[D38](#d38--the-fetch-path-next-state-is-decoded-flat-and-it-bought-area-rather-than-speed)'s
+again in a different costume: **the cheap measurement goes first.**
+`sim/cpi.py` took minutes and closed a question that had been open for
+four milestones and would have cost a week to answer with RTL.
+
+### What this does not close
+
+Nothing here says the critical path is fine. It says *this particular*
+attack on it does not pay. The path is still 37 levels and 87 ns, and
+D38's untried suggestion — replicating `blk_r`/`byte_r` so each consumer
+has a local copy, because the first hop is 4.25 ns of pure routing —
+costs no cycles at all and so has no break-even to clear. It was tried;
+[D60](#d60--narrowing-the-spram-read-path-earlier-and-replicating-its-select-bought-nothing-and-was-reverted)
+is what happened.
+
+## D60 — Narrowing the SPRAM read path earlier, and replicating its select, bought nothing and was reverted
+
+**[D38](#d38--the-fetch-path-next-state-is-decoded-flat-and-it-bought-area-rather-than-speed)
+named this as "the cheaper thing to try, and it is untried". It has now
+been tried, and it does not help.** Recorded so it is not tried a third
+time.
+
+### What was changed
+
+Two things, measured separately because they are separable:
+
+1. **Narrow at each block, then choose the block.** `rdata` was one
+   16-bit block mux feeding an 8-bit half mux, so both SPRAM outputs —
+   32 bits — had to converge before anything narrowed. Reversed, each
+   half mux can sit beside the `SB_SPRAM256KA` that feeds it and only 16
+   bits travel. **LUT-neutral: 31 SB_LUT4 either way.**
+2. **A local copy of the half select per block**, which is D38's actual
+   suggestion, aimed at the 4.25 ns of pure routing its timing report
+   found as the critical path's first hop.
+
+### The numbers, six placer seeds each
+
+| | `sclk` mean | min | max | spread | logic cells |
+|---|---|---|---|---|---|
+| **baseline** | **11.91** | 11.71 | **12.15** | 3.7 % | 5164 — 97 % |
+| narrowed early | 11.60 | 11.43 | 12.09 | 5.7 % | 5152 — 97 % |
+| + replicated select | 11.73 | 11.40 | 11.94 | 4.6 % | 5184 — 98 % |
+
+**The baseline wins on both the mean and the best seed**, and every
+difference is inside the spread. Reverted: `git checkout` on
+`rtl/soc/cool8_spram.v`, with the tooling and this entry kept.
+
+Both variants passed `sim/test_spram.py` (90,506 checks) and
+`sim/cosim.py all`, so this is a measurement of speed and not a report
+of a broken change.
+
+### The trap that nearly made this a false negative
+
+**Two flip-flops with identical inputs are silently deduplicated, and
+`(* keep *)` does not stop it.** The first attempt at the replication
+wrote `(* keep *) reg byte_r0, byte_r1;`, and `stat` showed the same
+three flip-flops as the baseline — the replication had undone itself and
+would have been "measured" as no change.
+
+Bisecting the passes: the attribute *works* through `opt -full`, where
+both `$dff` survive. It is lost during flip-flop techmapping, between
+`map_ffs` and `map_luts`. This is a known and open rough edge —
+[yosys #855](https://github.com/YosysHQ/yosys/issues/855) and
+[#4272](https://github.com/YosysHQ/yosys/issues/4272) — and the docs and
+maintainers both say `keep` is the mechanism, so the failure is silent
+and against expectation.
+
+**The robust form is to make the twins non-identical**, because cells
+that are not identical cannot be merged at all: hold the complement in
+one copy and swap the mux arms. That maps to an `SB_DFFESS` beside the
+`SB_DFFESR`, costs one flip-flop and no logic, and survives. If
+replication is ever wanted anywhere in this design, that is how, and
+**`stat` must be checked for the extra flip-flop rather than assumed.**
+
+### What it says about the critical path
+
+D38's timing report is not wrong — the first hop really is 4.25 ns of
+routing — but shortening it does not move Fmax, which means the path is
+not won or lost there. The cone is 37 levels deep and the routing is a
+symptom of a 97 %-full device, not the cause. **At this occupancy the
+placer's freedom is the constraint**, which is also why the seed spread
+is 4–6 % and why any change of this size is unmeasurable. Something that
+removes logic would help; something that reshapes it will not.

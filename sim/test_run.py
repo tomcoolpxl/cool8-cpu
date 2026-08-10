@@ -59,6 +59,25 @@ CASES = [
     ("a variable survives between lines",
      ["10 A = 6", "20 A = A * 7", "30 PRINT A", "40 END"], "42"),
 
+    # Two arithmetic edges that are surprising, documented in
+    # docs/13-basic.md sections 2 and 8, and would regress silently.
+    #
+    # `>>` is a *logical* shift in a language whose values are signed
+    # everywhere else: SHR/ROR shifts a zero into the top, so -8 >> 1 is
+    # 32764 and not -4. Anyone "fixing" that to an arithmetic shift
+    # changes the language, and this is where they find out.
+    ("`>>` is logical, not arithmetic",
+     ["10 PRINT -8 >> 1", "20 END"], "32764"),
+
+    # INT floors rather than truncating -- an arithmetic shift right by
+    # the point, so INT(-384), which is -1.5, is -2 and not -1. That is
+    # BBC BASIC's INT and it is deliberate: equal-width cells give a
+    # constant velocity constant pixel steps. The function was called FIX
+    # until the rename, which was the bug -- FIX means truncate-towards-
+    # zero wherever both names exist.
+    ("INT floors towards minus infinity",
+     ["10 PRINT INT(-384)", "20 END"], "-2"),
+
     # Comments. The tokeniser copies both forms verbatim to the end of
     # the line (sw/basic.bas tokenise), so what is stored begins with a
     # character below $80 -- which is exactly what `stmt` routes to
@@ -156,8 +175,8 @@ CASES = [
      ["10 ON 2 GOTO 40, 60", "20 PRINT 0", "30 END",
       "40 PRINT 40", "50 END", "60 PRINT 99", "70 END"], "99"),
 
-    ("8.8 fixed point: FMUL, FDIV and FIX agree",
-     ["10 PRINT FMUL(640, 384); FDIV(768, 512); FIX(1000)",
+    ("8.8 fixed point: FMUL, FDIV and INT agree",
+     ["10 PRINT FMUL(640, 384); FDIV(768, 512); INT(1000)",
       "20 END"], "9603843"),
 
     ("TILE writes the map entry where the mode 2 engine looks",
