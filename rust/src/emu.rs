@@ -70,6 +70,21 @@ fn screen_size() -> (usize, usize) {
     (1920, 1080) // minifb cannot ask; a common panel, letterboxed anyway
 }
 
+/// The two chords minifb cannot see on Windows: Alt+Enter arrives as a
+/// WM_SYSKEYDOWN with the generic VK_MENU, and Ctrl+Pause does not
+/// arrive as Pause at all — Windows reports that chord as VK_CANCEL,
+/// "Break", the same discovery tools/cool8run.py wrote down. Polled
+/// straight from the keyboard state instead, while the window has
+/// focus.
+#[cfg(target_os = "windows")]
+fn vk_down(vk: i32) -> bool {
+    #[link(name = "user32")]
+    extern "system" {
+        fn GetAsyncKeyState(vk: i32) -> i16;
+    }
+    unsafe { GetAsyncKeyState(vk) as u16 & 0x8000 != 0 }
+}
+
 /// The buffer is always 640x480; the window scales it with the aspect
 /// ratio kept, so "fullscreen" is a borderless window the size of the
 /// screen and the toggle is a window swap, not a mode set.
@@ -329,6 +344,8 @@ pub fn run(args: &Args) {
     let mut fullscreen = false;
     let mut window = make_window(fullscreen, chars.clone());
     let mut shot = 0;
+    #[cfg(target_os = "windows")]
+    let (mut fs_was, mut brk_was) = (false, false);
 
     let mut buf = vec![0u32; H_VIS * V_VIS];
     while window.is_open() {
@@ -337,18 +354,39 @@ pub fn run(args: &Args) {
         let ctrl = window.is_key_down(Key::LeftCtrl)
             || window.is_key_down(Key::RightCtrl);
 
+        // The chords Windows hides from minifb — see vk_down.
+        #[cfg(target_os = "windows")]
+        if window.is_active() {
+            let fs = vk_down(0x12) && vk_down(0x0D); // Alt+Enter
+            if fs && !fs_was {
+                fullscreen = !fullscreen;
+                window = make_window(fullscreen, chars.clone());
+            }
+            fs_was = fs;
+            let brk = vk_down(0x03); // Ctrl+Pause, reported as Break
+            if brk && !brk_was {
+                m.cpu.pulse_nmi();
+            }
+            brk_was = brk;
+        }
+
         for k in window.get_keys_pressed(minifb::KeyRepeat::No) {
             match k {
                 Key::F11 => m.cpu.pulse_nmi(),
                 Key::Pause if ctrl => m.cpu.pulse_nmi(),
+                Key::Enter if alt => {
+                    // Windows: the chord poll above did the toggle;
+                    // this arm only keeps the Enter from being typed.
+                    #[cfg(not(target_os = "windows"))]
+                    {
+                        fullscreen = !fullscreen;
+                        window = make_window(fullscreen, chars.clone());
+                    }
+                }
                 Key::F12 => {
                     shot += 1;
                     let path = format!("cool8-shot-{}.png", shot);
                     save_png(&path, &m.renderer.as_ref().unwrap().fb);
-                }
-                Key::Enter if alt => {
-                    fullscreen = !fullscreen;
-                    window = make_window(fullscreen, chars.clone());
                 }
                 _ => {
                     if keys_mode != "raw" && is_char_key(k) {

@@ -331,6 +331,14 @@ def build(payload, dest=0xA000, org=0x0200, build_dir=None):
     end = dest + len(payload)
     if org + len(stub) + len(payload) > dest:
         raise SystemExit("the payload would land on its own destination")
+    if dest == 0xA000 and end > 0xFE00:
+        # The relocation would write into the I/O page — poking random
+        # registers on the way — and the lost tail is the high code:
+        # the blitter, the filesystem, the ISR. That failure presents
+        # as an editor that half works, not as a build error, which is
+        # how a 7-bytes-over image cost a debugging round once.
+        raise SystemExit("the image is %d bytes over the I/O page"
+                         % (end - 0xFE00))
     if end > 0x10000:
         raise SystemExit("the image does not fit below $10000")
     return stub + payload

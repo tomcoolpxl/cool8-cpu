@@ -205,6 +205,9 @@ SUB setgeom()
     END IF
     gbase = PEEK($FE12) + (PEEK($FE13) << 8)
     gs8 = (PEEK($FE14) + (PEEK($FE15) << 8)) << 3
+    ' the blit's row step is one raster line -- the hardware stride --
+    ' set once here, not per glyph: bput leaves bstr alone
+    bstr = gs8 >> 3
     IF m = 3 THEN gs8 = gs8 + gs8
     ' repaint when the scrolled window would reach the fonts, whose
     ' floor is the 8x16 set at $F600
@@ -301,7 +304,9 @@ SUB bput(r AS INT, c AS INT, ch AS INT, inv AS INT)
     ch = 32
   END IF
   ' grow picks the font with the row count: the 8x16 set at $F600 for
-  ' mode 3's undoubled cells, the 8x8 at $FC00 everywhere else
+  ' mode 3's undoubled cells, the 8x8 at $FC00 everywhere else. bstr,
+  ' the one-raster-line row step, was set by setgeom; tilefont sets
+  ' its own and the tile console never comes here.
   IF grow = 16 THEN
     bfa = $F600 + ((ch - 32) << 4)
   ELSE
@@ -312,7 +317,6 @@ SUB bput(r AS INT, c AS INT, ch AS INT, inv AS INT)
   IF inv <> 0 THEN
     binv = 255
   END IF
-  bstr = gs8 >> 3
   ASM
         CALL bglyph
   END ASM
