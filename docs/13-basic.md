@@ -368,17 +368,37 @@ the `S` and the `E` measured too.
 | COOL8 @ 8.375 MHz | 0.05 | 0.26 | 0.54 | 0.50 | 0.70 | 1.06 | 1.77 |
 | the same work @ 2 MHz | 0.21 | 1.11 | 2.28 | 2.09 | 2.94 | 4.45 | 7.40 |
 | the same work @ 1 MHz | 0.41 | 2.21 | 4.56 | 4.18 | 5.87 | 8.90 | 14.80 |
-| Apple II Integer BASIC, 1 MHz | 1.3 | 3.1 | 7.2 | 7.2 | 8.8 | 18.5 | 28.0 |
-| BBC BASIC, 2 MHz | 0.8 | 3.1 | 8.1 | 8.7 | 9.0 | 13.9 | 21.1 |
-| Applesoft, 1 MHz | 1.3 | 8.5 | 16.0 | 17.8 | 19.1 | 28.6 | 44.8 |
-| Commodore 64, 1 MHz | 1.2 | 9.3 | 17.6 | 19.5 | 21.0 | 29.5 | 47.5 |
+| **Apple II Integer BASIC**, 6502 1 MHz | 1.3 | 3.1 | 7.2 | 7.2 | 8.8 | 18.5 | 28.0 |
+| **Luxor ABC 80 integer**, Z80 3 MHz | 0.3 | 1.1 | 3.5 | 3.5 | 3.6 | 5.8 | 9.3 |
+| BBC BASIC, 6502 2 MHz | 0.8 | 3.1 | 8.1 | 8.7 | 9.0 | 13.9 | 21.1 |
+| Applesoft, 6502 1 MHz | 1.3 | 8.5 | 16.0 | 17.8 | 19.1 | 28.6 | 44.8 |
+| Commodore 64, 6510 1 MHz | 1.2 | 9.3 | 17.6 | 19.5 | 21.0 | 29.5 | 47.5 |
+| ABC 800 single, Z80 3 MHz | 0.9 | 1.8 | 6.0 | 5.9 | 6.3 | 11.6 | 19.6 |
+| ZX Spectrum, Z80 3.58 MHz | 4.4 | 8.2 | 20.0 | 19.2 | 23.1 | 53.4 | 77.6 |
+| ZX80, Z80 3.25 MHz | 1.5 | 4.7 | 9.2 | 9.0 | 12.7 | 25.9 | 39.2 |
+| Spectravideo SV-328, Z80 3.6 MHz | 1.6 | 5.4 | 17.9 | 19.6 | 20.6 | 30.7 | 42.2 |
 
-**Read the Integer BASIC row first.** Applesoft, Commodore's MS BASIC
-and BBC BASIC evaluate in floating point, which is most of what
-BM3–BM7 measure, so beating them says little about this interpreter.
-Wozniak's Integer BASIC is the only other integer implementation in
-the published set, and clock for clock this is **1.4× to 3.1×** faster
-than it.
+**Read the two integer rows first.** Applesoft, Commodore's MS BASIC,
+BBC BASIC and the Sinclair and MS Z80 interpreters all evaluate in
+floating point, which is most of what BM3–BM7 measures, so beating
+them says little about this one. Wozniak's Integer BASIC and ABC 80's
+integer mode are the only other integer implementations in the
+published set, and **clock for clock this is 1.4× to 3.1× faster than
+either** — the two of them landing within a tenth of a second of each
+other on BM7 once normalised (27.9 s and 28.0 s at 1 MHz) is a decent
+sign the scaling is honest.
+
+The Z80 machines make the same point from the other side. The fastest
+of them on BM7 is ABC 80's *integer* mode at 9.3 s; its own floating
+point on the same 3 MHz Z80 takes 23.9 s, and a Spectrum 42–78 s.
+Nothing here is a Z80 verdict — it is a float-versus-integer one, in
+an era when almost every shipped BASIC chose float.
+
+**No TRS-80 row, and that is a gap rather than an omission.** A
+1.77 MHz Z80 running Level II BASIC is exactly the machine these
+benchmarks were aimed at — Rugg and Feldman wrote a book of TRS-80
+programs — but no BM1–BM7 times for it turned up in a citable source,
+and a number recalled rather than read would be worse than a blank.
 
 **BM8 is not run and no number is quoted for it.** It is `K^2`, `LOG`
 and `SIN` — a float-library benchmark, and §8 is the whole of the

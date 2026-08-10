@@ -120,21 +120,41 @@ BMS = [
 # Integer BASIC first: it is the only other integer interpreter here and
 # so the only like-for-like row.
 REF = [
-    ("Apple II  Integer BASIC", "6502", 1.0,
+    # Integer BASICs -- the only rows that compare like for like.
+    ("Apple II  Integer BASIC", "6502", 1.0, True,
      [1.3, 3.1, 7.2, 7.2, 8.8, 18.5, 28.0]),
-    ("Acorn Atom  System BASIC", "6502", 1.0,
+    ("Luxor ABC 80  integer", "Z80", 3.0, True,
+     [0.3, 1.1, 3.5, 3.5, 3.6, 5.8, 9.3]),
+    # Floating point, which is most of what BM3-BM7 then measures.
+    ("Acorn Atom  System BASIC", "6502", 1.0, False,
      [0.5, 5.1, 9.5, 10.8, 13.9, 19.1, 31.1]),
-    ("BBC Micro  BBC BASIC", "6502", 2.0,
+    ("BBC Micro  BBC BASIC", "6502", 2.0, False,
      [0.8, 3.1, 8.1, 8.7, 9.0, 13.9, 21.1]),
-    ("Apple II  Applesoft", "6502", 1.0,
+    ("Apple II  Applesoft", "6502", 1.0, False,
      [1.3, 8.5, 16.0, 17.8, 19.1, 28.6, 44.8]),
-    ("Commodore 64  MS BASIC", "6510", 1.0,
+    ("Commodore 64  MS BASIC", "6510", 1.0, False,
      [1.2, 9.3, 17.6, 19.5, 21.0, 29.5, 47.5]),
-    ("ZX Spectrum  Sinclair", "Z80", 3.58,
+    ("ABC 800  BASIC II single", "Z80", 3.0, False,
+     [0.9, 1.8, 6.0, 5.9, 6.3, 11.6, 19.6]),
+    ("Luxor ABC 80  float", "Z80", 3.0, False,
+     [1.1, 2.3, 11.1, 12.1, 12.6, 17.7, 23.9]),
+    ("Spectravideo SV-328  MS", "Z80", 3.6, False,
+     [1.6, 5.4, 17.9, 19.6, 20.6, 30.7, 42.2]),
+    ("ZX80  Sinclair", "Z80", 3.25, False,
+     [1.5, 4.7, 9.2, 9.0, 12.7, 25.9, 39.2]),
+    ("ZX Spectrum  Sinclair", "Z80", 3.58, False,
      [4.4, 8.2, 20.0, 19.2, 23.1, 53.4, 77.6]),
-    ("Altair 8800  Altair 4.0", "8080", 2.0,
+    ("TDL ZPU  Zapple", "Z80", 4.0, False,
+     [1.7, 9.5, 20.6, 21.7, 23.7, 36.7, 52.4]),
+    ("Altair 8800  Altair 4.0", "8080", 2.0, False,
      [1.7, 10.2, 21.0, 22.5, 24.3, 36.7, 52.4]),
 ]
+
+# **The TRS-80 is missing on purpose.** It belongs in this table -- a
+# 1.77 MHz Z80 running Level II BASIC is exactly the machine these
+# benchmarks were aimed at, and Rugg and Feldman wrote a book of TRS-80
+# programs. No BM1-BM7 times for it could be found in a source worth
+# citing, and a number recalled rather than read is worse than a gap.
 
 
 def run_cycles(code, syms, lines):
@@ -180,24 +200,28 @@ def main():
     print()
     print("  The machines these were written for (published seconds):")
     print()
-    print(f"  {'':<26}{'MHz':>5}" +
+    print(f"  {'':<26}{'CPU':>6}{'MHz':>6}" +
           "".join(f"{n:>8}" for n in ("BM1", "BM2", "BM3", "BM4",
                                       "BM5", "BM6", "BM7")))
-    for name, cpu, mhz, times in REF:
-        print(f"  {name:<26}{mhz:5.2f}" +
-              "".join(f"{t:8.1f}" for t in times))
+    for name, cpu, mhz, integer, times in REF:
+        mark = " *" if integer else "  "
+        print(f"  {name:<26}{cpu:>6}{mhz:6.2f}" +
+              "".join(f"{t:8.1f}" for t in times) + mark)
+    print("    * integer BASIC: the only rows that compare like for like")
 
-    # The headline, against the only other integer BASIC in the set,
-    # with the clock taken out of it.
-    ref = dict((r[0], r) for r in REF)["Apple II  Integer BASIC"]
+    # The headline, against every integer BASIC in the set, with the
+    # clock taken out of it -- one of them a Z80 at 3 MHz, which is the
+    # comparison a Z80 machine of the day actually offers.
     at1 = [s * 8.375 for s in mine]
+    names = ("BM1", "BM2", "BM3", "BM4", "BM5", "BM6", "BM7")
     print()
-    print("  Against Apple II Integer BASIC, both at 1 MHz "
-          "(the like-for-like row):")
-    print("    " + "  ".join(
-        f"{n}: {r / m:4.1f}x" for n, r, m in
-        zip(("BM1", "BM2", "BM3", "BM4", "BM5", "BM6", "BM7"),
-            ref[3], at1)))
+    print("  Against the integer BASICs, everything scaled to 1 MHz:")
+    for name, cpu, mhz, integer, times in REF:
+        if not integer:
+            continue
+        at1_ref = [t * mhz for t in times]
+        print(f"    {name:<26}" + "  ".join(
+            f"{n} {r / m:4.1f}x" for n, r, m in zip(names, at1_ref, at1)))
     print()
     print("  BM8 is not run: it is K^2, LOG and SIN, and this machine has")
     print("  16-bit integers and 8.8 fixed point. There is no honest")
