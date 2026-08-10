@@ -123,6 +123,9 @@ module cool8_vregs (
     reg [9:0]  vact_r;
     reg [9:0]  raster_r;
     reg [6:0]  blink_r;
+    reg [6:0]  curx_d;              // the display's cursor, latched at
+    reg [4:0]  cury_d;              //   frame start like VID_BASE
+    reg        blrst;               // a move's blink restart, pending
 
     assign o_sel = (io_a[7:4] == 4'h1) ||
                    (io_a[7:4] == 4'h2 && io_a[3:0] <= 4'h5);
@@ -138,8 +141,10 @@ module cool8_vregs (
     assign scrl_x    = scx_r;
     assign scrl_y    = scy_r;
     assign border    = border_r;
-    assign cur_x     = curx_r;
-    assign cur_y     = cury_r;
+    // The display reads the frame-latched copies, never the written
+    // registers — see the latch at frame_start below.
+    assign cur_x     = curx_d;
+    assign cur_y     = cury_d;
     assign cur_style = curctl_r[2:1];
     assign cur_lines = curlin_r;
     assign vactive   = vact_r;
@@ -270,11 +275,26 @@ module cool8_vregs (
             vact_r   <= 10'd480;
             raster_r <= 10'd0;
             blink_r  <= 7'd0;
+            curx_d   <= 7'd0;
+            cury_d   <= 5'd0;
+            blrst    <= 1'b0;
         end else begin
             if (line_start) raster_r <= line_y;
 
-            if (cur_reset)        blink_r <= 7'd0;
-            else if (frame_start) blink_r <= blink_r + 1'b1;
+            // The cursor the screen shows updates only at frame start,
+            // the way the fetch engine latches VID_BASE: a mid-frame
+            // move cannot split the block across two columns, and the
+            // blink-phase restart waits for the same edge so the
+            // cursor's whole screen state changes atomically. Software
+            // sees nothing: CUR_X and CUR_Y read back what was
+            // written, as they always did.
+            if (frame_start) begin
+                curx_d  <= curx_r;
+                cury_d  <= cury_r;
+                blink_r <= (blrst | cur_reset) ? 7'd0 : blink_r + 1'b1;
+                blrst   <= 1'b0;
+            end else if (cur_reset)
+                blrst   <= 1'b1;
 
             // Set before the acknowledge below, so a hit in the very
             // cycle a handler clears the flag is not lost.

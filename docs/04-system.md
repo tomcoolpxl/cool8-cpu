@@ -218,9 +218,9 @@ a straight run of stores with no address recomputation between them.
 | `$FE1F` | `PAL_DATA` | W | First write `0000RRRR`, second `GGGGBBBB`; the pair commits together and **the second advances `PAL_IDX`**. Matches the 12-bit VGA PMOD exactly. Write-only — a read port on the palette is the one the raster uses, and reading back what software wrote is not worth a second block RAM |
 | `$FE20` | `PAT_BASE_L` | R/W | Glyph/tile pattern base in VRAM. Repointing this swaps a whole tile set in one write |
 | `$FE21` | `PAT_BASE_H` | R/W | |
-| `$FE22` | `CUR_X` | R/W | Text cursor column |
-| `$FE23` | `CUR_Y` | R/W | Text cursor row |
-| `$FE24` | `CUR_CTRL` | R/W | `0` enable, `2:1` style (block/underline/bar/inverse), `4:3` blink rate. Writing `CUR_X` or `CUR_Y` resets the blink phase |
+| `$FE22` | `CUR_X` | R/W | Text cursor column. The displayed position is latched at the start of vertical blanking, as `VID_BASE` is, so a mid-frame move cannot split the block; reads return the written value at once |
+| `$FE23` | `CUR_Y` | R/W | Text cursor row, latched likewise |
+| `$FE24` | `CUR_CTRL` | R/W | `0` enable, `2:1` style (block/underline/bar/inverse), `4:3` blink rate. Writing `CUR_X` or `CUR_Y` resets the blink phase, effective at the same frame edge |
 | `$FE25` | `CUR_LINES` | R/W | `3:0` first scanline, `7:4` last — an arbitrary slice of the 16-line cell |
 | `$FE26` | `VRAM_ADDR_L` | R/W | VRAM address, low |
 | `$FE27` | `VRAM_ADDR_H` | R/W | high |

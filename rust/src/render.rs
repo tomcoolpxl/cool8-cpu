@@ -110,6 +110,11 @@ pub struct Renderer {
     trow: u8,              // the row inside a tile
     primed: bool,          // vblank filled both banks; line 0 fetches nothing
     sline: [[u8; H_VIS]; 2], // sprites: {behind << 4 | pix}; 0 = nothing
+    // The cursor the screen shows, latched at frame start as
+    // cool8_vregs latches it: a mid-frame move cannot split the block.
+    cur_x: u8,
+    cur_y: u8,
+    cur_lit: bool,
     pub font: [u8; 4096],
     pub fb: Vec<u16>,      // 12-bit palette colours, row-major
 }
@@ -123,6 +128,9 @@ impl Renderer {
             trow: 0,
             primed: false,
             sline: [[0; H_VIS]; 2],
+            cur_x: 0,
+            cur_y: 0,
+            cur_lit: false,
             font,
             fb: vec![0; H_VIS * V_VIS],
         }
@@ -136,6 +144,13 @@ impl Renderer {
         let vv = view(bus);
 
         if line == 480 {
+            // The cursor's screen state, atomically per frame.
+            let v = &bus.video;
+            let rate = (v.cur_ctrl >> 3) & 3;
+            self.cur_x = v.cur_x;
+            self.cur_y = v.cur_y;
+            self.cur_lit = v.cur_ctrl & 1 != 0
+                && (rate == 3 || v.blink & (1 << (3 + rate)) == 0);
             if vv.disp_en {
                 self.row_ptr = bus.video.base;
                 self.trow = (bus.video.scrl_y & 7) as u8;
@@ -311,9 +326,6 @@ impl Renderer {
         let v = &bus.video;
         let vrel = line.wrapping_sub(vv.vstart);
         let vborder = line < vv.vstart || vrel >= vv.vactive;
-        let cur_rate = (v.cur_ctrl >> 3) & 3;
-        let cur_lit = v.cur_ctrl & 1 != 0
-            && (cur_rate == 3 || v.blink & (1 << (3 + cur_rate)) == 0);
         let sline = &self.sline[(line & 1) as usize];
         let row = &mut self.fb[line as usize * H_VIS..][..H_VIS];
 
@@ -337,9 +349,9 @@ impl Renderer {
                         let fb = self.font
                             [(((w & 0xFF) << 4) | grow as u16) as usize];
                         let mut lit = fb & (1 << (7 - (rel & 7))) != 0;
-                        if cur_lit
-                            && cell == v.cur_x as u32
-                            && (vsrc >> 4) == v.cur_y as u32
+                        if self.cur_lit
+                            && cell == self.cur_x as u32
+                            && (vsrc >> 4) == self.cur_y as u32
                         {
                             match (v.cur_ctrl >> 1) & 3 {
                                 0 => lit = true,

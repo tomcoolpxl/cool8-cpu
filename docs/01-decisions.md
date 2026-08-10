@@ -1953,3 +1953,38 @@ the language became the line-numbered, tokenised interpreter of
 other casualty: its memory map put the stack at `$FF00-$FFFF`; the
 shipped machine keeps the stack in page 1 and `$FF00` became the
 interpreter's workspace page.
+
+## D53 -- The cursor position is frame-latched, like VID_BASE
+
+The pixel stage sampled `CUR_X`/`CUR_Y` live, so a move mid-frame drew
+the block at the old column on the lines already scanned and the new
+one below -- a torn cursor for one frame, on every machine with a
+live-sampled hardware cursor since the CRTC, and invisible on the
+phosphor those machines assumed. An LCD holds the frame, and the
+scanline-accurate emulator faithfully shows what the silicon does, so
+backspace under key repeat reads as tearing.
+
+Three places could fix it. **Doing nothing** is period-correct, and
+was the standing answer while the artifact lived only in principle.
+**Software** -- the vblank ISR mirroring the cursor registers, written
+only on change so the blink phase survives -- costs ~24 bytes against
+a 24-byte ceiling and fixes only the editor: a game drawing its UI
+with the hardware cursor tears on its own. **Hardware** latches the
+displayed position (and the blink-phase restart with it) at
+`frame_start`, exactly the arrangement `VID_BASE` already has and for
+the same reason: a change the raster is mid-way through showing
+should land on the next frame, whole. Reads are untouched -- software
+sees the value it wrote, immediately.
+
+Measured, not estimated: `cool8_vregs` alone goes from 337 LUT4 /
+173 FF to 330 LUT4 / 186 FF -- **+13 flip-flops and 7 LUTs returned**,
+the blink mux coming out simpler than the immediate-reset form it
+replaced. Style and `CUR_LINES` stay live: they change when software
+sets a mode, not per keystroke, and latching them buys nothing a
+frame of settling does not.
+
+The renderers follow the silicon: rust/src/render.rs latches the
+cursor at its frame event; cool8vid.py renders whole frames from a
+snapshot and could never show the tear in the first place -- which is
+why the artifact went unseen until the scanline renderer existed to
+show the truth.
