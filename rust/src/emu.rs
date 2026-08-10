@@ -4,7 +4,8 @@
 // look on the monitor the way they look on the board.
 //
 // Feature-gated (`--features gui`): the parity suite's build stays
-// dependency-free, and only this file touches minifb and cpal.
+// dependency-free, and only this file touches minifb, cpal and the
+// clipboard.
 //
 // ## Pacing
 //
@@ -12,16 +13,34 @@
 // machine's own 60 Hz. Audio is the drift-taker: the machine produces
 // samples at SND_HZ (8.375 MHz / 256 ≈ 32.7 kHz) into a queue the
 // audio callback resamples to the device rate; if the queue runs dry
-// the callback holds the last level (silence-shaped, inaudible), and
-// if it backs up past half a second the excess is dropped.
+// the callback holds the last level, and if it backs up past half a
+// second the excess is dropped.
 //
-// ## The keyboard
+// ## The keyboard, in cool8run.py's three modes (+keys=text|raw|both)
 //
-// Host keys become Set 2 scancodes — a make on press, a break on
-// release, E0-prefixed where the real key is — and go into the same
-// PS/2 FIFO the machine's tests feed. The mapping is the physical
-// US-layout table a PS/2 keyboard implements; the *machine's* layout
-// is sw/keymap.asm's business, exactly as on the bench.
+// `text`, the default: printable characters arrive through the OS —
+// so the user's layout applies, and a Belgian keyboard's quote is a
+// quote — and are turned into Set 2 make/break through the machine's
+// own keymap, derived from sw/keymap.asm by the launcher. The keys
+// that produce no character (cursors, Home and friends, the F-keys,
+// the modifiers, and Return/Backspace/Tab/Escape, kept physical so
+// they cannot depend on what a platform delivers as a character) go
+// as physical scancodes. `raw` sends everything as physical US-layout
+// scancodes. `both` is text with every character echoed to the UART,
+// for a machine that has no keyboard driver yet.
+//
+// A held physical key repeats its make code at the PS/2 typematic
+// rate (500 ms, then ~10.9 cps), because a held Backspace that
+// deletes one character feels dead; a held *character* key repeats
+// through the OS, which is applying the user's own repeat settings.
+//
+// ## The emulator's own keys
+//
+//     F11         the break button, SW[0] — an NMI, as the board's is
+//     Ctrl+Pause  the same, the chord the real keyboard uses
+//     F12         write the screen to a PNG beside the cwd
+//     Alt+Enter   aspect-scaled fullscreen
+//     right click paste the clipboard, typed through the keymap
 
 use crate::machine::Machine;
 use crate::render::{Renderer, H_VIS, V_VIS};
@@ -29,9 +48,13 @@ use crate::Args;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use minifb::{Key, MouseButton, Scale, ScaleMode, Window, WindowOptions};
 use std::collections::{HashMap, VecDeque};
+use std::io::Write;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 const SND_HZ: f64 = 8_375_000.0 / 256.0;
+const TYPEMATIC_DELAY: Duration = Duration::from_millis(500);
+const TYPEMATIC_RATE: Duration = Duration::from_millis(92); // ~10.9 cps
 
 #[cfg(target_os = "windows")]
 fn screen_size() -> (usize, usize) {
@@ -50,7 +73,7 @@ fn screen_size() -> (usize, usize) {
 /// The buffer is always 640x480; the window scales it with the aspect
 /// ratio kept, so "fullscreen" is a borderless window the size of the
 /// screen and the toggle is a window swap, not a mode set.
-fn make_window(fullscreen: bool) -> Window {
+fn make_window(fullscreen: bool, chars: Arc<Mutex<VecDeque<u32>>>) -> Window {
     let (w, h) = if fullscreen {
         screen_size()
     } else {
@@ -76,7 +99,21 @@ fn make_window(fullscreen: bool) -> Window {
         win.set_position(0, 0);
     }
     win.set_target_fps(60);
+    win.set_input_callback(Box::new(Chars(chars)));
     win
+}
+
+/// OS character input — the "text" path. Printable latin-1 only: the
+/// control characters ride the physical path, where a platform cannot
+/// surprise anyone.
+struct Chars(Arc<Mutex<VecDeque<u32>>>);
+
+impl minifb::InputCallback for Chars {
+    fn add_char(&mut self, uni: u32) {
+        if (0x20..0x100).contains(&uni) {
+            self.0.lock().unwrap().push_back(uni);
+        }
+    }
 }
 
 /// The machine's own layout, derived from sw/keymap.asm by the
@@ -100,7 +137,9 @@ fn load_keymap(path: &str) -> HashMap<u8, (u8, bool)> {
     map
 }
 
-/// Set 2 make code for a host key, with its E0 prefix flag.
+/// Set 2 make code for a host key, with its E0 prefix flag — the
+/// physical US-layout table a PS/2 keyboard implements. The machine's
+/// layout is sw/keymap.asm's business, exactly as on the bench.
 fn scancode(k: Key) -> Option<(u8, bool)> {
     use Key::*;
     Some(match k {
@@ -120,7 +159,7 @@ fn scancode(k: Key) -> Option<(u8, bool)> {
         F1 => (0x05, false), F2 => (0x06, false), F3 => (0x04, false),
         F4 => (0x0C, false), F5 => (0x03, false), F6 => (0x0B, false),
         F7 => (0x83, false), F8 => (0x0A, false), F9 => (0x01, false),
-        F10 => (0x09, false), F11 => (0x78, false), F12 => (0x07, false),
+        F10 => (0x09, false),
         Backquote => (0x0E, false), Minus => (0x4E, false),
         Equal => (0x55, false), Backslash => (0x5D, false),
         Backspace => (0x66, false), Space => (0x29, false),
@@ -141,19 +180,33 @@ fn scancode(k: Key) -> Option<(u8, bool)> {
     })
 }
 
-fn feed_key(m: &mut Machine, k: Key, pressed: bool) {
-    if let Some((code, ext)) = scancode(k) {
-        let mut b = Vec::with_capacity(3);
-        if ext {
-            b.push(0xE0);
-        }
-        if !pressed {
-            b.push(0xF0);
-        }
-        b.push(code);
-        m.bus.kbd.feed(&b);
-    }
+/// In text mode these keys' characters come through the OS instead,
+/// with the user's layout applied — so the physical path must not
+/// also fire for them, or every key would type twice.
+fn is_char_key(k: Key) -> bool {
+    use Key::*;
+    matches!(k,
+        A | B | C | D | E | F | G | H | I | J | K | L | M | N | O | P
+        | Q | R | S | T | U | V | W | X | Y | Z
+        | Key0 | Key1 | Key2 | Key3 | Key4 | Key5 | Key6 | Key7 | Key8
+        | Key9 | Space | Backquote | Minus | Equal | Backslash
+        | LeftBracket | RightBracket | Semicolon | Apostrophe | Comma
+        | Period | Slash)
 }
+
+fn send_key(m: &mut Machine, code: u8, ext: bool, pressed: bool) {
+    let mut b = Vec::with_capacity(3);
+    if ext {
+        b.push(0xE0);
+    }
+    if !pressed {
+        b.push(0xF0);
+    }
+    b.push(code);
+    m.bus.kbd.feed(&b);
+}
+
+// ------------------------------------------------------------- audio
 
 fn audio_stream(queue: Arc<Mutex<VecDeque<u8>>>) -> Option<cpal::Stream> {
     let device = cpal::default_host().default_output_device()?;
@@ -190,6 +243,55 @@ fn audio_stream(queue: Arc<Mutex<VecDeque<u8>>>) -> Option<cpal::Stream> {
     Some(stream)
 }
 
+/// Unsigned 8-bit mono at the machine's own sample rate — what the
+/// speaker heard, byte for byte, through the hound crate.
+fn save_wav(path: &str, samples: &[u8]) {
+    let spec = hound::WavSpec {
+        channels: 1,
+        sample_rate: SND_HZ.round() as u32,
+        bits_per_sample: 8,
+        sample_format: hound::SampleFormat::Int,
+    };
+    let write = || -> Result<(), hound::Error> {
+        let mut w = hound::WavWriter::create(path, spec)?;
+        for &s in samples {
+            w.write_sample((s as i16 - 128) as i8)?;
+        }
+        w.finalize()
+    };
+    match write() {
+        Ok(()) => eprintln!("wrote {}", path),
+        Err(e) => eprintln!("cannot write {}: {}", path, e),
+    }
+}
+
+// -------------------------------------------------------- screenshot
+
+/// The frame as a truecolour PNG, through the png crate.
+fn save_png(path: &str, fb: &[u16]) {
+    let mut rgb = Vec::with_capacity(H_VIS * V_VIS * 3);
+    for &px in fb {
+        rgb.push(((px >> 8) & 0xF) as u8 * 17);
+        rgb.push(((px >> 4) & 0xF) as u8 * 17);
+        rgb.push((px & 0xF) as u8 * 17);
+    }
+    let write = || -> Result<(), png::EncodingError> {
+        let file = std::fs::File::create(path)
+            .map_err(png::EncodingError::IoError)?;
+        let mut enc = png::Encoder::new(std::io::BufWriter::new(file),
+                                        H_VIS as u32, V_VIS as u32);
+        enc.set_color(png::ColorType::Rgb);
+        enc.set_depth(png::BitDepth::Eight);
+        enc.write_header()?.write_image_data(&rgb)
+    };
+    match write() {
+        Ok(()) => eprintln!("wrote {}", path),
+        Err(e) => eprintln!("cannot write {}: {}", path, e),
+    }
+}
+
+// -------------------------------------------------------------- run
+
 pub fn run(args: &Args) {
     let rom = crate::load_rom(args.rom.as_ref().unwrap_or_else(|| {
         eprintln!("+emu needs +rom=");
@@ -200,44 +302,95 @@ pub fn run(args: &Args) {
         std::process::exit(2);
     }));
     let flash = args.flash.as_ref().map(|p| std::fs::read(p).unwrap());
+    let keys_mode = args.keys.as_deref().unwrap_or("text");
+    if !["text", "raw", "both"].contains(&keys_mode) {
+        eprintln!("+keys= takes text, raw or both");
+        std::process::exit(2);
+    }
 
     let mut m = Machine::new(rom, flash);
     m.renderer = Some(Renderer::new(font));
 
-    let queue: Arc<Mutex<VecDeque<u8>>> = Arc::new(Mutex::new(VecDeque::new()));
+    let keymap = args.keymap.as_ref().map(|p| load_keymap(p))
+        .unwrap_or_default();
+    let mut clipboard = arboard::Clipboard::new().ok();
+    let chars: Arc<Mutex<VecDeque<u32>>> = Arc::default();
+    let mut typed: VecDeque<u8> = VecDeque::new();
+    let mut right_was_down = false;
+    let mut repeat: Option<(Key, u8, bool, Instant, Instant)> = None;
+
+    let queue: Arc<Mutex<VecDeque<u8>>> = Arc::default();
     let _stream = audio_stream(queue.clone());
     if _stream.is_none() {
         eprintln!("no audio device; running silent");
     }
-
-    let keymap = args.keymap.as_ref().map(|p| load_keymap(p))
-        .unwrap_or_default();
-    let mut clipboard = arboard::Clipboard::new().ok();
-    let mut paste: VecDeque<u8> = VecDeque::new();
-    let mut right_was_down = false;
+    let mut wav: Vec<u8> = Vec::new();
 
     let mut fullscreen = false;
-    let mut window = make_window(fullscreen);
+    let mut window = make_window(fullscreen, chars.clone());
+    let mut shot = 0;
 
     let mut buf = vec![0u32; H_VIS * V_VIS];
     while window.is_open() {
         let alt = window.is_key_down(Key::LeftAlt)
             || window.is_key_down(Key::RightAlt);
+        let ctrl = window.is_key_down(Key::LeftCtrl)
+            || window.is_key_down(Key::RightCtrl);
+
         for k in window.get_keys_pressed(minifb::KeyRepeat::No) {
-            if alt && k == Key::Enter {
-                fullscreen = !fullscreen;
-                window = make_window(fullscreen);
-            } else {
-                feed_key(&mut m, k, true);
+            match k {
+                Key::F11 => m.cpu.pulse_nmi(),
+                Key::Pause if ctrl => m.cpu.pulse_nmi(),
+                Key::F12 => {
+                    shot += 1;
+                    let path = format!("cool8-shot-{}.png", shot);
+                    save_png(&path, &m.renderer.as_ref().unwrap().fb);
+                }
+                Key::Enter if alt => {
+                    fullscreen = !fullscreen;
+                    window = make_window(fullscreen, chars.clone());
+                }
+                _ => {
+                    if keys_mode != "raw" && is_char_key(k) {
+                        continue; // its character arrives through the OS
+                    }
+                    if let Some((code, ext)) = scancode(k) {
+                        send_key(&mut m, code, ext, true);
+                        repeat = Some((k, code, ext, Instant::now(),
+                                       Instant::now()));
+                    }
+                }
             }
         }
         for k in window.get_keys_released() {
-            feed_key(&mut m, k, false);
+            if keys_mode != "raw" && is_char_key(k) {
+                continue;
+            }
+            if let Some((code, ext)) = scancode(k) {
+                send_key(&mut m, code, ext, false);
+            }
+        }
+        // The PS/2 typematic a real keyboard does in hardware: a held
+        // key re-sends its make code, no break between.
+        if let Some((k, code, ext, pressed, ref mut last)) = repeat {
+            if !window.is_key_down(k) {
+                repeat = None;
+            } else if pressed.elapsed() > TYPEMATIC_DELAY
+                && last.elapsed() >= TYPEMATIC_RATE
+            {
+                send_key(&mut m, code, ext, true);
+                *last = Instant::now();
+            }
         }
 
-        // Right click pastes the clipboard, as the Python front end
-        // does: typed at the machine's keyboard, a character a frame,
-        // so the 16-byte FIFO is never overrun.
+        // Characters: the OS-typed ones and the pasted ones share one
+        // queue, fed a character a frame so the FIFO cannot overrun.
+        if keys_mode != "raw" {
+            let mut cq = chars.lock().unwrap();
+            while let Some(c) = cq.pop_front() {
+                typed.push_back(c as u8);
+            }
+        }
         let right = window.get_mouse_down(MouseButton::Right);
         if right && !right_was_down {
             if let Some(cb) = clipboard.as_mut() {
@@ -245,7 +398,7 @@ pub fn run(args: &Args) {
                     for c in text.chars() {
                         let b = if c == '\n' { b'\r' } else { c as u32 as u8 };
                         if (c as u32) < 0x100 {
-                            paste.push_back(b);
+                            typed.push_back(b);
                         }
                     }
                 }
@@ -253,7 +406,10 @@ pub fn run(args: &Args) {
         }
         right_was_down = right;
         if m.bus.kbd.q.len() < 8 {
-            if let Some(ch) = paste.pop_front() {
+            if let Some(ch) = typed.pop_front() {
+                if keys_mode == "both" {
+                    m.bus.uart.feed(&[ch]);
+                }
                 if let Some(&(code, shifted)) = keymap.get(&ch) {
                     let mut b = Vec::new();
                     if shifted {
@@ -275,6 +431,9 @@ pub fn run(args: &Args) {
 
         {
             let mut q = queue.lock().unwrap();
+            if args.wav.is_some() {
+                wav.extend(m.bus.sound.samples.iter());
+            }
             q.extend(m.bus.sound.samples.drain(..));
             let cap = (SND_HZ / 2.0) as usize;
             while q.len() > cap {
@@ -291,4 +450,19 @@ pub fn run(args: &Args) {
         }
         window.update_with_buffer(&buf, H_VIS, V_VIS).unwrap();
     }
+
+    // SAVE survives the window closing: a dirtied flash goes back to
+    // its image, as cool8run.py's flush does.
+    if m.bus.flash.dirty {
+        if let Some(p) = args.flash.as_ref() {
+            match std::fs::write(p, &m.bus.flash.mem) {
+                Ok(()) => eprintln!("flash written back to {}", p),
+                Err(e) => eprintln!("cannot write {}: {}", p, e),
+            }
+        }
+    }
+    if let Some(p) = args.wav.as_ref() {
+        save_wav(p, &wav);
+    }
+    std::io::stderr().flush().ok();
 }

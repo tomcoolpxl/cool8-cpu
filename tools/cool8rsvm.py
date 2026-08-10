@@ -6,12 +6,15 @@
 `COOL8_PYVM=1` forces the reference, which is how to rule the fast
 machine out when a failure needs a second opinion.
 
-The surface is exactly the slice the batch suites use and no more:
-`bus.mem` to poke and read, `cpu.pc`/`cpu.sp` to set, `romen`,
-`run(budget=...)` returning "halt" or "budget", and `cpu.cycles` /
-`cpu.instructions` afterwards. Anything finer — a tick loop, `watch`,
-`trace`, the keyboard, the screen — belongs on the reference machine:
-use `cool8vm.Machine` directly for those cases and say why.
+The surface is the slice the batch suites use: `bus.mem` to poke and
+read, the whole register file on `cpu` (it round-trips, so run →
+inspect → run again works), `romen`, `breakpoints`, and
+`run(until=..., cycles=..., budget=...)` returning vm.Machine.run's
+own reasons — "until", "breakpoint", "cycles", "halt", "budget".
+`until` takes a PC or a collection of PCs; a *predicate* does not
+cross a process boundary, and a test that needs one — or a tick loop,
+`watch`, `trace`, the keyboard, the screen — belongs on the reference
+machine: use `cool8vm.Machine` directly and say why.
 
 **This is not a second machine model.** rust/src/machine.rs is held to
 cool8vm.py per retired instruction by sim/rustsim.py (RUST_PORT.md),
@@ -21,10 +24,8 @@ machine steps at ~66 M instr/s against CPython's ~0.5 M.
 
 One `cool8rs +serve` process is shared by every RustMachine in the
 process, so a suite of a hundred cases pays one spawn, not a hundred.
-Each run is a fresh machine on the far side — which is also the shape
-every batch suite already has, one Machine per case — so `run()` can be
-called once per RustMachine; a second call raises rather than silently
-resuming with stale registers.
+Memory and registers cross per call; peripheral state does not — the
+class docstring states the contract.
 """
 
 import atexit
@@ -87,6 +88,11 @@ class _Cpu:
     def __init__(self):
         self.pc = 0
         self.sp = 0xFFF8
+        self.r = [0, 0, 0, 0]
+        self.x = 0
+        self.y = 0
+        self.f = 0
+        self.halted = False
         self.cycles = 0
         self.instructions = 0
 
@@ -97,25 +103,34 @@ class _Bus:
 
 
 class RustMachine:
+    """See the module header. The registers round-trip, so poke → run →
+    inspect → run again works exactly as it does on vm.Machine; what
+    does NOT survive between runs is peripheral state (video, UART,
+    keyboard, flash), because every run is a fresh machine around the
+    carried CPU and memory. Batch workloads touch none of it; one that
+    starts to belongs on the machine-mode script harness instead."""
+
     backend = "rust"
 
     def __init__(self):
         self.bus = _Bus()
         self.cpu = _Cpu()
         self.romen = True
-        self._ran = False
+        self.breakpoints = set()
+
+    @staticmethod
+    def _pcs(spec):
+        if spec is None:
+            return "-"
+        if isinstance(spec, int):
+            spec = (spec,)
+        if callable(spec):
+            raise NotImplementedError(
+                "the batch machine takes PCs, not predicates; a test "
+                "that needs one belongs on cool8vm.Machine")
+        return ",".join(str(p) for p in spec) or "-"
 
     def run(self, until=None, cycles=None, budget=200_000_000):
-        if until is not None or cycles is not None:
-            raise NotImplementedError(
-                "the batch machine runs to a halt or a budget; a test "
-                "that needs until/cycles belongs on cool8vm.Machine")
-        if self._ran:
-            raise RuntimeError(
-                "one run per RustMachine — registers do not round-trip, "
-                "so a resume would be a different machine. Make a new one")
-        self._ran = True
-
         os.makedirs(BUILD, exist_ok=True)
         _serial[0] += 1
         base = os.path.join(BUILD, "rsvm_%d_%d" % (os.getpid(), _serial[0]))
@@ -123,17 +138,24 @@ class RustMachine:
         with open(mem_in, "wb") as f:
             f.write(self.bus.mem)
 
+        c = self.cpu
+        regs = ",".join(str(v) for v in (
+            c.pc, c.sp, c.r[0], c.r[1], c.r[2], c.r[3], c.x, c.y, c.f,
+            c.cycles, c.instructions, 1 if c.halted else 0))
         s = _srv()
-        s.stdin.write("run\t%s\t%s\t%d\t%d\t%d\t%d\n"
-                      % (mem_in, mem_out, self.cpu.pc, self.cpu.sp,
-                         1 if self.romen else 0, budget))
+        s.stdin.write("run\t%s\t%s\t%d\t%d\t%s\t%s\t%s\t%s\n"
+                      % (mem_in, mem_out, budget, 1 if self.romen else 0,
+                         regs, self._pcs(until), self._pcs(self.breakpoints),
+                         "-" if cycles is None else int(cycles)))
         s.stdin.flush()
         resp = s.stdout.readline().split()
         if not resp or resp[0] != "ok":
             raise RuntimeError("cool8rs server: %r" % (resp,))
         reason = resp[1]
-        self.cpu.instructions = int(resp[2])
-        self.cpu.cycles = int(resp[3])
+        v = [int(x) for x in resp[2].split(",")]
+        (c.pc, c.sp, c.r[0], c.r[1], c.r[2], c.r[3], c.x, c.y, c.f,
+         c.cycles, c.instructions) = v[:11]
+        c.halted = bool(v[11])
         with open(mem_out, "rb") as f:
             self.bus.mem[:] = f.read()
         os.remove(mem_in)

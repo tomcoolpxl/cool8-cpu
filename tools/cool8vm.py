@@ -748,30 +748,68 @@ class Video:
         elif a == 0x38:
             self._plot(v)
 
+    # The sprite engine's clock budget, as cool8_sprite.v's header
+    # counts it: a scanline is 266 system clocks, the descriptor scan
+    # and the sweep lead in, and a 16x16 sprite costs about 33 clocks
+    # to render. These are the RTL's own stated figures, not a
+    # re-derivation of its FSM; what matters is the *behaviour* — a
+    # line that runs out of clocks loses the sprites rendered last,
+    # which are the lowest-numbered ones, and the flag says so.
+    SPR_LINE = 266
+    SPR_LEAD = 34
+
+    @staticmethod
+    def _spr_cost(big, trail):
+        if trail:
+            return 21 if big else 13      # zeros, no pattern fetch
+        return 33 if big else 21
+
     def scan_sprites(self, line):
-        """The per-line slot scan, as cool8_sprite.v runs it.
+        """The per-line scan and budget, as cool8_sprite.v runs them.
 
         Eight sprites fit on a scanline and the ninth sets the overrun
         flag — including the two trailing rows past a sprite's bottom
         edge, which take slots like anything else, and which are the
-        only thing rendered past line 480. This is CPU-visible state
-        ($FE2C bit 1), so it lives here in the machine, not in a
-        renderer; what the RTL also flags — a render outrun by the next
-        line — needs a cycle-level cost model and is not modelled.
+        only thing rendered past line 480. And the eight that fit must
+        also *render* inside the line: the trailing rows go down first,
+        then the sprites, each pass walking the list backwards, and a
+        render still running when the next line begins is aborted with
+        the flag raised. This is CPU-visible state ($FE2C bit 1), so it
+        lives here in the machine, not in a renderer.
+
+        Returns the number of real sprites lost to the abort, counted
+        from the *end* of the render order — which is the lowest
+        descriptor indices, exactly as the hardware loses them.
         """
-        hits = 0
+        hits = []
         for si in range(0, 256, 8):
             d1 = self.spr[si + 1]
             if not (d1 & 0x40):
                 continue
-            h = 16 if (d1 & 0x80) else 8
+            big = bool(d1 & 0x80)
+            h = 16 if big else 8
             dy = (line - (((d1 & 0x01) << 8) | self.spr[si])) & 0x3FF
-            if not (dy < h + 2 and (line < 480 or dy >= h)):
+            trail = dy >= h
+            if not (dy < h + 2 and (line < 480 or trail)):
                 continue
-            if hits == 8:
+            if len(hits) == 8:
                 self.spr_overrun = True
-            else:
-                hits += 1
+                continue
+            hits.append((big, trail))
+
+        budget = self.SPR_LINE - self.SPR_LEAD
+        lost = 0
+        for want_trail in (True, False):
+            for big, trail in reversed(hits):
+                if trail != want_trail:
+                    continue
+                if lost or self._spr_cost(big, trail) > budget:
+                    lost += not trail     # a lost trailing row draws
+                    continue              # nothing anyway
+                budget -= self._spr_cost(big, trail)
+        if lost:
+            self.spr_overrun = True
+        return lost
 
     def _plot(self, colour):
         """PIX_DATA: one pixel at (X, Y), then X advances. Write-only."""

@@ -55,6 +55,9 @@ pub struct Args {
     pub font: Option<String>,
     pub keymap: Option<String>,
     fbdump: Option<String>,
+    textdump: Option<String>,
+    pub keys: Option<String>,
+    pub wav: Option<String>,
     emu: bool,
 }
 
@@ -111,6 +114,12 @@ fn parse_args() -> Args {
             a.keymap = Some(v.to_string());
         } else if let Some(v) = arg.strip_prefix("+fbdump=") {
             a.fbdump = Some(v.to_string());
+        } else if let Some(v) = arg.strip_prefix("+textdump=") {
+            a.textdump = Some(v.to_string());
+        } else if let Some(v) = arg.strip_prefix("+keys=") {
+            a.keys = Some(v.to_string());
+        } else if let Some(v) = arg.strip_prefix("+wav=") {
+            a.wav = Some(v.to_string());
         } else if arg == "+emu" {
             a.emu = true;
         } else if IGNORED.iter().any(|p| arg.starts_with(p)) {
@@ -275,13 +284,17 @@ enum Op {
     Type(Vec<u8>),
     Scan(Vec<u8>),
     Frames(u64),
+    Lines(u64),
+    Nmi,
     Poke(u16, Vec<u8>),
 }
 
 /// One op per line: `type <hex bytes>`, `scan <hex bytes>`, `frames N`,
-/// `poke <hex addr> <hex bytes>` — every byte written to that one
-/// address through the bus, which is what makes the auto-incrementing
-/// data ports (VRAM, palette, sprites, sound) scriptable.
+/// `lines N` (scanlines rather than frames, which is what a raster
+/// split needs), `nmi` (the break button), and `poke <hex addr>
+/// <hex bytes>` — every byte written to that one address through the
+/// bus, which is what makes the auto-incrementing data ports (VRAM,
+/// palette, sprites, sound) scriptable.
 /// Blank lines and `#` comments are skipped. sim/rustsim.py writes and
 /// executes the very same file against the Python machine.
 fn load_script(path: &str) -> Vec<Op> {
@@ -303,6 +316,11 @@ fn load_script(path: &str) -> Vec<Op> {
                 let n = it.next().unwrap_or_else(|| bad());
                 ops.push(Op::Frames(n.parse().unwrap_or_else(|_| bad())));
             }
+            "lines" => {
+                let n = it.next().unwrap_or_else(|| bad());
+                ops.push(Op::Lines(n.parse().unwrap_or_else(|_| bad())));
+            }
+            "nmi" => ops.push(Op::Nmi),
             "type" | "scan" => {
                 let bytes: Vec<u8> = it
                     .map(|w| u8::from_str_radix(w, 16)
@@ -370,6 +388,7 @@ fn run_machine(args: &Args) {
         match op {
             Op::Type(b) => m.bus.uart.feed(b),
             Op::Scan(b) => m.bus.kbd.feed(b),
+            Op::Nmi => m.cpu.pulse_nmi(),
             Op::Poke(a, b) => {
                 for &v in b {
                     m.bus.write(*a, v);
@@ -383,6 +402,22 @@ fn run_machine(args: &Args) {
                     if m.cpu.instructions != before {
                         n += 1;
                         trace.line(&m.cpu);
+                    }
+                }
+            }
+            Op::Lines(k) => {
+                let mut done = 0;
+                let mut prev = m.line;
+                while done < *k {
+                    let before = m.cpu.instructions;
+                    m.tick();
+                    if m.cpu.instructions != before {
+                        n += 1;
+                        trace.line(&m.cpu);
+                    }
+                    if m.line != prev {
+                        prev = m.line;
+                        done += 1;
                     }
                 }
             }
@@ -410,6 +445,27 @@ fn run_machine(args: &Args) {
         }
         out.flush().unwrap();
     }
+    if let Some(p) = args.textdump.as_ref() {
+        // The text screen through the machine's own VID_BASE, wrap
+        // included — what m.text() reads on the Python side.
+        let v = &m.bus.video;
+        let wrap = ((v.stride << 5) as u16).wrapping_sub(1);
+        let mut out = create(p);
+        for r in 0..30u16 {
+            let ra = (v.base & !wrap)
+                | (v.base.wrapping_add(r.wrapping_mul(v.stride)) & wrap);
+            let mut row = [b' '; 80];
+            for (c, slot) in row.iter_mut().enumerate() {
+                let b = m.bus.mem[ra.wrapping_add(2 * c as u16) as usize];
+                if (0x20..0x7F).contains(&b) {
+                    *slot = b;
+                }
+            }
+            out.write_all(&row).unwrap();
+            out.write_all(b"\n").unwrap();
+        }
+        out.flush().unwrap();
+    }
 
     // To stderr: in machine mode stdout may be carrying the trace.
     let secs = started.elapsed().as_secs_f64();
@@ -419,30 +475,117 @@ fn run_machine(args: &Args) {
 
 // --------------------------------------------------------- batch mode
 
-/// The core of a batch run for tools/cool8rsvm.py: a memory image in,
-/// the machine run to a halt or a budget, the memory image out. The
-/// loop is cool8vm.Machine.run's own — the halt test (a PC that does
-/// not move) before the tick, the budget counted in ticks — so a test
-/// that moves from one machine to the other keeps its stopping
-/// behaviour exactly.
-fn batch_run(image: &[u8], pc: Option<u16>, sp: Option<u16>, romen: bool,
-             budget: u64) -> (&'static str, machine::Machine) {
+/// The registers a batch run carries in and out, so tools/cool8rsvm.py
+/// can poke a machine, run it, inspect it, and run it again — the
+/// shape every vm.Machine test already has. Peripheral state does not
+/// round-trip; the batch machine is for CPU-and-RAM workloads and its
+/// docstring says so.
+#[derive(Default)]
+struct Regs {
+    pc: u16,
+    sp: u16,
+    r: [u8; 4],
+    x: u16,
+    y: u16,
+    f: u8,
+    cycles: u64,
+    instructions: u64,
+    halted: bool,
+}
+
+impl Regs {
+    fn parse(csv: &str) -> Option<Regs> {
+        let v: Vec<u64> = csv.split(',')
+            .map(|s| s.parse().ok())
+            .collect::<Option<Vec<u64>>>()?;
+        if v.len() != 12 {
+            return None;
+        }
+        Some(Regs {
+            pc: v[0] as u16,
+            sp: v[1] as u16,
+            r: [v[2] as u8, v[3] as u8, v[4] as u8, v[5] as u8],
+            x: v[6] as u16,
+            y: v[7] as u16,
+            f: v[8] as u8,
+            cycles: v[9],
+            instructions: v[10],
+            halted: v[11] != 0,
+        })
+    }
+
+    fn of(m: &machine::Machine) -> Regs {
+        let c = &m.cpu;
+        Regs {
+            pc: c.pc, sp: c.sp, r: c.r, x: c.x, y: c.y, f: c.f(),
+            cycles: c.cycles, instructions: c.instructions,
+            halted: c.halted,
+        }
+    }
+
+    fn csv(&self) -> String {
+        format!("{},{},{},{},{},{},{},{},{},{},{},{}",
+                self.pc, self.sp, self.r[0], self.r[1], self.r[2],
+                self.r[3], self.x, self.y, self.f, self.cycles,
+                self.instructions, self.halted as u8)
+    }
+}
+
+fn parse_pcs(csv: &str) -> Vec<u16> {
+    if csv == "-" {
+        return Vec::new();
+    }
+    csv.split(',')
+        .map(|s| s.parse().unwrap_or_else(|_| die(format!(
+            "bad pc list {:?}", csv))))
+        .collect()
+}
+
+/// The core of a batch run: a memory image and the registers in, the
+/// machine run to a stop, both out. The loop is cool8vm.Machine.run's
+/// own, tests in its order — until, breakpoint, cycles, halt, tick —
+/// so a test that moves from one machine to the other keeps its
+/// stopping behaviour exactly.
+fn batch_run(image: &[u8], romen: bool, budget: u64, regs: Option<&Regs>,
+             until: &[u16], brk: &[u16], cycles: Option<u64>)
+             -> (&'static str, machine::Machine) {
     let mut m = machine::Machine::new([0u8; 4096], None);
     if image.len() != 0x10000 {
         die(format!("memory image is {} bytes, want 65536", image.len()));
     }
     m.bus.mem.copy_from_slice(image);
     m.bus.romen = romen;
-    if let Some(pc) = pc {
-        m.cpu.pc = pc;
-    }
-    if let Some(sp) = sp {
-        m.cpu.sp = sp;
+    if let Some(rg) = regs {
+        let c = &mut m.cpu;
+        c.pc = rg.pc;
+        c.sp = rg.sp;
+        c.r = rg.r;
+        c.x = rg.x;
+        c.y = rg.y;
+        c.set_f(rg.f);
+        c.cycles = rg.cycles;
+        c.instructions = rg.instructions;
+        c.halted = rg.halted;
     }
 
+    let start = m.cpu.cycles;
     let mut last: i32 = -1;
     let mut reason = "budget";
     for _ in 0..budget {
+        if until.contains(&m.cpu.pc) {
+            reason = "until";
+            break;
+        }
+        if !brk.is_empty() && brk.contains(&m.cpu.pc) {
+            reason = "breakpoint";
+            break;
+        }
+        if let Some(cl) = cycles {
+            if m.cpu.cycles - start >= cl {
+                reason = "cycles";
+                break;
+            }
+        }
         if m.cpu.pc as i32 == last {
             reason = "halt";
             break;
@@ -455,8 +598,15 @@ fn batch_run(image: &[u8], pc: Option<u16>, sp: Option<u16>, romen: bool,
 
 fn run_batch(args: &Args) {
     let image = read_file(args.mem.as_ref().unwrap());
-    let (reason, m) = batch_run(&image, args.pc, args.sp, args.romen,
-                                args.budget);
+    let mut regs = Regs { sp: 0xFFF8, ..Regs::default() };
+    if let Some(pc) = args.pc {
+        regs.pc = pc;
+    }
+    if let Some(sp) = args.sp {
+        regs.sp = sp;
+    }
+    let (reason, m) = batch_run(&image, args.romen, args.budget,
+                                Some(&regs), &[], &[], None);
     if let Some(p) = args.outmem.as_ref() {
         std::fs::write(p, m.bus.mem.as_ref())
             .unwrap_or_else(|e| die(format!("cannot write {}: {}", p, e)));
@@ -469,14 +619,18 @@ fn run_batch(args: &Args) {
 /// hundred cases pays for one process rather than a hundred. The
 /// fields are tab-separated because they carry paths:
 ///
-///     run \t mem.bin \t out.bin \t pc \t sp \t romen \t budget
+///     run \t mem.bin \t out.bin \t budget \t romen \t regs \t until \t brk \t cycles
 ///
-/// answered, after out.bin is written, with
+/// `regs` is the twelve-field register file (see Regs::csv), `until`
+/// and `brk` are comma-separated PCs or `-`, `cycles` a count or `-`.
+/// Answered, after out.bin is written, with
 ///
-///     ok <reason> <instructions> <cycles>
+///     ok <reason> <regs>
 ///
-/// Every run is a fresh machine — state does not carry over, which is
-/// also cool8vm's shape: one Machine per test case.
+/// The registers round-trip, so a client can run the same machine
+/// again; peripheral state does not — every run is a fresh machine
+/// around the carried CPU and memory, which is what the batch client's
+/// docstring promises and no more.
 fn run_serve() {
     use std::io::BufRead;
     let stdin = std::io::stdin();
@@ -488,7 +642,7 @@ fn run_serve() {
         if line.is_empty() || f[0] == "quit" {
             break;
         }
-        if f[0] != "run" || f.len() != 7 {
+        if f[0] != "run" || f.len() != 9 {
             writeln!(out, "err bad command").unwrap();
             out.flush().unwrap();
             continue;
@@ -496,13 +650,16 @@ fn run_serve() {
         let num = |s: &str| s.parse::<u64>()
             .unwrap_or_else(|_| die(format!("bad number {:?}", s)));
         let image = read_file(f[1]);
-        let (reason, m) = batch_run(&image, Some(num(f[3]) as u16),
-                                    Some(num(f[4]) as u16),
-                                    num(f[5]) != 0, num(f[6]));
+        let regs = Regs::parse(f[5])
+            .unwrap_or_else(|| die(format!("bad regs {:?}", f[5])));
+        let until = parse_pcs(f[6]);
+        let brk = parse_pcs(f[7]);
+        let cycles = if f[8] == "-" { None } else { Some(num(f[8])) };
+        let (reason, m) = batch_run(&image, num(f[4]) != 0, num(f[3]),
+                                    Some(&regs), &until, &brk, cycles);
         std::fs::write(f[2], m.bus.mem.as_ref())
             .unwrap_or_else(|e| die(format!("cannot write {}: {}", f[2], e)));
-        writeln!(out, "ok {} {} {}",
-                 reason, m.cpu.instructions, m.cpu.cycles).unwrap();
+        writeln!(out, "ok {} {}", reason, Regs::of(&m).csv()).unwrap();
         out.flush().unwrap();
     }
 }

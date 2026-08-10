@@ -225,9 +225,16 @@ structure costs nothing, so it is modeled:
   *machine* (both of them — see the findings below), because the
   overrun flag is CPU-visible.
 
-Not modeled: fetch and sprite *bandwidth*. A line here always
-completes, where eight 16x16 sprites outrun the RTL's 266-clock line;
-the slot rule is exact, the cycle budget is not.
+The sprite *bandwidth* is modeled too, at the granularity the RTL's
+own header states it: the scan-and-sweep lead-in, ~33 clocks for a
+16x16 sprite, trailing rows cheaper, against the 266-clock line. A
+line that runs out of clocks loses its last-rendered — which are the
+lowest-numbered — sprites, and the overrun flag says so. The costs
+are the RTL's stated figures, not a cycle-exact FSM re-derivation;
+`sprite_plan` in machine.rs (mirrored in cool8vm's scan_sprites, the
+last change the Python reference will get) is the one statement of
+the rule for both the flag and the renderer. The *fetch* engine's
+bandwidth stays unmodeled: nothing observable hangs off it.
 
 **The gate**: `test_render` in sim/rustsim.py drives both machines
 through poke-built scenes — the monitor's text screen, tiles with
@@ -254,13 +261,22 @@ stays dependency-free; minifb owns the window, cpal the speaker.
   change that picture.
 - Audio is the machine's own 32.7 kHz `level` stream, resampled to the
   device rate; the queue takes the drift.
-- Host keys become Set 2 make/break codes into the same PS/2 FIFO the
-  tests feed; the *machine's* layout stays sw/keymap.asm's business.
-- **Alt+Enter** toggles aspect-ratio-scaled fullscreen (a borderless
-  screen-sized window; the picture letterboxes). **Right click**
-  pastes the clipboard as keystrokes, one character a frame so the
-  16-byte FIFO never overruns — the mapping is derived from
-  sw/keymap.asm by the launcher at run time, never a second copy.
+- The keyboard has cool8run.py's three modes (`+keys=text|raw|both`).
+  `text`, the default, takes printable characters from the OS — the
+  user's layout applies — and types them through the machine's own
+  keymap, derived from sw/keymap.asm by the launcher, never a second
+  copy; the character-less keys go as physical Set 2 make/break, with
+  the PS/2 typematic repeat a held key really produces. `raw` is all
+  physical US-layout scancodes; `both` echoes characters to the UART
+  for a machine with no keyboard driver yet.
+- **F11** (and Ctrl+Pause, the board's own chord) is the break button
+  — an NMI, as SW[0] is. **F12** writes the screen to a PNG.
+  **Alt+Enter** toggles aspect-ratio-scaled fullscreen. **Right
+  click** pastes the clipboard as keystrokes, a character a frame so
+  the 16-byte FIFO never overruns.
+- `+wav=` captures the speaker to a WAV at the machine's own sample
+  rate, and a flash the machine wrote is written back to its image at
+  exit, so SAVE survives the window closing.
 
 ## Python-model errors found against the RTL, and what was done
 
@@ -283,10 +299,10 @@ before the fix stayed green after it.)
    RTL also advances at frame start).
 2. **The sprite overrun flag was never set.** cool8_sprite sets it on
    the ninth hit of a line — trailing rows counting — and on a render
-   outrun by the next line. **Fixed** for the slot half: the scan now
-   runs in both machines' end-of-line step whenever sprites are
-   enabled ($FE2C bit 1 reads correctly). The bandwidth half needs a
-   cycle-cost model and is documented as not modeled.
+   outrun by the next line. **Fixed, both halves**: the scan and the
+   clock-budget model run in both machines' end-of-line step whenever
+   sprites are enabled, so $FE2C bit 1 reads correctly and the
+   renderer drops what the hardware would drop.
 3. **Whole-frame rendering itself** — the snapshot model cannot show a
    raster split, a mid-frame palette change, or the vblank `VID_BASE`
    latch. Not fixable at CPython speed; that is what render.rs is for,
@@ -294,26 +310,42 @@ before the fix stayed green after it.)
 
 ## What this is not (yet): the scope line
 
-- **`m.text()`-style screen reads stay Python-only** in the test
-  suites; the Rust machine's VRAM is compared byte-for-byte and its
-  frames pixel-for-pixel instead.
-- **No NMI/break op in the script vocabulary** yet — add one to both
-  executors when a workload needs `press_break()`.
-- **Sound samples are generated but not diffed.** The engine is ported
-  and audible, but the sample stream is not part of the parity
-  compare; nothing CPU-visible reads back from it.
-- **Sprite/fetch bandwidth is not modeled** — see the display section.
+- **Sound samples are generated but not diffed** — accepted: nothing
+  CPU-visible reads back from the sample stream.
+- **Scanline granularity, PS/2 at FIFO level** — accepted as the
+  machine's stated fidelity line, shared with the reference.
+- **The loader wire protocol (`cool8_loader`) is not modeled**,
+  deliberately: no software in the emulator ever speaks it (loading is
+  the flash image or a poked memory image), the reference machine does
+  not model it either, and modelling it Rust-first would invert the
+  authority rule. It becomes worth doing when the Python machine is
+  retired and the Rust one hosts a host-loader test.
+- **The heavy suites (`test_run`, `test_basic`) still run the Python
+  machine**: their settle loops are interactive in a way a lockstep
+  subprocess is not. The script vocabulary now has what they need
+  (`nmi`, `lines`, pokes, text dumps); the migration itself is its own
+  piece of work.
+
+**The endgame, stated:** the Python machine is scheduled to be
+replaced by the Rust one and thrown away. Until that day Python stays
+the specification and every Rust behaviour is gated against it; the
+parity suite is what will make the eventual hand-over a rename rather
+than a leap.
 
 ## How tests consume it: the batch machine
 
 `tools/cool8rsvm.py` is the consumer path, and `sim/test_interp.py` is
 its first user. `cool8rsvm.machine()` hands back a `cool8vm.Machine`
-stand-in whose surface is exactly the batch slice — `bus.mem`,
-`cpu.pc`/`cpu.sp`, `romen`, `run(budget=…)` → `"halt"`/`"budget"`,
-`cpu.cycles` after — and falls back to the reference machine when the
-runner is not built and cargo is absent, so `npm test` still works on a
-clone with only Node and Python. `COOL8_PYVM=1` forces the reference —
-the second opinion when a failure needs one.
+stand-in for batch workloads: `bus.mem`, the whole register file
+(which round-trips, so poke → run → inspect → run again works),
+`romen`, `breakpoints`, and `run(until=…, cycles=…, budget=…)` with
+vm.Machine.run's own reasons. Peripheral state does not survive
+between runs — the class docstring states the contract — and a
+predicate `until` does not cross a process boundary. It falls back to
+the reference machine when the runner is not built and cargo is
+absent, so `npm test` still works on a clone with only Node and
+Python. `COOL8_PYVM=1` forces the reference — the second opinion when
+a failure needs one.
 
 The plumbing: one `cool8rs +serve` process per test process, batch runs
 sent over stdin (tab-separated, because the fields carry paths), each

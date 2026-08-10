@@ -123,7 +123,7 @@ impl Cpu {
             | (self.i as u8) << 4
     }
 
-    fn set_f(&mut self, v: u8) {
+    pub fn set_f(&mut self, v: u8) {
         self.c = v & 1 != 0;
         self.z = v & 2 != 0;
         self.n = v & 4 != 0;

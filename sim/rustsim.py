@@ -219,8 +219,10 @@ def _script_file(tag, ops):
     path = os.path.join(BUILD, f"{tag}.script")
     with open(path, "w", newline="\n") as f:
         for kind, arg in ops:
-            if kind == "frames":
-                f.write(f"frames {arg}\n")
+            if kind in ("frames", "lines"):
+                f.write(f"{kind} {arg}\n")
+            elif kind == "nmi":
+                f.write("nmi\n")
             elif kind == "poke":
                 addr, data = arg
                 f.write("poke %04x " % addr
@@ -231,7 +233,8 @@ def _script_file(tag, ops):
     return path
 
 
-def machine_pair(tag, ops, flash_path=None, sanity=None, fb=False):
+def machine_pair(tag, ops, flash_path=None, sanity=None, fb=False,
+                 fb_check=None, text=False):
     """Run one script on both machines, comparing in lockstep.
 
     `ops` is [("type", bytes) | ("scan", bytes) | ("frames", n) |
@@ -260,6 +263,7 @@ def machine_pair(tag, ops, flash_path=None, sanity=None, fb=False):
     vram_p = os.path.join(BUILD, f"{tag}.rstvram")
     said_p = os.path.join(BUILD, f"{tag}.rstsaid")
     fb_p = os.path.join(BUILD, f"{tag}.rstfb")
+    text_p = os.path.join(BUILD, f"{tag}.rsttext")
     cmd = [EXE, f"+rom={rom_path}", f"+script={script}", "+trace=-",
            f"+memdump={mem_p}", f"+vramdump={vram_p}", f"+said={said_p}"]
     if fb:
@@ -267,6 +271,8 @@ def machine_pair(tag, ops, flash_path=None, sanity=None, fb=False):
         with open(font_path, "wb") as f:
             f.write(font)
         cmd += [f"+font={font_path}", f"+fbdump={fb_p}"]
+    if text:
+        cmd.append(f"+textdump={text_p}")
     if flash_path:
         cmd.append(f"+flash={flash_path}")
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
@@ -281,16 +287,31 @@ def machine_pair(tag, ops, flash_path=None, sanity=None, fb=False):
                 m.uart.feed(bytes(arg))
             elif kind == "scan":
                 m.scancode(bytes(arg))
+            elif kind == "nmi":
+                m.press_break()
+                continue
             elif kind == "poke":
                 addr, data = arg
                 for b in data:
                     m.bus.write(addr, b)
             else:
-                target = m.frames + arg
-                while m.frames < target:
+                if kind == "frames":
+                    done = lambda st: m.frames >= st + arg    # noqa: E731
+                    start = m.frames
+                else:                                         # lines
+                    start, seen = m.line, [0]
+
+                    def done(_s, seen=seen, prev=[m.line]):
+                        if m.line != prev[0]:
+                            prev[0] = m.line
+                            seen[0] += 1
+                        return seen[0] >= arg
+                while not done(start):
                     before = m.cpu.instructions
-                    prev = m.cpu.pc
+                    prev_pc = m.cpu.pc
                     m.tick()
+                    if kind == "lines":
+                        done(start)      # count a boundary as it passes
                     if m.cpu.instructions == before:
                         continue
                     idx += 1
@@ -298,8 +319,8 @@ def machine_pair(tag, ops, flash_path=None, sanity=None, fb=False):
                     theirs = proc.stdout.readline().rstrip("\n")
                     if mine != theirs:
                         fail = (f"    {tag}: DIVERGED at instruction {idx}\n"
-                                f"      at      {prev:04x}  "
-                                f"{_mdisasm(m, prev)}\n"
+                                f"      at      {prev_pc:04x}  "
+                                f"{_mdisasm(m, prev_pc)}\n"
                                 f"      py  {mine}\n"
                                 f"      rs  {theirs or '<ended>'}")
                         raise StopIteration
@@ -340,17 +361,35 @@ def machine_pair(tag, ops, flash_path=None, sanity=None, fb=False):
         except ImportError:
             print(f"    {tag}: numpy not available, frame not compared")
         else:
-            want = np.asarray(cool8vid.render_np(m))
             with open(fb_p, "rb") as f:
                 got = np.frombuffer(f.read(), dtype="<u2")
             got = got.reshape(480, 640).astype(np.int64)
-            if not np.array_equal(want, got):
-                bad = np.argwhere(want != got)
-                y, x = bad[0]
-                print(f"    {tag}: frame differs at {len(bad)} pixels, "
-                      f"first at ({x},{y}): py ${want[y, x]:03X} "
-                      f"rs ${got[y, x]:03X}")
-                return False, idx
+            if fb_check is not None:
+                # A known-answer check on the Rust frame alone: the
+                # per-line behaviour a whole-frame reference cannot
+                # express is asserted directly.
+                err = fb_check(got)
+                if err:
+                    print(f"    {tag}: {err}")
+                    return False, idx
+            else:
+                want = np.asarray(cool8vid.render_np(m))
+                if not np.array_equal(want, got):
+                    bad = np.argwhere(want != got)
+                    y, x = bad[0]
+                    print(f"    {tag}: frame differs at {len(bad)} pixels, "
+                          f"first at ({x},{y}): py ${want[y, x]:03X} "
+                          f"rs ${got[y, x]:03X}")
+                    return False, idx
+    if text:
+        with open(text_p, encoding="latin-1") as f:
+            rows = [ln.rstrip() for ln in f.read().splitlines()]
+        want = [m.row(r) for r in range(30)]
+        if rows != want:
+            first = next(i for i in range(30) if rows[i] != want[i])
+            print(f"    {tag}: text screen differs at row {first}: "
+                  f"py {want[first]!r} rs {rows[first]!r}")
+            return False, idx
     if sanity:
         err = sanity(m, said)
         if err:
@@ -414,7 +453,7 @@ def test_machine_monitor():
             return "D F000 did not answer with the reset vector"
         return None
 
-    ok, n = machine_pair("rs_monitor", ops, sanity=sanity)
+    ok, n = machine_pair("rs_monitor", ops, sanity=sanity, text=True)
     print(f"  24 frames, {n} instructions : {'ok' if ok else 'FAIL'} "
           f"({time.time() - t0:.1f}s)")
     return ok
@@ -563,6 +602,33 @@ def test_render():
     t0 = time.time()
     good, _ = machine_pair("rs_fb_bmp", ops, fb=True)
     print(f"  bitmap 8 bpp, scrolled, behind : "
+          f"{'ok' if good else 'FAIL'} ({time.time() - t0:.1f}s)")
+    ok &= good
+
+    # ---- a raster split: the one thing a whole-frame reference cannot
+    # check, asserted as a known answer on the Rust frame. A border
+    # write between two `lines` ops must land on the very next line —
+    # and the NMI op gets its parity exercise on the way in.
+    ops = [("frames", 2), ("nmi", None), ("frames", 2),
+           ("poke", (0xFE10, [0x00]))]            # display off: all border
+    ops += _pal([(1, 0x111), (2, 0x222)])
+    ops += [("poke", (0xFE1A, [0x01])), ("frames", 2),
+            ("lines", 240),
+            ("poke", (0xFE1A, [0x02])),           # mid-frame
+            ("lines", 284)]                       # finish at line 524
+
+    def split_check(got):
+        for y, want in ((0, 0x111), (100, 0x111), (240, 0x111),
+                        (241, 0x222), (300, 0x222), (479, 0x222)):
+            if got[y, 0] != want:
+                return (f"raster split wrong at line {y}: "
+                        f"${got[y, 0]:03X}, wanted ${want:03X}")
+        return None
+
+    t0 = time.time()
+    good, _ = machine_pair("rs_fb_split", ops, fb=True,
+                           fb_check=split_check)
+    print(f"  a raster split lands on the next line : "
           f"{'ok' if good else 'FAIL'} ({time.time() - t0:.1f}s)")
     ok &= good
     return ok

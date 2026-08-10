@@ -257,33 +257,28 @@ impl Renderer {
     }
 
     /// One sprite line into the bank the raster will read — the render
-    /// half of cool8_sprite. The slot budget is respected here too, so
-    /// what is *drawn* matches what the scan counted; the overrun flag
-    /// itself is the Machine's, because it is CPU-visible.
+    /// half of cool8_sprite. The slot cut, and the clock budget with
+    /// it, come from the Machine's own sprite_plan, so what is *drawn*
+    /// matches what the CPU-visible overrun flag counted: a line that
+    /// runs out of clocks loses its last-rendered — lowest-numbered —
+    /// sprites, exactly as the hardware does.
     fn sprite_line(&mut self, ln: u32, bus: &MachineBus) {
         let out = &mut self.sline[(ln & 1) as usize];
         out.fill(0);
-        let mut slots = 0;
-        for si in 0..32 {
-            let d = &bus.video.spr[si * 8..si * 8 + 8];
-            if d[1] & 0x40 == 0 {
-                continue;
-            }
-            let big = d[1] & 0x80 != 0;
-            let h: u32 = if big { 16 } else { 8 };
-            let y = (d[1] as u32 & 1) << 8 | d[0] as u32;
-            let dy = ln.wrapping_sub(y) & 0x3FF;
-            let trail = dy >= h;
-            if !(dy < h + 2 && (ln < 480 || trail)) {
-                continue;
-            }
-            if slots == 8 {
-                continue; // the scan in the Machine flagged the overrun
-            }
-            slots += 1;
+        let (hits, n, lost, _) = bus.video.sprite_plan(ln);
+        // The aborted tail of the render order is the *head* of the
+        // ascending hit list, reals only.
+        let mut skip = lost;
+        for &(si, big, trail, dy) in &hits[..n] {
             if trail {
                 continue; // writes zeros; a fresh buffer already is
             }
+            if skip > 0 {
+                skip -= 1;
+                continue; // outrun by the next line: never drawn
+            }
+            let d = &bus.video.spr[si * 8..si * 8 + 8];
+            let h: u32 = if big { 16 } else { 8 };
 
             let sx = (d[3] as u32 & 3) << 8 | d[2] as u32;
             let vflip = d[6] & 0x80 != 0;

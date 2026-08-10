@@ -146,6 +146,10 @@ pub struct Flash {
     open_r: bool,
     wdata: u8,
     denied: bool,
+    /// A program or erase landed: the emulator writes the image back
+    /// at exit so SAVE survives the window closing, as cool8run.py's
+    /// flush does. Batch and parity runs never write back.
+    pub dirty: bool,
 }
 
 impl Flash {
@@ -159,7 +163,8 @@ impl Flash {
             let n = d.len().min(Flash::SIZE);
             mem[..n].copy_from_slice(&d[..n]);
         }
-        Flash { mem, addr: 0, open_r: false, wdata: 0, denied: false }
+        Flash { mem, addr: 0, open_r: false, wdata: 0, denied: false,
+                dirty: false }
     }
 
     fn read(&mut self, a: u8) -> u8 {
@@ -209,6 +214,7 @@ impl Flash {
                     } else {
                         let i = self.addr as usize % Flash::SIZE;
                         self.mem[i] &= self.wdata;
+                        self.dirty = true;
                     }
                 } else if v & 0x02 != 0 {
                     // erase the 4 KB sector
@@ -218,6 +224,7 @@ impl Flash {
                         let base = (self.addr as usize % Flash::SIZE)
                             & !(Flash::SECTOR - 1);
                         self.mem[base..base + Flash::SECTOR].fill(0xFF);
+                        self.dirty = true;
                     }
                 }
             }
@@ -429,28 +436,72 @@ impl Video {
         (self.ctrl >> 2) & 3
     }
 
-    /// The per-line slot scan, as cool8_sprite.v runs it and exactly as
-    /// cool8vm.Video.scan_sprites states it: eight sprites fit on a
-    /// scanline, the ninth sets the overrun flag, and the two trailing
-    /// rows past a sprite's bottom edge take slots like anything else.
-    pub fn scan_sprites(&mut self, line: u32) {
-        let mut hits = 0;
-        for si in (0..256).step_by(8) {
-            let d1 = self.spr[si + 1];
+    /// One line's sprite work, planned as cool8_sprite.v performs it
+    /// and exactly as cool8vm.Video.scan_sprites states it: up to
+    /// eight hits in descriptor order (trailing rows counting), a
+    /// ninth setting the overrun flag, and the render budget — the
+    /// RTL's own stated costs against the 266-clock line — deciding
+    /// how many of the *last-rendered* sprites, which are the
+    /// lowest-numbered ones, are lost. Returns (hits, lost, ninth).
+    pub fn sprite_plan(&self, line: u32)
+        -> ([(usize, bool, bool, u32); 8], usize, usize, bool) {
+        let mut hits = [(0usize, false, false, 0u32); 8];
+        let mut n = 0;
+        let mut ninth = false;
+        for si in 0..32 {
+            let d1 = self.spr[si * 8 + 1];
             if d1 & 0x40 == 0 {
                 continue;
             }
-            let h = if d1 & 0x80 != 0 { 16u32 } else { 8 };
-            let y = ((d1 as u32 & 0x01) << 8) | self.spr[si] as u32;
+            let big = d1 & 0x80 != 0;
+            let h = if big { 16u32 } else { 8 };
+            let y = ((d1 as u32 & 0x01) << 8) | self.spr[si * 8] as u32;
             let dy = line.wrapping_sub(y) & 0x3FF;
-            if !(dy < h + 2 && (line < 480 || dy >= h)) {
+            let trail = dy >= h;
+            if !(dy < h + 2 && (line < 480 || trail)) {
                 continue;
             }
-            if hits == 8 {
-                self.spr_overrun = true;
-            } else {
-                hits += 1;
+            if n == 8 {
+                ninth = true;
+                continue;
             }
+            hits[n] = (si, big, trail, dy);
+            n += 1;
+        }
+
+        // The render costs as the RTL's header counts them: ~33 clocks
+        // for a 16x16, the scan and sweep leading in, trailing rows
+        // cheaper because they fetch nothing. Behaviour, not clock
+        // exactness: a render outrun by the next line loses its tail.
+        let mut budget: i32 = 266 - 34;
+        let mut lost = 0usize;
+        for want_trail in [true, false] {
+            for &(_, big, trail, _) in hits[..n].iter().rev() {
+                if trail != want_trail {
+                    continue;
+                }
+                let c: i32 = match (big, trail) {
+                    (true, true) => 21,
+                    (false, true) => 13,
+                    (true, false) => 33,
+                    (false, false) => 21,
+                };
+                if lost > 0 || c > budget {
+                    if !trail {
+                        lost += 1; // a lost trailing row draws nothing
+                    }
+                } else {
+                    budget -= c;
+                }
+            }
+        }
+        (hits, n, lost, ninth)
+    }
+
+    pub fn scan_sprites(&mut self, line: u32) {
+        let (_, _, lost, ninth) = self.sprite_plan(line);
+        if lost > 0 || ninth {
+            self.spr_overrun = true;
         }
     }
 

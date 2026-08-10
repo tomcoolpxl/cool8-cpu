@@ -8,12 +8,14 @@ description = "COOL8 fast runner. Never authoritative: tools/cool8emu.py is the 
 # The window and the speaker. Off by default so the parity suite's
 # build (sim/rustsim.py) stays dependency-free; tools/cool8rsrun.py
 # builds with `--features gui`.
-gui = ["dep:minifb", "dep:cpal", "dep:arboard"]
+gui = ["dep:minifb", "dep:cpal", "dep:arboard", "dep:png", "dep:hound"]
 
 [dependencies]
 minifb = { version = "0.27", optional = true }
 cpal = { version = "0.15", optional = true }
 arboard = { version = "3", optional = true, default-features = false }
+png = { version = "0.17", optional = true }
+hound = { version = "3", optional = true }
 
 [profile.release]
 lto = true
