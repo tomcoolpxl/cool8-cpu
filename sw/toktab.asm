@@ -107,4 +107,10 @@ TOKTAB:
         .byte 3, "E","R","A"
         .byte 7, "C","O","M","P","A","C","T"
         .byte 5, "D","R","I","V","E"
+; ---- $C6: the comment. A keyword like any other, so the interpreter
+; ---- skips a whole line on one dispatch instead of matching three
+; ---- characters at run time -- and LIST gives "REM" back because the
+; ---- text after it is stored verbatim. `'` needs no entry: it is
+; ---- punctuation, stored as itself, and stmt sends it the same way.
+        .byte 3, "R","E","M"
         .byte 0

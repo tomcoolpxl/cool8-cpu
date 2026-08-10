@@ -24,6 +24,7 @@ everything the graphics and sound commands touch is
 | `POKE a, b` / `PEEK(a)` | main RAM and the I/O page |
 | `DIM v(n)` | one-dimensional arrays on the heap |
 | `ASM` … `END ASM` | the whole assembler of [08-assembler.md](08-assembler.md), labels as variables |
+| `REM …` / `' …` | a comment: the rest of the line, whatever is in it. Both are stored with the text verbatim after a marker, so `LIST` gives back exactly what was typed and nothing inside is tokenised |
 | `END` | a clean stop |
 
 Numbers are decimal or `$` hex (`$FE10`). Variables `A`–`Z` are

@@ -26,6 +26,7 @@ other's `basic.bin` (docs/12-tasks.md).
 
 import os
 import sys
+import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -45,10 +46,21 @@ os.makedirs(BUILD, exist_ok=True)
 
 FAILS = []
 
+# Wall time charged to each check: the gap since the previous one, which
+# is the work that produced it. pytest's --durations answers this for
+# whole jobs and a job is minutes; this answers it for the case inside
+# the job, which is where a suite actually goes slow. Reported by
+# report() whenever a run is slow enough for the question to matter.
+_TIMES = []
+_last = [time.time()]
+
 
 def check(ok, what, detail=""):
     """One check, printed, remembered if it failed. Returns `ok`, so a
     caller can gate the next step on it."""
+    now = time.time()
+    _TIMES.append((now - _last[0], what))
+    _last[0] = now
     print(f"  {what:<52} {'ok' if ok else 'FAIL'}")
     if not ok:
         FAILS.append(what)
@@ -57,8 +69,20 @@ def check(ok, what, detail=""):
     return bool(ok)
 
 
-def report():
-    """The trailing verdict, and the exit code to return from main()."""
+def report(slow=3.0, top=6):
+    """The trailing verdict, and the exit code to return from main().
+
+    A run that took real time names where it went, so the next person
+    asking "why is this suite slow" has the answer in the output they
+    already have rather than in a profiling session.
+    """
+    total = sum(t for t, _ in _TIMES)
+    if total >= slow:
+        worst = sorted(_TIMES, reverse=True)[:top]
+        print(f"\n  {total:.1f}s total; slowest checks:")
+        for t, what in worst:
+            if t >= 0.05:
+                print(f"    {t:6.1f}s  {what}")
     print()
     print("PASS" if not FAILS else f"FAIL -- {len(FAILS)}")
     return 0 if not FAILS else 1

@@ -88,6 +88,7 @@ CONST K_INS   = 263
 ' of what makes an interpreted FOR slow. Appended, so saved programs
 ' keep working -- TOKTAB order is frozen.
 CONST T_LIT   = $A4
+CONST T_REM   = $C5             ' the comment keyword, sw/toktab.asm
 
 DIM cx AS BYTE                  ' cursor column on screen
 DIM cy AS BYTE                  ' cursor row on screen
@@ -875,23 +876,6 @@ SUB tokenise()
               w = w + 1
             END IF
           END IF
-          ' REM starts a comment, as it does everywhere else. It is a
-          ' comment and not a keyword, so nothing inside it is looked up
-          ' and LIST gives back exactly what was typed.
-          IF w = 3 THEN
-            IF upper(lbuf(i)) = 82 THEN
-              IF upper(lbuf(i + 1)) = 69 THEN
-                IF upper(lbuf(i + 2)) = 77 THEN
-                  DO WHILE i < llen
-                    tbuf(tlen) = lbuf(i)
-                    tlen = tlen + 1
-                    i = i + 1
-                  LOOP
-                  w = 0
-                END IF
-              END IF
-            END IF
-          END IF
           t = lookup(i, w)
           IF w = 0 THEN
             t = 0
@@ -899,6 +883,22 @@ SUB tokenise()
           IF t <> 0 THEN
             tbuf(tlen) = t
             tlen = tlen + 1
+            ' REM is an ordinary keyword -- lookup finds it, case and
+            ' all -- and it takes the rest of the line with it,
+            ' verbatim. So LIST prints the keyword back from the token
+            ' and the comment exactly as typed, and the interpreter
+            ' skips the line on one dispatch. Stored as plain text, as
+            ' it was, a comment reached the assignment handler instead
+            ' and every REM was ?SYNTAX.
+            IF t = T_REM THEN
+              i = i + w
+              w = 0
+              DO WHILE i < llen
+                tbuf(tlen) = lbuf(i)
+                tlen = tlen + 1
+                i = i + 1
+              LOOP
+            END IF
           ELSE
             k = 0
             DO WHILE k < w

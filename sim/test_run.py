@@ -59,6 +59,44 @@ CASES = [
     ("a variable survives between lines",
      ["10 A = 6", "20 A = A * 7", "30 PRINT A", "40 END"], "42"),
 
+    # Comments. The tokeniser copies both forms verbatim to the end of
+    # the line (sw/basic.bas tokenise), so what is stored begins with a
+    # character below $80 -- which is exactly what `stmt` routes to
+    # h_let. A comment that reaches the interpreter must be *skipped*,
+    # not parsed as an assignment, and the punctuation cases are the
+    # ones that decide it: `=` makes the line look like an assignment
+    # and `-` and `*` like an expression, so a handler that merely
+    # tolerates `REM HELLO` still stops on `REM A = B`.
+    ("an empty REM is skipped",
+     ["10 REM", "20 PRINT 1", "30 END"], "1"),
+
+    ("REM with words is skipped",
+     ["10 REM HELLO WORLD", "20 PRINT 1", "30 END"], "1"),
+
+    ("REM full of asterisks is skipped",
+     ["10 REM ********", "20 PRINT 1", "30 END"], "1"),
+
+    ("REM containing = is skipped, not assigned",
+     ["10 REM A = B", "20 PRINT 1", "30 END"], "1"),
+
+    ("REM containing dashes is skipped",
+     ["10 REM ---- SECTION ----", "20 PRINT 1", "30 END"], "1"),
+
+    ("an apostrophe comment is skipped",
+     ["10 ' A = B ****", "20 PRINT 1", "30 END"], "1"),
+
+    ("a comment between statements does not break the walk",
+     ["10 A = 6", "20 REM SIX", "30 A = A * 7", "40 ' SEVEN",
+      "50 PRINT A", "60 END"], "42"),
+
+    # The comment is stored as a token plus verbatim text, so LIST has
+    # to put the keyword back and the text through untouched. A program
+    # listing itself is the round trip end to end: typed, tokenised,
+    # stored, detokenised.
+    ("LIST gives a REM back exactly as it was typed",
+     ["10 REM SIX * SEVEN = 42", "20 LIST", "30 END"],
+     "10 REM SIX * SEVEN = 42"),
+
     ("FOR and NEXT",
      ["10 FOR I = 1 TO 5", "20 S = S + I", "30 NEXT I",
       "40 PRINT S", "50 END"], "15"),
@@ -227,8 +265,16 @@ def breaks_out(code, syms):
     M.type("\x1b[B" * 29, chunk=3)
     M.type("\x1b[H", chunk=3)
     M.m.type("RUN\r")
-    for _ in range(1_500_000):   # typed, read, and looping
-        M.m.tick()
+    # **One server-side run, not a Python tick loop.** This was
+    # `for _ in range(1_500_000): M.m.tick()`: a round trip per
+    # instruction across the machine's process boundary, which is the
+    # one thing AGENTS.md says that boundary cannot afford. On its own
+    # it was 90s of this suite's 101s, and it bought nothing the run
+    # below does not -- nothing was being watched, the program was just
+    # being let spin. Three million cycles is twenty vertical blanks:
+    # long enough for the typed RUN to reach the ring, be parsed, and
+    # for the program to be going round its GOTO when the break lands.
+    M.m.run(cycles=3_000_000)
     M.m.uart.feed(b"")
     M.settle(40_000_000)
     return M
@@ -406,9 +452,7 @@ def main():
     check(shows(M, "42"), "INPUT takes a number typed at a waiting program",
           " | ".join(r.strip() for r in M.screen() if r.strip())[:100])
 
-    print()
-    print("PASS" if not FAILS else f"FAIL -- {len(FAILS)}")
-    return 0 if not FAILS else 1
+    return H.report()
 
 
 if __name__ == "__main__":

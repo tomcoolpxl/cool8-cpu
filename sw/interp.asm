@@ -80,7 +80,7 @@ K_NUM   = $A4                   ; a binary literal: two bytes follow
 
 T_LIT   = $A4                   ; the stored-number marker, as
                                 ;   sw/basic.bas CONSTs it
-NTOK    = 69                    ; $80..$C4 -- graphics, sound, and the
+NTOK    = 70                    ; $80..$C5 -- graphics, sound, and the
                                 ; language round-out, all appended
 K_STEP  = $B3
 K_DATA  = $B0
@@ -632,6 +632,15 @@ stmt:
 .open:  CALL openline
         JMP  stmt
 .more:
+        ; An apostrophe comment is stored as itself -- it is
+        ; punctuation, so it gets no token -- and everything below $80
+        ; is an assignment as far as the dispatch below is concerned.
+        ; Sending it to h_rem here is what keeps `' like this` from
+        ; being parsed as a variable named `'`.
+        CMP  R2,#$27
+        BNE  .nc
+        JMP  h_rem
+.nc:
         CMP  R2,#$80            ; below $80 it is a name: an assignment
         BCS  .tok               ; (the fifth time this branch has gone
         JMP  h_let              ;  out of range: a JMP, once and for all)
@@ -726,7 +735,26 @@ sttab:
         .word h_dir             ; $C1 DIR
         .word h_era             ; $C2 ERA
         .word h_compact         ; $C3 COMPACT
-        .word h_drive           ; $C4 DRIVE -- the last token
+        .word h_drive           ; $C4 DRIVE
+        .word h_rem             ; $C5 REM -- the last token
+
+; ---------------------------------------------------------------------
+; REM, and the apostrophe stmt sends here: a comment.
+;
+; The tokeniser stores the text verbatim after the marker, so there is
+; nothing here to interpret -- walk to the record's terminator and let
+; the statement loop do what it already does with the end of a line.
+;
+; **Raw bytes, not skiptok.** A comment may contain a quote, and
+; skiptok would take it for the start of a string and run past the
+; terminator looking for the close.
+; ---------------------------------------------------------------------
+h_rem:  LD   R2,[Y]
+        TST  R2
+        BEQ  .out
+        INCW Y
+        BRA  h_rem
+.out:   JMP  stmt
 
 h_end:  MOV  R0,#E_DONE         ; a clean stop, not an error
         ST   [ERR],R0
