@@ -126,9 +126,46 @@ def main():
           "and RUN, typed the same way, prints its answer",
           " | ".join(r.strip() for r in m.text() if r.strip())[:120])
 
+    # ---- the restart chords (D54)
+    #
+    # Raw scancodes, because that is what the chords are: the keyboard
+    # decodes them before anything software could, and `m.key()` would
+    # go through sw/keymap.asm and produce characters instead.
+    #
+    # First the machine is put in the state a program leaves behind --
+    # mode 4, a bitmap the editor cannot be read on -- because that is
+    # what a restart is for.
     print()
-    print("PASS" if not FAILS else f"FAIL -- {len(FAILS)}")
-    return 0 if not FAILS else 1
+    key(m, syms, "MODE 4\r")
+    check(m.bus.read(0xFE10) & 0x0F == 4, "a program leaves mode 4 behind",
+          "VID_MODE=$%02X" % m.bus.read(0xFE10))
+
+    m.scancode([0x14, 0x76, 0xF0, 0x76, 0xF0, 0x14])       # Ctrl+Esc
+    settle(m, syms)
+    check(m.bus.read(0xFE10) & 0x0F == 0,
+          "Ctrl+Esc puts the editor back in mode 0",
+          "VID_MODE=$%02X" % m.bus.read(0xFE10))
+    key(m, syms, "LIST\r")
+    check(any("PRINT 6 * 7" in r for r in m.text()),
+          "...and the warm restart kept the program",
+          " | ".join(r.strip() for r in m.text() if r.strip())[:120])
+
+    # Cold: the keyboard resets the machine itself, so this is the whole
+    # boot path again -- ROM, autoboot, the stub -- and the program is
+    # gone because BASIC's init wipes user RAM on the way up.
+    m.scancode([0x14, 0x12, 0x76, 0xF0, 0x76, 0xF0, 0x12, 0xF0, 0x14])
+    for _ in range(90):
+        m.run_frame()
+    check(m.shows("COOLBASIC 1.0"),
+          "Ctrl+Shift+Esc reboots the machine from flash",
+          " | ".join(r.strip() for r in m.text() if r.strip())[:120])
+    settle(m, syms)
+    key(m, syms, "LIST\r")
+    check(not any("PRINT 6 * 7" in r for r in m.text()),
+          "...and the cold restart took the program with it",
+          " | ".join(r.strip() for r in m.text() if r.strip())[:120])
+
+    return H.report()
 
 
 if __name__ == "__main__":
