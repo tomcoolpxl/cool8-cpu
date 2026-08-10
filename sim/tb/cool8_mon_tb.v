@@ -28,6 +28,16 @@
 
 module cool8_mon_tb;
 
+    // **115200 is not just the shipping number here, it is the fastest
+    // this test can go.** Running the console faster to shorten the
+    // simulation was tried at div 7 -- 80 clocks a character -- and the
+    // machine could not keep up: the monitor reads a byte, echoes it
+    // and stores it, which costs more clocks than that, so a typed line
+    // outran the 16-byte FIFO and arrived shredded (`D 05` followed by
+    // the next command). The host may not send faster than the monitor
+    // can turn a character around, and at 730 clocks it comfortably
+    // can. What made this suite slow was the timeout below, not the
+    // wire.
     localparam integer DIV0 = 72;          // 115200 at 8.375 MHz
     localparam integer HP   = 400;         // system clocks per PS/2 half period
 
@@ -88,7 +98,7 @@ module cool8_mon_tb;
     always #5 clk = ~clk;
     always #2.39 pclk = ~pclk;
 
-    cool8_soc u_soc (
+    cool8_soc #(.UART_DIV(DIV0[15:0])) u_soc (
         .clk(clk), .rst_n(rst_n),
         .pclk(pclk), .prst_n(rst_n),
         .uart_rx(host_tx), .uart_tx(uart_tx),
@@ -261,7 +271,18 @@ module cool8_mon_tb;
             k = 0;
             hit = -1;
             scanned = rxq_rd;
-            while (hit < 0 && k < 3000000) begin
+            // The patience is what a *failure* costs: nothing here
+            // waits on a clock, it waits on the machine having said
+            // something, so the bound is only reached when the answer
+            // is never coming. At three million it was five and a half
+            // minutes of simulation per failing check, which is most of
+            // why this suite took nine. The longest legitimate answer
+            // is a full D dump: eight rows of sixteen bytes as hex and
+            // ASCII is about 800 characters, and a character is 730
+            // clocks at the divider above -- 584,000. One million keeps
+            // the real worst case comfortable and costs a failure two
+            // minutes instead of five and a half.
+            while (hit < 0 && k < 1000000) begin
                 while (scanned + patlen <= rxq_wr && hit < 0) begin
                     j = 0;
                     while (j < patlen && rxq[scanned + j] === pat[j])

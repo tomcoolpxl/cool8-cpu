@@ -381,7 +381,27 @@ module cool8_soc #(
             rx_settle <= 1'b0;
         end else begin
             rx_head   <= rxq[rx_rd[RX_ABITS-1:0]];
-            rx_settle <= rx_pop | rx_push;
+            // `rx_settle` hides the cycle in which `rx_head` is not yet
+            // the byte at `rx_rd`, and only two things can put it in
+            // that state: a pop, which moves `rx_rd`, and a push into
+            // an **empty** FIFO, which writes the entry `rx_head` is
+            // already pointing at. A push into a FIFO that is not empty
+            // lands at `rx_wr`, which is not `rx_rd`, and leaves
+            // `rx_head` alone.
+            //
+            // Settling on that push too cost a character. It drops
+            // `rx_avail` for a cycle, and `rx_pop` is gated on
+            // `rx_avail` -- so a read of UART_DATA landing in that
+            // cycle returned the right byte and did not advance the
+            // pointer, and the next read handed the same byte out
+            // again. Software cannot avoid it: the poll of UART_STAT
+            // said "ready" and the byte that arrived in between is what
+            // suppressed the pop. It needs a byte to arrive in the one
+            // cycle a read is launched, so it showed up as an
+            // occasional doubled character at 115200 and vanished at
+            // other baud rates -- `E 0500 A5 5A` typed, `A55 5A` echoed
+            // and $55 stored.
+            rx_settle <= rx_pop | (rx_push & (rx_wr == rx_rd));
 
             if (rx_pop) rx_rd <= rx_rd + 1'b1;
             // Write 1 to bit 2 of UART_STAT to acknowledge an overrun,
