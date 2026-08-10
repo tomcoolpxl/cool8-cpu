@@ -40,7 +40,7 @@ sys.path.insert(0, HERE)
 
 sys.path.insert(0, os.path.join(ROOT, "tools"))
 
-import cosim                                    # noqa: E402
+import toolchain as T                                    # noqa: E402
 import mkfont                                   # noqa: E402
 
 VGA = os.path.join(ROOT, "rtl", "soc", "cool8_vga.v")
@@ -144,8 +144,8 @@ def main():
     os.makedirs(BUILD, exist_ok=True)
     ok = True
 
-    vvp = cosim._build("cool8_vga_tb", TB, [VGA])
-    r = subprocess.run([cosim._tool("vvp"), vvp, "+frame=frame.hex"],
+    vvp = T.build("cool8_vga_tb", TB, [VGA])
+    r = subprocess.run([T.tool("vvp"), vvp, "+frame=frame.hex"],
                        cwd=BUILD, capture_output=True, text=True)
     out = r.stdout + r.stderr
     good = "\nPASS" in out
@@ -176,8 +176,8 @@ def main():
     print(f"    {present}/256 CP437 glyphs from a {fb[0]}x{fb[1]} box, "
           f"{blank} blank")
 
-    vvp = cosim._build("cool8_video_tb", VIDEO_TB,
-                       VIDEO + [cosim.ice40_cells()], gen="2012")
+    vvp = T.build("cool8_video_tb", VIDEO_TB,
+                       VIDEO + [T.cells()], gen="2012")
 
     # One process per phase, all at once.
     #
@@ -197,7 +197,7 @@ def main():
     # tiles.png used to need a second full sweep of all sixteen.
     jobs = []
     for ph in range(N_PHASES):
-        argv = [cosim._tool("vvp"), vvp, f"+from={ph}", f"+to={ph}"]
+        argv = [T.tool("vvp"), vvp, f"+from={ph}", f"+to={ph}"]
         if ph in FRAME_DUMPS:
             argv += [f"+frame={FRAME_DUMPS[ph]}", f"+which={ph}"]
         jobs.append((ph, subprocess.Popen(argv, cwd=BUILD,

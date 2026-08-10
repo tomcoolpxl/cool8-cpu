@@ -4,7 +4,7 @@ speaker, at full speed with the scanline renderer.
 
     python tools/cool8rsrun.py            # boot to BASIC off a disk image
     python tools/cool8rsrun.py --monitor  # just the boot ROM
-    (or: npm run emu:rust)
+    (or: poe emu)
 
 This is the launcher, not the emulator: it builds the assets the
 runner needs — the boot ROM, the font, and a flash image with BASIC on
@@ -32,36 +32,28 @@ EXE = os.path.join(ROOT, "rust", "target", "release",
 
 
 def basic_image():
-    """A flash image with BOOT.BIN on volume 0 — the path a board runs,
-    built with the ordinary tools (was the parity suite's helper, which
-    retired with the parity suite)."""
-    import cool8disk as disk
-    import mkboot
-    sys.path.insert(0, os.path.join(ROOT, "sim"))
-    import test_basic as B
+    """The disk on the shelf: `build/cool8.img`, whatever is in it.
 
-    code, _ = B.build()
-    boot = mkboot.build(code, dest=0xA000, build_dir=BUILD)
-    img = os.path.join(BUILD, "rs_boot.img")
-    if os.path.exists(img):
-        os.remove(img)
-    image = disk.Image(img, create=True)
-    v = disk.Volume(image, 0)
-    v.format("SYSTEM")
-    p = os.path.join(BUILD, "BOOT.BIN")
-    with open(p, "wb") as fh:
-        fh.write(boot)
-    v.add(p, "BOOT.BIN")
-    image.save()
-    return img
+    **This runs what is there and builds nothing.** `poe disk` builds
+    the image and `poe emu` boots it — two commands, because a launcher
+    that decides for itself when to rebuild needs a rule about when a
+    source counts as newer, and that rule is exactly the thing that
+    quietly boots a stale image one day. One disk builder either way:
+    `tools/flash.py` makes this image for the board too.
+    """
+    import flash
+    if not os.path.exists(flash.DISK):
+        sys.exit("no %s -- run `poe disk` to build it (or pass --flash)"
+                 % os.path.relpath(flash.DISK, ROOT))
+    return flash.DISK
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--monitor", action="store_true",
                     help="boot ROM only: no flash image, no BASIC")
-    ap.add_argument("--flash", help="use this flash image instead of "
-                                    "building one with BASIC on it")
+    ap.add_argument("--flash", help="boot this flash image instead of "
+                                    "build/cool8.img")
     args = ap.parse_args()
 
     if not shutil.which("cargo"):

@@ -36,6 +36,9 @@ between sessions, it is worth a commit.
 2. **Profile before optimising**, and report the number afterwards —
    including when it got worse (§"Debug and measure with the tooling").
 3. **Report the size at every milestone**, not at the end.
+4. **Investigate through the harness and the tooling — never a
+   throwaway script.** The section below is not advice; it is how work
+   is done here.
 
 | Document | Owns, and is normative for |
 |---|---|
@@ -153,6 +156,64 @@ It is a 16 KB ROM disassembly, so ask it a narrow question; a broad one
 gets a summary that misses the answer. If something cannot be reached,
 say it was not confirmed rather than filling it in from memory.
 
+## Every investigation goes through the harness. No exceptions.
+
+**`sim/harness.py` and the Machine API are how you look at this
+machine — in a test, in a one-off experiment, in a five-minute "let me
+just check something".** There is no second way, and reaching for one
+is the mistake this project has paid for most often.
+
+```python
+import harness as H
+
+code, syms = H.build_bas("basic.bas")     # compile + assemble + symbols
+m = vm.Machine()                          # or H-built drivers, see below
+H.check(m.shows("42"), "RUN prints its answer")
+return H.report()
+```
+
+| you want | use | not |
+|---|---|---|
+| BASIC compiled and assembled | `H.build_bas`, `H.compile_bas` | your own `subprocess` to `cool8asm.py` |
+| assembly text built | `H.assemble_text`, `H.assemble` | the same, again |
+| assembly that *should* fail | `H.try_assemble` → `(None, why)` | catching a non-zero exit |
+| a pass/fail line and an exit code | `H.check`, `H.report` | a fourteenth copy of `check()` |
+| paths | `H.ROOT`, `H.BUILD`, `H.SW` | a fresh `HERE`/`ROOT` preamble |
+| the iverilog toolchain | `sim/toolchain.py` — `T.tool`, `T.build`, `T.run`, `T.cells`, `T.CORE` | reaching into `cosim`'s privates |
+
+**Why this is a rule and not a preference.** Every one of those had
+between six and thirteen copies, and copies drift silently: the
+project has already lost rounds to a harness with its own stepping
+loop that could not deliver an interrupt, a harness that read the
+screen where the editor *wrote* rather than where the display pointed,
+and a gate that compared two programs against a third, private model
+of the I/O page. A private copy is not a shortcut, it is a second
+implementation nobody is checking.
+
+**A throwaway script also throws away the finding.** If a run is worth
+tracing twice, it belongs in the suite that already builds and runs
+the image — `sim/test_interp.py`, `sim/test_asm.py`, `sim/test_run.py`
+— so the next regression is caught rather than re-diagnosed. Adding a
+case there is usually three lines, because the harness is already
+holding the machine.
+
+**Reach for the tooling at the *first* sign of a fault, not the
+tenth.** `m.trace()`/`m.run(until=…)` say what the machine did;
+`m.profile_start()`/`m.profile_cycles()` say where the clocks went;
+`m.sp_min()` says how deep the stack got; `sim/dbg.py` says whether
+every `RET` found its `CALL`. Bisecting by re-running variant programs
+and squinting at the screen is the ad-hoc stepping loop wearing a
+different hat — it cost a round on the keyboard work before one
+`m.trace()` call showed the machine had simply already finished.
+[docs/10-debugging.md](docs/10-debugging.md) is the full tour and is
+normative for the tooling.
+
+**If the API cannot answer the question, extend it** — `key`,
+`scancode`, `settle`, the profiler and the SP watermark all exist
+because the question came up and the answer was not there. Extending
+`sim/harness.py` or the `+serve` protocol in `rust/src/main.rs` is the
+supported move; a local loop is not.
+
 ## The machine is the Machine API. Drive it through its API.
 
 **Every software test runs on the Machine API, and nothing reimplements
@@ -227,15 +288,6 @@ it — the rule [docs/10-debugging.md](docs/10-debugging.md) §3 exists for.
 `sim/test_basic.py` once reached into a renderer's private address
 helper, and every new harness copied it.
 
-**Do not bisect by re-running variant programs and reading the screen.**
-That is the ad-hoc stepping loop wearing a different hat: it answers
-slowly, it answers about the wrong thing as often as not, and it throws
-the finding away. It cost a round on the keyboard work before one
-`m.trace()` call showed the machine had simply already finished. Reach
-for the API at the *first* sign of a fault. **If the API cannot answer
-the question, extend `Machine`** — `key`, `scancode` and `trace` all
-exist because the question came up and the answer was not there.
-
 **`sim/dbg.py` still owns the structural checks**, and they are a
 different job: exact disassembly decoded forward from a label, a shadow
 call stack that pairs every `RET` with its `CALL`, the SP-neutrality
@@ -250,12 +302,6 @@ went into the expression evaluator at 16 % of a run while the line
 machinery was 48 %. A 256-byte lookup table built on an estimate of 10 %
 bought 2 %. `python tools/cool8asm.py <file> --pressure` is the same
 question for bytes.
-
-**A throwaway script also throws away the finding.** If a run is worth
-tracing twice, the case belongs in the suite that already builds and
-runs the image — `sim/test_interp.py`, `sim/test_asm.py`,
-`sim/test_run.py` — so the next regression is caught rather than
-re-diagnosed.
 
 ## The verification contract
 
@@ -281,6 +327,15 @@ Easy to get wrong:
   the trace is byte-identical to a run without one. Keep it that way.
 
 ## Traps already hit here
+
+- **A private copy of a shared thing is a second implementation.**
+  `check()` had thirteen identical copies, the compile-assemble-symbols
+  pipeline six, the paths preamble twenty-six, and `sim/test_lib.py`
+  carried a whole private model of the I/O page so it could fake a
+  vblank flag — which meant its gate compared two programs against a
+  third machine nobody was checking, and it measured nothing for a
+  year. Use `sim/harness.py` and `sim/toolchain.py`; extend them when
+  they fall short.
 
 - **Verilog-2001 requires declarations before use.** Icarus rejects a
   testbench referring to a `reg` declared further down. Declare

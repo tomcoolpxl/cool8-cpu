@@ -31,45 +31,28 @@ it shifted is noise.
 
 import os
 import re
-import subprocess
 import sys
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-ROOT = os.path.dirname(HERE)
-BUILD = os.environ.get("COOL8_BUILD") or os.path.join(HERE, "build")
-sys.path.insert(0, os.path.join(ROOT, "tools"))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+import harness as H                                      # noqa: E402
+
+sys.path.insert(0, os.path.join(H.ROOT, "tools"))
 
 import cool8rsvm as vm                                   # noqa: E402
-import cool8bas as bas                                   # noqa: E402
 import opcodes                                           # noqa: E402
+
+ROOT, BUILD = H.ROOT, H.BUILD
 
 
 class Image:
     """A compiled driver, with its symbols and an exact instruction map."""
 
     def __init__(self, source, org=0x0200, name="dbg"):
-        asm = bas.compile_source(source, org)
+        self.code, self.sym = H.compile_bas(source, name, org=org)
         apath = os.path.join(BUILD, name + ".asm")
-        with open(apath, "w") as fh:
-            fh.write(asm)
-        out = os.path.join(BUILD, name + ".bin")
-        sym = os.path.join(BUILD, name + ".sym")
-        r = subprocess.run([sys.executable,
-                            os.path.join(ROOT, "tools", "cool8asm.py"),
-                            apath, "-o", out, "--symbols", sym,
-                            "-I", os.path.join(ROOT, "sw")],
-                           capture_output=True, text=True)
-        if r.returncode != 0:
-            raise SystemExit(r.stdout + r.stderr)
-        with open(out, "rb") as fh:
-            self.code = fh.read()
         self.org = org
         self.end = org + len(self.code)
-        self.sym = {}
-        for line in open(sym):
-            p = line.split()
-            if len(p) == 2:
-                self.sym[p[1]] = int(p[0], 16)
         self.addr = sorted((a, n) for n, a in self.sym.items())
         # How wide each variable is, from the .res directives -- the
         # symbol table gives addresses but not sizes, and guessing them

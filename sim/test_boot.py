@@ -38,13 +38,12 @@ BUILD = os.environ.get("COOL8_BUILD") or os.path.join(HERE, "build")
 sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.join(ROOT, "tools"))
 
-import cosim                                   # noqa: E402
+import toolchain as T                                   # noqa: E402
 import mkrom                                   # noqa: E402
 
 SOC = [os.path.join(ROOT, "rtl", "soc", f)
        for f in ("cool8_rom.v", "cool8_spram.v", "cool8_mem.v")]
-CORE = [os.path.join(ROOT, "rtl", "core", f)
-        for f in ("cool8_alu.v", "cool8_agu.v", "cool8_core.v")]
+CORE = T.CORE
 TB = os.path.join(HERE, "tb")
 
 BOOT_ASM = os.path.join(ROOT, "sw", "boot.asm")
@@ -53,7 +52,7 @@ ROM_SYN = os.path.join(BUILD, "cool8_rom_syn.v")
 
 
 def run(vvp, args, cwd=None):
-    r = subprocess.run([cosim._tool("vvp"), vvp] + args, cwd=cwd,
+    r = subprocess.run([T.tool("vvp"), vvp] + args, cwd=cwd,
                        capture_output=True, text=True)
     return "\nPASS" in r.stdout, r.stdout + r.stderr
 
@@ -68,12 +67,12 @@ def report(name, ok, out, detail=()):
 
 def synth_rom():
     """Map cool8_rom to iCE40 cells and write the netlist out."""
-    cells = cosim.ice40_cells()
+    cells = T.cells()
     script = (f'read_verilog -lib "{cells}"; '
               f'read_verilog "{SOC[0]}"; '
               f'synth_ice40 -top cool8_rom -flatten; '
               f'write_verilog -noattr "{ROM_SYN}"')
-    r = subprocess.run([cosim._tool("yosys"), "-q", "-p", script],
+    r = subprocess.run([T.tool("yosys"), "-q", "-p", script],
                        cwd=BUILD, capture_output=True, text=True)
     if r.returncode != 0:
         print(r.stdout, r.stderr)
@@ -104,29 +103,29 @@ def main():
     import cool8asm                              # noqa: E402
     monitor_at = cool8asm.assemble(BOOT_ASM).syms["monitor"]
 
-    cells = cosim.ice40_cells()
+    cells = T.cells()
     ok = True
 
-    vvp = cosim._build("cool8_rom_tb", os.path.join(TB, "cool8_rom_tb.v"),
+    vvp = T.build("cool8_rom_tb", os.path.join(TB, "cool8_rom_tb.v"),
                        [SOC[0], cells], gen="2012")
     good, out = run(vvp, ["+expect=boot.hex"], cwd=BUILD)
     ok &= report("ROM image, RTL", good, out, ["bytes read back"])
 
     if not args.skip_netlist:
         blocks = synth_rom()
-        vvp = cosim._build("cool8_rom_syn_tb",
+        vvp = T.build("cool8_rom_syn_tb",
                            os.path.join(TB, "cool8_rom_tb.v"),
                            [ROM_SYN, cells], gen="2012")
         good, out = run(vvp, ["+expect=boot.hex"], cwd=BUILD)
         ok &= report(f"ROM image, netlist ({blocks} EBR blocks)", good, out,
                      ["bytes read back"])
 
-    vvp = cosim._build("cool8_mem_tb", os.path.join(TB, "cool8_mem_tb.v"),
+    vvp = T.build("cool8_mem_tb", os.path.join(TB, "cool8_mem_tb.v"),
                        SOC + [cells], gen="2012")
     good, out = run(vvp, ["+verbose"] if args.verbose else [])
     ok &= report("the overlay", good, out, ["checks,"])
 
-    vvp = cosim._build("cool8_boot_tb", os.path.join(TB, "cool8_boot_tb.v"),
+    vvp = T.build("cool8_boot_tb", os.path.join(TB, "cool8_boot_tb.v"),
                        SOC + CORE + [cells], gen="2012")
     good, out = run(vvp, [f"+rom={ROM_HEX}", f"+stopat={monitor_at:04x}"])
     ok &= report("booting, cold and through BOOTRAM", good, out,

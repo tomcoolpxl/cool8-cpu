@@ -21,23 +21,18 @@ assuming where it is -- the rule docs/10-debugging.md was written about.
 import os
 import sys
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-ROOT = os.path.dirname(HERE)
-sys.path.insert(0, HERE)
-sys.path.insert(0, os.path.join(ROOT, "tools"))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+import harness as H                                      # noqa: E402
+from harness import check                                # noqa: E402
+
+sys.path.insert(0, os.path.join(H.ROOT, "tools"))
 
 import test_basic as B                                     # noqa: E402
 
-FAILS = []
+ROOT = H.ROOT
 
-
-def check(ok, what, detail=""):
-    print(f"  {what:<52} {'ok' if ok else 'FAIL'}")
-    if not ok:
-        FAILS.append(what)
-        if detail:
-            print("    " + detail)
-    return ok
+FAILS = H.FAILS
 
 
 def run(code, syms, lines, budget=200_000_000):

@@ -42,7 +42,7 @@ BUILD = os.environ.get("COOL8_BUILD") or os.path.join(HERE, "build")
 sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.join(ROOT, "tools"))
 
-import cosim                                    # noqa: E402
+import toolchain as T                                    # noqa: E402
 import cool8asm                                 # noqa: E402
 import mkrom                                    # noqa: E402
 import mkfont                                   # noqa: E402
@@ -56,8 +56,7 @@ SOC = [os.path.join(ROOT, "rtl", "soc", f)
                  "cool8_ps2.v", "cool8_flash.v", "cool8_snd.v",
                  "cool8_video.v", "cool8_soc.v",
                  "cool8_top.v")]
-CORE = [os.path.join(ROOT, "rtl", "core", f)
-        for f in ("cool8_alu.v", "cool8_agu.v", "cool8_core.v")]
+CORE = T.CORE
 TB = os.path.join(HERE, "tb")
 ASM = os.path.join(HERE, "asm")
 
@@ -65,7 +64,7 @@ PROGS = ("led", "echo", "talk", "tx2")
 
 
 def run(vvp, args, cwd=None):
-    r = subprocess.run([cosim._tool("vvp"), vvp] + args, cwd=cwd,
+    r = subprocess.run([T.tool("vvp"), vvp] + args, cwd=cwd,
                        capture_output=True, text=True)
     return "\nPASS" in r.stdout, r.stdout + r.stderr
 
@@ -100,7 +99,7 @@ def build_progs():
 
 
 def yosys(script, quiet=True):
-    cmd = [cosim._tool("yosys")] + (["-q"] if quiet else []) + ["-p", script]
+    cmd = [T.tool("yosys")] + (["-q"] if quiet else []) + ["-p", script]
     r = subprocess.run(cmd, cwd=BUILD, capture_output=True, text=True)
     return r.returncode, r.stdout + r.stderr
 
@@ -112,7 +111,7 @@ def synth():
     at elaboration and yosys resolves that against its working directory.
     """
     read = "; ".join(
-        [f'read_verilog -lib "{cosim.ice40_cells()}"'] +
+        [f'read_verilog -lib "{T.cells()}"'] +
         [f'read_verilog "{f}"' for f in SOC + CORE])
 
     rc, out = yosys(f"{read}; hierarchy -check -top cool8_soc; proc; opt; "
@@ -166,23 +165,23 @@ def main():
         for b in font:
             fh.write("%02x\n" % b)
 
-    cells = cosim.ice40_cells()
+    cells = T.cells()
     ok = True
 
-    vvp = cosim._build("cool8_soc_tb", os.path.join(TB, "cool8_soc_tb.v"),
+    vvp = T.build("cool8_soc_tb", os.path.join(TB, "cool8_soc_tb.v"),
                        SOC + CORE + [cells], gen="2012")
     good, out = run(vvp, (["+verbose"] if args.verbose else []) +
                     [f"+{n}=prog_{n}.hex" for n in PROGS], cwd=BUILD)
     ok &= report("the I/O page", good, out, ["checks,"])
 
-    vvp = cosim._build("cool8_top_tb", os.path.join(TB, "cool8_top_tb.v"),
+    vvp = T.build("cool8_top_tb", os.path.join(TB, "cool8_top_tb.v"),
                        SOC + CORE + [cells], gen="2012")
     good, out = run(vvp, [], cwd=BUILD)
     ok &= report("the board wrapper: reset, pins, polarity", good, out,
                  ["checks,"])
 
     if not args.skip_boot:
-        vvp = cosim._build("cool8_soc_boot_tb",
+        vvp = T.build("cool8_soc_boot_tb",
                            os.path.join(TB, "cool8_soc_boot_tb.v"),
                            SOC + CORE + [cells], gen="2012")
         good, out = run(vvp, [], cwd=BUILD)

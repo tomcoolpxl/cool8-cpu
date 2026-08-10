@@ -32,14 +32,14 @@ RTL = [os.path.join(CORE, f)
        for f in ("cool8_alu.v", "cool8_agu.v", "cool8_core.v")]
 
 sys.path.insert(0, HERE)
-import cosim                                             # noqa: E402
+import toolchain as T                                             # noqa: E402
 
 
 def yosys(script):
     # cosim._tool also puts the suite's own directories on PATH, which
     # the toolchain's executables need to load their libraries. Finding
     # the binary is not the same as being able to run it.
-    exe = cosim._tool("yosys")
+    exe = T.tool("yosys")
     r = subprocess.run([exe, "-p", script], capture_output=True, text=True)
     if r.returncode != 0:
         print(r.stdout)

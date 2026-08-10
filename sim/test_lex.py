@@ -23,23 +23,24 @@ code generator.
 """
 
 import os
-import subprocess
 import sys
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-ROOT = os.path.dirname(HERE)
-BUILD = os.environ.get("COOL8_BUILD") or os.path.join(HERE, "build")
-os.makedirs(BUILD, exist_ok=True)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-sys.path.insert(0, os.path.join(ROOT, "tools"))
+import harness as H                                      # noqa: E402
+from harness import check                                # noqa: E402
+
+sys.path.insert(0, os.path.join(H.ROOT, "tools"))
 
 import cool8rsvm as vm                                   # noqa: E402
 import cool8bas as bas                                   # noqa: E402
 
+ROOT, BUILD = H.ROOT, H.BUILD
+
 ORG = 0x0200
 PROG = 0x4000           # the stored program the driver lexes
 OUT = 0x6000            # where the driver writes what it found
-FAILS = []
+FAILS = H.FAILS
 
 T_EOF, T_NL, T_NUM, T_NAME, T_STR, T_OP = range(6)
 
@@ -64,14 +65,6 @@ PRINT "hi there"
 CALL sub_a(x9, 3)
 """
 
-
-def check(ok, what, detail=""):
-    print(f"  {what:<52} {'ok' if ok else 'FAIL'}")
-    if not ok:
-        FAILS.append(what)
-        if detail:
-            print("    " + detail)
-    return ok
 
 
 def keyword_bytes():
@@ -211,19 +204,8 @@ def main():
     lines = SOURCE.splitlines()
     stored = store(lines, kw)
 
-    asm = bas.compile_source(DRIVER.replace("{size}", str(len(stored))), ORG)
-    apath = os.path.join(BUILD, "lex_drv.asm")
-    with open(apath, "w") as fh:
-        fh.write(asm)
-    out = os.path.join(BUILD, "lex_drv.bin")
-    r = subprocess.run([sys.executable,
-                        os.path.join(ROOT, "tools", "cool8asm.py"), apath,
-                        "-o", out, "-I", os.path.join(ROOT, "sw")],
-                       capture_output=True, text=True)
-    if r.returncode != 0:
-        print(r.stdout + r.stderr)
-        raise SystemExit("the driver would not compile")
-    code = open(out, "rb").read()
+    code, _ = H.compile_bas(DRIVER.replace("{size}", str(len(stored))),
+                            "lex_drv", org=ORG)
     print(f"  driver + lexer: {len(code):,} bytes, "
           f"{len(stored):,} bytes of stored program")
 

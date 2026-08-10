@@ -28,8 +28,9 @@ sys.path.insert(0, HERE)
 import opcodes                                  # noqa: E402
 import progen                                   # noqa: E402
 import cosim                                    # noqa: E402
+import toolchain as T                                    # noqa: E402
 
-BUILD = cosim.BUILD
+BUILD = T.BUILD
 
 
 def measure():
@@ -39,7 +40,7 @@ def measure():
     progen.write_hex(mem, hexf)
     cycf = os.path.join(BUILD, "timing.cyc")
     vvp = cosim.build_sim()
-    cosim.run_sim(vvp, [f"+hex={hexf}", f"+cyc={cycf}", "+ws=0",
+    T.run(vvp, [f"+hex={hexf}", f"+cyc={cycf}", "+ws=0",
                         "+maxcycles=4000000"])
 
     # Each line is the PC and the clock at which one instruction retired.

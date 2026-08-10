@@ -61,11 +61,15 @@ poe disk
 ```
 
 ```bash
-poe emu --flash build/cool8.img
+poe emu
 ```
 
 `disk` builds `build/cool8.img`, a flash image with BASIC installed;
-`emu` boots it in a window. In the window:
+`emu` boots it in a window. Two commands, not one: building is
+explicit, so `emu` always boots exactly the image on the shelf and
+never decides for itself that your last edit did not need rebuilding.
+(`--flash other.img` boots one you already have; `--monitor` boots the
+ROM alone with no disk.) In the window:
 
 - **Typing** arrives exactly as typed, on any keyboard layout; held keys
   repeat.

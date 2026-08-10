@@ -17,35 +17,27 @@ typed rather than a plausible-looking corruption of it.
 """
 
 import os
-import subprocess
 import sys
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-ROOT = os.path.dirname(HERE)
-BUILD = os.environ.get("COOL8_BUILD") or os.path.join(HERE, "build")
-os.makedirs(BUILD, exist_ok=True)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-sys.path.insert(0, os.path.join(ROOT, "tools"))
-sys.path.insert(0, HERE)
+import harness as H                                      # noqa: E402
+from harness import check                                # noqa: E402
+
+sys.path.insert(0, os.path.join(H.ROOT, "tools"))
 
 import cool8rsvm as vm                                    # noqa: E402
 import test_interp as T                                   # noqa: E402
 
+ROOT, BUILD = H.ROOT, H.BUILD
+
 CODE = 0x0200
 OUT = 0x7000
-FAILS = []
+FAILS = H.FAILS
 
 # Page 0, mirroring sw/asm.asm.
 ACH, AKLEN, AVAL = 0x00E0, 0x00E3, 0x00E5
 
-
-def check(ok, what, detail=""):
-    print(f"  {what:<52} {'ok' if ok else 'FAIL'}")
-    if not ok:
-        FAILS.append(what)
-        if detail:
-            print("    " + detail)
-    return ok
 
 
 # ---------------------------------------------------------------------
@@ -390,19 +382,17 @@ def asmprog(lines):
 
 
 def reference(lines):
-    """The same text through tools/cool8asm.py."""
+    """The same text through tools/cool8asm.py.
+
+    A refusal is a result here, not a failure: half these cases exist to
+    check that both assemblers reject the same thing, so this uses the
+    non-fatal form and hands the complaint back.
+    """
     path = os.path.join(BUILD, "ta_ref.asm")
     with open(path, "w") as fh:
         fh.write(f"        .org ${ORG:04X}\n" + "\n".join(lines) + "\n")
-    out = os.path.join(BUILD, "ta_ref.bin")
-    r = subprocess.run([sys.executable,
-                        os.path.join(ROOT, "tools", "cool8asm.py"), path,
-                        "-o", out, "-I", os.path.join(ROOT, "sw")],
-                       capture_output=True, text=True)
-    if r.returncode != 0:
-        return None, (r.stdout + r.stderr).strip()
-    with open(out, "rb") as fh:
-        return fh.read(), None
+    code, rest = H.try_assemble(path)
+    return (code, None) if code is not None else (None, str(rest).strip())
 
 
 def machine(code, syms, lines, budget=2_000_000):

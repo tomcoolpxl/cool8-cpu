@@ -150,6 +150,11 @@ run = "sim/test_fs.py"
 about = "the filesystem, both implementations"
 
 [[tool.cool8.jobs.sw]]
+id = "lib"
+run = "sim/test_lib.py"
+about = "M14 -- sw/demo.bas against sw/demo.asm: work per frame, within 2x"
+
+[[tool.cool8.jobs.sw]]
 id = "bas"
 run = "sim/test_bas.py"
 about = "the code-size gate: within 15% of hand-written"
@@ -206,6 +211,11 @@ id = "video"
 run = "sim/test_video.py"
 about = "every mode, every visible pixel"
 slow = true
+
+[[tool.cool8.jobs.rtl]]
+id = "snd"
+run = "sim/test_snd.py"
+about = "the sound engine, and the level stream sim/test_vm.py gates against"
 
 [[tool.cool8.jobs.rtl]]
 id = "vram"

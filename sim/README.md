@@ -2,6 +2,11 @@
 
 Testbenches and co-simulation harnesses.
 
+`harness.py` builds and checks for every software suite; `toolchain.py`
+finds and drives iverilog and yosys for every RTL one. Use them — a
+suite that rolls its own is a second implementation (AGENTS.md,
+standing rule 4).
+
 The machine lives in `rust/`; this directory drives RTL
 against it and compares architectural state after every instruction, and
 the whole 64 KB address space at the end of the run.

@@ -39,15 +39,18 @@ compiler emits and it is the thing being measured.
 """
 
 import os
-import subprocess
 import sys
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-ROOT = os.path.dirname(HERE)
-BUILD = os.environ.get("COOL8_BUILD") or os.path.join(HERE, "build")
-sys.path.insert(0, os.path.join(ROOT, "tools"))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+import harness as H                                      # noqa: E402
+from harness import check                                # noqa: E402
+
+sys.path.insert(0, os.path.join(H.ROOT, "tools"))
 
 import cool8rsvm as emu                                   # noqa: E402
+
+ROOT, BUILD = H.ROOT, H.BUILD
 
 # ---- where things live in the emitted programs
 CODE = 0x0200
@@ -345,21 +348,12 @@ MUL16 = [
 # The harness
 # =====================================================================
 
-ASM = os.path.join(ROOT, "tools", "cool8asm.py")
 os.makedirs(BUILD, exist_ok=True)
 
 
 def assemble(src, stem, quiet=False):
-    a = os.path.join(BUILD, stem + ".asm")
-    b = os.path.join(BUILD, stem + ".bin")
-    open(a, "w").write(src)
-    r = subprocess.run([sys.executable, ASM, a, "-o", b],
-                       capture_output=True, text=True)
-    if r.returncode != 0:
-        if not quiet:
-            print(r.stdout + r.stderr)
-        raise SystemExit("assembly failed: " + stem)
-    return b, os.path.getsize(b)
+    code, _ = H.assemble_text(src, stem, incdirs=(), write=True)
+    return os.path.join(BUILD, stem + ".bin"), len(code)
 
 
 def run(binpath, extra=None, limit=200_000_000):

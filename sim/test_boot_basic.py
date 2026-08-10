@@ -26,33 +26,24 @@ machine that cannot be reflashed -- the file carries its own relocation.
 """
 
 import os
-import subprocess
 import sys
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-ROOT = os.path.dirname(HERE)
-BUILD = os.environ.get("COOL8_BUILD") or os.path.join(HERE, "build")
-os.makedirs(BUILD, exist_ok=True)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-sys.path.insert(0, HERE)
-sys.path.insert(0, os.path.join(ROOT, "tools"))
+import harness as H                                      # noqa: E402
+from harness import check                                # noqa: E402
+
+sys.path.insert(0, os.path.join(H.ROOT, "tools"))
 
 import cool8rsvm as vm                                     # noqa: E402
 import cool8disk as disk                                   # noqa: E402
 import mkboot                                              # noqa: E402
 import test_basic as B                                     # noqa: E402
 
+BUILD = H.BUILD
+
 IMG = os.path.join(BUILD, "bootbasic.img")
-FAILS = []
-
-
-def check(ok, what, detail=""):
-    print(f"  {what:<52} {'ok' if ok else 'FAIL'}")
-    if not ok:
-        FAILS.append(what)
-        if detail:
-            print("    " + detail)
-    return ok
+FAILS = H.FAILS
 
 
 def image(boot):

@@ -66,6 +66,35 @@ appear in its output — two of them report a count rather than a status,
 and an exit code alone would take their word for it. The shim enforces
 this, not the suites.
 
+## Writing a suite
+
+Every suite is an ordinary script: it builds something, drives the
+machine, prints a line per check, and returns an exit code. What it
+does **not** do is carry its own copy of any of that.
+
+```python
+import harness as H
+import cool8rsvm as vm
+
+def main():
+    code, syms = H.build_bas("basic.bas")
+    m = vm.Machine()
+    ...
+    H.check(m.shows("42"), "RUN prints its answer")
+    return H.report()
+```
+
+`sim/harness.py` owns building, checking and the paths;
+`sim/toolchain.py` owns iverilog, yosys and the RTL file lists
+(`T.build`, `T.run`, `T.cells`, `T.CORE`). Both are described in
+[AGENTS.md](../AGENTS.md) and [10-debugging.md](10-debugging.md), and
+using them is standing rule 4 — not a style note. A suite that rolls
+its own is a second implementation of the thing it is testing with.
+
+**A suite that reads another suite's artifact must search for it and
+fail loudly when it is missing** — see the per-job build directories
+above.
+
 ## The jobs
 
 ### `sw` — the software suite (`poe test`)
@@ -73,6 +102,7 @@ this, not the suites.
 | | |
 |---|---|
 | `interp` | the interpreter on the editor's stored form |
+| `lib` | M14 -- `sw/demo.bas` against `sw/demo.asm`, work per frame |
 | `asm` | the on-machine assembler, byte-identical to `tools/cool8asm.py` |
 | `basic` | the screen editor, typed at |
 | `run` | `RUN`, plus `INKEY` and `KEY` driven from the PS/2 port |
@@ -110,6 +140,7 @@ receiver, the parity check and the FIFO itself.
 | `ps2` `flash` `spram` `loader` | one peripheral each |
 | `monitor` | type at the whole SoC, serial and PS/2 |
 | `video` `vram` `vport` | every mode and visible pixel |
+| `snd` | the sound engine — **and it writes `build/snd.hex`**, the golden `test_vm` gates against |
 
 Not in the runner, because they are slower than the gate and are run
 deliberately:
@@ -164,6 +195,14 @@ poe flash-verify    read BOTH halves back off the board and compare
 poe console -- --port COM6      the board's text screen, on the PC
 poe load -- --port COM6 --load build/BOOT.BIN --at 0x200 --go 0x200
 ```
+
+> **`console` and `load` need a `LOADER(1)` bitstream, which is not the
+> one you have.** Both talk to the hardware loader, and `LOADER`
+> defaults to 0 ([D40](01-decisions.md)) — so on a shipping board they
+> reach nothing. `poe board-screen` is the screen reader that works
+> there: it asks BASIC to POKE the framebuffer at the UART, which needs
+> no loader. Build with `LOADER(1)` when a board will not boot and you
+> need the bus-master read-back.
 
 **The boot ROM is inside the bitstream.** There is no separate step for
 it: a change to `sw/boot.asm`, `sw/kbd.asm` or `sw/keymap.asm` reaches

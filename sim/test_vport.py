@@ -47,7 +47,7 @@ ROOT = os.path.dirname(HERE)
 
 sys.path.insert(0, HERE)
 
-import cosim                                    # noqa: E402
+import toolchain as T                                    # noqa: E402
 
 TB = os.path.join(HERE, "tb", "cool8_vport_tb.v")
 RTL = [os.path.join(ROOT, "rtl", "soc", f)
@@ -55,7 +55,7 @@ RTL = [os.path.join(ROOT, "rtl", "soc", f)
 
 
 def build():
-    return cosim._build("cool8_vport_tb", TB, RTL + [cosim.ice40_cells()],
+    return T.build("cool8_vport_tb", TB, RTL + [T.cells()],
                         gen="2012")
 
 
@@ -71,7 +71,7 @@ def main():
     vvp = build()
     bad = 0
     for seed in range(1, args.seeds + 1):
-        cmd = [cosim._tool("vvp"), vvp, f"+n={args.n}", f"+seed={seed}"]
+        cmd = [T.tool("vvp"), vvp, f"+n={args.n}", f"+seed={seed}"]
         if args.vcd and seed == 1:
             cmd.append(f"+vcd={args.vcd}")
         if args.verbose:

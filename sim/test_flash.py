@@ -44,14 +44,14 @@ ROOT = os.path.dirname(HERE)
 
 sys.path.insert(0, HERE)
 
-import cosim                                    # noqa: E402
+import toolchain as T                                    # noqa: E402
 
 TB = os.path.join(HERE, "tb", "cool8_flash_tb.v")
 RTL = [os.path.join(ROOT, "rtl", "soc", "cool8_flash.v")]
 
 
 def build():
-    return cosim._build("cool8_flash_tb", TB, RTL + [cosim.ice40_cells()],
+    return T.build("cool8_flash_tb", TB, RTL + [T.cells()],
                         gen="2012")
 
 
@@ -62,7 +62,7 @@ def main():
     args = ap.parse_args()
 
     vvp = build()
-    cmd = [cosim._tool("vvp"), vvp]
+    cmd = [T.tool("vvp"), vvp]
     if args.vcd:
         cmd.append(f"+vcd={args.vcd}")
     if args.verbose:

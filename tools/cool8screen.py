@@ -4,6 +4,12 @@
     python tools/cool8screen.py --port COM6 --demo
     python tools/cool8screen.py --port COM6
 
+**This needs a `LOADER(1)` bitstream.** It reads the framebuffer
+through the hardware loader, and `LOADER` defaults to 0 (D40), so on a
+shipping board it reaches nothing at all. `tools/board.py --screen`
+is the reader for that board: it asks BASIC to POKE the framebuffer at
+the UART, which needs no loader.
+
 **The framebuffer is just RAM**, and a bus grant is architecturally
 invisible, so the loader can read the screen out from under a running
 program without it noticing. That means a screen exists before the video

@@ -34,31 +34,23 @@ compiler gets extrapolated from.
 """
 
 import os
-import subprocess
 import sys
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-ROOT = os.path.dirname(HERE)
-BUILD = os.environ.get("COOL8_BUILD") or os.path.join(HERE, "build")
-os.makedirs(BUILD, exist_ok=True)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-sys.path.insert(0, os.path.join(ROOT, "tools"))
+import harness as H                                      # noqa: E402
+from harness import check                                # noqa: E402
+
+sys.path.insert(0, os.path.join(H.ROOT, "tools"))
 
 import cool8rsvm as vm                                   # noqa: E402
 import cool8bas as bas                                   # noqa: E402
 
+ROOT, BUILD = H.ROOT, H.BUILD
+
 ORG = 0x0200            # where the driver runs
 CODE = 0x6000           # where it emits
-FAILS = []
-
-
-def check(ok, what, detail=""):
-    print(f"  {what:<52} {'ok' if ok else 'FAIL'}")
-    if not ok:
-        FAILS.append(what)
-        if detail:
-            print("    " + detail)
-    return ok
+FAILS = H.FAILS
 
 
 # The program, twice: once as calls into the emitter, once as text for
@@ -129,24 +121,13 @@ sub:    MOV  R3,R2
 
 
 def compile_bas(src, org, name):
-    asm = bas.compile_source(src, org)
-    apath = os.path.join(BUILD, name + ".asm")
-    with open(apath, "w") as fh:
-        fh.write(asm)
-    return assemble(apath, name)
+    code, _ = H.compile_bas(src, name, org=org)
+    return code
 
 
 def assemble(apath, name):
-    out = os.path.join(BUILD, name + ".bin")
-    r = subprocess.run([sys.executable,
-                        os.path.join(ROOT, "tools", "cool8asm.py"), apath,
-                        "-o", out, "-I", os.path.join(ROOT, "sw")],
-                       capture_output=True, text=True)
-    if r.returncode != 0:
-        print(r.stdout + r.stderr)
-        raise SystemExit(f"{name}: assembly failed")
-    with open(out, "rb") as fh:
-        return fh.read()
+    code, _ = H.assemble(apath, name=name)
+    return code
 
 
 def main():

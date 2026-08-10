@@ -20,22 +20,24 @@ every iteration of a loop re-parses decimal.
 """
 
 import os
-import subprocess
 import sys
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-ROOT = os.path.dirname(HERE)
-BUILD = os.environ.get("COOL8_BUILD") or os.path.join(HERE, "build")
-os.makedirs(BUILD, exist_ok=True)
-sys.path.insert(0, os.path.join(ROOT, "tools"))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+import harness as H                                      # noqa: E402
+from harness import check                                # noqa: E402
+
+sys.path.insert(0, os.path.join(H.ROOT, "tools"))
 
 import cool8rsvm as vm                                   # noqa: E402
 import cool8rsvm                                         # noqa: E402
 
+ROOT, BUILD = H.ROOT, H.BUILD
+
 CODE = 0x0200
 PROG = 0x3000
 VARS = 0x0040
-FAILS = []
+FAILS = H.FAILS
 
 # the editor's tokens, TOKTAB order
 K = {n: 0x80 + i for i, n in enumerate(
@@ -88,25 +90,7 @@ def program(*lines):
 
 
 def build(name_, text):
-    path = os.path.join(BUILD, f"ti_{name_}.asm")
-    with open(path, "w") as fh:
-        fh.write(text)
-    out = os.path.join(BUILD, f"ti_{name_}.bin")
-    sym = os.path.join(BUILD, f"ti_{name_}.sym")
-    r = subprocess.run([sys.executable,
-                        os.path.join(ROOT, "tools", "cool8asm.py"), path,
-                        "-o", out, "--symbols", sym,
-                        "-I", os.path.join(ROOT, "sw")],
-                       capture_output=True, text=True)
-    if r.returncode != 0:
-        raise SystemExit(r.stdout + r.stderr)
-    syms = {}
-    for ln in open(sym):
-        p = ln.split()
-        if len(p) == 2:
-            syms[p[1]] = int(p[0], 16)
-    with open(out, "rb") as fh:
-        return fh.read(), syms
+    return H.assemble_text(text, f"ti_{name_}")
 
 
 # The interpreter needs three of the editor's routines. In the real
@@ -258,15 +242,6 @@ v_progend: .word 0
         .include "interp.asm"
 prog:
 """
-
-
-def check(ok, what, detail=""):
-    print(f"  {what:<46} {'ok' if ok else 'FAIL'}")
-    if not ok:
-        FAILS.append(what)
-        if detail:
-            print("    " + detail)
-    return ok
 
 
 CASES = [

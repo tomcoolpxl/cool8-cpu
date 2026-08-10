@@ -31,20 +31,20 @@ programming that can only clear bits.
 """
 
 import os
-import subprocess
 import sys
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-ROOT = os.path.dirname(HERE)
-BUILD = os.environ.get("COOL8_BUILD") or os.path.join(HERE, "build")
-os.makedirs(BUILD, exist_ok=True)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-sys.path.insert(0, os.path.join(ROOT, "tools"))
+import harness as H                                      # noqa: E402
+from harness import check                                # noqa: E402
+
+sys.path.insert(0, os.path.join(H.ROOT, "tools"))
 
 import cool8rsvm as vm                                   # noqa: E402
 import cool8disk as disk                                 # noqa: E402
 
-ASM = os.path.join(ROOT, "tools", "cool8asm.py")
+ROOT, BUILD = H.ROOT, H.BUILD
+
 FS = os.path.join(ROOT, "sw", "fs.asm").replace("\\", "/")
 IMG = os.path.join(BUILD, "fs.img")
 
@@ -54,22 +54,15 @@ DEST = 0x4000
 
 
 def build(name, body):
-    """Assemble a driver with sw/fs.asm behind it."""
-    src = os.path.join(BUILD, name + ".asm")
-    out = os.path.join(BUILD, name + ".bin")
-    with open(src, "w") as fh:
-        # A leading global label: local labels are scoped to the last
-        # global one, so a driver whose first label is `.bad` has
-        # nowhere to hang it.
-        fh.write("        .org $0200\nmain:\n" + body +
-                 f'\n        .include "{FS}"\n')
-    r = subprocess.run([sys.executable, ASM, src, "-o", out],
-                       capture_output=True, text=True)
-    if r.returncode != 0:
-        print(r.stdout + r.stderr)
-        raise SystemExit("assembly failed: " + name)
-    with open(out, "rb") as fh:
-        return fh.read()
+    """Assemble a driver with sw/fs.asm behind it.
+
+    A leading global label: local labels are scoped to the last global
+    one, so a driver whose first label is `.bad` has nowhere to hang it.
+    """
+    code, _ = H.assemble_text(
+        "        .org $0200\nmain:\n" + body +
+        f'\n        .include "{FS}"\n', name)
+    return code
 
 
 def run(code, steps=40_000_000):
@@ -91,15 +84,7 @@ def name8_3(s):
     return disk.pad_name(s).decode("ascii")
 
 
-FAILS = []
-
-
-def check(cond, what, detail=""):
-    print(f"  {what:<52} {'ok' if cond else 'FAIL'}")
-    if not cond:
-        FAILS.append(what)
-        if detail:
-            print("    " + detail)
+FAILS = H.FAILS
 
 
 # =====================================================================

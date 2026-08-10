@@ -6,8 +6,8 @@
     python tools/flash.py system        write BASIC to flash at $100000
     python tools/flash.py all           both, in the order that works
 
-Or, which is the point: `npm run flash`, `npm run flash:fpga`,
-`npm run flash:system`, `npm run disk`.
+Or, which is the point: `poe flash`, `poe flash-fpga`,
+`poe flash-system`, `poe disk`.
 
 ## Why this exists rather than a line in a README
 
@@ -141,9 +141,12 @@ def run(args):
 def build_disk():
     """A flash image with BASIC on volume 0 as BOOT.BIN.
 
-    Built from the current sources every time. A stale BOOT.BIN on the
-    board is the most expensive kind of wrong answer: it looks like the
-    change you just made did not work.
+    Built from the current sources every time it is asked for, and it
+    is only ever asked for explicitly (`poe disk`, `poe flash`). A
+    stale BOOT.BIN is the most expensive kind of wrong answer — it
+    looks like the change you just made did not work — and a rule about
+    *when* to rebuild is a rule that can be wrong. Building is a
+    command; running is a different command.
     """
     import cool8disk as disk
     import mkboot
@@ -192,7 +195,7 @@ def check_bootable(path):
 
 def cmd_disk(_):
     build_disk()
-    print("\n  not written to any board -- `npm run flash:system` does that")
+    print("\n  not written to any board -- `poe flash-system` does that")
     return 0
 
 
@@ -233,7 +236,7 @@ def cmd_fpga(args):
     """
     path = args.bitstream or BITSTREAM
     if not os.path.exists(path):
-        raise SystemExit("no %s -- run `npm run bit` first" % path)
+        raise SystemExit("no %s -- run `poe bit` first" % path)
     with open(path, "rb") as fh:
         want = fh.read()
     print("  bitstream %s, %d bytes -> flash offset 0"
@@ -286,7 +289,7 @@ def cmd_fpga(args):
 
     if getattr(args, "verify", True) is False:
         print("\n  not verified: the debugger is re-enumerating. Run "
-              "`npm run flash:verify`\n  once the board is back.")
+              "`poe flash-verify`\n  once the board is back.")
         return 0
     print()
     return compare(readback(0, len(want), "bitstream"), want, "the bitstream")
@@ -360,7 +363,7 @@ def cmd_verify(args):
         rc |= compare(readback(base, len(want), "vol0"), want, "volume 0")
     elif not os.path.exists(BITSTREAM):
         raise SystemExit("nothing built to compare against -- "
-                         "run `npm run bit` and `npm run disk`")
+                         "run `poe bit` and `poe disk`")
     return rc
 
 

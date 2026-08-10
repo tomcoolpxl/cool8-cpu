@@ -24,24 +24,24 @@ decoded dump of the compiler's own variables.
 """
 
 import os
-import subprocess
 import sys
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-ROOT = os.path.dirname(HERE)
-BUILD = os.environ.get("COOL8_BUILD") or os.path.join(HERE, "build")
-os.makedirs(BUILD, exist_ok=True)
-sys.path.insert(0, HERE)
-sys.path.insert(0, os.path.join(ROOT, "tools"))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-import cool8bas as bas                                   # noqa: E402
+import harness as H                                      # noqa: E402
+from harness import check                                # noqa: E402
+
+sys.path.insert(0, os.path.join(H.ROOT, "tools"))
+
 import dbg                                               # noqa: E402
 from test_lex import keyword_bytes, store                # noqa: E402
+
+ROOT, BUILD = H.ROOT, H.BUILD
 
 ORG = 0x0200            # where the compiler itself runs
 SRC = 0x8000            # the stored program it compiles
 OUT = 0xA000            # and where it puts the result
-FAILS = []
+FAILS = H.FAILS
 
 DRIVER = """
 INCLUDE "chars.bas"
@@ -227,38 +227,12 @@ END FUNCTION
 ]
 
 
-def check(ok, what, detail=""):
-    print(f"  {what:<44} {'ok' if ok else 'FAIL'}")
-    if not ok:
-        FAILS.append(what)
-        if detail:
-            print(detail)
-    return ok
-
-
 def reference(source, name):
     """cool8bas on the same program: the bytes, and where storage went."""
-    asm = bas.compile_source(source, OUT)
-    apath = os.path.join(BUILD, f"ref_{name}.asm")
-    with open(apath, "w") as fh:
-        fh.write(asm)
-    out = os.path.join(BUILD, f"ref_{name}.bin")
-    sym = os.path.join(BUILD, f"ref_{name}.sym")
-    r = subprocess.run([sys.executable,
-                        os.path.join(ROOT, "tools", "cool8asm.py"), apath,
-                        "-o", out, "--symbols", sym,
-                        "-I", os.path.join(ROOT, "sw")],
-                       capture_output=True, text=True)
-    if r.returncode != 0:
-        raise SystemExit(r.stdout + r.stderr)
-    addrs = {}
-    for line in open(sym):
-        p = line.split()
-        if len(p) == 2 and (p[1].startswith("v_") or p[1].startswith("a_")
-                            or p[1].endswith("_lim")):
-            addrs[p[1]] = int(p[0], 16)
-    with open(out, "rb") as fh:
-        return fh.read(), addrs
+    code, syms = H.compile_bas(source, f"ref_{name}", org=OUT)
+    addrs = {n: a for n, a in syms.items()
+             if n.startswith(("v_", "a_")) or n.endswith("_lim")}
+    return code, addrs
 
 
 def run_case(name, source, img, kw):

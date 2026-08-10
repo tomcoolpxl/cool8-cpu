@@ -142,7 +142,7 @@ do, correctly, and is gated to prove it.
 ## 5. Reviving it
 
 The sources are all still here and every correctness gate still exists;
-`comp`, `emit` and `lex` run deliberately rather than in `npm test`,
+`comp`, `emit` and `lex` run deliberately rather than in `poe test`,
 because they gate code that ships nowhere (see
 [12-tasks.md](12-tasks.md)). The dispatch benchmarks that settled the
 compile-or-interpret question are deleted — their numbers are recorded
@@ -163,6 +163,23 @@ the user has written, on the machine, when they want the speed** — the
 smaller requirement than compiling the system.
 
 ---
+
+## 5a. What the generated code still leaves on the floor
+
+Found by profiling `sw/demo.bas` against its assembly twin
+(`sim/test_lib.py`, and [D58](01-decisions.md)), in the order they
+cost:
+
+| | |
+|---|---|
+| **A mask that cannot do anything** | `x AND 255` where `x` is `BYTE` emits `MOV R2,#255` + `AND R0,R2`. The add already wrapped and the store truncates. A width-aware peephole would delete it; until then, do not write it |
+| **A call per iteration** | `CALL Spr16(i, x << 1, y << 1, SPRID)` pushes four 16-bit parameters and builds a frame, eight times a frame, to reach a body that is itself hand-written `ASM` |
+| **Every array access recomputes its address** | `sx(i)` is `LDW X,#a_sx` + `ADDW X,R0` + `LD`, about five instructions, with no strength reduction across a loop that walks `i` upward |
+
+None is a defect: this is a one-pass compiler with no register
+allocator and no peephole, which is what §3 says it is. They are
+listed because the first one is free to avoid by hand, and because
+together they are most of the 2.3x that `sim/test_lib.py` gates.
 
 ## 6. The bytecode VM
 

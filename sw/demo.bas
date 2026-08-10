@@ -175,30 +175,39 @@ SUB MoveSprites()
     y = sy(i)
     dy = sdy(i)
 
-    x = (x + dx) AND 255
+    ' No `AND 255` on any of these. x, dx, y and dy are BYTE, so the
+    ' add wraps in eight bits and the store truncates -- the mask was
+    ' `MOV R2,#255` + `AND R0,R2` six times per sprite per frame,
+    ' computing something that had already happened.
+    x = x + dx
     IF x < 8 THEN
-      dx = (0 - dx) AND 255
+      dx = 0 - dx
+      sdx(i) = dx
       x = 8
     END IF
     IF x > 239 THEN
-      dx = (0 - dx) AND 255
+      dx = 0 - dx
+      sdx(i) = dx
       x = 239
     END IF
 
-    y = (y + dy) AND 255
+    y = y + dy
     IF y < 8 THEN
-      dy = (0 - dy) AND 255
+      dy = 0 - dy
+      sdy(i) = dy
       y = 8
     END IF
     IF y > 209 THEN
-      dy = (0 - dy) AND 255
+      dy = 0 - dy
+      sdy(i) = dy
       y = 209
     END IF
 
+    ' The step is written back only where it changed -- a sprite
+    ' bounces every fifty frames or so, and an array store is five
+    ' instructions. The position always changes, so it always goes.
     sx(i) = x
-    sdx(i) = dx
     sy(i) = y
-    sdy(i) = dy
     CALL Spr16(i, x << 1, y << 1, SPRID)
     i = i + 1
   LOOP

@@ -52,7 +52,7 @@ BUILD = os.environ.get("COOL8_BUILD") or os.path.join(HERE, "build")
 sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.join(ROOT, "tools"))
 
-import cosim                                    # noqa: E402
+import toolchain as T                                    # noqa: E402
 import mkrom                                    # noqa: E402
 import mkfont                                   # noqa: E402
 
@@ -65,8 +65,7 @@ SOC = [os.path.join(ROOT, "rtl", "soc", f)
                  "cool8_pll.v", "cool8_pixport.v", "cool8_sprite.v",
                  "cool8_ps2.v", "cool8_flash.v", "cool8_snd.v",
                  "cool8_video.v", "cool8_soc.v")]
-CORE = [os.path.join(ROOT, "rtl", "core", f)
-        for f in ("cool8_alu.v", "cool8_agu.v", "cool8_core.v")]
+CORE = T.CORE
 
 
 def main():
@@ -93,9 +92,9 @@ def main():
     print(f"  boot.asm with the monitor: {len(img)} bytes, "
           f"{sum(1 for b in rom if b)} non-zero of {len(rom)}")
 
-    vvp = cosim._build("cool8_mon_tb", TB, SOC + CORE + [cosim.ice40_cells()],
+    vvp = T.build("cool8_mon_tb", TB, SOC + CORE + [T.cells()],
                        gen="2012")
-    cmd = [cosim._tool("vvp"), os.path.abspath(vvp)]
+    cmd = [T.tool("vvp"), os.path.abspath(vvp)]
     if args.vcd:
         cmd.append(f"+vcd={args.vcd}")
     if args.verbose:

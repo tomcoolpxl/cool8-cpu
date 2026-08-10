@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Build the system image and the bootable file, and report the sizes.
 
-    python sim/build_basic.py          (or: npm run build)
+    python sim/build_basic.py          (or: poe build)
 
 `sim/test_basic.py` builds `basic.bin` as a side effect of testing it,
 which is fine for a test and no use at all when what you want is the

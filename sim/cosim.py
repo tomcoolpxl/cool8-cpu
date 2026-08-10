@@ -37,9 +37,9 @@ sys.path.insert(0, HERE)
 import opcodes                              # noqa: E402
 import cool8rsvm                            # noqa: E402
 import progen                               # noqa: E402
+import toolchain as T                       # noqa: E402
 
-RTL = [os.path.join(ROOT, "rtl", "core", f)
-       for f in ("cool8_alu.v", "cool8_agu.v", "cool8_core.v")]
+RTL = T.CORE
 TB = os.path.join(HERE, "tb", "cool8_tb.v")
 PADS = os.path.join(ROOT, "rtl", "pads", "tt_um_cool8.v")
 BUSTB = os.path.join(HERE, "tb", "cool8_bus_tb.v")
@@ -48,92 +48,25 @@ SPRAMTB = os.path.join(HERE, "tb", "cool8_spram_cpu_tb.v")
 
 
 # ------------------------------------------------------------- toolchain
-
-def _with_libs(root, path):
-    """Put the toolchain's own directories on PATH before running it.
-
-    Every suite here says "set OSS_CAD_SUITE if it is not on PATH", and
-    that was not quite true: an absolute path finds the executable, but
-    `vvp` then loads `libvvp-1.dll` beside itself and Windows resolves
-    that against PATH. Setting the variable alone gave a process that
-    died with 0xC0000135 and no output at all, which reads like a
-    simulator that produced nothing rather than one that never started.
-    """
-    for d in (os.path.join(root, "bin"), os.path.join(root, "lib")):
-        if os.path.isdir(d) and d not in os.environ.get("PATH", ""):
-            os.environ["PATH"] = d + os.pathsep + os.environ.get("PATH", "")
-    return path
-
-
-def _tool(name):
-    root = os.environ.get("OSS_CAD_SUITE")
-    if root:
-        cand = os.path.join(root, "bin", name + ".exe")
-        if os.path.exists(cand):
-            return _with_libs(root, cand)
-        cand = os.path.join(root, "bin", name)
-        if os.path.exists(cand):
-            return _with_libs(root, cand)
-    found = shutil.which(name)
-    if not found:
-        sys.exit(f"{name} not found. Put the OSS CAD Suite on PATH or set "
-                 f"OSS_CAD_SUITE to its root directory.")
-    return found
-
-
-def ice40_cells():
-    """The toolchain's own SB_* simulation models.
-
-    Not vendored into the repository: the models must match the yosys
-    that maps the design, and a stale copy of a memory primitive is a bug
-    that looks like an RTL bug.
-    """
-    roots = []
-    if os.environ.get("OSS_CAD_SUITE"):
-        roots.append(os.environ["OSS_CAD_SUITE"])
-    roots.append(os.path.dirname(os.path.dirname(_tool("yosys"))))
-    for r in roots:
-        cand = os.path.join(r, "share", "yosys", "ice40", "cells_sim.v")
-        if os.path.exists(cand):
-            return cand
-    sys.exit("ice40 cells_sim.v not found; set OSS_CAD_SUITE to the "
-             "toolchain root")
-
-
-def _build(name, tb, sources, gen="2005"):
-    os.makedirs(BUILD, exist_ok=True)
-    out = os.path.join(BUILD, name + ".vvp")
-    newest = max(os.path.getmtime(f) for f in sources + [tb])
-    if os.path.exists(out) and os.path.getmtime(out) > newest:
-        return out
-    subprocess.run([_tool("iverilog"), "-g" + gen, "-Wall", "-Wno-timescale",
-                    "-o", out, tb] + sources, check=True)
-    return out
-
+#
+# In sim/toolchain.py, which every RTL suite shares. It lived here, and
+# ten other files reached in through its private names.
 
 def build_sim():
-    return _build("cool8_tb", TB, RTL)
+    return T.build("cool8_tb", TB, RTL)
 
 
 def build_bus_sim():
-    return _build("cool8_bus_tb", BUSTB, RTL + [PADS])
+    return T.build("cool8_bus_tb", BUSTB, RTL + [PADS])
 
 
 def build_spram_sim():
-    # -g2012 only because yosys's cells_sim.v uses default port values.
-    # Everything in rtl/ is still Verilog-2001 and is compiled as such by
-    # sim/synth.py and by every other build here.
-    return _build("cool8_spram_cpu_tb", SPRAMTB,
-                  RTL + [SPRAM, ice40_cells()], gen="2012")
+    return T.build("cool8_spram_cpu_tb", SPRAMTB,
+                   RTL + [SPRAM, T.cells()], gen="2012")
 
 
 def run_sim(vvp_file, args):
-    r = subprocess.run([_tool("vvp"), vvp_file] + args,
-                       capture_output=True, text=True)
-    if r.returncode != 0:
-        print(r.stdout, r.stderr)
-        raise SystemExit("simulator failed")
-    return r.stdout
+    return T.run(vvp_file, args)
 
 
 # --------------------------------------------------------------- emulator

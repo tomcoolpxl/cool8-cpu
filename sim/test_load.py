@@ -32,7 +32,7 @@ BUILD = os.environ.get("COOL8_BUILD") or os.path.join(HERE, "build")
 sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.join(ROOT, "tools"))
 
-import cosim                                    # noqa: E402
+import toolchain as T                                    # noqa: E402
 import cool8asm                                 # noqa: E402
 import cool8load as L                           # noqa: E402
 
@@ -45,8 +45,7 @@ SOC = [os.path.join(ROOT, "rtl", "soc", f)
                  "cool8_ps2.v", "cool8_flash.v", "cool8_snd.v",
                  "cool8_video.v", "cool8_soc.v",
                  "cool8_top.v")]
-CORE = [os.path.join(ROOT, "rtl", "core", f)
-        for f in ("cool8_alu.v", "cool8_agu.v", "cool8_core.v")]
+CORE = T.CORE
 TB = os.path.join(HERE, "tb", "cool8_wire_tb.v")
 
 PROG_AT = 0x0400
@@ -157,9 +156,9 @@ def run_wire(entries):
     if os.path.exists(dst):
         os.remove(dst)
 
-    vvp = cosim._build("cool8_wire_tb", TB, SOC + CORE + [cosim.ice40_cells()],
+    vvp = T.build("cool8_wire_tb", TB, SOC + CORE + [T.cells()],
                        gen="2012")
-    r = subprocess.run([cosim._tool("vvp"), vvp,
+    r = subprocess.run([T.tool("vvp"), vvp,
                         "+in=session.hex", "+out=replies.hex"],
                        cwd=BUILD, capture_output=True, text=True)
     if "\nPASS" not in r.stdout:

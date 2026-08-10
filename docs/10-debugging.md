@@ -5,7 +5,20 @@ only thing a running machine hands back is a program counter. This is
 the tooling that closes that gap, and the rules that came out of using
 it.
 
-There are two layers and they do different jobs.
+**Using this tooling is not optional.** An investigation, an
+experiment, a quick check — all of it goes through the harness and the
+Machine API, never a throwaway script
+([AGENTS.md](../AGENTS.md), standing rule 4). The reason is in this
+document: every rule below was bought with a lost day.
+
+There are three layers and they do different jobs.
+
+**`sim/harness.py` builds what you are going to look at** — `build_bas`
+and `compile_bas` (compile, assemble and hand back the symbols),
+`assemble_text` for a driver written in the test, `try_assemble` where
+a refusal is the expected answer, and `check`/`report` for the verdict.
+It is also where `ROOT`, `BUILD` and `SW` come from. Nothing spawns
+`cool8asm.py`: the assembler is a module.
 
 **The machine is `rust/`, and `tools/cool8rsvm.py` is the one API
 everything drives it through** — running, typing, reading the screen,

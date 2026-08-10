@@ -49,7 +49,7 @@ MATRIX = [(15, 0), (15, 3), (31, 1), (103, 0), (103, 1), (103, 3)]
 # cosim's learned to put the suite's bin directory on PATH so `vvp` can
 # find libvvp-1.dll, this copy did not — six phases failed with no output
 # and looked like a broken loader.
-from cosim import _tool                                  # noqa: E402
+from toolchain import tool as _tool                      # noqa: E402
 
 
 def build():

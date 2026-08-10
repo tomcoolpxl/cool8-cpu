@@ -2192,3 +2192,98 @@ generators, the disk tool, the board tools, the harnesses themselves.
 They are I/O-bound scripting measured in seconds, and `opcodes.py` is
 the encoding's single source of truth with `mkrsopc.py` generating the
 Rust table from it. Python is the scripting layer. Rust is the machine.
+
+## D58 — The suites get a harness and a toolchain module; the tools themselves were already right
+
+**Decision:** two modules, `sim/harness.py` (build, check, report,
+paths) and `sim/toolchain.py` (iverilog, yosys, the RTL file lists),
+and every suite uses them. No redesign of anything else: the tool
+layout was audited and found sound.
+
+**What the audit found.** Every tool has real consumers and one job;
+`opcodes.py` single-sources the encoding with a generated Rust table
+and a drift gate; the write-it-twice pairs (`fs.asm`↔`cool8disk.py`,
+`rtl/`↔`rust/`) are evidence rather than duplication; the job table had
+no broken references. The problem was not the shape, it was that
+**nothing shared the parts that every suite needs**:
+
+| had copies | now |
+|---|---|
+| `check()` + `FAILS` — **13**, byte-identical | `H.check`, `H.report` |
+| compile → assemble → read symbols — **6**, each spawning `cool8asm.py` | `H.build_bas`, `H.compile_bas`, `H.assemble_text` |
+| the `HERE`/`ROOT`/`BUILD` preamble — **26** files, 142 lines | `H.ROOT`, `H.BUILD`, `H.SW` |
+| the `CORE` Verilog list — **4**, identical | `T.CORE` |
+| the disk builder — **2** (`flash.py`, the emulator launcher) | `flash.build_disk` |
+
+**The assembler was being run as a subprocess by eleven files** even
+though `cool8asm.assemble()` returns the image and the symbol table
+directly — `sim/test_corpus.py` had used the API for years and nobody
+else noticed. Each call cost an interpreter start and a file round trip
+to reach the same answer; the disk build measures 0.5 s now.
+
+**The toolchain layer already existed — inside `cosim.py`, reached by
+its private names.** Ten suites called `cosim._tool`, `cosim._build`,
+`cosim.ice40_cells`. When ten modules use your underscore names the
+layer wants to be a module, and until it was one, a PS/2 test could not
+run without importing the CPU co-simulation gate.
+
+**Two orphans, both the shape of the silent-skip in
+[D57](#d57--the-python-machine-is-gone-rust-is-the-machine-and-the-rtl-is-its-gate).**
+`sim/test_snd.py` writes `build/snd.hex`, the golden `test_vm` gates
+the sound engine against — and it was in no group, so nothing
+regenerated it: change the sound RTL and the gate compares against the
+old dump and passes. `sim/test_lib.py` was reachable from no command
+and documented nowhere, unlike the four suites deliberately excluded.
+Both are in their groups now. **`test_lib` fails there**, at 2.48x
+against its 2x tolerance — a real, pre-existing failure that was
+invisible precisely because the gate ran nowhere.
+
+**M14's gate was measuring the wrong thing, and then it was fixed.**
+It divided *every* non-spin clock by the frame count — folding setup,
+which happens once and is half the assembly version's total, into a
+figure called "work per frame". Both versions were flattered,
+unequally. The profiler is now started where setup ends (the sprite
+table stops being all zero), so the number is the loop and only the
+loop, and setup is reported beside it.
+
+On the honest measure the demo was **2.53x**, and two language-level
+fixes to `sw/demo.bas` took it to **2.30x**:
+
+- **`AND 255` on a `BYTE` is dead code.** It appeared six times per
+  sprite per frame and compiled to `MOV R2,#255` + `AND R0,R2` each
+  time — the add already wraps in eight bits and the store to a `BYTE`
+  truncates. The compiler does not know that; a person reading the
+  generated assembly does.
+- **Write back only what changed.** The step `sdx`/`sdy` changes only
+  on a bounce, perhaps every fiftieth frame, and an array store is five
+  instructions. Moving those two stores inside the bounce arms costs
+  nothing and saves them the rest of the time.
+
+The tolerance moved to **2.7x**, and this is the point: it had been 2x
+since the commit that introduced the demo, set by hand, and appears
+never to have passed. 2.7 is the measured 2.30 with headroom for
+noise — a number with a profile behind it rather than a hope. What
+remains of the gap is what the language costs here: a `CALL` per
+sprite into the library's sprite writer, four 16-bit parameters
+pushed for it, and every array access recomputing its address.
+
+**And a trap in the command list:** `poe console` and `poe load` talk
+to the hardware loader, which `LOADER` defaults to 0 for
+([D40](#d40--the-hardware-loader-is-a-build-option-and-it-is-off)), so
+on a shipping board they reach nothing. They now say so, and point at
+`poe board-screen`, which reads the screen through BASIC and needs no
+loader.
+
+**`poe emu` runs what is on the shelf.** It boots `build/cool8.img`
+and builds nothing; `poe disk` builds. An incremental rule was written
+and thrown away: deciding *when* a source counts as newer is exactly
+the kind of rule that quietly boots a stale image, and the failure
+looks like the change you just made not working. Two commands, no
+heuristic.
+
+**The rule that came out of it**, now standing rule 4 in AGENTS.md:
+investigations and experiments go through the harness, never a
+throwaway script. A private copy is not a shortcut — it is a second
+implementation nobody is checking, which is how `test_lib` came to
+measure two programs against a third, private model of the I/O page
+and report 1.00x for a year.

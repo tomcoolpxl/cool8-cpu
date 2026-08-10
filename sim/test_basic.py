@@ -31,57 +31,26 @@ state one keystroke early and blames the machine.
 """
 
 import os
-import subprocess
 import sys
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-ROOT = os.path.dirname(HERE)
-BUILD = os.environ.get("COOL8_BUILD") or os.path.join(HERE, "build")
-os.makedirs(BUILD, exist_ok=True)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-sys.path.insert(0, os.path.join(ROOT, "tools"))
+import harness as H                                      # noqa: E402
+from harness import check                                # noqa: E402
+
+sys.path.insert(0, os.path.join(H.ROOT, "tools"))
 
 import cool8rsvm as vm                                   # noqa: E402
-import cool8bas as bas                                   # noqa: E402
 import cool8disk as disk                                 # noqa: E402
 
+ROOT, BUILD = H.ROOT, H.BUILD
 ORG = 0xA000
 IMG = os.path.join(BUILD, "basic.img")
-FAILS = []
-
-
-def check(ok, what, detail=""):
-    print(f"  {what:<52} {'ok' if ok else 'FAIL'}")
-    if not ok:
-        FAILS.append(what)
-        if detail:
-            print("    " + detail)
-    return ok
+FAILS = H.FAILS
 
 
 def build():
-    src = os.path.join(ROOT, "sw", "basic.bas")
-    with open(src, encoding="utf-8") as fh:
-        asm = bas.compile_source(fh.read(), ORG, optimize=True)
-    apath = os.path.join(BUILD, "basic.asm")
-    with open(apath, "w") as fh:
-        fh.write(asm)
-    r = subprocess.run([sys.executable,
-                        os.path.join(ROOT, "tools", "cool8asm.py"), apath,
-                        "-o", os.path.join(BUILD, "basic.bin"),
-                        "--symbols", os.path.join(BUILD, "basic.sym"),
-                        "-I", os.path.join(ROOT, "sw")],
-                       capture_output=True, text=True)
-    if r.returncode != 0:
-        print(r.stdout + r.stderr)
-        raise SystemExit("compile failed")
-    syms = {}
-    for line in open(os.path.join(BUILD, "basic.sym")):
-        p = line.split()
-        if len(p) == 2:
-            syms[p[1].lower()] = int(p[0], 16)
-    with open(os.path.join(BUILD, "basic.bin"), "rb") as fh:
-        return fh.read(), syms
+    return H.build_bas("basic.bas", org=ORG)
 
 
 class Machine:
@@ -333,9 +302,7 @@ def main():
     print()
     files(code, syms)
 
-    print()
-    print("PASS" if not FAILS else f"FAIL -- {len(FAILS)}")
-    return 0 if not FAILS else 1
+    return H.report()
 
 
 def blank(code, syms, label="PROGRAMS"):

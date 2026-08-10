@@ -24,20 +24,20 @@ the tolerance is 15 % and not zero.
 """
 
 import os
-import subprocess
 import sys
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-ROOT = os.path.dirname(HERE)
-BUILD = os.environ.get("COOL8_BUILD") or os.path.join(HERE, "build")
-BENCH = os.path.join(ROOT, "sw", "bench")
-os.makedirs(BUILD, exist_ok=True)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-sys.path.insert(0, os.path.join(ROOT, "tools"))
-sys.path.insert(0, HERE)
+import harness as H                                      # noqa: E402
+from harness import check                                # noqa: E402
+
+sys.path.insert(0, os.path.join(H.ROOT, "tools"))
 
 import cool8rsvm as emu                                   # noqa: E402
 import cool8bas as bas                                   # noqa: E402
+
+ROOT, BUILD = H.ROOT, H.BUILD
+BENCH = os.path.join(ROOT, "sw", "bench")
 
 TOLERANCE = 0.15
 
@@ -55,26 +55,10 @@ CASES = [
 
 def build(src):
     """Compile, assemble, and hand back the image and the symbol map."""
-    stem = os.path.join(BUILD, "bas_" + os.path.basename(src)[:-4])
-    with open(os.path.join(BENCH, src)) as fh:
-        asm = bas.compile_source(fh.read())
-    with open(stem + ".asm", "w") as fh:
-        fh.write(asm)
-    r = subprocess.run([sys.executable,
-                        os.path.join(ROOT, "tools", "cool8asm.py"),
-                        stem + ".asm", "-o", stem + ".bin",
-                        "--symbols", stem + ".sym"],
-                       capture_output=True, text=True)
-    if r.returncode != 0:
-        print(r.stdout + r.stderr)
-        raise SystemExit("assembly failed: " + src)
-    syms = {}
-    for line in open(stem + ".sym"):
-        parts = line.split()
-        if len(parts) == 2:
-            syms[parts[1].lower()] = int(parts[0], 16)
-    with open(stem + ".bin", "rb") as fh:
-        return fh.read(), syms, stem
+    name = "bas_" + os.path.basename(src)[:-4]
+    code, syms = H.compile_bas(os.path.join(BENCH, src), name,
+                               lower=True, write=True)
+    return code, syms, os.path.join(BUILD, name)
 
 
 def run(code, limit=200_000_000):
