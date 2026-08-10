@@ -99,10 +99,14 @@ fn make_window(fullscreen: bool, chars: Arc<Mutex<VecDeque<u32>>>) -> Window {
         w,
         h,
         WindowOptions {
-            resize: true,
+            // Fullscreen is a bare popup the size of the screen: any
+            // caption or sizing frame would eat rows from the top and
+            // leave a border — which it did, once.
+            resize: !fullscreen,
+            title: !fullscreen,
+            borderless: fullscreen,
             scale: Scale::X1,
             scale_mode: ScaleMode::AspectRatioStretch,
-            borderless: fullscreen,
             ..WindowOptions::default()
         },
     )
