@@ -1595,6 +1595,12 @@ was closed by measurement at the M2 gate; see
 ## D44 — There is one emulator and it is gated against the RTL, not
 against itself
 
+> **Superseded in its subject by [D57](#d57--the-python-machine-is-gone-rust-is-the-machine-and-the-rtl-is-its-gate)**,
+> which retired the Python machine this entry is about. **Its
+> principle survived unchanged and is why the hand-over was safe**:
+> one machine model, gated against the RTL rather than against itself.
+> Read it as the argument, not as a description of the tree.
+
 **A software machine is only worth writing an operating system against
 if it agrees with the gates.** `tools/cool8vm.py` is the whole computer
 in Python — the memory map, the ROM overlay, every register in
@@ -2045,3 +2051,144 @@ removable media — doubtful on this board, undecided beyond it — the
 drive/disk distinction returns as a drive-to-device table in software,
 and the `"n:"` prefix syntax above is the shape to reach for. Nothing
 shipped today blocks it.
+
+## D55 — The suites and cosim's model run on the Rust machine; Python stays the specification, for now
+
+**Decision:** the software suites and cosim's model side run on
+`cool8rs`, the Rust machine, through `tools/cool8rsvm.py`'s session
+and batch clients. This entry records the migration; the Python
+reference it was gated against was retired hours later, in the same
+session, once the last three consumers had somewhere to go —
+[D57](#d57--the-python-machine-is-gone-rust-is-the-machine-and-the-rtl-is-its-gate).
+
+**Why now, measured:** CPython steps this machine at ~0.5 M instr/s
+against the Rust machine's ~66 M. On migration day: the sw suite
+823.8 s → 185.7 s wall (`test_run` 823.7 → 183.7, `test_basic` 177.9
+→ 2.9, `test_fs`/`boot_basic`/`autoboot` to under 1.5 s each), and
+`cosim all` at 55 s with the model side reduced from most of the time
+to seconds — the vvp is the bottleneck now, which is the correct
+bottleneck.
+
+**How the boundary held:** the rule from the original port —
+machine-API granularity or coarser, no per-access FFI — produced the
+session protocol: one persistent machine per `+serve` process,
+commands mirroring the Machine API, and `settle` (the suites'
+per-instruction idle poll) server-side as one command. Two findings
+worth their bruises: `romen` is machine state and must round-trip
+with the registers (a client pushing its stale copy re-enabled the
+ROM overlay the flash stub had just dropped, mid-boot), and
+`Machine.settle` had to exist on both machines so a suite keeps one
+code path.
+
+**What was still on the reference when this was written** — the
+profiler, the SP high-water case, and the render gate — is what D57
+had to move, and did. `tools/cool8run.py`, the pygame window, is
+already gone: `rust/src/emu.rs` superseded it feature for feature and
+`poe emu` launches it.
+
+**Rejected:** porting the assembler, compiler or host tools to Rust —
+they are seconds of I/O-bound scripting, they read `opcodes.py`
+natively, and porting them buys nothing but a second copy of the
+single-source tables. Python stays the scripting layer; Rust is for
+the one thing Python is slow at here, which is being the machine.
+
+## D56 — The runner is pytest and the manifest is pyproject.toml; Node is gone
+
+**Decision:** `package.json` and `tools/run.mjs` are deleted. The job
+table, the project config (`[tool.cool8]`) and the command aliases
+(`[tool.poe.tasks]`) live in `pyproject.toml`; **pytest** with
+pytest-xdist is the suite runner, fed by the one policy-free shim in
+`sim/runner/test_jobs.py`; **poethepoet** names the direct commands.
+`tools/board.py` and `tools/doctor.py` read the config with stdlib
+`tomllib`. Checked against the 2026 landscape before choosing: poe is
+a current, maintained standard for pyproject task-running (the
+uv+poe pairing is documented practice), pytest is uncontested, and
+the smaller alternatives (uv-script, pyproject-runner, taskipy) are
+the same idea with fewer users.
+
+**Why:** Node's entire role was naming commands and fanning out
+subprocesses — package.json said so itself. That is pytest's day job:
+`-n auto` is the parallel pool, a marker is a group, `--durations` is
+the timing report, and the exit code gates a commit. One toolchain
+fewer on a fresh clone; the per-job build directory
+(`COOL8_BUILD=sim/build/jobs/<group>-<id>`) and the "exit 0 AND no
+FAIL in the output" pass rule are kept, in the shim, verbatim.
+
+**Rejected:** hand-porting `run.mjs` to Python — a bespoke runner is
+the wheel pytest already is; and `uv` as a hard dependency — worth
+adopting for env management some day, but it changes installation,
+not this shape, and plain pip works today.
+
+## D57 — The Python machine is gone; Rust is the machine and the RTL is its gate
+
+**Decision:** `tools/cool8emu.py`, `tools/cool8vm.py`, `tools/cool8vid.py`
+and `sim/rustsim.py` are deleted. `rust/` **is** the COOL8 machine.
+Nothing falls back: without `cargo` there is no machine and the suites
+say so. [D55](#d55--the-suites-and-cosims-model-run-on-the-rust-machine-python-stays-the-specification-for-now)
+had moved the suites and cosim onto it hours earlier and left the
+Python side standing as a second opinion; this finishes the job the
+same session.
+
+**Why not keep it as a second opinion.** Because a reference nothing
+runs is a reference nobody notices going stale — and it was already
+costing: two models to change per ISA change, a `COOL8_PYVM` path with
+no coverage, and a render model (`cool8vid`) whose whole-frame
+snapshot could not express what the machine now does per line
+([D53](#d53--the-cursor-position-is-frame-latched-like-vid_base) was
+found *because* the scanline renderer existed and it could not show
+it).
+
+**What kept the honesty.** The property that made the emulator
+trustworthy was never that it was Python; it was
+[D44](#d44--there-is-one-emulator-and-it-is-gated-against-the-rtl-not-against-itself)'s
+rule — one model, gated against the *RTL* rather than against itself.
+That rule is untouched. Two independent statements of the semantics
+still exist and are still diffed instruction by instruction: the
+Verilog, and `rust/src/`. The count did not change; the language did.
+
+**The three things that had to move first**, all of them
+per-instruction observation that cannot cross a pipe a tick at a time,
+and all now server-side commands in the `+serve` protocol:
+
+| was | is |
+|---|---|
+| `Machine.profile`, read by `dbg.Profile` | `profon`/`profdump` — cycles by PC; label attribution stays in Python, where the symbol table is |
+| `test_interp`'s SP high-water loop | `spmin`/`spclr` — the machine's own low-water mark |
+| the render gate: RTL frames → `cool8vid` → `render.rs` | RTL frames → `render.rs`, **directly**. `sim/test_vm.py` replays the testbench stimulus through the machine and compares its scanned-out frame per pixel |
+
+The render gate is the one that mattered, and it came out *shorter*:
+the chain lost a link rather than gaining one, and the stimulus is
+still transcribed by hand from `cool8_video_tb.v` so a misreading of a
+register has to be made twice, identically, to pass. 307,200 pixels ×
+three frames, 4096 sound samples, and the boot conversation, all clean
+on the first run after the swap.
+
+**A gate that could not run was passing.** `poe test-rust` went green
+in 0.19 s having compared nothing: every runner job gets its own
+`COOL8_BUILD`, so `test_vm.py` looked for the RTL golden dumps in a
+directory only a sibling job writes, found none, and counted the
+absence as a skip. It now searches the shared build and every job's,
+and **a missing golden is a failure** — a check that cannot run has
+not passed. Worth stating as a rule, because per-job build directories
+make it a trap any suite reading another's artifact can fall into.
+
+**Casualties worth naming.** `sim/rustsim.py` compared two models and
+had nothing left to compare, so it went; `poe test-rust` now runs
+`sim/test_vm.py`, which asks the RTL instead. `sim/test_lib.py`'s
+hand-written bus — a *third* implementation of the I/O page, written
+only to fake a permanently-ready vblank flag — went with it, and the
+suite now reads the machine's own state through `pald`/`sprd`/`sndd`.
+Rewriting it turned up that its gate had been measuring nothing since
+the machine grew real vblank timing: both versions are frame-locked, so
+frames-per-clock is 1.00x by construction. It now measures **work per
+frame**, the clocks spent outside the spin, and at that measure the
+BASIC demo is 2.48x the assembly against a 2x tolerance — a real
+failure the old shape could not see. Left failing, deliberately: the
+number is the finding.
+
+**What Python keeps**, and this is the line D55 drew and this entry
+does not move: the assembler, the compiler, `opcodes.py` and the
+generators, the disk tool, the board tools, the harnesses themselves.
+They are I/O-bound scripting measured in seconds, and `opcodes.py` is
+the encoding's single source of truth with `mkrsopc.py` generating the
+Rust table from it. Python is the scripting layer. Rust is the machine.

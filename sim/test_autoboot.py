@@ -3,7 +3,7 @@
 
     python sim/test_autoboot.py
 
-Two new things in the boot ROM, both checked on `tools/cool8vm.py` with
+Two new things in the boot ROM, both checked on the machine with
 a real flash image built by `tools/cool8disk.py`:
 
   autoboot   the ROM looks on drive 0 for BOOT.BIN, loads it to $0200
@@ -34,7 +34,7 @@ os.makedirs(BUILD, exist_ok=True)
 
 sys.path.insert(0, os.path.join(ROOT, "tools"))
 
-import cool8vm as vm                                     # noqa: E402
+import cool8rsvm as vm                                   # noqa: E402
 import cool8disk as disk                                 # noqa: E402
 
 IMG = os.path.join(BUILD, "autoboot.img")

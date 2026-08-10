@@ -1169,7 +1169,7 @@ have been found anywhere else.
 
 **The timer and the UART do not raise interrupts.** This table listed
 both for a long time and the hardware never agreed: `cool8_soc.v:468`
-drives the core with `irq | vid_irq | ps2_irq`, and `tools/cool8vm.py`
+drives the core with `irq | vid_irq | ps2_irq`, and the machine
 mirrors it. `TMR_CTRL` bit 4 and the UART's status bits exist, but
 nothing carries either to the core, and `irq` is an external SoC input
 that nothing on the board drives. **The keyboard is not in that

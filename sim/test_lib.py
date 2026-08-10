@@ -12,16 +12,36 @@ sprites bouncing, and a two-voice arpeggio with a software envelope.
 
 ## How the comparison is made fair
 
-Both programs wait for vertical blank, so left alone they would run at
-exactly the same speed -- 60 frames a second, both idle. So the vblank
-flag is held permanently ready for both, which turns the wait into a no
--op and lets each run its update loop flat out. Frames are counted by
-watching writes of zero to `SPR_IDX`, which is how each version starts
-its sprite pass, and the measure is frames completed per million clocks.
+Both programs wait for vertical blank, so on a real machine they run at
+exactly the same speed: 60 frames a second, each spending the rest of
+the frame spinning on `VID_IRQ`. **Frames completed is therefore not a
+measurement** -- it is 429 either way in a 60 Mclock budget, and a gate
+built on it can never fail. (It was one, for a while, and passed at
+1.00x for the same reason a stopped clock is right: this file used to
+run on a hand-written bus that held the vblank flag permanently ready
+so both versions ran flat out.)
+
+What is measured instead is **work per frame**: the clocks each version
+spends *not* spinning. The machine's profiler charges every cycle to
+the PC that spent it, so the spin loop's own cycles subtract out and
+what is left is the update -- sprite movement, the music, the envelope.
+That is the number the gate is about, and it is the one a demo with a
+sixteenth voice would move.
 
 Setup is measured separately: it is a one-off, it is dominated by
 pushing 8 KB through the VRAM port, and averaging it into a per-frame
 figure would flatter whichever version was given more frames.
+
+## What the comparison reads
+
+The machine's own state, through the session dumps -- VRAM, the
+committed palette entries, the sprite descriptor table and the
+programmed sound voices (`m.palette()`, `m.sprites()`, `m.sound()`).
+This file used to carry a hand-written bus that modelled just enough
+of the I/O page to fake those, which meant the gate compared two
+programs against a *third* implementation of the hardware, written
+here and nowhere else. It now compares them on the machine both would
+run on.
 """
 
 import os
@@ -35,7 +55,7 @@ os.makedirs(BUILD, exist_ok=True)
 
 sys.path.insert(0, os.path.join(ROOT, "tools"))
 
-import cool8emu as emu                                   # noqa: E402
+import cool8rsvm as vm                                   # noqa: E402
 import cool8bas as bas                                   # noqa: E402
 
 TOLERANCE = 2.0
@@ -52,106 +72,82 @@ def check(ok, what, detail=""):
     return ok
 
 
-class Bus(emu.Bus):
-    """RAM, VRAM behind its port, and just enough I/O to run the demo.
+def start(code):
+    """The program loaded at $0200, ready to run."""
+    m = vm.Machine()
+    m.bus.mem[0x200:0x200 + len(code)] = code
+    m.cpu.pc, m.cpu.sp, m.romen = 0x200, 0xFFF7, False
+    return m
 
-    The vblank flag reads as permanently ready, which is what makes the
-    two versions comparable: both spin on it, and neither should be
-    measured waiting.
+
+def measure_setup(code, syms, budget=BUDGET):
+    """The clocks before the first sprite pass.
+
+    Setup ends when the descriptor table stops being all zero, which is
+    the first thing the update loop does. Stepped in fine slices and
+    asked, rather than hooked: a 5000-clock slice is 4 % of a frame, so
+    the boundary is exact to far better than the number it feeds.
     """
-
-    def __init__(self):
-        self.mem = bytearray(0x10000)
-        self.vram = bytearray(0x10000)
-        self.vaddr = 0
-        self.frames = 0
-        self.spr = bytearray(256)
-        self.spr_idx = 0
-        self.snd = bytearray(64)
-        self.snd_idx = 0
-        self.pal = []
-        self.pal_idx = 0
-        self.regs = {}
-
-    def read(self, a):
-        a &= 0xFFFF
-        if (a & 0xFF00) == 0xFE00:
-            r = a & 0xFF
-            if r == 0x1D:
-                return 0x02                 # vblank, always pending
-            if r == 0x29:
-                v = self.vram[self.vaddr]
-                self.vaddr = (self.vaddr + 1) & 0xFFFF
-                return v
-            return self.regs.get(r, 0xFF)
-        return self.mem[a]
-
-    def write(self, a, v):
-        a &= 0xFFFF
-        v &= 0xFF
-        if (a & 0xFF00) == 0xFE00:
-            r = a & 0xFF
-            self.regs[r] = v
-            if r == 0x26:
-                self.vaddr = (self.vaddr & 0xFF00) | v
-            elif r == 0x27:
-                self.vaddr = (self.vaddr & 0x00FF) | (v << 8)
-            elif r == 0x29:
-                self.vram[self.vaddr] = v
-                self.vaddr = (self.vaddr + 1) & 0xFFFF
-            elif r == 0x1E:
-                self.pal_idx = v
-            elif r == 0x1F:
-                # The stream of bytes, not a decoded palette: a byte
-                # pair commits an entry and the index then advances, and
-                # modelling that here would be a second implementation
-                # of cool8_pal to get wrong. What matters is that both
-                # versions send the same bytes.
-                self.pal.append(v)
-            elif r == 0x2A:
-                self.spr_idx = v
-                if v == 0:
-                    self.frames += 1        # each pass starts at sprite 0
-            elif r == 0x2B:
-                self.spr[self.spr_idx] = v
-                self.spr_idx = (self.spr_idx + 1) & 0xFF
-            elif r == 0x50:
-                self.snd_idx = v & 0x3F
-            elif r == 0x51:
-                self.snd[self.snd_idx] = v
-                self.snd_idx = (self.snd_idx + 1) & 0x3F
-            return
-        self.mem[a] = v
+    m = start(code)
+    while m.cpu.cycles < budget:
+        m.run(cycles=5_000)
+        if any(m.sprites()):
+            return m.cpu.cycles
+    return None
 
 
-def run(code, budget=BUDGET):
-    bus = Bus()
-    bus.mem[0x200:0x200 + len(code)] = code
-    c = emu.Cool8(bus)
-    c.reset()
-    c.pc = 0x200
-    c.sp = 0xFFF7
-    setup = None
-    n = 0
-    while c.cycles < budget and not c.halted:
-        c.step()
-        n += 1
-        if setup is None and bus.frames == 1:
-            setup = c.cycles
-    return bus, c.cycles, setup
+def wait_range(syms, name):
+    """[lo, hi) of the vblank wait routine, from the symbol map: its own
+    address up to the next symbol above it.
+
+    A local label inside the routine (`wait_vbl.w`, `s_waitvbl.wv` --
+    the spin itself) is part of it, not the end of it, so those are
+    skipped when looking for the next symbol.
+    """
+    lo = syms[name]
+    above = [a for n, a in syms.items()
+             if a > lo and not n.startswith(name + ".")]
+    return lo, min(above) if above else lo + 16
 
 
-def build_asm(src, out):
+def run(code, syms, waitsym, budget=BUDGET):
+    """One program for a fixed clock budget, with the spin discounted.
+
+    Returns the machine, the clocks spent, the frames reached, and the
+    clocks spent *outside* the vblank wait -- the work.
+    """
+    m = start(code)
+    m.profile_start()
+    m.run(cycles=budget)
+    lo, hi = wait_range(syms, waitsym)
+    spin = sum(c for pc, c in m.profile_cycles().items() if lo <= pc < hi)
+    return m, m.cpu.cycles, m.frames, m.cpu.cycles - spin
+
+
+def _symbols(path):
+    syms = {}
+    for line in open(path):
+        p = line.split()
+        if len(p) == 2:
+            syms[p[1].lower()] = int(p[0], 16)
+    return syms
+
+
+def _assemble(apath, out):
+    sym = os.path.join(BUILD, out + ".sym")
     r = subprocess.run([sys.executable,
-                        os.path.join(ROOT, "tools", "cool8asm.py"),
-                        os.path.join(ROOT, "sw", src),
-                        "-o", os.path.join(BUILD, out)],
+                        os.path.join(ROOT, "tools", "cool8asm.py"), apath,
+                        "-o", os.path.join(BUILD, out), "--symbols", sym],
                        capture_output=True, text=True)
     if r.returncode != 0:
         print(r.stdout + r.stderr)
-        raise SystemExit("assembly failed: " + src)
+        raise SystemExit("assembly failed: " + apath)
     with open(os.path.join(BUILD, out), "rb") as fh:
-        return fh.read()
+        return fh.read(), _symbols(sym)
+
+
+def build_asm(src, out):
+    return _assemble(os.path.join(ROOT, "sw", src), out)
 
 
 def build_bas(src, out):
@@ -160,72 +156,101 @@ def build_bas(src, out):
     apath = os.path.join(BUILD, out + ".asm")
     with open(apath, "w") as fh:
         fh.write(asm)
-    r = subprocess.run([sys.executable,
-                        os.path.join(ROOT, "tools", "cool8asm.py"), apath,
-                        "-o", os.path.join(BUILD, out)],
-                       capture_output=True, text=True)
-    if r.returncode != 0:
-        print(r.stdout + r.stderr)
-        raise SystemExit("compile failed: " + src)
-    with open(os.path.join(BUILD, out), "rb") as fh:
-        return fh.read()
+    return _assemble(apath, out)
 
 
 def main():
     print("  M14 -- sw/demo.bas against sw/demo.asm")
     print()
 
-    a_code = build_asm("demo.asm", "demo_asm.bin")
-    b_code = build_bas("demo.bas", "demo_bas.bin")
+    a_code, a_syms = build_asm("demo.asm", "demo_asm.bin")
+    b_code, b_syms = build_bas("demo.bas", "demo_bas.bin")
 
-    a_bus, a_cyc, a_setup = run(a_code)
-    b_bus, b_cyc, b_setup = run(b_code)
+    # The vblank wait, so its clocks can be taken out: `wait_vbl` in the
+    # assembly, and lib.bas's `waitvbl` compiled to `s_waitvbl` with the
+    # spin itself at the local label `.wv` inside it.
+    a_wait, b_wait = "wait_vbl", "s_waitvbl"
+
+    a_setup = measure_setup(a_code, a_syms)
+    b_setup = measure_setup(b_code, b_syms)
+    a, a_cyc, a_frames, a_work = run(a_code, a_syms, a_wait)
+    b, b_cyc, b_frames, b_work = run(b_code, b_syms, b_wait)
+
+    a_vram, b_vram = a.video.vram, b.video.vram
+    a_pal, b_pal = a.palette(), b.palette()
+    a_spr, b_spr = a.sprites(), b.sprites()
+    a_snd, b_snd = a.sound(), b.sound()
+
+    wa = a_work / max(a_frames, 1)
+    wb = b_work / max(b_frames, 1)
 
     print(f"  {'':<22} {'assembly':>12} {'BASIC':>12} {'ratio':>8}")
     print(f"  {'code size':<22} {len(a_code):11,}B {len(b_code):11,}B "
           f"{len(b_code)/len(a_code):7.2f}x")
     print(f"  {'setup, to frame 1':<22} {a_setup:11,} {b_setup:11,} "
           f"{b_setup/a_setup:7.2f}x")
-    fa = a_bus.frames / (a_cyc / 1e6)
-    fb = b_bus.frames / (b_cyc / 1e6)
-    print(f"  {'frames':<22} {a_bus.frames:11,} {b_bus.frames:11,}")
-    print(f"  {'frames per Mclock':<22} {fa:11.1f} {fb:11.1f} "
-          f"{fa/fb:7.2f}x")
+    # Equal by construction: both wait for vblank, so both reach the
+    # same number of frames in the same budget. Printed as the control
+    # it is -- if these ever differ, one version stopped waiting.
+    print(f"  {'frames (both locked)':<22} {a_frames:11,} {b_frames:11,}")
+    print(f"  {'work per frame':<22} {wa:11,.0f} {wb:11,.0f} "
+          f"{wb/wa:7.2f}x")
+    print(f"  {'of a frame''s 139,650':<22} {100*wa/139650:10.1f}% "
+          f"{100*wb/139650:10.1f}%")
     print()
 
-    slow = fa / fb
+    check(a_frames == b_frames,
+          "both are frame-locked, so work per frame is the comparison",
+          f"asm {a_frames} frames, bas {b_frames}")
+
+    slow = wb / wa
     check(slow <= TOLERANCE,
           f"the language version is within {TOLERANCE:g}x of assembly",
-          f"{slow:.2f}x slower")
+          f"{slow:.2f}x slower: {wb:,.0f} clocks a frame against "
+          f"{wa:,.0f}")
+    check(wb < 139650,
+          "and it still fits inside a frame",
+          f"{wb:,.0f} clocks of the 139,650 a frame has")
 
     # ---- and it has to be the same demo, not merely a fast one
-    check(a_bus.vram[0x4000:0x4020] == b_bus.vram[0x4000:0x4020]
-          and a_bus.vram[0x4020:0x4040] == b_bus.vram[0x4020:0x4040],
+    check(a_vram[0x4000:0x4040] == b_vram[0x4000:0x4040],
           "the tile patterns match the assembly version",
-          f"asm {a_bus.vram[0x4000:0x4008].hex()} "
-          f"bas {b_bus.vram[0x4000:0x4008].hex()}")
-    check(a_bus.vram[0x6000:0x6080] == b_bus.vram[0x6000:0x6080],
+          f"asm {a_vram[0x4000:0x4008].hex()} "
+          f"bas {b_vram[0x4000:0x4008].hex()}")
+    check(a_vram[0x6000:0x6080] == b_vram[0x6000:0x6080],
           "the sprite pattern matches, all 128 bytes",
-          f"asm {a_bus.vram[0x6040:0x6048].hex()} "
-          f"bas {b_bus.vram[0x6040:0x6048].hex()}")
-    check(a_bus.vram[0:256] == b_bus.vram[0:256],
+          f"asm {a_vram[0x6040:0x6048].hex()} "
+          f"bas {b_vram[0x6040:0x6048].hex()}")
+    check(a_vram[0:256] == b_vram[0:256],
           "the first row of the tile map matches")
-    check(a_bus.pal[:512] == b_bus.pal[:512],
-          "the palette bytes match, all 256 entries",
-          f"asm {a_bus.pal[:6]} bas {b_bus.pal[:6]}")
+    # The committed entries, not the byte stream that made them: what
+    # matters is that both programs put the same colours in the
+    # palette, whatever order they wrote the halves in.
+    check(a_pal == b_pal,
+          "the palette matches, all 256 entries",
+          f"asm {[hex(v) for v in a_pal[:3]]} "
+          f"bas {[hex(v) for v in b_pal[:3]]}")
 
-    def enabled(bus):
-        return sum(1 for i in range(8) if bus.spr[i * 8 + 1] & 0x40)
-    check(enabled(a_bus) == 8 and enabled(b_bus) == 8,
+    def enabled(spr):
+        return sum(1 for i in range(8) if spr[i * 8 + 1] & 0x40)
+    check(enabled(a_spr) == 8 and enabled(b_spr) == 8,
           "both have eight sprites enabled and moving",
-          f"asm {enabled(a_bus)} bas {enabled(b_bus)}")
-    check(a_bus.snd[4] != 0 and b_bus.snd[4] != 0
-          and a_bus.snd[0] != 0 and b_bus.snd[0] != 0,
+          f"asm {enabled(a_spr)} bas {enabled(b_spr)}")
+    # Every descriptor field except the position, which is where the
+    # two versions are legitimately out of step: they have run a
+    # different number of frames by the budget's end.
+    same = all(a_spr[i * 8 + 4:i * 8 + 8] == b_spr[i * 8 + 4:i * 8 + 8]
+               for i in range(8))
+    check(same, "and the same pattern, flip and priority in all eight",
+          f"asm {a_spr[4:8].hex()} bas {b_spr[4:8].hex()}")
+    check(a_snd[4] != 0 and b_snd[4] != 0
+          and (a_snd[0] or a_snd[1]) and (b_snd[0] or b_snd[1]),
           "both are playing: voice 0 has a pitch and a volume",
-          f"asm inc={a_bus.snd[0]:02x}{a_bus.snd[1]:02x} "
-          f"vol={a_bus.snd[4]:02x}  "
-          f"bas inc={b_bus.snd[0]:02x}{b_bus.snd[1]:02x} "
-          f"vol={b_bus.snd[4]:02x}")
+          f"asm inc={a_snd[1]:02x}{a_snd[0]:02x} vol={a_snd[4]:02x}  "
+          f"bas inc={b_snd[1]:02x}{b_snd[0]:02x} vol={b_snd[4]:02x}")
+    check(a_snd[5] & 0x40 and b_snd[5] & 0x40,
+          "and voice 0 is enabled in both",
+          f"asm ctrl={a_snd[5]:02x} bas ctrl={b_snd[5]:02x}")
 
     print()
     print("PASS" if not FAILS else f"FAIL -- {len(FAILS)}")

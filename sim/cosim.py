@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
-"""COOL8 RTL co-simulation — the RTL against the reference emulator.
+"""COOL8 RTL co-simulation — the RTL against the software model.
 
-The emulator (tools/cool8emu.py) is the executable specification. This
-runs the same program through it and through the Verilog, each emitting
-one line of full architectural state per retired instruction, and reports
-the first line where they disagree together with the disassembly of the
-instruction that caused it.
+This runs the same program through the model and through the Verilog,
+each emitting one line of full architectural state per retired
+instruction, and reports the first line where they disagree together
+with the disassembly of the instruction that caused it.
+
+The model side is cool8rs — the machine (RUST_PORT.md). The Python
+reference emulator retired (D57 in docs/01-decisions.md); this diff,
+against the silicon-truth of the RTL, is now the contract that holds
+the model honest, exactly as it once held the RTL to the emulator.
 
     python sim/cosim.py directed          # one probe per encoding
     python sim/cosim.py random            # constrained-random streams
@@ -31,7 +35,7 @@ sys.path.insert(0, os.path.join(ROOT, "tools"))
 sys.path.insert(0, HERE)
 
 import opcodes                              # noqa: E402
-import cool8emu                             # noqa: E402
+import cool8rsvm                            # noqa: E402
 import progen                               # noqa: E402
 
 RTL = [os.path.join(ROOT, "rtl", "core", f)
@@ -134,38 +138,42 @@ def run_sim(vvp_file, args):
 
 # --------------------------------------------------------------- emulator
 
-def emu_trace(image, path, max_instr=0, events=None):
-    """Run the emulator, writing the same state line the testbench does.
+def rs_trace(hexf, path, max_instr=0, plusargs=()):
+    """The same trace out of cool8rs — the fast model, ~150x the speed.
 
-    `events` maps a retired-instruction count to an action on the CPU,
-    applied immediately after that instruction retires and before the
-    halt check — so an event aimed at a halted machine still fires.
+    The runner takes the RTL testbench's plusarg vocabulary verbatim
+    (hardware-only knobs accepted and ignored), which is why the same
+    `sim_args` the vvp gets can be passed straight through: an
+    interrupt spec expressed as `+irqafter=` means the same retirement
+    boundary to both.
     """
-    bus = cool8emu.Bus()
-    bus.mem[:] = image
-    cpu = cool8emu.Cool8(bus)
-    ev = dict(events or {})
-    n = 0
-    if 0 in ev:
-        ev[0](cpu)
-    with open(path, "w") as f:
-        while True:
-            before = cpu.instructions
-            cpu.step()
-            if cpu.instructions != before:
-                n += 1
-                if n in ev:
-                    ev[n](cpu)
-                f.write("%04x %02x%02x%02x%02x %04x %04x %04x %02x\n" % (
-                    cpu.pc, cpu.r[0], cpu.r[1], cpu.r[2], cpu.r[3],
-                    cpu.x, cpu.y, cpu.sp, cpu.f))
-                if max_instr and n >= max_instr:
-                    break
-            if cpu.halted and not (cpu.nmi_edge or (cpu.irq_line and cpu.I)):
-                break
-            if n > 20_000_000:
-                raise SystemExit("emulator runaway")
-    return n, bytes(bus.mem)
+    memf = path + ".mem"
+    cmd = [cool8rsvm.EXE, f"+hex={hexf}", f"+trace={path}",
+           f"+memdump={memf}"]
+    if max_instr:
+        cmd.append(f"+maxinstr={max_instr}")
+    cmd += list(plusargs)
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    if r.returncode != 0:
+        print(r.stdout, r.stderr)
+        raise SystemExit("cool8rs failed")
+    n = int(r.stdout.split()[1])        # "-- N instructions, ..."
+    return n, read_memdump(memf)
+
+
+def model_trace(image, hexf, path, max_instr=0, events=None, plusargs=()):
+    """One model-side trace, out of cool8rs.
+
+    `image` and `events` are unused now the Python emulator has
+    retired — kept in the signature so the call sites, which mirror
+    the RTL invocations beside them, do not churn. The interrupt spec
+    travels as `plusargs`, the vocabulary the model and the testbench
+    share.
+    """
+    del image, events
+    if not cool8rsvm.available():
+        raise SystemExit("cosim needs cool8rs (cargo) — see RUST_PORT.md")
+    return rs_trace(hexf, path, max_instr=max_instr, plusargs=plusargs)
 
 
 # ------------------------------------------------------------------ diff
@@ -228,7 +236,8 @@ def _run_pair(tag, mem, vvp, sim_args=(), max_instr=0, events=None,
     image = progen.write_hex(mem, hexf)
 
     emu_t = os.path.join(BUILD, f"{tag}.emu")
-    n, emu_mem = emu_trace(image, emu_t, max_instr=max_instr, events=events)
+    n, emu_mem = model_trace(image, hexf, emu_t, max_instr=max_instr,
+                             events=events, plusargs=sim_args)
 
     rtl_t = os.path.join(BUILD, f"{tag}.rtl")
     rtl_m = os.path.join(BUILD, f"{tag}.rtlmem")
@@ -315,7 +324,8 @@ def test_interrupts(vvp):
         hexf = os.path.join(BUILD, f"{tag}.hex")
         image = progen.write_hex(mem, hexf)
         emu_t = os.path.join(BUILD, f"{tag}.emu")
-        n, emu_mem = emu_trace(image, emu_t, events=ev)
+        n, emu_mem = model_trace(image, hexf, emu_t, events=ev,
+                                 plusargs=args)
         rtl_t = os.path.join(BUILD, f"{tag}.rtl")
         rtl_m = os.path.join(BUILD, f"{tag}.rtlmem")
         run_sim(vvp, [f"+hex={hexf}", f"+trace={rtl_t}", f"+memdump={rtl_m}",
@@ -468,7 +478,7 @@ def test_bus(vvp_unused):
         image = progen.write_hex(mem, hexf)
         emu_t = os.path.join(BUILD, f"{tag}.emu")
         t0 = time.time()
-        n, emu_mem = emu_trace(image, emu_t)
+        n, emu_mem = model_trace(image, hexf, emu_t)
         rtl_t = os.path.join(BUILD, f"{tag}.rtl")
         rtl_m = os.path.join(BUILD, f"{tag}.rtlmem")
         run_sim(vvp, [f"+hex={hexf}", f"+trace={rtl_t}", f"+memdump={rtl_m}"]
@@ -527,7 +537,7 @@ def test_mul(vvp):
 
     t0 = time.time()
     emu_t = os.path.join(BUILD, "mul.emu")
-    n, emu_mem = emu_trace(image, emu_t)
+    n, emu_mem = model_trace(image, hexf, emu_t)
     rtl_m = os.path.join(BUILD, "mul.rtlmem")
     run_sim(vvp, [f"+hex={hexf}", f"+memdump={rtl_m}", "+maxcycles=200000000"])
     rtl_mem = read_memdump(rtl_m)

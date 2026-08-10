@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """What is installed, what is missing, and what that stops you doing.
 
-    npm run doctor
+    poe doctor
 
 Every failure this reports has been mistaken for something else at least
 once. `which icesprog` in a shell that has not put the OSS CAD Suite on
@@ -28,22 +28,22 @@ sys.path.insert(0, os.path.join(ROOT, "sim"))
 OK, BAD, DIM, OFF = "\033[32m", "\033[31m", "\033[2m", "\033[0m"
 
 def _cfg():
-    """package.json's cool8 block -- the one place these are named."""
-    import json
-    with open(os.path.join(ROOT, "package.json")) as fh:
-        return json.load(fh).get("cool8", {})
+    """pyproject.toml's [tool.cool8] -- the one place these are named."""
+    import tomllib
+    with open(os.path.join(ROOT, "pyproject.toml"), "rb") as fh:
+        return tomllib.load(fh).get("tool", {}).get("cool8", {})
 
 
 # What each tool is for, and what stops working without it. The *list*
 # of tools and the name of the environment variable come from
-# package.json, so adding one is a config change and not a code change.
+# pyproject.toml, so adding one is a config change and not a code change.
 WHAT = {
-    "yosys":         ("synthesis",         "npm run bit, npm run synth"),
-    "nextpnr-ice40": ("place and route",   "npm run bit"),
-    "icepack":       ("bitstream packing", "npm run bit"),
-    "iverilog":      ("RTL simulation",    "npm run test:rtl, npm run cosim"),
-    "vvp":           ("RTL simulation",    "npm run test:rtl"),
-    "icesprog":      ("programming flash", "npm run flash, npm run test:board"),
+    "yosys":         ("synthesis",         "poe bit, poe synth"),
+    "nextpnr-ice40": ("place and route",   "poe bit"),
+    "icepack":       ("bitstream packing", "poe bit"),
+    "iverilog":      ("RTL simulation",    "poe test-rtl, poe cosim"),
+    "vvp":           ("RTL simulation",    "poe test-rtl"),
+    "icesprog":      ("programming flash", "poe flash, poe test-board"),
 }
 _TC = _cfg().get("toolchain", {})
 SUITE_ENV = _TC.get("env", "OSS_CAD_SUITE")
@@ -76,21 +76,28 @@ def find(name):
 
 def main():
     print("\n  environment\n")
-    say(sys.version_info >= (3, 8), "python %d.%d"
+    say(sys.version_info >= (3, 11), "python %d.%d"
         % sys.version_info[:2], sys.executable)
     try:
-        v = subprocess.run(["node", "--version"], capture_output=True,
+        import pytest
+        say(True, "pytest %s" % pytest.__version__, "the suite runner")
+    except ImportError:
+        say(False, "pytest", 'pip install -e ".[dev]" -- poe test')
+    try:
+        v = subprocess.run(["cargo", "--version"], capture_output=True,
                            text=True).stdout.strip()
-        say(bool(v), "node %s" % v, "the task runner")
+        say(bool(v), v or "cargo",
+            "the fast machine and the emulator window; without it the "
+            "suites fall back to the Python reference")
     except Exception:
-        say(False, "node", "npm run <anything> needs it")
+        say(False, "cargo", "poe emu needs it; poe test slows without it")
 
     try:
         import serial
         say(True, "pyserial %s" % serial.__version__,
-            "npm run board, npm run console")
+            "poe board, poe console")
     except ImportError:
-        say(False, "pyserial", "pip install pyserial -- npm run board")
+        say(False, "pyserial", 'pip install -e "." -- poe board')
 
     root = suite_root()
     print()

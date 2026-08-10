@@ -2,11 +2,11 @@
 name = "cool8rs"
 version = "0.1.0"
 edition = "2021"
-description = "COOL8 fast runner. Never authoritative: tools/cool8emu.py is the executable specification, and sim/rustsim.py holds this to its trace. See RUST_PORT.md."
+description = "The COOL8 machine. Held to the RTL by sim/cosim.py per retired instruction and by sim/test_vm.py per pixel. See RUST_PORT.md."
 
 [features]
 # The window and the speaker. Off by default so the parity suite's
-# build (sim/rustsim.py) stays dependency-free; tools/cool8rsrun.py
+# build stays dependency-free; tools/cool8rsrun.py
 # builds with `--features gui`.
 # SDL2 is the window, the speaker, the clipboard and the scaler — the
 # same library the Python front end uses through pygame. Bundled, so

@@ -541,11 +541,37 @@ fn parse_pcs(csv: &str) -> Vec<u16> {
         .collect()
 }
 
+/// The run loop itself, in place on any machine. It is
+/// cool8vm.Machine.run's own, tests in its order — until, breakpoint,
+/// cycles, halt, tick — so a test that moves from one machine to the
+/// other keeps its stopping behaviour exactly.
+fn run_loop(m: &mut machine::Machine, budget: u64, until: &[u16],
+            brk: &[u16], cycles: Option<u64>) -> &'static str {
+    let start = m.cpu.cycles;
+    let mut last: i32 = -1;
+    for _ in 0..budget {
+        if until.contains(&m.cpu.pc) {
+            return "until";
+        }
+        if !brk.is_empty() && brk.contains(&m.cpu.pc) {
+            return "breakpoint";
+        }
+        if let Some(cl) = cycles {
+            if m.cpu.cycles - start >= cl {
+                return "cycles";
+            }
+        }
+        if m.cpu.pc as i32 == last {
+            return "halt";
+        }
+        last = m.cpu.pc as i32;
+        m.tick();
+    }
+    "budget"
+}
+
 /// The core of a batch run: a memory image and the registers in, the
-/// machine run to a stop, both out. The loop is cool8vm.Machine.run's
-/// own, tests in its order — until, breakpoint, cycles, halt, tick —
-/// so a test that moves from one machine to the other keeps its
-/// stopping behaviour exactly.
+/// machine run to a stop, both out.
 fn batch_run(image: &[u8], romen: bool, budget: u64, regs: Option<&Regs>,
              until: &[u16], brk: &[u16], cycles: Option<u64>)
              -> (&'static str, machine::Machine) {
@@ -567,32 +593,7 @@ fn batch_run(image: &[u8], romen: bool, budget: u64, regs: Option<&Regs>,
         c.instructions = rg.instructions;
         c.halted = rg.halted;
     }
-
-    let start = m.cpu.cycles;
-    let mut last: i32 = -1;
-    let mut reason = "budget";
-    for _ in 0..budget {
-        if until.contains(&m.cpu.pc) {
-            reason = "until";
-            break;
-        }
-        if !brk.is_empty() && brk.contains(&m.cpu.pc) {
-            reason = "breakpoint";
-            break;
-        }
-        if let Some(cl) = cycles {
-            if m.cpu.cycles - start >= cl {
-                reason = "cycles";
-                break;
-            }
-        }
-        if m.cpu.pc as i32 == last {
-            reason = "halt";
-            break;
-        }
-        last = m.cpu.pc as i32;
-        m.tick();
-    }
+    let reason = run_loop(&mut m, budget, until, brk, cycles);
     (reason, m)
 }
 
@@ -615,51 +616,401 @@ fn run_batch(args: &Args) {
              reason, m.cpu.instructions, m.cpu.cycles);
 }
 
-/// `+serve`: batch runs over stdin, one per line, so a suite of a
-/// hundred cases pays for one process rather than a hundred. The
-/// fields are tab-separated because they carry paths:
+fn hex_of(bytes: &[u8]) -> String {
+    let mut s = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        s.push_str(&format!("{:02x}", b));
+    }
+    if s.is_empty() {
+        s.push('-');
+    }
+    s
+}
+
+fn bytes_of(hex: &str) -> Vec<u8> {
+    if hex == "-" {
+        return Vec::new();
+    }
+    (0..hex.len() / 2)
+        .map(|i| u8::from_str_radix(&hex[2 * i..2 * i + 2], 16)
+            .unwrap_or_else(|_| die(format!("bad hex {:?}", hex))))
+        .collect()
+}
+
+/// The raw character bytes of the visible text screen, through the
+/// machine's own VID_BASE and the circular wrap — the address math
+/// m.row() uses on the Python side, which does the string munging.
+fn text_bytes(m: &machine::Machine) -> Vec<u8> {
+    let v = &m.bus.video;
+    let wrap = ((v.stride << 5) as u16).wrapping_sub(1);
+    let mut out = Vec::with_capacity(30 * 80);
+    for r in 0..30u16 {
+        let ra = (v.base & !wrap)
+            | (v.base.wrapping_add(r.wrapping_mul(v.stride)) & wrap);
+        for c in 0..80u16 {
+            out.push(m.bus.mem[ra.wrapping_add(2 * c) as usize]);
+        }
+    }
+    out
+}
+
+/// `+serve`: one machine service per line over stdin, so a suite of a
+/// hundred cases pays for one process rather than a hundred. Fields
+/// are tab-separated because some carry paths; numbers are decimal,
+/// payloads are hex with `-` for empty.
+///
+/// The stateless form carries a whole machine per call:
 ///
 ///     run \t mem.bin \t out.bin \t budget \t romen \t regs \t until \t brk \t cycles
+///     -> ok <reason> <regs>          (after out.bin is written)
 ///
-/// `regs` is the twelve-field register file (see Regs::csv), `until`
-/// and `brk` are comma-separated PCs or `-`, `cycles` a count or `-`.
-/// Answered, after out.bin is written, with
+/// Registers round-trip; peripheral state does not — every `run` is a
+/// fresh machine around the carried CPU and memory.
 ///
-///     ok <reason> <regs>
+/// The session form holds ONE persistent machine — peripherals, flash
+/// and all — which is what lets the interactive suites move here. One
+/// session per process: a client that needs two machines starts two
+/// servers. The commands mirror cool8vm.Machine's API, at the
+/// machine-API granularity RUST_PORT.md requires the boundary to keep:
 ///
-/// The registers round-trip, so a client can run the same machine
-/// again; peripheral state does not — every run is a fresh machine
-/// around the carried CPU and memory, which is what the batch client's
-/// docstring promises and no more.
+///     new \t rom|- \t flash|- [\t font|0|-]   fresh machine (paths; - for
+///                                      none; the 4th field attaches the
+///                                      scanline renderer, 0 = blank font)
+///     sregs \t regs \t romen           set the register file
+///     gregs                            -> ok <regs> <romen>
+///     srun \t budget \t until \t brk \t cycles   -> ok <reason> <regs>
+///     ticks \t n                       n tick()s -> ok <regs>
+///     frames \t n                      n frames of tick() -> ok <regs>
+///     settle \t idle \t irhead \t irtail \t budget
+///                                      -> ok settled|budget <regs>
+///     type|scan \t hex                 UART / PS/2 bytes in
+///     nmi                              the break button
+///     said                             -> ok <hex>, draining the UART
+///     stat                             -> ok <rx> <q> <uart_ov> <kbd_ov>
+///     rd \t addr \t len                -> ok <hex>   (RAM, no side effects)
+///     wr \t addr \t hex                RAM in, no side effects
+///     busrd \t addr                    -> ok <val>   (through the bus)
+///     buswr \t addr \t hex             every byte through the bus — the
+///                                      auto-increment data-port idiom
+///     text                             -> ok <hex of 30x80 char bytes>
+///     fb                               -> ok <hex of 640x480 u16 LE pixels>
+///     profon                           start (or restart) the cycle profile
+///     profdump                         -> ok pc:cycles ... (nonzero only)
+///     spmin / spclr                    the SP low-water mark; reset it
+///     flush                            flash image written back to its path
+///
+/// `settle` is test_basic's idle test, server-side because it polls
+/// per instruction: UART FIFO empty, PS/2 FIFO empty, the input ring
+/// drained (mem[irhead] == mem[irtail]) and the PC at the idle label.
+/// The session: the machine plus the observation the suites need and a
+/// per-instruction Python loop cannot afford over a pipe — a cycle
+/// profile by PC, and the stack's low-water mark. Both ride the tick
+/// wrapper, so every stepping command feeds them.
+struct Sess {
+    m: machine::Machine,
+    flash_path: Option<String>,
+    prof: Option<Box<[u64; 0x10000]>>,
+    spmin: u16,
+}
+
+impl Sess {
+    fn tick(&mut self) {
+        let pc = self.m.cpu.pc as usize;
+        let c0 = self.m.cpu.cycles;
+        self.m.tick();
+        if let Some(p) = self.prof.as_mut() {
+            p[pc] += self.m.cpu.cycles - c0;
+        }
+        if self.m.cpu.sp < self.spmin {
+            self.spmin = self.m.cpu.sp;
+        }
+    }
+
+    /// cool8vm.Machine.run's loop, tests in its order, on the wrapper.
+    fn run(&mut self, budget: u64, until: &[u16], brk: &[u16],
+           cycles: Option<u64>) -> &'static str {
+        let start = self.m.cpu.cycles;
+        let mut last: i32 = -1;
+        for _ in 0..budget {
+            if until.contains(&self.m.cpu.pc) {
+                return "until";
+            }
+            if !brk.is_empty() && brk.contains(&self.m.cpu.pc) {
+                return "breakpoint";
+            }
+            if let Some(cl) = cycles {
+                if self.m.cpu.cycles - start >= cl {
+                    return "cycles";
+                }
+            }
+            if self.m.cpu.pc as i32 == last {
+                return "halt";
+            }
+            last = self.m.cpu.pc as i32;
+            self.tick();
+        }
+        "budget"
+    }
+}
+
 fn run_serve() {
     use std::io::BufRead;
     let stdin = std::io::stdin();
     let stdout = std::io::stdout();
     let mut out = stdout.lock();
+    let mut sess: Option<Sess> = None;
     for line in stdin.lock().lines() {
         let line = line.unwrap_or_default();
         let f: Vec<&str> = line.split('\t').collect();
         if line.is_empty() || f[0] == "quit" {
             break;
         }
-        if f[0] != "run" || f.len() != 9 {
-            writeln!(out, "err bad command").unwrap();
+        let num = |s: &str| s.parse::<u64>()
+            .unwrap_or_else(|_| die(format!("bad number {:?}", s)));
+        let opt = |s: &str| if s == "-" { None } else { Some(num(s)) };
+
+        // ---- the stateless batch form
+        if f[0] == "run" && f.len() == 9 {
+            let image = read_file(f[1]);
+            let regs = Regs::parse(f[5])
+                .unwrap_or_else(|| die(format!("bad regs {:?}", f[5])));
+            let until = parse_pcs(f[6]);
+            let brk = parse_pcs(f[7]);
+            let (reason, m) = batch_run(&image, num(f[4]) != 0, num(f[3]),
+                                        Some(&regs), &until, &brk, opt(f[8]));
+            std::fs::write(f[2], m.bus.mem.as_ref()).unwrap_or_else(
+                |e| die(format!("cannot write {}: {}", f[2], e)));
+            writeln!(out, "ok {} {}", reason, Regs::of(&m).csv()).unwrap();
             out.flush().unwrap();
             continue;
         }
-        let num = |s: &str| s.parse::<u64>()
-            .unwrap_or_else(|_| die(format!("bad number {:?}", s)));
-        let image = read_file(f[1]);
-        let regs = Regs::parse(f[5])
-            .unwrap_or_else(|| die(format!("bad regs {:?}", f[5])));
-        let until = parse_pcs(f[6]);
-        let brk = parse_pcs(f[7]);
-        let cycles = if f[8] == "-" { None } else { Some(num(f[8])) };
-        let (reason, m) = batch_run(&image, num(f[4]) != 0, num(f[3]),
-                                    Some(&regs), &until, &brk, cycles);
-        std::fs::write(f[2], m.bus.mem.as_ref())
-            .unwrap_or_else(|e| die(format!("cannot write {}: {}", f[2], e)));
-        writeln!(out, "ok {} {}", reason, Regs::of(&m).csv()).unwrap();
+
+        // ---- the session form. `new` takes rom|-, flash|-, and an
+        // optional renderer field: `-` none, `0` a zero font (sprites
+        // and bitmaps need no glyphs), else a font path.
+        if f[0] == "new" && (f.len() == 3 || f.len() == 4) {
+            let rom = if f[1] == "-" { [0u8; 4096] } else { load_rom(f[1]) };
+            let flash = if f[2] == "-" { None }
+                        else { Some(read_file(f[2])) };
+            let mut m = machine::Machine::new(rom, flash);
+            if f.len() == 4 && f[3] != "-" {
+                let font = if f[3] == "0" { [0u8; 4096] }
+                           else { load_font(f[3]) };
+                m.renderer = Some(render::Renderer::new(font));
+            }
+            sess = Some(Sess {
+                m,
+                flash_path: if f[2] == "-" { None }
+                            else { Some(f[2].to_string()) },
+                prof: None,
+                spmin: 0xFFFF,
+            });
+            writeln!(out, "ok").unwrap();
+            out.flush().unwrap();
+            continue;
+        }
+        let s = match sess.as_mut() {
+            Some(s) => s,
+            None => {
+                writeln!(out, "err no machine").unwrap();
+                out.flush().unwrap();
+                continue;
+            }
+        };
+        let reply = match f[0] {
+            "sregs" if f.len() == 3 => {
+                let rg = Regs::parse(f[1])
+                    .unwrap_or_else(|| die(format!("bad regs {:?}", f[1])));
+                let c = &mut s.m.cpu;
+                c.pc = rg.pc;
+                c.sp = rg.sp;
+                c.r = rg.r;
+                c.x = rg.x;
+                c.y = rg.y;
+                c.set_f(rg.f);
+                c.cycles = rg.cycles;
+                c.instructions = rg.instructions;
+                c.halted = rg.halted;
+                s.m.bus.romen = num(f[2]) != 0;
+                "ok".to_string()
+            }
+            "gregs" => format!("ok {} {}", Regs::of(&s.m).csv(),
+                               s.m.bus.romen as u8),
+            "srun" if f.len() == 5 => {
+                let until = parse_pcs(f[2]);
+                let brk = parse_pcs(f[3]);
+                let reason = s.run(num(f[1]), &until, &brk, opt(f[4]));
+                format!("ok {} {} {}", reason, Regs::of(&s.m).csv(),
+                        s.m.bus.romen as u8)
+            }
+            "ticks" if f.len() == 2 => {
+                for _ in 0..num(f[1]) {
+                    s.tick();
+                }
+                format!("ok {} {}", Regs::of(&s.m).csv(),
+                        s.m.bus.romen as u8)
+            }
+            "frames" if f.len() == 2 => {
+                let target = s.m.frames + num(f[1]);
+                while s.m.frames < target {
+                    s.tick();
+                }
+                format!("ok {} {}", Regs::of(&s.m).csv(),
+                        s.m.bus.romen as u8)
+            }
+            "settle" if f.len() == 5 => {
+                let idle = num(f[1]) as u16;
+                let (irh, irt) = (num(f[2]) as usize, num(f[3]) as usize);
+                let mut reason = "budget";
+                for _ in 0..num(f[4]) {
+                    if s.m.bus.uart.rx.is_empty()
+                        && s.m.bus.kbd.q.is_empty()
+                        && s.m.bus.mem[irh] == s.m.bus.mem[irt]
+                        && s.m.cpu.pc == idle {
+                        reason = "settled";
+                        break;
+                    }
+                    s.tick();
+                }
+                format!("ok {} {} {}", reason, Regs::of(&s.m).csv(),
+                        s.m.bus.romen as u8)
+            }
+            "type" if f.len() == 2 => {
+                s.m.bus.uart.feed(&bytes_of(f[1]));
+                "ok".to_string()
+            }
+            "scan" if f.len() == 2 => {
+                s.m.bus.kbd.feed(&bytes_of(f[1]));
+                "ok".to_string()
+            }
+            "nmi" => {
+                s.m.cpu.pulse_nmi();
+                "ok".to_string()
+            }
+            "said" => {
+                let r = format!("ok {}", hex_of(&s.m.bus.uart.tx));
+                s.m.bus.uart.tx.clear();
+                r
+            }
+            "stat" => format!("ok {} {} {} {} {} {}",
+                              s.m.bus.uart.rx.len(), s.m.bus.kbd.q.len(),
+                              s.m.bus.uart.overrun as u8,
+                              s.m.bus.kbd.overrun as u8,
+                              s.m.bus.kbd.irq_en as u8,
+                              s.m.frames),
+            // The programmed peripheral state, for a harness comparing
+            // two programs' setup: the palette as committed entries
+            // (u16 LE), the sprite descriptor bytes, the sound voices.
+            "pald" => {
+                let mut bytes = Vec::with_capacity(512);
+                for e in s.m.bus.video.pal.iter() {
+                    bytes.extend_from_slice(&e.to_le_bytes());
+                }
+                format!("ok {}", hex_of(&bytes))
+            }
+            "sprd" => format!("ok {}", hex_of(&s.m.bus.video.spr)),
+            "sndd" => format!("ok {}", hex_of(&s.m.bus.sound.dump())),
+            // The level stream the engine has produced since the last
+            // ask, at SND_HZ — what test_vm holds against the RTL's own
+            // dump of the running engine.
+            "snds" => {
+                let r = format!("ok {}", hex_of(&s.m.bus.sound.samples));
+                s.m.bus.sound.samples.clear();
+                r
+            }
+            "vrd" if f.len() == 3 => {
+                let a = num(f[1]) as usize;
+                let n = num(f[2]) as usize;
+                let bytes: Vec<u8> = (0..n)
+                    .map(|i| s.m.bus.video.vram[(a + i) & 0xFFFF])
+                    .collect();
+                format!("ok {}", hex_of(&bytes))
+            }
+            "vwr" if f.len() == 3 => {
+                let a = num(f[1]) as usize;
+                for (i, b) in bytes_of(f[2]).iter().enumerate() {
+                    s.m.bus.video.vram[(a + i) & 0xFFFF] = *b;
+                }
+                "ok".to_string()
+            }
+            "rd" if f.len() == 3 => {
+                let a = num(f[1]) as usize;
+                let n = num(f[2]) as usize;
+                let bytes: Vec<u8> = (0..n)
+                    .map(|i| s.m.bus.mem[(a + i) & 0xFFFF])
+                    .collect();
+                format!("ok {}", hex_of(&bytes))
+            }
+            "wr" if f.len() == 3 => {
+                let a = num(f[1]) as usize;
+                for (i, b) in bytes_of(f[2]).iter().enumerate() {
+                    s.m.bus.mem[(a + i) & 0xFFFF] = *b;
+                }
+                "ok".to_string()
+            }
+            "busrd" if f.len() == 2 => {
+                use cpu::Bus as _;
+                format!("ok {}", s.m.bus.read(num(f[1]) as u16))
+            }
+            "buswr" if f.len() == 3 => {
+                use cpu::Bus as _;
+                let a = num(f[1]) as u16;
+                for b in bytes_of(f[2]) {
+                    s.m.bus.write(a, b);
+                }
+                "ok".to_string()
+            }
+            "text" => format!("ok {}", hex_of(&text_bytes(&s.m))),
+            // The frame the renderer has drawn: 640x480 of 12-bit
+            // palette colours, two hex bytes per pixel, little-endian.
+            "fb" => match s.m.renderer.as_ref() {
+                Some(r) => {
+                    let mut bytes = Vec::with_capacity(r.fb.len() * 2);
+                    for px in r.fb.iter() {
+                        bytes.extend_from_slice(&px.to_le_bytes());
+                    }
+                    format!("ok {}", hex_of(&bytes))
+                }
+                None => "err no renderer".to_string(),
+            },
+            // The profiler: cycles by the PC that spent them, exactly
+            // what cool8vm.Machine.profile counted — server-side,
+            // because it looks at every instruction.
+            "profon" => {
+                s.prof = Some(vec![0u64; 0x10000].into_boxed_slice()
+                    .try_into().unwrap());
+                "ok".to_string()
+            }
+            "profdump" => {
+                let mut r = String::from("ok");
+                if let Some(p) = s.prof.as_ref() {
+                    for (pc, &c) in p.iter().enumerate() {
+                        if c != 0 {
+                            r.push_str(&format!(" {}:{}", pc, c));
+                        }
+                    }
+                }
+                r
+            }
+            // The stack's low-water mark since `spclr` (or the
+            // session's start) — the SP-after-every-instruction look a
+            // pipe cannot afford.
+            "spmin" => format!("ok {}", s.spmin),
+            "spclr" => {
+                s.spmin = 0xFFFF;
+                "ok".to_string()
+            }
+            "flush" => match s.flash_path.as_ref() {
+                Some(p) => {
+                    std::fs::write(p, &s.m.bus.flash.mem).unwrap_or_else(
+                        |e| die(format!("cannot write {}: {}", p, e)));
+                    "ok".to_string()
+                }
+                None => "err no flash".to_string(),
+            },
+            _ => "err bad command".to_string(),
+        };
+        writeln!(out, "{}", reply).unwrap();
         out.flush().unwrap();
     }
 }

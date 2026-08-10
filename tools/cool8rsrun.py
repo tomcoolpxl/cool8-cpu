@@ -31,6 +31,31 @@ EXE = os.path.join(ROOT, "rust", "target", "release",
                    "cool8rs.exe" if os.name == "nt" else "cool8rs")
 
 
+def basic_image():
+    """A flash image with BOOT.BIN on volume 0 — the path a board runs,
+    built with the ordinary tools (was the parity suite's helper, which
+    retired with the parity suite)."""
+    import cool8disk as disk
+    import mkboot
+    sys.path.insert(0, os.path.join(ROOT, "sim"))
+    import test_basic as B
+
+    code, _ = B.build()
+    boot = mkboot.build(code, dest=0xA000, build_dir=BUILD)
+    img = os.path.join(BUILD, "rs_boot.img")
+    if os.path.exists(img):
+        os.remove(img)
+    image = disk.Image(img, create=True)
+    v = disk.Volume(image, 0)
+    v.format("SYSTEM")
+    p = os.path.join(BUILD, "BOOT.BIN")
+    with open(p, "wb") as fh:
+        fh.write(boot)
+    v.add(p, "BOOT.BIN")
+    image.save()
+    return img
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--monitor", action="store_true",
@@ -43,7 +68,8 @@ def main():
         sys.exit("cargo not found: the window needs a Rust toolchain")
 
     os.makedirs(BUILD, exist_ok=True)
-    import cool8vm as vm
+    import cool8rsvm as vm
+    import cool8kbd
     rom, font = vm.build_rom()
     rom_p = os.path.join(BUILD, "emu_rom.bin")
     font_p = os.path.join(BUILD, "emu_font.bin")
@@ -54,7 +80,7 @@ def main():
 
     # The machine's own layout for right-click paste, derived from
     # sw/keymap.asm through the machine's tables — never a second copy.
-    chars, _ = vm._kbd_tables()
+    chars, _ = cool8kbd.kbd_tables()
     km_p = os.path.join(BUILD, "emu_keymap.txt")
     with open(km_p, "w", newline="\n") as f:
         for ch, (code, shifted) in sorted(chars.items()):
@@ -65,8 +91,7 @@ def main():
     if args.flash:
         cmd.append(f"+flash={os.path.abspath(args.flash)}")
     elif not args.monitor:
-        import rustsim
-        cmd.append(f"+flash={rustsim._basic_image()}")
+        cmd.append(f"+flash={basic_image()}")
 
     env = dict(os.environ)
     # SDL2's cmake_minimum_required predates what cmake 4 will still

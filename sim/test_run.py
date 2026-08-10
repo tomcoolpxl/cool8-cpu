@@ -313,13 +313,13 @@ def keyboard(code, syms):
 def sprites(code, syms):
     """SPRITE, animated the way a game animates it: the pattern VPOKEd
     into VRAM, the descriptor rewritten once per VSYNC, one pixel per
-    frame. The frame is rendered through cool8vid -- the renderer the
-    window uses and the one test_video holds against the RTL -- so what
-    this checks is the path a person actually sees, timing included.
+    frame. The frame comes from the machine's own scanline renderer
+    (rust/src/render.rs, derived from the RTL) over the session `fb`
+    command -- the same renderer the window shows, so what this checks
+    is the path a person actually sees, timing included.
     """
-    import cool8vid as vid
     out = {}
-    M = B.Machine(code, syms)
+    M = B.Machine(code, syms, render=True)
     M.settle()
     # This harness boots no flash image, so the boot stub's palette
     # never ran and every entry is black -- the program states its own
@@ -342,9 +342,9 @@ def sprites(code, syms):
         xs = [x for x, v in enumerate(row) if v != bg]
         return (xs[0], xs[-1]) if xs else None
 
-    out["first"] = find(vid.render_np(M.m).reshape(-1).tolist())
+    out["first"] = find(M.m.fb())
     M.m.run(cycles=4_000_000)
-    out["later"] = find(vid.render_np(M.m).reshape(-1).tolist())
+    out["later"] = find(M.m.fb())
     return out
 
 

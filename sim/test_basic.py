@@ -41,8 +41,7 @@ os.makedirs(BUILD, exist_ok=True)
 
 sys.path.insert(0, os.path.join(ROOT, "tools"))
 
-import cool8vm as vm                                     # noqa: E402
-import cool8vid as vid                                   # noqa: E402
+import cool8rsvm as vm                                   # noqa: E402
 import cool8bas as bas                                   # noqa: E402
 import cool8disk as disk                                 # noqa: E402
 
@@ -86,8 +85,10 @@ def build():
 
 
 class Machine:
-    def __init__(self, code, syms, flash=None):
-        self.m = vm.Machine(flash_path=flash) if flash else vm.Machine()
+    def __init__(self, code, syms, flash=None, render=False):
+        # render=True attaches the scanline renderer, so m.fb() answers
+        # — for the checks that look at actual pixels.
+        self.m = vm.Machine(flash_path=flash, render=render)
         self.m.bus.mem[ORG:ORG + len(code)] = code
         self.m.cpu.pc = ORG
         # Where sw/boot.asm:339 leaves it, not somewhere roomier. The
@@ -125,20 +126,12 @@ class Machine:
         self.irtail = syms["irtail"]
 
     def settle(self, budget=80_000_000):
-        n = 0
-        while n < budget:
-            if (not self.m.uart.rx
-                    and not self.m.kbd.q
-                    and self.m.bus.mem[self.irhead]
-                    == self.m.bus.mem[self.irtail]
-                    and self.m.cpu.pc == self.idle):
-                return
-            # tick, not cpu.step: only the machine advances the raster
-            # and the interrupt flags, so a bare stepping loop runs a
-            # machine where no time passes and no interrupt can fire.
-            self.m.tick()
-            n += 1
-        raise SystemExit("the machine never went idle")
+        # The idle test lives on the machine now (m.settle) — it polls
+        # per instruction, which must not cross the fast machine's
+        # process boundary one tick at a time. Same loop, same
+        # condition, whichever machine is underneath.
+        if not self.m.settle(self.idle, self.irhead, self.irtail, budget):
+            raise SystemExit("the machine never went idle")
 
     def type(self, text, chunk=8):
         data = text.replace("\n", "\r").encode("latin-1")
@@ -187,16 +180,27 @@ class Machine:
         self.type(s + "\r")
 
     def row(self, r):
-        """One displayed row, through the machine's own VID_BASE.
+        """One row of the text screen, from wherever the machine keeps
+        the truth.
 
-        The machine knows where its screen is. This used to reach into
-        `cool8vid._row_addr_v`, a private function, and work it out
-        again -- so every harness that wanted the screen had to.
+        In the text modes that is the display itself, read through the
+        machine's own VID_BASE as always. In the tile and bitmap modes
+        the display shows the *mirror* -- reading it through VID_BASE
+        returns bitmap bytes -- and the text lives only in the cell
+        map at $8000, the 128x32 truth the editor edits in every mode
+        (docs/13-basic.md section 4). That map is an architectural
+        invariant, not a harness guess at an address: a program that
+        ends in MODE 4 leaves its PRINT output there, and nowhere
+        readable else.
         """
-        return self.m.row(r)
+        if self.m.video.ctrl & 3 == 0:
+            return self.m.row(r)
+        base = 0x8000 + ((r & 31) << 8)
+        return "".join(chr(self.m.bus.mem[base + 2 * c])
+                       for c in range(80)).replace("\x00", " ").rstrip()
 
     def screen(self):
-        return self.m.text()
+        return [self.row(r) for r in range(32)]
 
     def find(self, text):
         for r, line in enumerate(self.screen()):

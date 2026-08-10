@@ -4,7 +4,7 @@
     python sim/bench_lang.py
 
 Six benchmarks, written once as a tiny IR, emitted two ways, and
-measured on the real instruction set by tools/cool8emu.py.
+measured on the real instruction set, on the machine.
 
   native    leaf-aware accumulator code generation, the leaf-aware model in tools/cool8bas.py
   bytecode  a stack machine with a token dispatch loop, FastBasic's model
@@ -47,7 +47,7 @@ ROOT = os.path.dirname(HERE)
 BUILD = os.environ.get("COOL8_BUILD") or os.path.join(HERE, "build")
 sys.path.insert(0, os.path.join(ROOT, "tools"))
 
-import cool8emu as emu                                   # noqa: E402
+import cool8rsvm as emu                                   # noqa: E402
 
 # ---- where things live in the emitted programs
 CODE = 0x0200
@@ -362,35 +362,19 @@ def assemble(src, stem, quiet=False):
     return b, os.path.getsize(b)
 
 
-class Mem(emu.Bus):
-    def __init__(self):
-        self.mem = bytearray(0x10000)
-
-    def read(self, a):
-        return self.mem[a & 0xFFFF]
-
-    def write(self, a, v):
-        self.mem[a & 0xFFFF] = v & 0xFF
-
-
 def run(binpath, extra=None, limit=200_000_000):
-    bus = Mem()
+    m = emu.machine()
     d = open(binpath, "rb").read()
-    bus.mem[CODE:CODE + len(d)] = d
+    m.bus.mem[CODE:CODE + len(d)] = d
     if extra:
         off, blob = extra
-        bus.mem[off:off + len(blob)] = blob
-    c = emu.Cool8(bus)
-    c.reset()
-    c.pc = CODE
-    c.sp = 0xFFF7
-    n = 0
-    while n < limit and not c.halted:
-        c.step()
-        n += 1
-    if not c.halted:
+        m.bus.mem[off:off + len(blob)] = blob
+    m.cpu.pc = CODE
+    m.cpu.sp = 0xFFF7
+    m.romen = False
+    if m.run(budget=limit) != "halt":
         raise SystemExit("did not halt: " + binpath)
-    return c.cycles, bus
+    return m.cpu.cycles, m.bus
 
 
 def answer(bus, name):
@@ -584,7 +568,7 @@ def main():
     HZ = 8_375_000
     vm, vmsize = assemble(vm_source(), "bl_vm")
 
-    print("  M10 -- native code against stack bytecode, on cool8emu")
+    print("  M10 -- native code against stack bytecode, on the machine")
     print()
     print(f"  {'benchmark':<30} {'native':>11} {'bytecode':>11} "
           f"{'ratio':>7}  answers")

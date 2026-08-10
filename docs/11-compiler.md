@@ -130,7 +130,9 @@ development systems and Commodore's on a cross-assembler.
 code plus 4.3 KB of tables in a 39.5 KB user area, a program has about
 12 KB left. A statement interpreter has no compiled output at all, so
 the same machine gives a program ~43 KB — three and a half times more,
-for 3–5x the time (`sim/bench_interp.py`, `sim/bench_interp2.py`).
+for 3–5x the time. (Measured by `sim/bench_interp.py` and
+`sim/bench_interp2.py`, which are deleted now the question is settled —
+git history has them, and the numbers here are the record they leave.)
 
 Neither limit is a defect in the compiler. It does what it was built to
 do, correctly, and is gated to prove it.
@@ -139,7 +141,12 @@ do, correctly, and is gated to prove it.
 
 ## 5. Reviving it
 
-Nothing has been deleted and every gate still runs. What it would need:
+The sources are all still here and every correctness gate still exists;
+`comp`, `emit` and `lex` run deliberately rather than in `npm test`,
+because they gate code that ships nowhere (see
+[12-tasks.md](12-tasks.md)). The dispatch benchmarks that settled the
+compile-or-interpret question are deleted — their numbers are recorded
+in §4 and the scripts are in git history. What reviving would need:
 
 - **A 24 KB overlay** rather than 16. Video RAM is 64 KB and idle in
   text mode, so the cost is user RAM during a `RUN`, not permanently.
@@ -173,15 +180,15 @@ is what makes the native emitter's answers trustworthy.
 
 | | |
 |---|---|
-| `sim/test_lex.py` | the machine's lexer against `cool8bas.py`'s, token for token |
-| `sim/test_emit.py` | the machine's emitter against `cool8asm.py`, byte for byte |
-| `sim/test_comp.py` | the machine's compiler against the cross-compiler, one program per feature |
+| `sim/test_lex.py` | the machine's lexer against `cool8bas.py`'s, token for token — run deliberately |
+| `sim/test_emit.py` | the machine's emitter against `cool8asm.py`, byte for byte — run deliberately |
+| `sim/test_comp.py` | the machine's compiler against the cross-compiler, one program per feature — run deliberately |
 | `sim/test_bas.py` | the cross-compiler's own correctness suite |
-| `sim/bench_lang.py` | native against bytecode: 6.7x, and the size it costs |
-| `sim/bench_dispatch.py` | how an interpreted operation reaches the next |
-| `sim/bench_interp.py` | statement dispatch against native, loop control |
-| `sim/bench_interp2.py` | the same for expressions, subscripts and calls |
+| `sim/bench_lang.py` | native against bytecode: 6.7x, and the size it costs. Kept: it carries the language's only second implementation |
 | `sim/check_names.py` | every top-level name declared once |
+
+(`bench_dispatch.py`, `bench_interp.py` and `bench_interp2.py` answered
+the settled question above and are deleted; git history keeps them.)
 
 The pattern throughout: **write it twice and make the two agree.** See
 [docs/10-debugging.md](10-debugging.md) for the tooling that makes a

@@ -2,7 +2,7 @@
 
 Testbenches and co-simulation harnesses.
 
-The golden model lives in `tools/cool8emu.py`; this directory drives RTL
+The machine lives in `rust/`; this directory drives RTL
 against it and compares architectural state after every instruction, and
 the whole 64 KB address space at the end of the run.
 
@@ -68,7 +68,7 @@ python sim/timing.py
 ```
 
 `test_vm.py` is the odd one out: it runs no Verilog. It compares
-`tools/cool8vm.py` against files the Verilog produced — `build/text.hex`,
+the machine against files the Verilog produced — `build/text.hex`,
 `build/tiles.hex` and `build/sprites.hex` from `test_video.py`, and
 `build/snd.hex` from `test_snd.py` — so a machine emulated in Python has
 to agree with the gates on 1.8 million pixels and 4096 samples. Run it
@@ -82,7 +82,7 @@ two languages to go unnoticed.
 
 `bench_lang.py` runs no Verilog either. It is a measurement rather than
 a test: six benchmarks emitted by two code generators and counted on
-`cool8emu`, which gates the self-hosted compiler. It exits non-zero if
+the machine, which gates the self-hosted compiler. It exits non-zero if
 native code stops being 3x the bytecode model, so a change to the
 instruction set that quietly undermined the language decision would be
 noticed.

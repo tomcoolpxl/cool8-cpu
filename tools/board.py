@@ -6,7 +6,7 @@
     python tools/board.py --port COM6 --type "10 PRINT 6 * 7" --run
     python tools/board.py --port COM6 --selftest
 
-`tools/cool8vm.py`'s `Machine` is the emulator's API and every software
+`tools/cool8rsvm.py`'s `Machine` is the machine's API and every software
 test drives it. This is the same shape for hardware: type at it, read
 its memory, read its screen. Import `Board` and it is a harness;
 `sim/test_board.py` is the suite built on it.
@@ -48,19 +48,20 @@ import sys
 import time
 
 def _config():
-    """The board's settings, out of package.json.
+    """The board's settings, out of pyproject.toml.
 
-    Not written into this file: package.json is where every other name
+    Not written into this file: [tool.cool8] is where every other name
     and number this project uses already lives, and a USB id buried in
     a Python constant is one more place to look. `COOL8_BOARD_USB`
     overrides it for a different debugger without editing anything.
     """
-    import json
+    import tomllib
     here = os.path.dirname(os.path.abspath(__file__))
-    path = os.path.join(os.path.dirname(here), "package.json")
+    path = os.path.join(os.path.dirname(here), "pyproject.toml")
     try:
-        with open(path) as fh:
-            cfg = json.load(fh).get("cool8", {}).get("board", {})
+        with open(path, "rb") as fh:
+            cfg = tomllib.load(fh).get("tool", {}).get("cool8", {}) \
+                                  .get("board", {})
     except Exception:
         cfg = {}
     usb = os.environ.get("COOL8_BOARD_USB") or cfg.get("usb", "")

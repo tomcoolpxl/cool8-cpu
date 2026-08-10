@@ -8,15 +8,15 @@ the document that owns its subject.
 
 ## What exists
 
-The whole machine, verified at three levels — emulator, RTL
-co-simulation, and (where the bench allows) real silicon:
+The whole machine, verified at three levels — the software machine,
+RTL co-simulation, and (where the bench allows) real silicon:
 
-- **CPU** — the COOL8 core, cosim-gated against `tools/cool8emu.py`
+- **CPU** — the COOL8 core, cosim-gated against the machine (`rust/`)
   instruction by instruction, mutation-tested, timed by
   `sim/timing.py`.
 - **Video** — text, tiles, bitmaps, 32 sprites, 256-entry palette;
-  the renderer in `tools/cool8vid.py` is held against RTL frames on
-  every pixel of every mode.
+  the scanline renderer is held against RTL frames on every pixel of
+  every mode.
 - **Sound** — 8 voices, 1-bit sigma-delta, model checked against the
   running engine.
 - **Keyboard** — PS/2 decoder shared between the boot ROM's monitor

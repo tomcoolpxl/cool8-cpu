@@ -102,6 +102,22 @@ module cool8_mon_tb;
         .o_halted()
     );
 
+    // +rxdbg: every byte the UART strobes and every FIFO pop, for
+    // chasing a duplicated or lost character to its side of the FIFO.
+    reg rxdbg;
+    always @(posedge clk) if (rxdbg) begin
+        if (u_soc.fwd_valid)
+            $display("RXDBG strobe %02h t=%0t", u_soc.fwd_data, $time);
+        if (u_soc.rx_pop)
+            $display("RXDBG pop %02h rd=%0d wr=%0d t=%0t",
+                     u_soc.rx_head, u_soc.rx_rd, u_soc.rx_wr, $time);
+        if (u_soc.uart_tx_start)
+            $display("RXDBG txgo %02h t=%0t", u_soc.uart_tx_data, $time);
+        if (u_soc.io_we && u_soc.io_a == 8'h71)
+            $display("RXDBG txwr %02h pc=%04h t=%0t",
+                     u_soc.bus_wdata, u_soc.u_cpu.pc, $time);
+    end
+
     always @(posedge spi_cs_n) begin
         d_bit  = 0;
         d_miso = 1'b1;
@@ -175,6 +191,7 @@ module cool8_mon_tb;
                 rxq[rxq_wr] = b;
                 rxq_wr = rxq_wr + 1;
             end
+            if (rxdbg) $display("RXDBG txrx %02h t=%0t", b, $time);
             if (verbose) $write("%0s", b);
         end
     end
@@ -284,6 +301,7 @@ module cool8_mon_tb;
         bitclk = DIV0 + 1;
         kb_clk_oe = 1'b0; kb_dat_oe = 1'b0;
 
+        rxdbg = $test$plusargs("rxdbg");
         d_bit = 0; d_sr = 8'h00; d_out = 8'h00; d_miso = 1'b1;
         d_bad = 1'b0; d_a = 24'h000000;
         for (i = 0; i < 65536; i = i + 1)

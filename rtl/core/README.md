@@ -13,5 +13,5 @@ in the chain accepts it with no dialect flags.
 | `cool8_alu.v` | The 8-bit ALU and flag generator — one adder |
 | `cool8_agu.v` | The single 16-bit adder and its operand muxes |
 
-Checked instruction by instruction against `tools/cool8emu.py`; see
+Checked instruction by instruction against the machine (`rust/`); see
 `sim/`. `python sim/synth.py` enforces the rules above.

@@ -59,13 +59,16 @@ put anything in it that is not already recorded properly somewhere else.
 Two files are themselves normative, in code rather than prose:
 
 - **`tools/opcodes.py`** — the single source of truth for the encoding.
-  The emulator, assembler, disassembler and test generators all import
+  The assembler, disassembler and test generators all import
   it; nothing carries its own copy of the opcode map. Adding an
   instruction there makes it assemblable, disassemblable and tested with
   no other change. If you find yourself writing a second mnemonic table,
   stop.
-- **`tools/cool8emu.py`** — the executable specification. RTL is checked
-  against it instruction by instruction. When the two disagree, one is
+  `tools/mkrsopc.py` generates `rust/src/optab.rs` from it, and
+  `poe check` fails on drift.
+- **`rust/` is the machine and `rtl/` is the hardware, and they are
+  checked against each other** instruction by instruction (`sim/cosim.py`)
+  and pixel by pixel (`sim/test_vm.py`). When the two disagree, one is
   wrong and `docs/02-isa.md` decides which. Do not resolve a
   co-simulation failure by changing whichever side is easier to change.
 
@@ -116,12 +119,16 @@ a broken shell.
 
 ## Commands
 
-`npm test`, `npm run build`, `npm run check`, `npm run list`. Every
-command is named in `package.json` and run by `tools/run.mjs`, which
-fans the suites out in parallel and gives each its own build directory.
+`poe test`, `poe build`, `poe check`, `poe list` (or `python -m
+poethepoet ...` if Scripts is not on PATH). Every command is named in
+`pyproject.toml`: the suites are the job table under `[tool.cool8]`,
+fed to **pytest** by the one shim in `sim/runner/` — pytest-xdist fans
+them out in parallel and each job gets its own build directory — and
+the direct commands are `[tool.poe.tasks]`. There is no Node and no
+package.json; `pip install -e ".[dev]"` once is the setup.
 
 **[docs/12-tasks.md](docs/12-tasks.md) is normative for all of it** --
-what each job proves, the RTL tests that are deliberately not in the
+what each job proves, the tests that are deliberately not in the
 runner, and how to add one. `sim/cosim.py all` is the gate for any RTL
 change: run it, do not reason about whether it would pass.
 
@@ -146,16 +153,33 @@ It is a 16 KB ROM disassembly, so ask it a narrow question; a broad one
 gets a summary that misses the answer. If something cannot be reached,
 say it was not confirmed rather than filling it in from memory.
 
-## The machine is `tools/cool8vm.py`. Drive it through its API.
+## The machine is the Machine API. Drive it through its API.
 
-**Every software test runs on `vm.Machine`, and nothing reimplements
+**Every software test runs on the Machine API, and nothing reimplements
 part of it.** That is not a style preference: for a year each harness
 grew its own stepping loop, and each one was a subtly different machine.
 One of them could not deliver an interrupt at all and nobody knew until
 software wanted one.
 
+**The machine is `rust/` and `tools/cool8rsvm.py` is how Python drives
+it** ([RUST_PORT.md](RUST_PORT.md), [D57](docs/01-decisions.md)). The
+Python emulator it grew from is gone: it was gated against this one per
+retired instruction until the hand-over, and the RTL holds the seat it
+used to. **Needs `cargo`** — without it there is no machine, and the
+suites say so rather than limping.
+
+Two shapes: `machine()` is the batch machine (CPU and RAM per call,
+one shared server), `Machine()`/`boot()` the session machine (a
+persistent machine with peripherals, `render=True` for a frame).
+
+**Anything that must watch the machine *while it runs* is a
+server-side command, never a Python loop** — `settle`, the cycle
+profiler, the SP low-water mark. A round trip per instruction is the
+one thing this boundary cannot afford, so a new question of that shape
+extends the protocol in `rust/src/main.rs`.
+
 ```python
-import cool8vm as vm
+import cool8rsvm as vm
 m = vm.Machine()
 m.bus.mem[0xA000:0xA000 + len(code)] = code
 m.cpu.pc, m.cpu.sp, m.romen = 0xA000, 0x0200, False
@@ -200,8 +224,8 @@ interrupt that can ever fire.
 **Never compute a screen address.** `m.row()` reads through the
 machine's own `VID_BASE`, which is what catches a program that never set
 it — the rule [docs/10-debugging.md](docs/10-debugging.md) §3 exists for.
-`sim/test_basic.py` used to reach into `cool8vid._row_addr_v`, a private
-function, and every new harness copied it.
+`sim/test_basic.py` once reached into a renderer's private address
+helper, and every new harness copied it.
 
 **Do not bisect by re-running variant programs and reading the screen.**
 That is the ad-hoc stepping loop wearing a different hat: it answers
@@ -310,24 +334,23 @@ Easy to get wrong:
 - **The COOL8 assembler splits operands on commas before it recognises
   character literals**, so `MOV R0,#','` is three operands and no
   encoding matches. Write `#$2C`.
-- **`tools/cool8vm.py` could not deliver an interrupt to anything.** It
-  set `cpu.irq`; `cool8emu.py`'s input is `irq_line`, so the assignment
-  made a new attribute the CPU never read. Nothing noticed for as long
-  as no software wanted an interrupt, and the first thing that did —
-  BASIC's break key — simply hung. Python will invent an attribute for
-  you; the emulator's own name is the one to check against.
-- **Only `Machine.run_line` advances the raster, the sound and the
-  interrupt flags.** A harness that loops on `cpu.step()` therefore runs
-  a machine where *no time passes*: no vblank, no raster compare, no
-  interrupt that could ever fire, and anything waiting on one waits for
-  ever. Use `Machine.tick()` — one instruction with the peripherals kept
-  in step — unless you specifically want a scanline at a time.
+- **The Python machine could not deliver an interrupt to anything.** It
+  set `cpu.irq` where the CPU read `irq_line`, so the assignment made a
+  new attribute nobody read. Nothing noticed for as long as no software
+  wanted an interrupt, and the first thing that did — BASIC's break key
+  — simply hung. Python will invent an attribute for you; the machine's
+  own name is the one to check against. (Both models are gone; the
+  lesson is why the client is a thin, explicit protocol now.)
+- **`romen` is machine state, not client belief.** The flash stub drops
+  the ROM overlay before jumping to BASIC. A client that pushes its own
+  remembered `romen` back before each run re-enables the overlay
+  mid-boot, and the failure looks like a bad relocation. It round-trips
+  with the registers on every stepping reply.
 - **The machine can be typed at and read from directly.**
-  `Machine.type()`, `.said()`, `.row()`, `.text()` and `.shows()` are on
-  the emulator, so an external test program needs to know nothing about
-  where the screen lives. `sim/test_basic.py` used to reach into
-  `cool8vid._row_addr_v`, a private function, and every new harness
-  copied it.
+  `Machine.type()`, `.said()`, `.row()`, `.text()` and `.shows()` are
+  on the machine client, so an external test program needs to know
+  nothing about where the screen lives. A harness that computes a
+  screen address is a harness that cannot catch an unset `VID_BASE`.
 - **A conditional branch reaches ±127 bytes** and a dispatcher at the
   top of a large file does not. `sw/disasm.asm` defines `jlo`/`jhs`/`jeq`
   macros that invert the test and let a `JMP` carry the distance; the

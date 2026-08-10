@@ -6,7 +6,7 @@ the encoding tables — that is the second-mnemonic-table trap AGENTS.md
 warns about. Everything tabular the Rust core needs — cycle costs per
 encoding, the page-2 assigned/reserved split, the interrupt entry cost —
 is generated here from opcodes.py, the single source of truth. The
-hand-written Rust states semantics only, and sim/rustsim.py holds those
+hand-written Rust states semantics only, and sim/cosim.py holds those
 to the emulator's trace, instruction by instruction.
 
 `--check` regenerates and compares without writing — the same drift gate

@@ -22,10 +22,10 @@ desktop. This is the gate that makes them agree.
 **Two implementations, no shared code.** The Python does not import the
 assembler's constants and the assembly does not read the Python's; both
 were written from the layout in their own headers. An agreement between
-them is therefore evidence, which is the same reason cool8emu and the
+them is therefore evidence, which is the same reason the machine and the
 RTL are kept apart.
 
-The machine runs on tools/cool8vm.py, whose flash models the two things
+The machine is rust/, whose flash models the two things
 that make this format work -- the $100000 floor in gates, and
 programming that can only clear bits.
 """
@@ -41,7 +41,7 @@ os.makedirs(BUILD, exist_ok=True)
 
 sys.path.insert(0, os.path.join(ROOT, "tools"))
 
-import cool8vm as vm                                     # noqa: E402
+import cool8rsvm as vm                                   # noqa: E402
 import cool8disk as disk                                 # noqa: E402
 
 ASM = os.path.join(ROOT, "tools", "cool8asm.py")
@@ -79,11 +79,10 @@ def run(code, steps=40_000_000):
     m.cpu.pc = 0x200
     m.cpu.sp = 0xFFF7
     m.romen = False
-    n = 0
-    while n < steps and not m.cpu.halted:
-        m.tick()
-        n += 1
-    if not m.cpu.halted:
+    # run() stops on a HALT — a PC that does not move — which is how
+    # every driver here ends; a tick loop over the session boundary
+    # would pay a round trip per instruction.
+    if m.run(budget=steps) != "halt":
         raise SystemExit("the machine did not halt")
     return m
 

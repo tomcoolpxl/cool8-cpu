@@ -32,27 +32,36 @@ blue](docs/img/readme-mode4.png)
 | **Software** | BASIC with a full-screen editor that works **in every screen mode** (80/40/32 columns, C64 editing rules, direct mode, program chaining), graphics, sound, an inline assembler and 8.8 fixed point — 24 KB, resident in the top of RAM |
 | **Board** | iCESugar v1.5 — Lattice iCE40UP5K, 5280 logic cells |
 
+## Prerequisites
+
+| | Needed for | Get it |
+|---|---|---|
+| **Python 3.12+** | the tools around it — assembler, compiler, disk and board tools, and the test harnesses | then `pip install -e ".[dev]"`, once, for the runner and the board tools' libraries |
+| **Rust** (`cargo`) | **the machine itself** — the emulator window and everything the test suites run on. There is no fallback | [rustup.rs](https://rustup.rs) |
+| **[OSS CAD Suite](https://github.com/YosysHQ/oss-cad-suite-build)** | hardware work only: the RTL suites, the bitstream | put its `bin` on `PATH` or set `OSS_CAD_SUITE` to its root |
+
+There is no Node. `poe doctor` reports what is installed, what is
+missing, and what each absence blocks.
+
 ## Run it — no board required
 
-The whole machine exists in software: the CPU model is checked
-instruction-for-instruction against the Verilog, the renderer is
-compared against frames dumped from the gates on all 307,200 pixels of
-every mode, and the sound model against samples of the running engine.
+The whole machine exists in software: it is checked
+instruction-for-instruction against the Verilog, its renderer against
+frames dumped from the gates on all 307,200 pixels of every mode, and
+its sound engine against samples of the running one.
 
 What the window shows is what the silicon does.
 
-You need Python 3.12+ and Node 18+, then:
-
 ```bash
-pip install pygame-ce numpy
+pip install -e ".[dev]"
 ```
 
 ```bash
-npm run disk
+poe disk
 ```
 
 ```bash
-npm run emu -- --flash build/cool8.img
+poe emu --flash build/cool8.img
 ```
 
 `disk` builds `build/cool8.img`, a flash image with BASIC installed;
@@ -90,7 +99,7 @@ accountable to — is documented in [docs/13-basic.md](docs/13-basic.md).
 ![Block diagram: the COOL8 CPU connected to memory, video, UART, PS/2,
 sound and SPI flash, each wired to its connector](docs/img/readme-soc.svg)
 
-*Generated from the RTL by `npm run diagram` — yosys elaborates the SoC
+*Generated from the RTL by `poe diagram` — yosys elaborates the SoC
 and the diagram states what is actually connected, not what a drawing
 claims.*
 
@@ -124,23 +133,23 @@ put its `bin` on `PATH` or set `OSS_CAD_SUITE` to its root, then let
 the environment check tell you where you stand:
 
 ```bash
-npm run doctor
+poe doctor
 ```
 
 Build the bitstream, then program the board — bitstream and system
 image both, written over USB and verified by reading them back:
 
 ```bash
-npm run bit
+poe bit
 ```
 
 ```bash
-npm run flash
+poe flash
 ```
 
 The board boots into the same BASIC as the emulator. With only the USB
 cable connected, the serial console (115200 8N1 on the iCELink's CDC
-port) is the keyboard and `npm run board:screen` reads the screen back;
+port) is the keyboard and `poe board-screen` reads the screen back;
 every BASIC command has been verified on the chip through that wire.
 The VGA, PS/2 and audio connectors are wired in the gates but await
 their physical counterparts — the pinout and the bench notes live in
@@ -150,7 +159,7 @@ their physical counterparts — the pinout and the bench notes live in
 ## Tests
 
 ```bash
-npm test
+poe test
 ```
 
 runs the software suites in parallel — interpreter, editor, assembler,
@@ -158,18 +167,18 @@ compiler, filesystem, and a cold boot from a flash image. The other
 phases:
 
 ```bash
-npm run test:rtl
+poe test-rtl
 ```
 
 ```bash
-npm run test:board
+poe test-board
 ```
 
-`test:rtl` simulates the Verilog, including `cosim` — the emulator
-executed in lockstep against the RTL, which is the gate for any RTL
-change. `test:board` talks to the real board. The full command
-vocabulary is [docs/12-tasks.md](docs/12-tasks.md); `npm run list`
-prints it.
+`test-rtl` simulates the Verilog, including `cosim` — the machine and
+the RTL executed in lockstep and diffed per retired instruction, which
+is the gate for any RTL change. `test-board` talks to the real board.
+The full command vocabulary is [docs/12-tasks.md](docs/12-tasks.md);
+`poe list` prints it.
 
 ## Documentation
 

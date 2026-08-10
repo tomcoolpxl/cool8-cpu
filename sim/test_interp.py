@@ -29,7 +29,7 @@ BUILD = os.environ.get("COOL8_BUILD") or os.path.join(HERE, "build")
 os.makedirs(BUILD, exist_ok=True)
 sys.path.insert(0, os.path.join(ROOT, "tools"))
 
-import cool8vm as vm                                     # noqa: E402
+import cool8rsvm as vm                                   # noqa: E402
 import cool8rsvm                                         # noqa: E402
 
 CODE = 0x0200
@@ -948,7 +948,7 @@ def main():
     code, syms = build("interp", HARNESS)
     print(f"  interpreter: {syms['prog'] - syms['irun']:,} bytes")
     # The batch runs use the Rust machine when it is available
-    # (tools/cool8rsvm.py; parity-gated by sim/rustsim.py). COOL8_PYVM=1
+    # (tools/cool8rsvm.py, the batch machine).
     # forces the reference machine when a failure needs a second opinion.
     print(f"  machine: {'rust' if cool8rsvm.available() else 'python'}")
     print()
@@ -1101,9 +1101,10 @@ def main():
         prog = program(line(10, name("A"), "=",
                             "(" * d, num(7), ")" * d),
                        line(20, [K["END"]]))
-        # The reference machine, not the batch one: the high-water mark
-        # needs a look at SP after every instruction, which is exactly
-        # the "anything finer" cool8rsvm.py sends back here.
+        # The high-water mark needs a look at SP after every
+        # instruction — the machine's own low-water mark (sp_min,
+        # server-side), because that look cannot cross the session
+        # pipe one tick at a time.
         m = vm.Machine()
         m.bus.mem[CODE:CODE + len(code)] = code
         at = syms["prog"]
@@ -1111,16 +1112,9 @@ def main():
         m.cpu.pc, m.cpu.sp, m.romen = CODE, 0x7FF0, False
         m.bus.mem[0x0016] = (at + len(prog)) & 0xFF
         m.bus.mem[0x0017] = (at + len(prog)) >> 8
-        # The high-water mark needs a look at every instruction, so
-        # this one keeps its loop -- but ticks the machine, not the CPU.
-        low, last = 0x7FF0, -1
-        for _ in range(2_000_000):
-            if m.cpu.pc == last:
-                break
-            last = m.cpu.pc
-            m.tick()
-            if m.cpu.sp < low:
-                low = m.cpu.sp
+        m.sp_clear()
+        m.run(budget=2_000_000)
+        low = min(m.sp_min(), 0x7FF0)
         a = m.bus.mem[VARS] | (m.bus.mem[VARS + 1] << 8)
         return 0x7FF0 - low, a
 

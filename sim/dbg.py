@@ -39,7 +39,7 @@ ROOT = os.path.dirname(HERE)
 BUILD = os.environ.get("COOL8_BUILD") or os.path.join(HERE, "build")
 sys.path.insert(0, os.path.join(ROOT, "tools"))
 
-import cool8vm as vm                                     # noqa: E402
+import cool8rsvm as vm                                   # noqa: E402
 import cool8bas as bas                                   # noqa: E402
 import opcodes                                           # noqa: E402
 
@@ -230,27 +230,13 @@ class Run:
         return "  ".join(out)
 
     def watch(self, lo, hi=None):
-        """Report every write into an address range, with the culprit.
-
-        Hand-rolled three times while chasing one bug; permanent now.
-        """
-        hi = lo if hi is None else hi
-        bus = self.m.bus
-        orig = bus.write
-        self.hits = []
-        img = self.img
-        run = self
-
-        def guard(a, v):
-            if lo <= a <= hi:
-                pc = run.m.cpu.pc
-                run.hits.append(
-                    f"    ${a:04X}=${v:02X} sp=${run.m.cpu.sp:04X} "
-                    f"by {img.name(pc)}: {img.at(pc) or '(not an instruction)'}"
-                    + (f"  line {run.source_line()}"
-                       if run.source_line() else ""))
-            orig(a, v)
-        bus.write = guard
+        """A per-write hook needed the Python machine's bus, which
+        retired (D57). The session protocol grows a watch command the
+        next time a hunt needs one — extend it, do not loop here."""
+        raise NotImplementedError(
+            "watch() needs a bus write hook; the fast machine answers "
+            "per-instruction questions server-side. Extend the serve "
+            "protocol (rust/src/main.rs) with a watch command.")
 
     # ------------------------------------------------------------- running
 
@@ -271,7 +257,12 @@ class Run:
             if pc == brk:
                 return "breakpoint"
             last = pc
-            op = mem[pc]
+            # The opcode from the image, not the machine: the code does
+            # not self-modify, and a memory read over the session pipe
+            # would double the cost of a loop that is already paying a
+            # round trip per instruction.
+            op = (img.code[pc - img.org] if img.org <= pc < img.end
+                  else mem[pc])
             if pc in img.entries:
                 self.trail.append(img.entries[pc][2:])
             # tick, not cpu.step: the machine advances the raster and
@@ -365,16 +356,16 @@ class Profile:
         return lo or f"${pc:04X}"
 
     def run(self, m, limit=80_000_000):
-        """Step to a halt, charging each instruction to its routine."""
-        last = -1
-        for _ in range(limit):
-            pc = m.cpu.pc
-            if pc == last:
-                break
-            last = pc
-            before = m.cpu.cycles
-            m.tick()
-            cost = m.cpu.cycles - before
+        """Run to a halt, charging each instruction to its routine.
+
+        The counting is the machine's own (`profile_start`, cycles by
+        PC, server-side — a look at every instruction cannot cross the
+        session pipe one tick at a time); the label attribution stays
+        here, where the symbol table is.
+        """
+        m.profile_start()
+        m.run(budget=limit)
+        for pc, cost in m.profile_cycles().items():
             who = self._who(pc)
             self.by[who] = self.by.get(who, 0) + cost
             self.total += cost

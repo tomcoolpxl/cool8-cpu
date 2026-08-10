@@ -1,9 +1,12 @@
-# The Rust fast runner
+# The machine
 
-`rust/` is a Rust copy of the COOL8 CPU *and of the machine around it*
-that exists for one reason: speed. Measured on this machine (2026-08;
-`python sim/rustsim.py` prints current numbers at the end of every full
-run):
+`rust/` **is** the COOL8 machine: the CPU, the SoC around it, the
+scanline renderer and the window. Every software suite runs on it,
+`sim/cosim.py` diffs it against the RTL, and `tools/cool8rsvm.py` is
+how Python drives it. Read this file before touching anything under
+`rust/`.
+
+It began as a fast copy of a Python model, for one reason — speed:
 
 | level | workload | CPython | Rust | |
 |---|---|---|---|---|
@@ -12,31 +15,28 @@ run):
 
 Profiling showed the CPU stepping loop itself was the cost, and PyPy
 was ruled out by its numpy story, so the loop was ported rather than
-coaxed.
+coaxed. It then spent a development cycle as a runner gated against
+the Python model per retired instruction, which is what made the
+hand-over a rename rather than a leap
+([D57](docs/01-decisions.md)) — and the Python model is now gone.
 
-It is a runner, not a second specification. Read this file before
-touching anything under `rust/`.
+## The one rule: the RTL is the authority, and the specification is prose
 
-## The one rule: Python is the specification, Rust is never authoritative
+`docs/02-isa.md` and `docs/04-system.md` say what this machine is;
+`rtl/` is what it will be in silicon. **When this machine and the RTL
+disagree, one of them is wrong and the documents decide which** — the
+seat the Python emulator used to hold, now held by the hardware it was
+always checked against. Do not resolve a cosim failure by changing
+whichever side is easier to change.
 
-`tools/cool8emu.py` is the executable specification of this CPU, and
-`tools/cool8vm.py` of the machine. The RTL is verified against the
-emulator; so is this port, at both levels. **When the Rust runner and
-the Python side disagree, the Rust runner is wrong** — by definition,
-before any investigation. If investigation then shows the Python side
-is itself wrong, `docs/02-isa.md` (or `docs/04-system.md`) decides, the
-*Python model* gets fixed the normal way, and the Rust side follows it.
-There is no path on which rust/ is corrected first and the reference
-"caught up".
-
-This is the same seat the RTL sits in, and it is held there by the same
-contract.
+Two independent implementations of the semantics still exist, which is
+the property that made any of this trustworthy: the Verilog and this.
+They are diffed instruction by instruction on every run of the gate.
 
 ## The verification contract
 
-`sim/rustsim.py` holds the Rust runner to the exact contract
-`sim/cosim.py` holds the RTL to — deliberately the *same* contract, so
-its rules are already documented and already trusted:
+`sim/cosim.py` holds this machine and the RTL to one contract, and it
+is the contract that was always here:
 
 - **One line of full architectural state per retired instruction**, in
   cosim's format, lowercase hex:
@@ -47,28 +47,27 @@ its rules are already documented and already trusted:
   interrupt/halt/brk programs, and the exhaustive 65536-pair multiply.
 - **The same retirement rules.** BRK and the reserved page-2 trap retire
   (they are instructions); a hardware interrupt entry does not; a halted
-  tick does not. The Rust `instructions` counter mirrors the emulator's.
+  tick does not. `o_retire` is the RTL's signal for it and the
+  machine's `instructions` counter is its mirror.
 - **Interrupts injected by retired-instruction count, never by cycle**,
   because the two models cannot agree on a cycle and do not need to.
-  The runner takes the RTL testbench's plusarg vocabulary (`+irqafter=`,
-  `+nmiafter=`, `+irqat=`) so the call sites in rustsim.py read like
-  cosim's.
+  The machine takes the RTL testbench's plusarg vocabulary
+  (`+irqafter=`, `+nmiafter=`, `+irqat=`), so cosim invokes both sides
+  with the same words.
 - **The whole 64 KB memory image is compared** after every run, so a
   store to a wrong address cannot hide behind a matching register trace.
 
 Run it:
 
 ```
-npm run test:rust          # via the runner
-python sim/rustsim.py      # directly; --quick skips the multiply
-                           # sweep, the BASIC boot and the speed runs
+poe cosim              # the gate for any RTL change
+poe test-rust          # the machine against RTL-dumped goldens
+poe check              # among other things, the generated-table drift check
 ```
 
-The suite builds the crate itself (`cargo build --release`) and runs the
-drift check first, so a stale generated table fails loudly instead of
-misexecuting quietly. It lives in its own runner group rather than `sw`
-because it needs `cargo`, and `npm test` has to keep working on a fresh
-clone with only Node and Python present.
+`poe check` runs `mkrsopc --check` so a stale generated table fails
+loudly instead of misexecuting quietly. Run it before trusting a
+cosim result after an encoding change.
 
 ## What is generated and what is hand-written
 
@@ -82,37 +81,33 @@ Rust cannot import Python, so the tables are **generated, not copied**:
 - The generated file is committed, and `python tools/mkrsopc.py --check`
   regenerates and compares without writing — the same drift gate
   `asic/tt/prepare.py --check` gives the TinyTapeout copy of the RTL.
-  It runs in `npm run check` and again at the top of `sim/rustsim.py`.
+  It runs in `poe check`.
 - **The hand-written Rust states no table.** `rust/src/cpu.rs` adds
   cycles only from `optab.rs` — there are no inline cycle constants to
   drift — and decides reserved-page-2 trapping only from the generated
   `P2_ASSIGNED`. After any change to the encoding or to
   `opcodes.cycles()`: rerun `python tools/mkrsopc.py`, rebuild, rerun
-  the parity suite.
+  `poe cosim`.
 
 What *cannot* be generated is the instruction semantics, because
-`opcodes.py` does not contain them (deliberately — the emulator decodes
-from bit fields independently of the table so a disagreement between
-the two is a real signal). `rust/src/cpu.rs` is therefore a hand port
-of `cool8emu.py`'s decode and execute, function for function, and the
-trace diff is what polices it. That is a genuine second model of the
-semantics, accepted for the same reason the RTL is: it is independent,
-and it is diffed against the specification instruction by instruction.
+`opcodes.py` does not contain them (deliberately — the machine decodes
+from bit fields independently of the table, so a disagreement between
+the two is a real signal). `rust/src/cpu.rs` states them by hand, and
+the trace diff against the RTL is what polices it.
 
 ## The files
 
 | file | what |
 |---|---|
-| `rust/src/cpu.rs` | the CPU: state, ALU, conditions, interrupts, the step dispatcher, and the `Bus` trait. A port of `cool8emu.py`, structured to match it |
-| `rust/src/machine.rs` | the machine: memory map, ROM overlay, UART, PS/2, flash, sound, the video register file and VRAM, and the scanline accounting. A port of `cool8vm.py`, minus rendering and the font, which no register exposes |
+| `rust/src/cpu.rs` | the CPU: state, ALU, conditions, interrupts, the step dispatcher, and the `Bus` trait |
+| `rust/src/machine.rs` | the SoC: memory map, ROM overlay, UART, PS/2, flash, sound, the video register file and VRAM, and the scanline accounting |
 | `rust/src/optab.rs` | **generated** by `tools/mkrsopc.py` — do not edit |
 | `rust/src/main.rs` | the harness: both CLIs, the run loops, trace, dumps |
 | `rust/src/render.rs` | the scanline renderer, modeled on the RTL — see below |
 | `rust/src/emu.rs` | the window, the speaker and the host keyboard (`--features gui` only) |
 | `tools/mkrsopc.py` | the generator, and `--check` |
-| `tools/cool8rsvm.py` | the Python client: a `cool8vm.Machine` stand-in for batch runs, backed by one shared `+serve` process |
+| `tools/cool8rsvm.py` | the Python client: the batch machine (CPU+RAM per call, one shared `+serve` process) and the session machine (a persistent machine with peripherals, one process each), plus module-level `Machine`/`boot`/`converse` so a suite migrates by importing this module as `vm` |
 | `tools/cool8rsrun.py` | the launcher: builds the ROM, font, keymap and disk with the ordinary tools, then hands over to `cool8rs +emu` |
-| `sim/rustsim.py` | all the parity suites and the speed measurements |
 
 `rust/target/` is gitignored; `Cargo.lock` is committed. There are no
 dependencies.
@@ -126,7 +121,7 @@ vocabulary. Hardware-only plusargs (`+ws=`, `+wsrnd=`, `+maxcycles=`,
 verbatim; anything else unknown is an error, so a typo'd `+irqafter`
 cannot silently become a run with no interrupt in it. **Machine mode**
 (`+rom=`, a binary ROM image): `+flash=` (a raw flash image, as
-`vm.Machine(flash_path=…)` takes), `+script=`, `+trace=` (a path, or
+`Machine(flash_path=…)` takes), `+script=`, `+trace=` (a path, or
 `-` for stdout), `+memdump=`, `+vramdump=`, `+said=`. Every run prints
 `-- N instructions, … T s` (stdout in CPU mode, stderr in machine mode,
 where stdout may be carrying the trace); T is stepping time alone, so
@@ -135,35 +130,28 @@ report.
 
 ## The machine level
 
-Phase 2 ports `cool8vm.py`'s `Machine` — the memory map with the I/O
-page and the ROM overlay, the UART, the PS/2 port, the SPI flash with
-its floor, the eight-voice sound engine, the complete video register
-file with its VRAM port, palette latch, pixel port and sprite table,
-and the scanline accounting that makes time pass. What is deliberately
-absent: rendering (`cool8vid.py` stays the only renderer; the Rust
-machine holds VRAM and registers and never draws a frame) and the font,
-which no register exposes.
+`machine.rs` is the SoC: the memory map with the I/O page and the ROM
+overlay, the UART, the PS/2 port, the SPI flash with its floor, the
+eight-voice sound engine, the complete video register file with its
+VRAM port, palette latch, pixel port and sprite table, and the
+scanline accounting that makes time pass.
 
-The gate is the same contract one level up, in `sim/rustsim.py`:
+Its gate is `sim/test_vm.py`, and it is the same shape as cosim's: the
+stimulus is transcribed by hand from `sim/tb/cool8_video_tb.v` into
+Python, replayed through this machine's registers and VRAM, and the
+frame the renderer scans out is compared **per pixel** against the
+frame the RTL's own pixels made — `build/text.hex`, `build/tiles.hex`
+and the sprite phase, 307,200 pixels each. The sound engine's level
+stream is compared the same way against `build/snd.hex`, 4096 samples
+from the running RTL, and the boot path against the bytes a real board
+returned on its serial console.
 
-- **A stimulus script both sides execute identically** — `type <hex>`
-  (UART bytes), `scan <hex>` (PS/2 scancodes), `frames N`. The Python
-  driver applies the same ops through the machine's own API (`m.type`,
-  `m.scancode`, `m.tick` — never a bare `cpu.step` loop), and the
-  scancode bytes are encoded once, in Python, from the real
-  `sw/keymap.asm`, so the keymap stays single-sourced.
-- **The Rust trace streams over stdout** (`+trace=-`) and is compared
-  in lockstep, one line per retired instruction, so a divergence stops
-  the run early and no quarter-gigabyte trace file is ever written.
-- **RAM, VRAM and everything said on the UART are compared at the end**,
-  and a sanity callback checks the workload actually did its job — a
-  run that diverges nowhere because BASIC never booted proves nothing.
-- The two workloads: the boot ROM to the monitor over the serial
-  console, and the full board path borrowed from
-  `sim/test_boot_basic.py` — a flash image, autoboot, the relocation to
-  `$A000`, the ROMEN handover, BASIC's banner, then
-  `10 PRINT 6 * 7` typed at the PS/2 port and `RUN` printing 42.
-  8.5 M instructions, byte-identical throughout.
+**Why transcribe the stimulus rather than share it.** The frames could
+have been produced by asking this machine to render whatever the
+testbench set up, which would make the check a test of the renderer
+against itself. Written out twice — once in Verilog, once in Python —
+a misunderstanding of what a register means has to be made twice,
+identically, to go unnoticed.
 
 ## Traps already hit, or designed around
 
@@ -202,11 +190,11 @@ The gate is the same contract one level up, in `sim/rustsim.py`:
 
 `rust/src/render.rs` is a scanline renderer derived from the Verilog —
 `cool8_fetch.v`, `cool8_pixel.v`, `cool8_sprite.v`, `cool8_vga.v` —
-rather than a port of cool8vid.py. The reason is stated in cool8vid's
-own header: at CPython speed a frame costs 0.88 s, so the Python
-renderer draws whole frames from a register snapshot and **a mid-frame
-register change is not visible**. At Rust speed the hardware's real
-structure costs nothing, so it is modeled:
+rather than a port of the whole-frame Python renderer it replaced. The
+reason that renderer stated in its own header: at CPython speed a frame
+costs 0.88 s, so it drew whole frames from a register snapshot and **a
+mid-frame register change was not visible**. At Rust speed the
+hardware's real structure costs nothing, so it is modeled:
 
 - **The line buffer, filled a source row ahead of the raster**, with
   `row_ptr` walking by stride from a base captured at frame start —
@@ -231,28 +219,28 @@ own header states it: the scan-and-sweep lead-in, ~33 clocks for a
 line that runs out of clocks loses its last-rendered — which are the
 lowest-numbered — sprites, and the overrun flag says so. The costs
 are the RTL's stated figures, not a cycle-exact FSM re-derivation;
-`sprite_plan` in machine.rs (mirrored in cool8vm's scan_sprites, the
-last change the Python reference will get) is the one statement of
-the rule for both the flag and the renderer. The *fetch* engine's
+`sprite_plan` in machine.rs is the one statement of the rule, for
+both the flag and the renderer. The *fetch* engine's
 bandwidth stays unmodeled: nothing observable hangs off it.
 
-**The gate**: `test_render` in sim/rustsim.py drives both machines
-through poke-built scenes — the monitor's text screen, tiles with
-every attribute bit and fine scroll under fifteen sprites, a scrolled
-8 bpp bitmap with `behind` sprites — and compares the Rust frame
-against `cool8vid.render_np` **per pixel**. render_np is the model
-sim/test_vm.py holds against the RTL's own rendered output, so
-agreement chains back to hardware. Static frames only, necessarily:
-the per-line behaviour that a whole-frame model cannot check rests on
-the RTL derivation.
+**The gate**: `sim/test_vm.py`, per pixel, against the RTL's own
+rendered frames — text, tiles and eleven sprites over a bitmap, all
+307,200 pixels of each. Static frames, necessarily: the per-line
+behaviour a whole-frame comparison cannot reach rests on the RTL
+derivation above, and on `sim/test_video.py`, which checks the gates
+themselves on every pixel clock of two frames.
 
-## The window: `npm run emu:rust`
+## The window: `poe emu`
 
 `tools/cool8rsrun.py` builds the ROM, the font, the machine-layout
 keymap and a BASIC disk with the ordinary tools, then launches
 `cool8rs +emu` (`--monitor` boots just the ROM). The front end is
 `rust/src/emu.rs`, behind `--features gui` so the parity suite's build
-stays dependency-free; minifb owns the window, cpal the speaker.
+stays dependency-free; SDL2 — bundled, so the build owns its copy — is
+the window, the speaker, the clipboard and the scaler, the same library
+the Python front end rides through pygame. (It was minifb and cpal
+first; one library that does all four jobs replaced two that did one
+each.)
 
 - The CPU gets **exactly 266 system clocks per scanline**, 525 lines a
   frame, 139,650 cycles a frame at 60 Hz — 8.375 MHz of machine time,
@@ -261,7 +249,7 @@ stays dependency-free; minifb owns the window, cpal the speaker.
   change that picture.
 - Audio is the machine's own 32.7 kHz `level` stream, resampled to the
   device rate; the queue takes the drift.
-- The keyboard has cool8run.py's three modes (`+keys=text|raw|both`).
+- The keyboard has three modes (`+keys=text|raw|both`).
   `text`, the default, takes printable characters from the OS — the
   user's layout applies — and types them through the machine's own
   keymap, derived from sw/keymap.asm by the launcher, never a second
@@ -281,9 +269,9 @@ stays dependency-free; minifb owns the window, cpal the speaker.
 ## Python-model errors found against the RTL, and what was done
 
 Reading the Verilog for the renderer turned up three places where
-`cool8vm.py` disagreed with the hardware. Per the project rule the
-reference was fixed first and the Rust machine follows it; parity
-gates both, and the software suites that exercise machine timing
+the Python model disagreed with the hardware. Per the rule of the day
+the reference was fixed first and the Rust machine followed it; parity
+gated both, and the software suites that exercise machine timing
 (`basic`, `boot_basic`, `autoboot`, `interp`, and `test_run`'s VSYNC
 and sprite-pacing checks) pass on the corrected phase. (At the time of
 the fix, `names` and parts of `test_run` were failing for an unrelated
@@ -293,10 +281,10 @@ before the fix stayed green after it.)
 
 1. **The vblank flag fired 45 lines late.** cool8_vga raises
    `frame_start` at line 480 — the start of vertical blanking, which
-   is also what docs/04-system.md section 6 specifies — and cool8vm
-   raised it at the counter wrap, line 525/0. **Fixed** in
-   `cool8vm._end_line` (and the cursor-blink tick with it, which the
-   RTL also advances at frame start).
+   is also what docs/04-system.md section 6 specifies — and the model
+   raised it at the counter wrap, line 525/0. **Fixed** in the
+   end-of-line step (and the cursor-blink tick with it, which the RTL
+   also advances at frame start).
 2. **The sprite overrun flag was never set.** cool8_sprite sets it on
    the ninth hit of a line — trailing rows counting — and on a render
    outrun by the next line. **Fixed, both halves**: the scan and the
@@ -306,46 +294,32 @@ before the fix stayed green after it.)
 3. **Whole-frame rendering itself** — the snapshot model cannot show a
    raster split, a mid-frame palette change, or the vblank `VID_BASE`
    latch. Not fixable at CPython speed; that is what render.rs is for,
-   and cool8vid.py remains correct for what its header claims.
+   and it is why the whole-frame Python renderer could not survive as
+   the render model.
 
-## What this is not (yet): the scope line
+## What this is not: the scope line
 
-- **Sound samples are generated but not diffed** — accepted: nothing
-  CPU-visible reads back from the sample stream.
-- **Scanline granularity, PS/2 at FIFO level** — accepted as the
-  machine's stated fidelity line, shared with the reference.
+- **Scanline granularity, PS/2 at FIFO level** — the machine's stated
+  fidelity line. Finer than that, ask the RTL.
 - **The loader wire protocol (`cool8_loader`) is not modeled**,
-  deliberately: no software in the emulator ever speaks it (loading is
-  the flash image or a poked memory image), the reference machine does
-  not model it either, and modelling it Rust-first would invert the
-  authority rule. It becomes worth doing when the Python machine is
-  retired and the Rust one hosts a host-loader test.
-- **The heavy suites (`test_run`, `test_basic`) still run the Python
-  machine**: their settle loops are interactive in a way a lockstep
-  subprocess is not. The script vocabulary now has what they need
-  (`nmi`, `lines`, pokes, text dumps); the migration itself is its own
-  piece of work.
-
-**The endgame, stated:** the Python machine is scheduled to be
-replaced by the Rust one and thrown away. Until that day Python stays
-the specification and every Rust behaviour is gated against it; the
-parity suite is what will make the eventual hand-over a rename rather
-than a leap.
+  deliberately: no software in the emulator ever speaks it — loading is
+  the flash image or a poked memory image — and `sim/test_loader.py`
+  drives the real thing over a bit-banged wire. It becomes worth doing
+  the day a host-loader test wants to run without iverilog.
+- **The sound *sample stream* is now diffed** (`sim/test_vm.py`, 4096
+  levels against the running RTL); what is still not is the sigma-delta
+  bitstream below it, where nothing CPU-visible reads back.
 
 ## How tests consume it: the batch machine
 
-`tools/cool8rsvm.py` is the consumer path, and `sim/test_interp.py` is
-its first user. `cool8rsvm.machine()` hands back a `cool8vm.Machine`
-stand-in for batch workloads: `bus.mem`, the whole register file
-(which round-trips, so poke → run → inspect → run again works),
-`romen`, `breakpoints`, and `run(until=…, cycles=…, budget=…)` with
-vm.Machine.run's own reasons. Peripheral state does not survive
+`tools/cool8rsvm.py` is the consumer path. `cool8rsvm.machine()` hands
+back the batch machine, for CPU-and-RAM workloads: `bus.mem`, the
+whole register file (which round-trips, so poke → run → inspect → run
+again works), `romen`, `breakpoints`, and `run(until=…, cycles=…,
+budget=…)` with the classic reasons. Peripheral state does not survive
 between runs — the class docstring states the contract — and a
-predicate `until` does not cross a process boundary. It falls back to
-the reference machine when the runner is not built and cargo is
-absent, so `npm test` still works on a clone with only Node and
-Python. `COOL8_PYVM=1` forces the reference — the second opinion when
-a failure needs one.
+predicate `until` does not cross a process boundary. Without cargo
+there is no machine and it says so: the suites need one.
 
 The plumbing: one `cool8rs +serve` process per test process, batch runs
 sent over stdin (tab-separated, because the fields carry paths), each
@@ -356,30 +330,63 @@ moves unchanged. One spawn per suite, not per case; per-case cost is a
 second call — registers do not round-trip, so a resume would be a
 different machine.
 
-What stays on the reference machine, deliberately: anything that
-watches the machine *while it runs* — tick loops (test_interp's SP
-high-water case), `watch`, `trace`, the keyboard, the screen. The rule
-from the original investigation stands: the boundary must sit at
-machine-API granularity or coarser, which is why there is no PyO3
-wrapper and no per-bus-access FFI. Measured on `sim/test_interp.py`:
-1.9 s on the reference machine, 0.7 s on the batch machine — the
-remaining time is Python start-up and assembling the harness. The
-suites this pattern is really for are the minutes-long ones
-(`test_run`, `test_basic`), which need the script vocabulary extended
-(keyboard, screen reads) before they can move.
+**The boundary rule, unchanged since the original investigation: it
+sits at machine-API granularity or coarser.** There is no PyO3 wrapper
+and no per-bus-access FFI. Anything that must look at the machine
+*while it runs* becomes a server-side command rather than a Python
+loop — `settle`, the cycle profiler (`profon`/`profdump`, which is
+what `dbg.Profile` now reads) and the SP low-water mark (`spmin`),
+each of which would otherwise cost a round trip per instruction. A new
+question extends the protocol; it does not get a loop here.
+
+## And the session machine, for the suites that type
+
+The batch machine cannot host `test_basic` — that suite types, waits
+for idle, reads the screen, types again — so the serve protocol grew a
+**session form**: one persistent machine per `+serve` process,
+peripherals, flash and all, with commands that mirror the Machine API
+(`type`, `scan`, `nmi`, `said`, `text`, `frames`, `srun`, memory and
+VRAM reads and writes, `flush` for the flash image, `fb` for a
+rendered frame, and the peripheral dumps `pald`/`sprd`/`sndd`/`snds`
+that let a harness compare two programs' setup without modelling any
+of it). The command that shows the boundary rule at work is
+**`settle`**: test_basic's idle test — both FIFOs empty, the input
+ring drained, PC at the idle label — polls per instruction, so it runs
+server-side as one command instead of one tick per round trip.
+
+Two invariants the first migration day taught:
+
+- **`romen` is machine state, not client belief.** The flash stub
+  drops the overlay before jumping to BASIC; a client that pushes its
+  own stale `romen` back before every run re-enables the overlay
+  mid-boot. It round-trips with the registers on every stepping reply.
+- **A zero-length transfer is `-`**, not an empty hex string, on both
+  sides of the wire.
+
+`cool8rsvm.Machine(...)`, `.boot(...)` and `.converse(...)` are the
+module-level entry points, so a suite reads exactly as it did — the
+migration was a changed import. `Machine(render=True)` attaches the
+scanline renderer, which is what `m.fb()` answers from and what
+`test_run`'s sprite check and `test_vm`'s frame gate use.
 
 ## Measured
 
-2026-08, this machine, `python sim/rustsim.py`:
+The speeds that justified the port, 2026-08 on this machine, against
+the CPython model it replaced:
 
 | | workload | CPython 3.12 | `cool8rs` (release, LTO) |
 |---|---|---|---|
 | CPU | multiply sweep, 852,740 instr | 1.17 s — 0.73 M instr/s | 0.0074 s — 115 M instr/s |
 | machine | 90 boot frames, 3,605,915 instr | 7.18 s — 0.50 M instr/s | 0.055 s — 66 M instr/s |
 
-Parity at that date: directed (511 encodings), 8 random streams of
-3000, the four interrupt programs, the multiply sweep, the monitor
-conversation (0.98 M instructions) and the flash-to-BASIC boot with a
-typed program (8.5 M instructions) — traces, RAM, VRAM and UART output
-byte-identical throughout. Re-run the suite for current numbers rather
-than trusting these.
+And what that bought the suites, on the day they moved: the software
+group **823.8 s → 185.7 s** wall (`test_run` 823.7 → 183.7,
+`test_basic` 177.9 → 2.9, the flash and boot suites to under 1.5 s
+each), and `cosim all` to 55 s with the model side reduced from most
+of the run to seconds — vvp is the cost now, which is the right cost.
+
+The parity suite that made the hand-over safe (directed 511 encodings,
+random streams, the interrupt programs, the multiply sweep, the
+monitor conversation and an 8.5 M-instruction flash-to-BASIC boot, all
+byte-identical) retired with the model it compared against. Its
+successors are `poe cosim` and `poe test-rust`.

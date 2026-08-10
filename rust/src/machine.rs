@@ -250,6 +250,25 @@ pub struct Sound {
 impl Sound {
     const VOICES: usize = 8;
 
+    /// The programmed voice array, in the register layout software
+    /// wrote it through SND_IDX/SND_DATA: per voice, inc lo/hi at
+    /// 8v+0/1, the (engine-owned) phase at 8v+2/3, volume at 8v+4,
+    /// noise/enable bits at 8v+5. What a harness comparing two
+    /// programs' sound setup wants to see.
+    pub fn dump(&self) -> [u8; 64] {
+        let mut out = [0u8; 64];
+        for v in 0..Sound::VOICES {
+            out[8 * v] = self.inc[v] as u8;
+            out[8 * v + 1] = (self.inc[v] >> 8) as u8;
+            out[8 * v + 2] = self.phase[v] as u8;
+            out[8 * v + 3] = (self.phase[v] >> 8) as u8;
+            out[8 * v + 4] = self.vol[v];
+            out[8 * v + 5] = ((self.noise[v] as u8) << 7)
+                | ((self.enable[v] as u8) << 6);
+        }
+        out
+    }
+
     fn new() -> Sound {
         Sound {
             inc: [0; 8],

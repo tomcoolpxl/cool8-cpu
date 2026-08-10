@@ -1,61 +1,74 @@
 # 12. Commands, and the runner that names them
 
-Every command this project has is named in `package.json` and run by
-`tools/run.mjs`. That file is the vocabulary: if a command is not in it,
-it is not a command, it is something someone typed once.
+Every command this project has is named in `pyproject.toml`: the job
+table under `[tool.cool8.jobs]` for the suites, `[tool.poe.tasks]` for
+the direct commands. That file is the vocabulary: if a command is not
+in it, it is not a command, it is something someone typed once.
+
+**The runner is pytest**, fed the job table by the one shim in
+`sim/runner/test_jobs.py` — the shim shells each suite exactly as a
+person would and holds no policy of its own. pytest-xdist runs jobs in
+parallel (`-n auto`, the default), a group is a marker (`-m rtl`), and
+`--durations` says where the time went. **poethepoet** (`poe`) names
+the rest; `pip install -e ".[dev]"` once installs all three. Use
+`python -m pytest` / `python -m poethepoet` where Scripts is not on
+PATH.
 
 ```
-npm test                 every software suite, in parallel
-npm test -- interp asm   just those two
-npm run test:rtl         the RTL side (cosim is the gate for any RTL change)
-npm run test:board       the physical board, one job at a time
-npm run test:all         software and RTL together
-npm run check            encoding tables and the CPU self-test
-npm run build            boot ROM, basic.bin, BOOT.BIN, with sizes
-npm run bench            the interpreter benchmarks
-npm run prof             where the interpreter's clocks go
-npm run list             everything the runner knows about
+poe test                 every software suite, in parallel  (pytest)
+pytest -k "interp or asm"    just those two
+poe test-rtl             the RTL side (cosim is the gate for any RTL change)
+poe test-board           the physical board, one job at a time
+poe test-all             software and RTL together
+poe check                the generated tables, against what generated them
+poe build                boot ROM, basic.bin, BOOT.BIN, with sizes
+poe bench                the language benchmark
+poe prof                 where the interpreter's clocks go
+poe list                 everything the runner knows about
 ```
 
 **Three phases, and they are not the same kind of thing.** `sw` runs on
-the emulator and is the fast inner loop. `rtl` runs iverilog against the
-hardware description — slower, and where a change to `sw/boot.asm`
-actually gets checked, since the boot ROM is compiled into the
-bitstream. `board` talks to real hardware over USB.
+the machine — `rust/`, driven through `tools/cool8rsvm.py`, so it needs
+`cargo` and there is no fallback — and is the fast inner loop. `rtl`
+runs iverilog against the hardware description: slower, and where a
+change to `sw/boot.asm` actually gets checked, since the boot ROM is
+compiled into the bitstream. `board` talks to real hardware over USB.
 
-**Long jobs report that they are alive.** Every ten seconds the runner
-names what is still going and for how long — `test_run` takes four
-minutes and `cosim` a minute, and a job that says nothing for that long
-cannot be told from one that has hung. `COOL8_HEARTBEAT_MS` changes the
-interval.
+**Board jobs must not run in parallel.** There is one USB device and no
+lock on it; two `icesprog` processes at once do not fail cleanly, they
+interleave on the SPI and hand back a readback full of zeroes — which
+reads as a corrupt bitstream rather than as a corrupt test. That
+happened here. `poe test-board` therefore carries `-n 0`; never run the
+board group with xdist enabled.
 
-**Board jobs are exclusive and drop the pool to one.** There is one USB
-device and no lock on it; two `icesprog` processes at once do not fail
-cleanly, they interleave on the SPI and hand back a readback full of
-zeroes — which reads as a corrupt bitstream rather than as a corrupt
-test. That happened here the first time `test:board` ran two jobs in
-parallel. Mark any job that touches hardware `"exclusive": true`.
+What the runner buys is the part that was being done by hand in a shell
+loop for a year:
 
-Node runs none of the machine. It spawns Python, and what it buys is the
-part that was being done by hand in a shell loop for a year:
+- **The suites run at once.** A dozen of them, serially, is minutes of
+  waiting while eleven cores idle.
+- **Each job gets its own build directory**, `sim/build/jobs/<group>-<id>`,
+  passed as `COOL8_BUILD`. Every `sim/*.py` honours it. This is not a
+  nicety: the suites all compile `basic.bin`, and without it parallel
+  runs write it on top of each other and fail in ways that look like
+  bugs in the machine.
 
-- **The suites run at once.** Thirteen of them, serially, is minutes of
-  waiting on `test_run` and `test_basic` while eleven cores idle.
-- **Each job gets its own build directory**, `sim/build/<id>`, passed as
-  `COOL8_BUILD`. Every `sim/*.py` honours it. This is not a nicety:
-  thirteen suites all compile `basic.bin`, and without it parallel runs
-  write it on top of each other and fail in ways that look like bugs in
-  the machine.
-- **Only failures print.** A pass is one line and a duration.
+  **The trap that comes with it:** a suite that reads an artifact
+  *another* suite produced will not find it, because that one wrote to
+  its own directory. `sim/test_vm.py` hit this and passed in 0.19 s
+  having compared nothing. If a suite consumes another's output, it
+  must search the sibling directories — and **treat a missing input as
+  a failure, never a skip**. A check that cannot run has not passed.
+- **Only failures print their output.** A pass is a dot and a duration.
 - **The exit code is the answer**, so it can gate a commit.
 
 A suite counts as passed when it exits 0 *and* the word `FAIL` does not
 appear in its output — two of them report a count rather than a status,
-and an exit code alone would take their word for it.
+and an exit code alone would take their word for it. The shim enforces
+this, not the suites.
 
 ## The jobs
 
-### `sw` — the software suite (`npm test`)
+### `sw` — the software suite (`poe test`)
 
 | | |
 |---|---|
@@ -66,14 +79,19 @@ and an exit code alone would take their word for it.
 | `boot_basic` | reset → autoboot → relocate → BASIC → a keypress, off a flash image |
 | `autoboot` | autoboot and the monitor's flash write |
 | `corpus` | the compiler against its corpus |
-| `emit` | the code emitter, gated against the assembler |
-| `comp` | the self-hosted compiler |
-| `lex` | the compiler's front end |
 | `fs` | the filesystem, both implementations |
 | `bas` | the code-size gate: within 15 % of hand-written |
 | `names` | global name collisions across the system image |
 
-### `rtl` — `npm run test:rtl`
+The shelved on-machine compiler's gates — `sim/test_comp.py`,
+`sim/test_emit.py`, `sim/test_lex.py` — are **not in the runner**: they
+cost minutes to gate code that ships nowhere
+([11-compiler.md](11-compiler.md)). Run them deliberately before
+touching `sw/comp.bas`, `sw/emit.bas` or `sw/lex.bas`, and before any
+change to the token table or the stored-program format, which both
+sides of those diffs share.
+
+### `rtl` — `poe test-rtl`
 
 `cosim` is **the gate for any RTL change**. It takes about a minute. Run
 it; do not reason about whether it would pass.
@@ -83,12 +101,12 @@ it; do not reason about whether it would pass.
 parameters the bitstream carries and types at it on **both** the serial
 line and the PS/2 clock, so a scancode takes the same path it takes on
 the bench. That is where a keyboard change is really checked — the
-emulator models the PS/2 port, but only this runs the receiver, the
-parity check and the FIFO.
+machine models the PS/2 port at FIFO level, but only this runs the
+receiver, the parity check and the FIFO itself.
 
 | | |
 |---|---|
-| `cosim` `boot` `soc` | the CPU and the machine against the emulator |
+| `cosim` `boot` `soc` | the CPU and the machine against the RTL |
 | `ps2` `flash` `spram` `loader` | one peripheral each |
 | `monitor` | type at the whole SoC, serial and PS/2 |
 | `video` `vram` `vport` | every mode and visible pixel |
@@ -100,12 +118,12 @@ deliberately:
 python sim/cosim.py mul        # exhaustive multiply (~2.5 min)
 python sim/test_load.py        # the host loader, against the RTL
 python sim/test_video.py --refresh    # also updates docs/img/
-npm run mutate                 # break the RTL on purpose; require a fail
-npm run synth                  # hygiene, LUT/FF count, gate estimate
-npm run timing                 # measured clocks per encoding
+poe mutate                 # break the RTL on purpose; require a fail
+poe synth                  # hygiene, LUT/FF count, gate estimate
+poe timing                 # measured clocks per encoding
 ```
 
-### `board` — `npm run test:board`
+### `board` — `poe test-board`
 
 | | |
 |---|---|
@@ -114,16 +132,17 @@ npm run timing                 # measured clocks per encoding
 
 Neither writes anything. Both are exclusive.
 
-### `rust` — `npm run test:rust`
+### `rust` — `poe test-rust`
 
 | | |
 |---|---|
-| `rust` | the Rust fast runner against the emulator and the machine: trace, memory, VRAM and UART parity over cosim's programs and a real flash-to-BASIC boot, then the measured speeds |
+| `vm` | the machine against RTL-dumped goldens: every pixel of three frames (text, tiles, sprites over a bitmap), 4096 sound samples, and a boot to the monitor answering `D F000` with the bytes a real board gave |
 
-One job, its own group rather than `sw`, because it needs `cargo` and
-`npm test` must keep working on a fresh clone with only Node and Python
-present. Everything about the runner — what it is for, what is
-generated, what the gate proves — is in [RUST_PORT.md](../RUST_PORT.md).
+Its own group rather than `sw` because it needs the RTL dumps in
+`sim/build` — `sim/test_video.py` and `sim/test_snd.py` produce them,
+and it SKIPs rather than fails when they are absent. Everything about
+the machine — what it is, what is generated, what the gates prove — is
+in [RUST_PORT.md](../RUST_PORT.md).
 
 **What the board phase cannot check** is that the machine boots to a
 picture. `LOADER` defaults to 0 ([D40](01-decisions.md)) so there is no
@@ -136,20 +155,20 @@ automatable.
 ### The board
 
 ```
-npm run bit             build the bitstream: yosys, nextpnr, icepack
-npm run disk            a flash image with BASIC on volume 0. No board touched
-npm run flash           bitstream + BASIC: the whole board
-npm run flash:fpga      the bitstream only, to flash offset 0
-npm run flash:system    BASIC only, to flash offset $100000
-npm run flash:verify    read BOTH halves back off the board and compare
-npm run console -- --port COM6      the board's text screen, on the PC
-npm run load -- --port COM6 --load build/BOOT.BIN --at 0x200 --go 0x200
+poe bit             build the bitstream: yosys, nextpnr, icepack
+poe disk            a flash image with BASIC on volume 0. No board touched
+poe flash           bitstream + BASIC: the whole board
+poe flash-fpga      the bitstream only, to flash offset 0
+poe flash-system    BASIC only, to flash offset $100000
+poe flash-verify    read BOTH halves back off the board and compare
+poe console -- --port COM6      the board's text screen, on the PC
+poe load -- --port COM6 --load build/BOOT.BIN --at 0x200 --go 0x200
 ```
 
 **The boot ROM is inside the bitstream.** There is no separate step for
 it: a change to `sw/boot.asm`, `sw/kbd.asm` or `sw/keymap.asm` reaches
-the board through `npm run bit` and `npm run flash:fpga`, and through
-nothing else. `npm run rom` builds `boot.hex` for the *emulator*.
+the board through `poe bit` and `poe flash-fpga`, and through
+nothing else. `poe rom` builds `boot.hex` for the *simulators*.
 
 Flash holds two unrelated things and every way of confusing them is
 destructive, so `tools/flash.py` makes the mistakes impossible rather
@@ -216,12 +235,12 @@ else warns you as it fills.
 
 ## Adding a command
 
-Add it to the relevant list in `package.json`'s `cool8` block: an `id`,
+Add it to the relevant job list in `pyproject.toml`'s `[tool.cool8.jobs]`: an `id`,
 the `run` path, optional `args`, and an `about` line that says what it
 proves. `slow: true` moves it to the front of the queue, since with a
 fixed pool the long pole sets the wall clock.
 
-Nothing else needs changing. `npm run list` picks it up.
+Nothing else needs changing. `poe list` picks it up.
 
 ## Shells
 
@@ -238,4 +257,4 @@ one.
 `sim/build/` and everything under it, including the per-job
 subdirectories. `build/` is the bitstream's. Both are gitignored, as is
 `node_modules/` — there are no dependencies, so nothing is installed and
-`npm test` works on a fresh clone with Node present.
+`poe test` works on a fresh clone with Node present.

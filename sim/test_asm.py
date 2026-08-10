@@ -28,7 +28,7 @@ os.makedirs(BUILD, exist_ok=True)
 sys.path.insert(0, os.path.join(ROOT, "tools"))
 sys.path.insert(0, HERE)
 
-import cool8vm as vm                                      # noqa: E402
+import cool8rsvm as vm                                    # noqa: E402
 import test_interp as T                                   # noqa: E402
 
 CODE = 0x0200

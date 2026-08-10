@@ -44,7 +44,7 @@ os.makedirs(BUILD, exist_ok=True)
 
 sys.path.insert(0, os.path.join(ROOT, "tools"))
 
-import cool8vm as vm                                     # noqa: E402
+import cool8rsvm as vm                                   # noqa: E402
 import cool8bas as bas                                   # noqa: E402
 
 ORG = 0x0200            # where the driver runs

@@ -37,7 +37,7 @@ os.makedirs(BUILD, exist_ok=True)
 sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.join(ROOT, "tools"))
 
-import cool8vm as vm                                       # noqa: E402
+import cool8rsvm as vm                                     # noqa: E402
 import cool8disk as disk                                   # noqa: E402
 import mkboot                                              # noqa: E402
 import test_basic as B                                     # noqa: E402
@@ -70,20 +70,11 @@ def image(boot):
 
 
 def settle(m, syms, budget=40_000_000):
-    """Wait for the editor to go idle, as sim/test_basic.py does.
-
-    Same three conditions: nothing in either FIFO, nothing in the ring,
-    and the CPU sitting at rawkey's "nothing waiting" branch.
-    """
-    idle = syms["s_rawkey.rk0"]
-    head, tail = syms["irhead"], syms["irtail"]
-    for _ in range(budget):
-        if (not m.uart.rx and not m.kbd.q
-                and m.bus.mem[head] == m.bus.mem[tail]
-                and m.cpu.pc == idle):
-            return True
-        m.tick()
-    return False
+    """Wait for the editor to go idle — m.settle, the machine's own
+    idle test (same conditions sim/test_basic.py names: both FIFOs
+    empty, the ring drained, the CPU at rawkey's idle branch)."""
+    return m.settle(syms["s_rawkey.rk0"], syms["irhead"], syms["irtail"],
+                    budget)
 
 
 def key(m, syms, text):

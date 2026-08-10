@@ -36,7 +36,7 @@ os.makedirs(BUILD, exist_ok=True)
 sys.path.insert(0, os.path.join(ROOT, "tools"))
 sys.path.insert(0, HERE)
 
-import cool8emu as emu                                   # noqa: E402
+import cool8rsvm as emu                                   # noqa: E402
 import cool8bas as bas                                   # noqa: E402
 
 TOLERANCE = 0.15
@@ -51,17 +51,6 @@ CASES = [
     ("array  BM7  m(l) = k", "array.bas", "a", 1000, 505_055),
     ("sieve       Byte sieve 8190", "sieve.bas", "c", 1899, 3_069_408),
 ]
-
-
-class Mem(emu.Bus):
-    def __init__(self):
-        self.mem = bytearray(0x10000)
-
-    def read(self, a):
-        return self.mem[a & 0xFFFF]
-
-    def write(self, a, v):
-        self.mem[a & 0xFFFF] = v & 0xFF
 
 
 def build(src):
@@ -89,19 +78,14 @@ def build(src):
 
 
 def run(code, limit=200_000_000):
-    bus = Mem()
-    bus.mem[bas.ORG:bas.ORG + len(code)] = code
-    c = emu.Cool8(bus)
-    c.reset()
-    c.pc = bas.ORG
-    c.sp = 0xFFF7
-    n = 0
-    while n < limit and not c.halted:
-        c.step()
-        n += 1
-    if not c.halted:
+    m = emu.machine()
+    m.bus.mem[bas.ORG:bas.ORG + len(code)] = code
+    m.cpu.pc = bas.ORG
+    m.cpu.sp = 0xFFF7
+    m.romen = False
+    if m.run(budget=limit) != "halt":
         raise SystemExit("the program did not halt")
-    return c.cycles, bus
+    return m.cpu.cycles, m.bus
 
 
 # Programs that are not benchmarks: they check the compiler is a

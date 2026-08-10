@@ -1,22 +1,22 @@
 #!/usr/bin/env python3
-"""The emulator against the hardware, pixel for pixel and sample for
+"""The machine against the hardware, pixel for pixel and sample for
 sample.
 
-`tools/cool8vm.py` is only worth writing an operating system against if
-it agrees with the gates. This is the check that says so, and it is not a
-self-check: every expected value here came out of a Verilog simulation of
-the RTL.
+The machine (rust/, RUST_PORT.md) is only worth writing an operating
+system against if it agrees with the gates. This is the check that says
+so, and it is not a self-check: every expected value here came out of a
+Verilog simulation of the RTL.
 
   video   `sim/test_video.py` dumps two frames as the DUT's own pixels
           leave it — build/text.hex (mode 0) and build/tiles.hex (mode
           2). The stimulus that produced them is replayed here through
-          the emulator's registers and VRAM, and all 307,200 pixels of
-          each frame must match.
+          the machine's registers and VRAM, rendered by its own
+          scanline renderer, and all 307,200 pixels must match.
 
   sound   `sim/test_snd.py` dumps 4096 level bytes from the running
           engine — a five-note chord at unrelated pitches, a silent
-          voice, a stopped voice and noise. The emulator's Sound must
-          produce the identical stream.
+          voice, a stopped voice and noise. The machine's sound engine
+          must produce the identical stream.
 
   machine the ROM boots, the monitor answers, and `D F000` returns the
           bytes the board returned over its serial port.
@@ -25,7 +25,7 @@ the RTL.
     python sim/test_vm.py --regen        # re-run the RTL suites first
 
 **Why replay the stimulus rather than share it.** The frames could have
-been produced by asking the emulator to render whatever the testbench
+been produced by asking the machine to render whatever the testbench
 happened to set up, which would make this a test of the renderer against
 itself. Writing the setup out twice — once in Verilog, once here — means
 a misunderstanding of what the registers mean has to be made twice,
@@ -42,12 +42,28 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 BUILD = os.environ.get("COOL8_BUILD") or os.path.join(HERE, "build")
+SHARED = os.path.join(HERE, "build")
+
+
+def golden(name):
+    """An RTL dump, wherever the suite that made it put it.
+
+    `sim/test_video.py` and `sim/test_snd.py` produce these, and under
+    the runner every job has its own COOL8_BUILD — so the dumps land in
+    a sibling directory, not in this job's. Look in this job's build
+    first, then the shared one, then any job's.
+    """
+    import glob
+    for cand in ([os.path.join(BUILD, name), os.path.join(SHARED, name)]
+                 + sorted(glob.glob(os.path.join(SHARED, "jobs", "*", name)))):
+        if os.path.exists(cand):
+            return cand
+    return None
 
 sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.join(ROOT, "tools"))
 
-import cool8vm                                   # noqa: E402
-import cool8vid                                  # noqa: E402
+import cool8rsvm as vm                           # noqa: E402
 import mkfont                                    # noqa: E402
 
 H_VIS, V_VIS = 640, 480
@@ -151,12 +167,26 @@ def load_text_map(m, scr):
             m.bus.mem[0x8000 + j * 256 + k * 2 + 1] = c >> 8
 
 
-def vram_put(m, wa, d):
-    m.video.vram[(wa * 2) & 0xFFFF] = d & 0xFF
-    m.video.vram[(wa * 2 + 1) & 0xFFFF] = (d >> 8) & 0xFF
+class Vram:
+    """VRAM built locally, then pushed in one go.
+
+    The engine sees words; this collects them and hands the machine a
+    whole 64 KB at once, because a round trip per word would be 32,768
+    of them.
+    """
+
+    def __init__(self):
+        self.buf = bytearray(0x10000)
+
+    def put(self, wa, d):
+        self.buf[(wa * 2) & 0xFFFF] = d & 0xFF
+        self.buf[(wa * 2 + 1) & 0xFFFF] = (d >> 8) & 0xFF
+
+    def flush(self, m):
+        m.video.vram[0:0x10000] = self.buf
 
 
-def load_tiles(m):
+def load_tiles(m, v):
     """A map of 64 columns at stride 128 with every attribute
     combination, and patterns that are not symmetric so a flip that does
     nothing is visible."""
@@ -166,11 +196,11 @@ def load_tiles(m):
         for k in range(64):
             # {j[3:0]^k[3:0], k[5:0]+j[5:0], 2'b00} is twelve bits wide,
             # so it zero-extends before the XOR with {k[7:0], j[7:0]}.
-            v = ((((j ^ k) & 0xF) << 8) | ((((k + j) & 0x3F)) << 2))
-            vram_put(m, (j * 128 + k * 2) >> 1,
-                     (v ^ (((k & 0xFF) << 8) | (j & 0xFF))) & 0xFFFF)
+            w = ((((j ^ k) & 0xF) << 8) | ((((k + j) & 0x3F)) << 2))
+            v.put((j * 128 + k * 2) >> 1,
+                  (w ^ (((k & 0xFF) << 8) | (j & 0xFF))) & 0xFFFF)
     for k in range(4096):
-        vram_put(m, 0x2000 + k,
+        v.put(0x2000 + k,
                  (((k & 0xF) << 12) | ((((k >> 4) & 0xFF) ^ 0x6D) << 4) |
                   ((k >> 4) & 0xF)) & 0xFFFF)
 
@@ -182,10 +212,10 @@ def read_hex(path):
         return [int(line, 16) for line in fh if line.strip()]
 
 
-def frame_check(name, path, setup):
-    if not os.path.exists(path):
-        print(f"  {name:<28} build/{os.path.basename(path)} missing"
-              f"{'':<12} SKIP")
+def frame_check(name, dump, setup):
+    path = golden(dump)
+    if path is None:
+        print(f"  {name:<28} build/{dump} missing{'':<12} MISSING")
         return None
     want = read_hex(path)
     if len(want) != H_VIS * V_VIS:
@@ -193,38 +223,42 @@ def frame_check(name, path, setup):
               f"{'':<6} FAIL")
         return False
 
-    m = cool8vm.Machine()
-    setup(m)
+    m = vm.Machine(font=font_bytes(), render=True)
+    v = Vram()
+    setup(m, v)
+    v.flush(m)
 
-    ok = True
-    # Both renderers, against the hardware — not against each other.
-    for how, fn in (("", cool8vid.render), (" (vectorised)",
-                                            cool8vid.render_fast)):
-        got = fn(m)
-        bad = 0
-        first = None
-        for i, (g, w) in enumerate(zip(got, want)):
-            if g != w:
-                if first is None:
-                    first = (i % H_VIS, i // H_VIS, g, w)
-                bad += 1
-        detail = f"{len(want)} pixels, {bad} wrong"
-        print(f"  {name + how:<28} {detail:<28} "
-              f"{'ok' if bad == 0 else 'FAIL'}")
-        if first:
-            x, y, g, w = first
-            print(f"    first at ({x},{y}): got {g:03x} want {w:03x}")
-        ok = ok and bad == 0
-    return ok
+    # The renderer draws as the raster runs, so the frame has to be
+    # scanned out before it can be read. The CPU is halted for it: RAM
+    # holds the text map and nothing should be executing over it. Two
+    # frames, because the first may be joined part-way.
+    m.cpu.halted = True
+    m.run_frame(2)
+    got = m.fb()
+
+    bad = 0
+    first = None
+    for i, (g, w) in enumerate(zip(got, want)):
+        if g != w:
+            if first is None:
+                first = (i % H_VIS, i // H_VIS, g, w)
+            bad += 1
+    detail = f"{len(want)} pixels, {bad} wrong"
+    print(f"  {name:<28} {detail:<28} {'ok' if bad == 0 else 'FAIL'}")
+    if first:
+        x, y, g, w = first
+        print(f"    first at ({x},{y}): got {g:03x} want {w:03x}")
+    return bad == 0
 
 
-def load_font(m):
+def font_bytes():
+    """The machine's font, for the renderer — text mode needs glyphs."""
     font, _, _ = mkfont.build(os.path.join(ROOT, 'assets', 'font',
                                            'spleen-8x16.bdf'))
-    m.video.font[:len(font)] = font
+    return font
 
 
-def fill_vram_bitmap(m):
+def fill_vram_bitmap(m, v):
     """What the bitmap phases leave behind, and the tile phase inherits.
 
     Pattern banks 1..3 are never written by the tile setup, so what a
@@ -234,12 +268,11 @@ def fill_vram_bitmap(m):
     """
     for k in range(32768):
         # {k[7:0] ^ 8'h5A, k[15:8] + 8'h37} — the XOR is the *high* byte.
-        vram_put(m, k, (((k & 0xFF) ^ 0x5A) << 8) |
+        v.put(k, (((k & 0xFF) ^ 0x5A) << 8) |
                        (((k >> 8) + 0x37) & 0xFF))
 
 
-def setup_text(m):
-    load_font(m)
+def setup_text(m, v):
     put_pal(m)
     no_sprites(m)
     set_mode(m, 0)
@@ -258,29 +291,28 @@ def put_spr(m, i, en, big, hf, vf, bh, x, y, pat, bank):
     m.io_write(0x2B, bank)                  # per-sprite, and never used
 
 
-def load_sprite_patterns(m):
+def load_sprite_patterns(m, v):
     """Every pattern asymmetric in both directions, so a flip taken from
     the wrong bit shows up as a wrong pixel rather than a symmetry."""
     for k in range(2048):
-        vram_put(m, 0x3000 + k,
+        v.put(0x3000 + k,
                  ((((k & 0xF) + 1) & 0xF) << 12) |
                  (((((k >> 4) & 0xF) ^ 6) & 0xF) << 8) |
                  (((((k >> 8) & 0xF) + 3) & 0xF) << 4) |
                  ((((k >> 2) & 0xF) ^ 0xA) & 0xF))
 
 
-def setup_tiles(m):
-    load_font(m)
+def setup_tiles(m, v):
     put_pal(m)
     no_sprites(m)
-    fill_vram_bitmap(m)
+    fill_vram_bitmap(m, v)
     m.io_write(0x1A, 0x2B)                  # the border the bitmap phases set
     set_mode(m, 2)
-    load_tiles(m)
+    load_tiles(m, v)
     set_scroll(m, 0, 0)
 
 
-def setup_sprites(m):
+def setup_sprites(m, v):
     """Phase 13: eleven sprites over a 4 bpp bitmap.
 
     The background is whatever the earlier phases left in VRAM — the
@@ -290,14 +322,13 @@ def setup_sprites(m):
     present, every flip is used, two are behind the background, and
     three hang off the left, right and bottom edges.
     """
-    load_font(m)
     put_pal(m)
     no_sprites(m)
-    fill_vram_bitmap(m)
+    fill_vram_bitmap(m, v)
     m.io_write(0x1A, 0x2B)
     set_mode(m, 2)
-    load_tiles(m)
-    load_sprite_patterns(m)
+    load_tiles(m, v)
+    load_sprite_patterns(m, v)
 
     set_mode(m, 4)
     m.io_write(0x12, 0x00)
@@ -322,22 +353,21 @@ def setup_sprites(m):
 
 
 def sound_check():
-    path = os.path.join(BUILD, "snd.hex")
-    if not os.path.exists(path):
+    path = golden("snd.hex")
+    if path is None:
         print(f"  {'the sound engine':<28} build/snd.hex missing"
-              f"{'':<11} SKIP")
+              f"{'':<11} MISSING")
         return None
     want = read_hex(path)
 
-    s = cool8vm.Sound()
+    m = vm.Machine()
+    m.cpu.halted = True                     # the engine, not a program
 
     def set_voice(v, inc, en, noise, vol):
-        s.write(0x50, v << 3)
-        s.write(0x51, inc & 0xFF)
-        s.write(0x51, inc >> 8)
-        s.write(0x50, (v << 3) | 4)
-        s.write(0x51, vol)
-        s.write(0x51, (noise << 7) | (en << 6))
+        m.io_write(0x50, v << 3)
+        m.io_writes(0x51, [inc & 0xFF, inc >> 8])
+        m.io_write(0x50, (v << 3) | 4)
+        m.io_writes(0x51, [vol, (noise << 7) | (en << 6)])
 
     set_voice(0, 881,   1, 0, 15)
     set_voice(1, 1109,  1, 0, 10)
@@ -348,7 +378,14 @@ def sound_check():
     set_voice(6, 0,     1, 0, 9)
     set_voice(7, 3000,  1, 1, 12)
 
-    got = [s.level() for _ in range(len(want))]
+    # The engine makes a sample every 256 system clocks, so run the
+    # machine until it has produced as many as the RTL dumped.
+    m.samples()                             # drop anything from setup
+    got = []
+    while len(got) < len(want):
+        m.run(cycles=256 * (len(want) - len(got)))
+        got += list(m.samples())
+    got = got[:len(want)]
     bad = sum(1 for g, w in zip(got, want) if g != w)
     ok = bad == 0
     detail = f"{len(want)} samples, {bad} wrong"
@@ -364,8 +401,8 @@ def sound_check():
 
 def machine_check():
     """The boot path, and the answer the board itself gave."""
-    m = cool8vm.boot()
-    txt = cool8vm.converse(m, "D F000\\r", frames=20)
+    m = vm.boot()
+    txt = vm.converse(m, "D F000\\r", frames=20)
     ok = "COOL8" in txt and "2F 60 00 02" in txt.upper()
     detail = "boots, prompts, dumps the ROM"
     print(f"  {'the whole machine':<28} {detail:<28} "
@@ -390,11 +427,11 @@ def main():
     results = [
         machine_check(),
         frame_check("mode 0 text, 80x30",
-                    os.path.join(BUILD, "text.hex"), setup_text),
+                    "text.hex", setup_text),
         frame_check("mode 2 tiles, 40x30",
-                    os.path.join(BUILD, "tiles.hex"), setup_tiles),
+                    "tiles.hex", setup_tiles),
         frame_check("11 sprites over a bitmap",
-                    os.path.join(BUILD, "sprites.hex"), setup_sprites),
+                    "sprites.hex", setup_sprites),
         sound_check(),
     ]
 

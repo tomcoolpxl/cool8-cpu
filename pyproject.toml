@@ -1,0 +1,269 @@
+# The project manifest. What package.json was, in Python's own standard:
+# pytest (with xdist) runs the suites, poethepoet names the commands,
+# and [tool.cool8] is the one place the project's names and numbers
+# live. tools/board.py and tools/doctor.py read it with stdlib tomllib.
+#
+#     pip install -e ".[dev]"      once, for pytest/xdist/poe
+#     poe test                     the software suite (npm test was this)
+#     poe --help                   every named command
+#
+# docs/12-tasks.md is normative for what each job proves.
+
+[project]
+name = "cool8"
+version = "1.0.0"
+description = "A clean-sheet 8-bit CPU and the retro home computer around it. Python is the scripting layer; the machine itself is cool8rs (rust/) and the OSS CAD Suite."
+requires-python = ">=3.11"
+dependencies = [
+    "pyserial",   # the board tools' wire
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "pytest-xdist", "poethepoet"]
+
+# ---------------------------------------------------------------- pytest
+#
+# pytest is the runner run.mjs used to be: -m picks a group, -n auto
+# fans out, --durations says where the time went. sim/runner/ holds the
+# one shim that feeds it the job table below; the suites themselves are
+# ordinary scripts and know nothing about pytest.
+
+[tool.pytest.ini_options]
+testpaths = ["sim/runner"]
+addopts = "-m sw -n auto --durations=10 -q"
+markers = [
+    "sw: the software suite (the default)",
+    "rtl: RTL suites; need iverilog/vvp on PATH or OSS_CAD_SUITE",
+    "board: touch the physical board; run with -n 0, never in parallel",
+    "rust: the machine against RTL-dumped goldens; needs cargo",
+    "check: generated-table drift checks and self-tests",
+    "build: build the ROM and the BASIC image",
+    "bench: measurements, not gates",
+    "slow: the minutes-long jobs",
+]
+
+# ------------------------------------------------------------------ poe
+#
+# The command aliases npm's scripts block used to hold. `poe <name>`.
+
+[tool.poe.tasks]
+test = "python -m pytest -m sw"
+test-rtl = "python -m pytest -m rtl"
+test-board = "python -m pytest -m board -n 0"
+test-rust = "python -m pytest -m rust"
+test-all = "python -m pytest -m 'sw or rtl'"
+check = "python -m pytest -m check"
+build = "python -m pytest -m build"
+bench = "python -m pytest -m bench -n 0"
+list = "python -m pytest --collect-only -q -m 'sw or rtl or board or rust or check or build or bench'"
+doctor = "python tools/doctor.py"
+
+prof = "python sim/prof_interp.py"
+cosim = "python sim/cosim.py all"
+rom = "python tools/mkrom.py sw/boot.asm -o sim/build/boot.hex"
+boot = "python tools/mkboot.py sim/build/basic.bin -o sim/build/BOOT.BIN"
+
+bit = "python tools/mkbit.py"
+diagram = "python tools/mkdiagram.py -o docs/img/readme-soc.svg --alu docs/img/readme-alu.png"
+synth = "python sim/synth.py"
+timing = "python sim/timing.py"
+mutate = "python sim/mutate.py"
+
+disk = "python tools/flash.py disk"
+flash = "python tools/flash.py all"
+flash-fpga = "python tools/flash.py fpga"
+flash-system = "python tools/flash.py system"
+flash-verify = "python tools/flash.py verify"
+
+board = "python tools/board.py"
+board-screen = "python tools/board.py --screen"
+board-ports = "python tools/board.py --ports"
+emu = "python tools/cool8rsrun.py"
+console = "python tools/cool8screen.py"
+load = "python tools/cool8load.py"
+
+# ---------------------------------------------------------------- cool8
+#
+# The project's own names and numbers — carried over from package.json's
+# "cool8" block, consumers unchanged in what they read.
+
+[tool.cool8]
+buildRoot = "sim/build"
+
+[tool.cool8.board]
+baud = 115200
+usb = "1D50:602B"
+# The iCELink's USB vendor:product, used to find the board's serial
+# port -- its COM number changes whenever the FPGA is reconfigured.
+# Override with COOL8_BOARD_USB, or pass --port.
+
+[tool.cool8.toolchain]
+env = "OSS_CAD_SUITE"
+tools = ["yosys", "nextpnr-ice40", "icepack", "iverilog", "vvp", "icesprog"]
+# Where yosys, nextpnr, icepack, iverilog, vvp and icesprog live. Set
+# the OSS_CAD_SUITE environment variable to the suite root, or put its
+# bin on PATH. Never a path in the source: this differs per machine.
+# `poe doctor` says which tools were found and where.
+
+# The jobs. One entry per named job; the group is the pytest marker.
+# docs/12-tasks.md says what each proves and which are deliberately
+# not here.
+
+[[tool.cool8.jobs.sw]]
+id = "interp"
+run = "sim/test_interp.py"
+about = "I2 -- the interpreter on the editor's stored form"
+
+[[tool.cool8.jobs.sw]]
+id = "asm"
+run = "sim/test_asm.py"
+about = "I3b -- the on-machine assembler, byte-identical to cool8asm"
+
+[[tool.cool8.jobs.sw]]
+id = "basic"
+run = "sim/test_basic.py"
+about = "S1 -- the screen editor, typed at"
+
+[[tool.cool8.jobs.sw]]
+id = "run"
+run = "sim/test_run.py"
+about = "I5 -- RUN, plus INKEY and KEY from the keyboard"
+
+[[tool.cool8.jobs.sw]]
+id = "boot_basic"
+run = "sim/test_boot_basic.py"
+about = "M16 -- reset to BASIC to a keypress, off a flash image"
+
+[[tool.cool8.jobs.sw]]
+id = "autoboot"
+run = "sim/test_autoboot.py"
+about = "M15 -- autoboot and the monitor's flash write"
+
+[[tool.cool8.jobs.sw]]
+id = "corpus"
+run = "sim/test_corpus.py"
+about = "the compiler against its corpus"
+
+[[tool.cool8.jobs.sw]]
+id = "fs"
+run = "sim/test_fs.py"
+about = "the filesystem, both implementations"
+
+[[tool.cool8.jobs.sw]]
+id = "bas"
+run = "sim/test_bas.py"
+about = "the code-size gate: within 15% of hand-written"
+
+[[tool.cool8.jobs.sw]]
+id = "names"
+run = "sim/check_names.py"
+about = "global name collisions across the system image"
+
+[[tool.cool8.jobs.rtl]]
+id = "cosim"
+run = "sim/cosim.py"
+args = ["all"]
+about = "the RTL against the model -- the gate for any RTL change"
+slow = true
+
+[[tool.cool8.jobs.rtl]]
+id = "boot"
+run = "sim/test_boot.py"
+about = "boot ROM, the overlay, a cold boot"
+
+[[tool.cool8.jobs.rtl]]
+id = "soc"
+run = "sim/test_soc.py"
+about = "the I/O page, and the whole machine"
+
+[[tool.cool8.jobs.rtl]]
+id = "ps2"
+run = "sim/test_ps2.py"
+about = "the keyboard port, against a keyboard"
+
+[[tool.cool8.jobs.rtl]]
+id = "flash"
+run = "sim/test_flash.py"
+about = "the SPI reader, against a flash"
+
+[[tool.cool8.jobs.rtl]]
+id = "spram"
+run = "sim/test_spram.py"
+about = "SPRAM controller against a byte array"
+
+[[tool.cool8.jobs.rtl]]
+id = "loader"
+run = "sim/test_loader.py"
+about = "UART and loader, over a bit-banged wire"
+
+[[tool.cool8.jobs.rtl]]
+id = "monitor"
+run = "sim/test_monitor.py"
+about = "M6's gate: type at it and it answers"
+
+[[tool.cool8.jobs.rtl]]
+id = "video"
+run = "sim/test_video.py"
+about = "every mode, every visible pixel"
+slow = true
+
+[[tool.cool8.jobs.rtl]]
+id = "vram"
+run = "sim/test_vram.py"
+about = "video RAM and its four-way arbiter"
+
+[[tool.cool8.jobs.rtl]]
+id = "vport"
+run = "sim/test_vport.py"
+about = "the CPU's indirect VRAM port"
+
+[[tool.cool8.jobs.board]]
+id = "probe"
+run = "tools/flash.py"
+args = ["probe"]
+about = "the board answers at all: SPI flash identified"
+
+[[tool.cool8.jobs.board]]
+id = "flash"
+run = "tools/flash.py"
+args = ["verify"]
+about = "both halves of the board's flash, read back and compared"
+
+[[tool.cool8.jobs.rust]]
+id = "vm"
+run = "sim/test_vm.py"
+about = "the machine against the RTL: every pixel of three frames, the sound stream, and a boot to the monitor"
+
+[[tool.cool8.jobs.check]]
+id = "opcodes"
+run = "tools/opcodes.py"
+args = ["--check"]
+about = "the encoding table against the documented examples"
+
+[[tool.cool8.jobs.check]]
+id = "asmtab"
+run = "tools/mkasmtab.py"
+args = ["--check"]
+about = "sw/asmtab.asm is current"
+
+[[tool.cool8.jobs.check]]
+id = "rsopc"
+run = "tools/mkrsopc.py"
+args = ["--check"]
+about = "rust/src/optab.rs is current"
+
+[[tool.cool8.jobs.build]]
+id = "rom"
+run = "tools/mkrom.py"
+args = ["sw/boot.asm", "-o", "sim/build/boot.hex"]
+about = "the 4 KB boot ROM"
+
+[[tool.cool8.jobs.build]]
+id = "basic"
+run = "sim/build_basic.py"
+about = "basic.bin and BOOT.BIN, with the sizes"
+
+[[tool.cool8.jobs.bench]]
+id = "lang"
+run = "sim/bench_lang.py"
+about = "the language benchmark, and the size trade -- carries the bytecode VM, the language's second implementation"

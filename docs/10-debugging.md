@@ -1,14 +1,19 @@
 # Debugging COOL8
 
 Software that runs on the machine is hard to debug from outside it: the
-only thing the emulator hands back is a program counter. This is the
-tooling that closes that gap, and the rules that came out of using it.
+only thing a running machine hands back is a program counter. This is
+the tooling that closes that gap, and the rules that came out of using
+it.
 
 There are two layers and they do different jobs.
 
-**`tools/cool8vm.py`'s `Machine` is the machine, and everything drives
-it through the same API** — running, typing, reading the screen,
-watching an address, profiling. Nothing reimplements part of it.
+**The machine is `rust/`, and `tools/cool8rsvm.py` is the one API
+everything drives it through** — running, typing, reading the screen,
+profiling. Nothing reimplements part of it. Observation that needs
+every instruction (the idle test, the cycle profile, the stack's
+low-water mark) is a command the machine answers, not a Python loop:
+see [RUST_PORT.md](../RUST_PORT.md) and
+[D57](01-decisions.md).
 
 **`sim/dbg.py` sits on top for the *structural* checks** — exact
 disassembly, a shadow call stack, SP neutrality, and a diff of two code
@@ -20,7 +25,7 @@ business carrying.
 ## 0. Driving the machine
 
 ```python
-import cool8vm as vm
+import cool8rsvm as vm
 m = vm.Machine()
 m.bus.mem[0xA000:0xA000 + len(code)] = code
 m.cpu.pc, m.cpu.sp, m.romen = 0xA000, 0x0200, False
@@ -29,7 +34,7 @@ m.cpu.pc, m.cpu.sp, m.romen = 0xA000, 0x0200, False
 | | |
 |---|---|
 | `m.tick()` | one instruction, with the raster, sound and interrupt flags kept in step |
-| `m.run(until=…, cycles=…, budget=…)` | returns `"until"`, `"breakpoint"`, `"halt"`, `"cycles"` or `"budget"`. `until` takes a PC, a set of PCs, or a predicate |
+| `m.run(until=…, cycles=…, budget=…)` | returns `"until"`, `"breakpoint"`, `"halt"`, `"cycles"` or `"budget"`. `until` takes a PC or a set of PCs |
 | `m.breakpoints.add(addr)` | stop there, whatever else was asked |
 | `m.type("10 PRINT 1
 RUN
@@ -39,9 +44,11 @@ RUN
 | `m.key("HI")`, `m.key(["K_UP"])` | keystrokes at the **PS/2 port**: make, break, and any shift |
 | `m.scancode([0x1C])` | raw Set 2 — a make with no break is a key *held* |
 | `m.text()`, `m.row(r)`, `m.shows("42")` | the text screen, through the machine's own `VID_BASE` |
-| `m.trace(n, syms)` → `m.trace_report(rows)` | the last n instructions, disassembled, with registers |
-| `m.watch(lo, hi)` → `m.hits` | every write into the range, as `(pc, addr, value)` |
-| `m.profile(syms, org, end)` → `m.profile_report()` | where the clocks went, by routine |
+| `m.settle(idle, irhead, irtail)` | run until nothing is waiting and the PC is at the idle label |
+| `m.profile_start()` → `m.profile_cycles()` | cycles by PC; `dbg.Profile` rolls them up by routine |
+| `m.sp_clear()` → `m.sp_min()` | the stack's low-water mark |
+| `m.fb()` | the rendered frame, with `Machine(render=True)` |
+| `m.palette()`, `m.sprites()`, `m.sound()`, `m.samples()` | the programmed peripheral state |
 
 `type()` and `key()` are not interchangeable. One is the serial console
 and one is the keyboard on the desk — different drivers, a different
@@ -49,52 +56,52 @@ interrupt, and for a long time only one of them existed in BASIC at all.
 The codes `key()` sends come out of `sw/keymap.asm` itself, so the day
 the table changes the harness changes with it.
 
-`trace()` answers the question a breakpoint cannot. A breakpoint says
-where the machine stopped; a trace says what it did on the way, and it
-decodes *forward* from the live PC rather than backwards from a symptom
-— which is the failure this whole document opens with. Pass
-`into=False` to step over `CALL`s when a routine's own shape is what you
-are looking at.
+**Three rules, all learned the hard way.**
 
-**Two rules, and both were learned the hard way.**
+*Never write your own stepping loop.* Only the machine advances the
+raster, the sound and the interrupt flags. A bare loop over single
+steps is a machine where no time passes — no vblank, no raster
+compare, no interrupt that could ever fire — and anything waiting on
+one waits for ever. That went unnoticed for as long as every harness
+polled its devices, and the first software that wanted an interrupt
+simply hung.
 
-*Never loop on `cpu.step()`.* Only the machine advances the raster, the
-sound and the interrupt flags. A bare stepping loop is a machine where
-no time passes — no vblank, no raster compare, no interrupt that could
-ever fire — and anything waiting on one waits for ever. That went
-unnoticed for as long as every harness polled its devices, and the first
-software that wanted an interrupt simply hung.
+*Never compute a screen address.* `m.row()` reads through the
+machine's own `VID_BASE`, which is what catches a program that never
+set it (§3). A harness that once reached into a renderer's private
+address helper was copied by every harness after it.
 
-*Never compute a screen address.* `m.row()` reads through the machine's
-own `VID_BASE`, which is what catches a program that never set it (§3).
-`sim/test_basic.py` used to reach into `cool8vid._row_addr_v`, a private
-function, and every new harness copied the arithmetic.
+*Never ask a question one instruction at a time across the wire.* The
+machine runs in its own process, so a Python loop that ticks and looks
+pays a round trip per instruction. Every such question is a command
+the machine answers itself — `settle`, the profiler, `sp_min` — and a
+new one extends the protocol (`rust/src/main.rs`) rather than growing
+a loop here.
 
-### All four at once
+### Several at once
 
-Typing at the editor, reading the screen, catching who wrote to a byte,
-and measuring where the time went — one machine, one run:
+Typing at the editor, reading the screen back, and measuring where the
+time went — one machine, one run:
 
 ```python
 import test_basic as B
 code, syms = B.build()
 M = B.Machine(code, syms); M.settle()
 
-M.m.profile(syms, 0xA000, 0xFE00)   # where the clocks go
-M.m.watch(0x0018)                   # ERR: who stops the program
+M.m.profile_start()                 # where the clocks go
 
 M.cmd("10 PRINT 6 * 7"); M.cmd("20 END"); M.cmd("RUN")
 M.settle(120_000_000)
 
 M.screen()[-1]                      # '42'
-M.m.hits[-1]                        # (0xa9d6, 0x18, 255) -- h_end
-M.m.profile_report(3)               # [('s_serialkey', 4430535, 33.5), ...]
+p = dbg.Profile(syms, 0xA000, 0xFE00)
+p.by.update(M.m.profile_cycles())   # cycles by PC, rolled up by label
+print(p.report(3))                  # s_serialkey 4,430,535  33.5%
 ```
 
-The watch answers "who set `ERR`" with an address, not a guess: `$A9D6`
-is `h_end`, and 255 is the clean stop. The profile says a third of that
-run was `serialkey` — which is the editor waiting for a key, not the
-interpreter, and is exactly the kind of thing an estimate gets wrong.
+The profile says a third of that run was `serialkey` — the editor
+waiting for a key, not the interpreter, and exactly the kind of thing
+an estimate gets wrong.
 
 ## 1. What dbg.py adds
 

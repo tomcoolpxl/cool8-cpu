@@ -12,7 +12,7 @@ import os, sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.join(os.path.dirname(HERE), "tools"))
-import cool8vm as vm
+import cool8rsvm as vm                                   # noqa: E402
 import dbg
 import test_interp as T
 
