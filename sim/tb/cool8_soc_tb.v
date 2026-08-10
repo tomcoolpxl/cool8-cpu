@@ -742,6 +742,52 @@ module cool8_soc_tb;
         expect_reply("echo of what followed it", 8'h5A);
         expect_quiet("the echo said nothing else");
 
+        // --------------------------------------------------------- 11b
+        // The same program, fed a *stream* rather than a byte at a
+        // time -- and that difference is the whole test.
+        //
+        // Sending one byte and waiting for it leaves the receive FIFO
+        // empty every time the CPU reads it, which is the one
+        // arrangement in which the fault below cannot happen. A byte
+        // arriving in the very cycle a read of UART_DATA launched used
+        // to suppress the pop: the read returned the right byte, the
+        // pointer did not move, and the next read handed the same byte
+        // out again. Software could not defend against it -- its poll
+        // of UART_STAT had already said ready. It needed a push during
+        // a read, so only a continuous stream produced it, and on the
+        // bench it was an occasional doubled character at 115200.
+        //
+        // A stream, rather than a byte at a time: the FIFO holds
+        // several at once and the program reads while more arrive.
+        // Nothing here is timed against the receiver -- the one-cycle
+        // coincidence that duplicates a byte is built deliberately in
+        // 11c below, because a stream this short will not find it --
+        // but a stream that comes back in order is worth its own
+        // check, and the gaps keep the arrivals off a single cadence.
+        for (i = 0; i < 32; i = i + 1) begin
+            repeat (i) @(posedge clk);
+            send_byte(8'hE0 + i[7:0]);
+        end
+        for (i = 0; i < 32; i = i + 1)
+            expect_reply("a streamed byte comes back once, in order",
+                         8'hE0 + i[7:0]);
+        expect_quiet("and the stream produced no extra byte");
+
+        // The one-cycle coincidence that duplicates a byte is NOT
+        // reachable from here, and it is worth saying why rather than
+        // leaving the next person to try it. The host has one wire:
+        // `bus_read` is a loader frame over the same line `send_byte`
+        // uses, so a read cannot be issued *while* a byte is arriving
+        // -- forking the two collides on host_tx and corrupts the
+        // protocol rather than racing the FIFO. Driving it from a
+        // program instead puts the read where the program's own loop
+        // puts it, which is what makes the odds one in a byte-time.
+        //
+        // sim/test_monitor.py is the gate for that fault: it types
+        // thousands of characters through a consumer slow enough to
+        // keep the FIFO non-empty, which is exactly the condition, and
+        // it caught the duplicate that this file could not.
+
         // --------------------------------------------------------- 12
         // A program that writes UART_DATA without looking at whether
         // there is room. The byte already accepted must survive and the

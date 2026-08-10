@@ -271,10 +271,15 @@ def breaks_out(code, syms):
     # one thing AGENTS.md says that boundary cannot afford. On its own
     # it was 90s of this suite's 101s, and it bought nothing the run
     # below does not -- nothing was being watched, the program was just
-    # being let spin. Three million cycles is twenty vertical blanks:
-    # long enough for the typed RUN to reach the ring, be parsed, and
-    # for the program to be going round its GOTO when the break lands.
-    M.m.run(cycles=3_000_000)
+    # being let spin.
+    #
+    # **Six million cycles, not three.** The loop it replaced ran about
+    # 1.5 M instructions, which is some 4.5 M cycles, and a rewrite
+    # that leaves a test running the machine for *less* time than
+    # before is a rewrite that quietly narrows what the test can catch.
+    # This runs longer than the loop did and still costs milliseconds,
+    # because the cost was never the machine -- it was the round trips.
+    M.m.run(cycles=6_000_000)
     M.m.uart.feed(b"")
     M.settle(40_000_000)
     return M
