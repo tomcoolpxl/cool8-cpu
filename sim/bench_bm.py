@@ -138,6 +138,12 @@ REF = [
      [0.9, 1.8, 6.0, 5.9, 6.3, 11.6, 19.6]),
     ("Luxor ABC 80  float", "Z80", 3.0, False,
      [1.1, 2.3, 11.1, 12.1, 12.6, 17.7, 23.9]),
+    ("IBM PC  BASICA", "8088", 4.77, False,
+     [1.5, 5.2, 12.1, 12.6, 13.6, 23.5, 37.4]),
+    ("Apple III  Business BASIC", "6502B", 2.0, False,
+     [1.7, 7.2, 13.5, 14.5, 16.0, 27.0, 42.5]),
+    ("VIC-20  MS BASIC", "6502", 1.108, False,
+     [1.4, 8.3, 15.5, 17.1, 18.3, 27.2, 42.7]),
     ("Spectravideo SV-328  MS", "Z80", 3.6, False,
      [1.6, 5.4, 17.9, 19.6, 20.6, 30.7, 42.2]),
     ("ZX80  Sinclair", "Z80", 3.25, False,
@@ -155,6 +161,12 @@ REF = [
 # benchmarks were aimed at, and Rugg and Feldman wrote a book of TRS-80
 # programs. No BM1-BM7 times for it could be found in a source worth
 # citing, and a number recalled rather than read is worse than a gap.
+#
+# **So are the 8086 and the NEC V20**, for the same reason. The 8088
+# row is the IBM PC and is real; the V20 was a pin-compatible 8088
+# replacement and an 8086 has the wider bus, so both would land near
+# that row -- but "would land near" is an argument, not a measurement,
+# and this table only carries measurements.
 
 
 def run_cycles(code, syms, lines):

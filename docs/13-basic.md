@@ -374,6 +374,9 @@ the `S` and the `E` measured too.
 | Applesoft, 6502 1 MHz | 1.3 | 8.5 | 16.0 | 17.8 | 19.1 | 28.6 | 44.8 |
 | Commodore 64, 6510 1 MHz | 1.2 | 9.3 | 17.6 | 19.5 | 21.0 | 29.5 | 47.5 |
 | ABC 800 single, Z80 3 MHz | 0.9 | 1.8 | 6.0 | 5.9 | 6.3 | 11.6 | 19.6 |
+| IBM PC BASICA, 8088 4.77 MHz | 1.5 | 5.2 | 12.1 | 12.6 | 13.6 | 23.5 | 37.4 |
+| Apple III, 6502B 2 MHz | 1.7 | 7.2 | 13.5 | 14.5 | 16.0 | 27.0 | 42.5 |
+| VIC-20, 6502 1.108 MHz | 1.4 | 8.3 | 15.5 | 17.1 | 18.3 | 27.2 | 42.7 |
 | ZX Spectrum, Z80 3.58 MHz | 4.4 | 8.2 | 20.0 | 19.2 | 23.1 | 53.4 | 77.6 |
 | ZX80, Z80 3.25 MHz | 1.5 | 4.7 | 9.2 | 9.0 | 12.7 | 25.9 | 39.2 |
 | Spectravideo SV-328, Z80 3.6 MHz | 1.6 | 5.4 | 17.9 | 19.6 | 20.6 | 30.7 | 42.2 |
@@ -394,11 +397,21 @@ point on the same 3 MHz Z80 takes 23.9 s, and a Spectrum 42–78 s.
 Nothing here is a Z80 verdict — it is a float-versus-integer one, in
 an era when almost every shipped BASIC chose float.
 
-**No TRS-80 row, and that is a gap rather than an omission.** A
-1.77 MHz Z80 running Level II BASIC is exactly the machine these
-benchmarks were aimed at — Rugg and Feldman wrote a book of TRS-80
-programs — but no BM1–BM7 times for it turned up in a citable source,
-and a number recalled rather than read would be worse than a blank.
+**The IBM PC is in the table and is not the machine to fear.** An
+8088 at 4.77 MHz — nearly this machine's clock — runs BM7 in 37.4 s
+against 1.77 s here, and it loses to a 3 MHz Z80 (ABC 800, 19.6 s)
+while it is at it. BASICA is floating point and interpreted from a
+ROM designed for a different job; the 8088's own half-width bus does
+the rest.
+
+**No TRS-80, 8086 or NEC V20 row, and those are gaps rather than
+omissions.** A 1.77 MHz Z80 running Level II BASIC is exactly the
+machine these benchmarks were aimed at — Rugg and Feldman wrote a
+book of TRS-80 programs — but no BM1–BM7 times for it turned up in a
+citable source. The V20 was a pin-compatible 8088 replacement and an
+8086 has the wider bus, so both would land near the IBM PC row; "would
+land near" is an argument, not a measurement, and this table carries
+only measurements.
 
 **BM8 is not run and no number is quoted for it.** It is `K^2`, `LOG`
 and `SIN` — a float-library benchmark, and §8 is the whole of the
