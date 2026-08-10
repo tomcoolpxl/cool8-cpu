@@ -67,7 +67,11 @@ module cool8_mon_tb;
 
     // A flash on the other end, so the monitor's L command has
     // something to load from. Same model as cool8_flash_tb's, and it
-    // fails the run on any opcode but $03 for the same reason.
+    // fails the run on any opcode it does not know for the same
+    // reason. It knows three: $03 read, and the $FF / $AB wake-up
+    // frames cool8_flash sends once at reset — the controller grew
+    // those for the real part, which sleeps, and a model that flagged
+    // them was a model still assuming the flash starts awake.
     wire         spi_cs_n, spi_sck, spi_mosi;
     reg  [7:0]   flash [0:65535];
     reg  [7:0]   d_sr, d_out;
@@ -107,9 +111,11 @@ module cool8_mon_tb;
         d_sr  = {d_sr[6:0], spi_mosi};
         d_bit = d_bit + 1;
         case (d_bit)
-            8: if (d_sr !== 8'h03) begin
+            8: if (d_sr !== 8'h03 && d_sr !== 8'hFF && d_sr !== 8'hAB)
+               begin
                    d_bad = 1'b1;
-                   $display("FAIL opcode %02h, this part only has $03", d_sr);
+                   $display("FAIL opcode %02h, this part only has $03/$FF/$AB",
+                            d_sr);
                end
             16: d_a[23:16] = d_sr;
             24: d_a[15:8]  = d_sr;

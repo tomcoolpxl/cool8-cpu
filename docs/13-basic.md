@@ -272,7 +272,8 @@ game, at a fiftieth of their cost.
   inside the language, with `SAVE "N" AT addr, len` as its partner
   for sprite sheets, tile sets, fonts and machine code.
 - `SAVE`/`LOAD`/`DIR` are the SPI-flash filesystem: named files on
-  fake-disk volumes, surviving power-off.
+  fake-disk volumes, surviving power-off. The format and geometry are
+  [04-system.md §8](04-system.md#8-mass-storage-the-filesystem).
 
 ## 9b. The editor: every mode, the C64's law
 

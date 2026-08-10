@@ -2,8 +2,9 @@
 ; fs.asm -- the COOL8 filesystem, machine side.
 ;
 ; Sixteen volumes of 448 KB above the $100000 hardware floor, mounted by
-; number. One 4 KB directory sector of 256 sixteen-byte entries, then
-; 111 sectors of data. The format is documented in tools/cool8disk.py,
+; number. One 4 KB directory sector of 256 sixteen-byte entries, 110
+; sectors of data, and one scratch sector COMPACT keeps for itself.
+; The format is documented in tools/cool8disk.py,
 ; which is the same filesystem written independently on the PC -- and
 ; sim/test_fs.py is the gate that makes the two agree.
 ;

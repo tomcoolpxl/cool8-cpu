@@ -1988,3 +1988,60 @@ cursor at its frame event; cool8vid.py renders whole frames from a
 snapshot and could never show the tear in the first place -- which is
 why the artifact went unseen until the scanline renderer existed to
 show the truth.
+
+## D54 — Storage stays sixteen mounted volumes; the disk box was considered and declined
+
+**Decision:** `SAVE`/`LOAD` storage stays exactly as
+[D52](#d52--the-operating-system-is-cool8-basic-and-how-it-got-that-shape)
+shipped it — sixteen 448 KB volumes above the flash floor, one mounted
+at a time, selected by `DRIVE n`. The period-styled alternatives were
+worked through to a full design and declined; this entry records the
+workings so the next reopening starts from them rather than from
+scratch.
+
+**The itch is real.** The 448 KB volume is the last piece of the
+machine that matches no hardware of its era: a 1541 held ~170 KB, an
+IBM single-sided 5.25" exactly 160 KB. The design worked out was a
+**disk box**: treat the 7 MB as a caddy of diskettes — 44 × 160 KB, or
+37 × 192 KB keeping the 64 KB alignment — with one or two drives, a
+`DISK drive, n` statement that "inserts" a disk, and a `"1:"` name
+prefix to address the second drive (in the name string, because
+`LOAD`'s comma argument already means merge-from-line). Hardware
+drive-select was never on the table: the mapping is two bytes of
+software state, and gates are the scarce resource
+([D34](#d34--the-video-engine-ships-with-sprites-and-a-pixel-port-and-no-blitter)).
+
+**Why declined: it collapsed under its own simplification.** Two
+drives shrank to one — a single-user machine swaps disks, and the
+second drive bought nothing but the prefix parser. And at one drive
+the disk box *is* the shipped design: "insert disk n" and "mount
+volume n" are the same operation, and nothing in `sw/fs.asm`
+distinguishes a box of sixteen disks in one drive from sixteen drives
+with a disk in each. The difference is narration, and narration went
+into [04-system.md §8](04-system.md#8-mass-storage-the-filesystem) —
+which this decision caused to be written — instead of into code. The
+last candidate standing, renaming the keyword `DRIVE` to `DISK`, was
+staged and reverted too: the spelling is free (the token byte is the
+table *position*, and toktab.asm appends and never reorders), but it
+would invalidate every listing in every document for one word.
+
+**Findings worth keeping although nothing changed:**
+
+- **The geometry is cheaper to change than fs.asm's header implies.**
+  Any volume size that is a multiple of 4 KB keeps the base's low byte
+  zero, so the one-add file addressing degrades only to `ADD`+`ADC` in
+  the three seek routines — and the base itself is computed once, at
+  mount, where even an awkward multiply is paid per disk swap, not per
+  access. 192 KB = 3 × 64 KB would keep the pure one-add form: the 7
+  in `fs_mount`'s base formula becomes a 3 and nothing else moves.
+- **Autoboot never cared.** It reads volume 0 at `$100000`, which
+  every variant kept, so `sw/boot.asm` was untouched in all of them.
+- The host tool's box-management commands — volume-to-volume copy,
+  import/export of a single 448 KB volume image — are orthogonal to
+  all of this and remain worth having on their own.
+
+**What reopens it: a real drive.** If pins and gates ever admit real
+removable media — doubtful on this board, undecided beyond it — the
+drive/disk distinction returns as a drive-to-device table in software,
+and the `"n:"` prefix syntax above is the shape to reach for. Nothing
+shipped today blocks it.

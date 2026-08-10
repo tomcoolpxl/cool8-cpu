@@ -151,7 +151,7 @@ what you want at M4 when there isn't any.
 
 | Source | When | Notes |
 |---|---|---|
-| SPI flash (§4.8) | **The usual way.** `icesprog -o 0x100000 -w prog.bin`, then the monitor's `L` | 7.9 MB above the bitstream, ~125 ms to load 64 KB |
+| SPI flash (§4.8) | **The usual way.** `icesprog -o 0x100000 -w prog.bin`, then the monitor's `L` — or as a named file on a volume (§8) | 7.9 MB above the bitstream, ~125 ms to load 64 KB |
 | The machine's own flash writes (§4.8) | Anything it made itself | `FLS_WDATA`/`FLS_WCTRL`, above the `$100000` floor |
 | Hardware loader over USB serial | Only in a `LOADER(1)` build | No bitstream rebuild, no working ROM required |
 | Baked into the boot ROM image | Bring-up only | The ROM is 4 KB and the monitor is 3029 bytes of it |
@@ -482,7 +482,8 @@ Wire protocol: [07-loader.md](07-loader.md).
 The board's 8 MB configuration flash doubles as mass storage. The iCE40
 releases pins 14–17 to user logic once `CDONE` goes high, so a small SPI
 master can read the flash at runtime. This is the machine's cartridge
-slot and its disk.
+slot and its disk. This section is the raw device; the filesystem
+`SAVE` and `LOAD` put on top of it is §8.
 
 | Addr | Name | Access | Description |
 |---|---|---|---|
@@ -1184,3 +1185,98 @@ handler reads the per-peripheral status registers to find the cause.
 This is the smallest arrangement and it is what an 8-bit machine should
 do; a priority encoder can come later if the handler's dispatch cost
 ever matters.
+
+---
+
+## 8. Mass storage: the filesystem
+
+What `SAVE`, `LOAD`, `DIR`, `ERA`, `COMPACT` and `DRIVE` talk to. The
+7 MB of flash above the `$100000` hardware floor (§4.8) is **sixteen
+volumes of 448 KB, mounted one at a time by number** — `DRIVE n` in
+BASIC. Sixteen drives with a disk in each, or one drive and a box of
+sixteen disks: at one mounted volume the two readings are the same
+code, and
+[D54](01-decisions.md#d54--storage-stays-sixteen-mounted-volumes-the-disk-box-was-considered-and-declined)
+records why the machine does not have to choose.
+
+Two things sit **below** this layer and read the flash raw: the
+monitor's `L` command, which copies bytes from any offset, and the boot
+ROM's autoboot, which walks volume 0's directory looking for `BOOT.BIN`
+with its own few lines of code ([`sw/boot.asm`](../sw/boot.asm)) rather
+than linking the filesystem into a 4 KB ROM. Autoboot reads, only —
+mounting, allocating and writing all live in the OS.
+
+**The format is written twice, on purpose.**
+[`sw/fs.asm`](../sw/fs.asm) is the machine side;
+[`tools/cool8disk.py`](../tools/cool8disk.py) is the same filesystem
+implemented independently on the PC, enforcing the same only-clear-bits
+flash rules so the tool cannot produce an image the machine could not
+have. `sim/test_fs.py` is the gate that makes the two agree — change
+either and it says so. This section is the human-readable copy; where
+prose and gate disagree, the gate decides.
+
+### 8.1 Geometry
+
+A volume is 448 KB = 7 × 64 KB, so **every volume base is 64 KB
+aligned**: `base = ($10 + drive × 7) << 16`, low sixteen bits zero. A
+file starts on a 256-byte page, so the flash address of a file is
+
+```
+low = 0,  mid = start page low,  high = base high + start page high
+```
+
+— one 8-bit add, and 448 KB was chosen partly for it.
+
+Inside a volume:
+
+| Offset | | |
+|---|---|---|
+| `+$00000` | directory | one 4 KB sector: 256 entries of 16 bytes |
+| `+$01000` | data | 110 sectors, 440 KB — files appended on 256-byte page boundaries |
+| `+$6F000` | scratch | one 4 KB sector, `COMPACT`'s — see §8.2 |
+
+A directory entry:
+
+| Bytes | Field |
+|---|---|
+| 0–10 | name — 8.3, space padded, upper case |
+| 11 | status: `$FF` free, `$00` deleted, `$80` volume label, else type |
+| 12–13 | start, in 256-byte pages from the volume base |
+| 14–15 | length in bytes — so a file is at most 64 KB, the whole address space |
+
+### 8.2 Built around what NOR flash can do
+
+Erase sets a 4 KB sector to `$FF`; programming can only clear bits
+(§4.8). Everything about the format follows:
+
+- **Creating a file** programs an entry that is still `$FF` — no erase,
+  no read-modify-write, and **no 4 KB RAM buffer anywhere**, which is
+  the whole reason this is not FAT.
+- **Deleting one** clears its status byte to `$00`. One byte
+  programmed, nothing erased.
+- **Free space is the tail.** Files are appended; there is no
+  allocation bitmap and no free list.
+- **The free pointer is not stored** — a value that only increases
+  cannot be rewritten in place — so `fs_mount` derives it by scanning
+  the directory for the highest `start + length`. One sector read,
+  always right, where a stored counter can drift.
+- **An erased volume is an empty volume.** Format is erase, and there
+  is no superblock to be missing or wrong.
+
+`COMPACT` is the only operation that erases, and it is explicit. It has
+to put a sector's contents somewhere before erasing underneath them,
+and "somewhere" cannot be main RAM (the user's program) or VRAM (their
+sprites), so it is the volume's own last sector: gather, erase, copy
+back. Slow, and 4 KB of every volume — and the reason a deleted file
+costs nothing until the space is asked for back.
+
+### 8.3 The host side
+
+`icesprog -w disk.img` writes a whole 8 MB image to the board;
+[`tools/cool8disk.py`](../tools/cool8disk.py) builds and reads one on
+the PC — `format`, `add`, `get`, `del`, `dir`, `compact`, one volume at
+a time. `tools/cool8run.py --flash disk.img` hands the same image to
+the emulated machine, so a disk prepared on the PC is tested without a
+board. What the tool does not yet have is volume-to-volume copy or
+import/export of a single 448 KB volume image; both are additive if
+they are ever wanted.

@@ -156,6 +156,16 @@ def main():
         for b in rom:
             fh.write("%02x\n" % b)
 
+    # The pixel stage's font ROM reads font.hex the same way the boot
+    # ROM reads boot.hex — at elaboration, against the working
+    # directory — so both images have to exist here before yosys or
+    # vvp elaborate the SoC.
+    font, _, _ = mkfont.build(os.path.join(ROOT, "assets", "font",
+                                           "spleen-8x16.bdf"))
+    with open(os.path.join(BUILD, "font.hex"), "w") as fh:
+        for b in font:
+            fh.write("%02x\n" % b)
+
     cells = cosim.ice40_cells()
     ok = True
 

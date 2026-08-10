@@ -244,15 +244,23 @@ module cool8_top #(
     wire [3:0] flash_io_i;
     wire       flash_mosi_o;
 
-    SB_IO #(
-        .PIN_TYPE(6'b1010_01),
-        .PULLUP(1'b0)
-    ) u_flash_io [3:0] (
-        .PACKAGE_PIN({flash_hold, flash_wp, flash_miso, flash_mosi}),
-        .OUTPUT_ENABLE({1'b1, 1'b1, 1'b0, 1'b1}),
-        .D_OUT_0({1'b1, 1'b1, 1'b0, flash_mosi_o}),
-        .D_IN_0(flash_io_i)
-    );
+    // Four named instances, not one [3:0] array: iverilog refuses an
+    // instance array of a module whose ports carry default values —
+    // which every SB_ primitive in yosys's cells_sim.v does — with a
+    // "sorry", and sim/test_soc.py compiles exactly that combination.
+    // Same gates either way; only the elaborator cares.
+    SB_IO #(.PIN_TYPE(6'b1010_01), .PULLUP(1'b0)) u_flash_io3 (
+        .PACKAGE_PIN(flash_hold), .OUTPUT_ENABLE(1'b1),
+        .D_OUT_0(1'b1), .D_IN_0(flash_io_i[3]));
+    SB_IO #(.PIN_TYPE(6'b1010_01), .PULLUP(1'b0)) u_flash_io2 (
+        .PACKAGE_PIN(flash_wp), .OUTPUT_ENABLE(1'b1),
+        .D_OUT_0(1'b1), .D_IN_0(flash_io_i[2]));
+    SB_IO #(.PIN_TYPE(6'b1010_01), .PULLUP(1'b0)) u_flash_io1 (
+        .PACKAGE_PIN(flash_miso), .OUTPUT_ENABLE(1'b0),
+        .D_OUT_0(1'b0), .D_IN_0(flash_io_i[1]));
+    SB_IO #(.PIN_TYPE(6'b1010_01), .PULLUP(1'b0)) u_flash_io0 (
+        .PACKAGE_PIN(flash_mosi), .OUTPUT_ENABLE(1'b1),
+        .D_OUT_0(flash_mosi_o), .D_IN_0(flash_io_i[0]));
 
     wire flash_miso_i = flash_io_i[1];
 

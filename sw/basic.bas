@@ -55,8 +55,6 @@ CONST MEMTOP  = $7FFF
 ' program's to fill. FREE reported MEMTOP - progend, and a program
 ' that believed it would have run into both.
 CONST USERTOP = $7EDF
-CONST COLS    = 80
-CONST ROWS    = 30
 
 CONST VID_MODE   = $FE10
 CONST VID_BASE_L = $FE12

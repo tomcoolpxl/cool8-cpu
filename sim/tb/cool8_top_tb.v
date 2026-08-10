@@ -61,6 +61,8 @@ module cool8_top_tb;
 
     always #5 clk = ~clk;
 
+    wire flash_idle = 1'b1;            // a flash nobody is talking to
+
     // ------------------------------------------------------------ DUT
     //
     // No reset port: there is no reset pin on the board and that is the
@@ -85,7 +87,12 @@ module cool8_top_tb;
         // not — cool8_video_tb is where the picture is checked.
         .vga_r(), .vga_g(), .vga_b(), .vga_hs(), .vga_vs(),
         .ps2_clk(ps2_clk), .ps2_dat(ps2_dat),
-        .flash_cs(), .flash_sck(), .flash_mosi(), .flash_miso(1'b1)
+        // A net, not a literal: flash_miso is an inout (the SB_IO
+        // claims the pin) and iverilog rightly refuses a constant
+        // wired to one. flash_idle is declared above the instance,
+        // where Verilog-2001 wants it.
+        .flash_cs(), .flash_sck(), .flash_mosi(),
+        .flash_miso(flash_idle)
     );
 
     // The UART divider is cool8_soc's default, 72 for 115200 at 8.375 MHz,
