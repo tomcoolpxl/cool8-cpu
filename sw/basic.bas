@@ -180,8 +180,8 @@ SUB setgeom()
     rpl = 3
   END IF
   IF gkind = 0 THEN
-    POKE CUR_CTRL, $0F          ' style 3: the C64's reverse blink,
-  ELSE                          '   done by the silicon
+    POKE CUR_CTRL, $17          ' style 3, the C64's reverse blink, in
+  ELSE                          '   silicon; rate 2, 32 frames a phase
     POKE CUR_CTRL, 0            ' soft cursor, drawn by curdrw
   END IF
   IF gkind = 2 THEN
@@ -551,7 +551,7 @@ FUNCTION getkey() AS INT
     ' the soft blink, C64-timed: 20 frames a phase, only while
     ' waiting -- which is also the only time the C64 blinked
     IF gkind <> 0 THEN
-      IF PEEK($FF26) + (PEEK($FF27) << 8) - blb >= 20 THEN
+      IF PEEK($FF26) + (PEEK($FF27) << 8) - blb >= 32 THEN
         curph = 1 - curph
         CALL curdrw(curph)
         blb = PEEK($FF26) + (PEEK($FF27) << 8)
