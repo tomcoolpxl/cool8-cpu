@@ -42,10 +42,18 @@ struct Args {
     maxinstr: u64,
     irq_at: Option<u64>,
     nmi_at: Option<u64>,
+    mem: Option<String>,
+    outmem: Option<String>,
+    pc: Option<u16>,
+    sp: Option<u16>,
+    romen: bool,
+    budget: u64,
 }
 
 fn parse_args() -> Args {
     let mut a = Args::default();
+    a.romen = true;
+    a.budget = 200_000_000;
     for arg in std::env::args().skip(1) {
         let num = |s: &str| -> u64 {
             s.parse().unwrap_or_else(|_| {
@@ -77,6 +85,18 @@ fn parse_args() -> Args {
             a.irq_at = Some(num(v));
         } else if let Some(v) = arg.strip_prefix("+nmiafter=") {
             a.nmi_at = Some(num(v));
+        } else if let Some(v) = arg.strip_prefix("+mem=") {
+            a.mem = Some(v.to_string());
+        } else if let Some(v) = arg.strip_prefix("+outmem=") {
+            a.outmem = Some(v.to_string());
+        } else if let Some(v) = arg.strip_prefix("+pc=") {
+            a.pc = Some(num(v) as u16);
+        } else if let Some(v) = arg.strip_prefix("+sp=") {
+            a.sp = Some(num(v) as u16);
+        } else if let Some(v) = arg.strip_prefix("+romen=") {
+            a.romen = num(v) != 0;
+        } else if let Some(v) = arg.strip_prefix("+budget=") {
+            a.budget = num(v);
         } else if IGNORED.iter().any(|p| arg.starts_with(p)) {
             // a hardware-only knob; nothing to do in software
         } else {
@@ -84,12 +104,14 @@ fn parse_args() -> Args {
             exit(2);
         }
     }
-    if a.hex.is_none() && a.rom.is_none() {
+    if a.hex.is_none() && a.rom.is_none() && a.mem.is_none() {
         eprintln!(
             "usage: cool8rs +hex=image.hex [+trace=f] [+memdump=f] \
              [+maxinstr=n] [+irqafter=n] [+nmiafter=n]\n\
              \x20      cool8rs +rom=rom.bin +script=s [+flash=img] \
-             [+trace=f|-] [+memdump=f] [+vramdump=f] [+said=f]"
+             [+trace=f|-] [+memdump=f] [+vramdump=f] [+said=f]\n\
+             \x20      cool8rs +mem=in.bin +outmem=out.bin [+pc=n] [+sp=n] \
+             [+romen=0|1] [+budget=n]"
         );
         exit(2);
     }
@@ -331,9 +353,105 @@ fn run_machine(args: &Args) {
               n, m.cpu.cycles, m.frames, secs);
 }
 
+// --------------------------------------------------------- batch mode
+
+/// The core of a batch run for tools/cool8rsvm.py: a memory image in,
+/// the machine run to a halt or a budget, the memory image out. The
+/// loop is cool8vm.Machine.run's own — the halt test (a PC that does
+/// not move) before the tick, the budget counted in ticks — so a test
+/// that moves from one machine to the other keeps its stopping
+/// behaviour exactly.
+fn batch_run(image: &[u8], pc: Option<u16>, sp: Option<u16>, romen: bool,
+             budget: u64) -> (&'static str, machine::Machine) {
+    let mut m = machine::Machine::new([0u8; 4096], None);
+    if image.len() != 0x10000 {
+        die(format!("memory image is {} bytes, want 65536", image.len()));
+    }
+    m.bus.mem.copy_from_slice(image);
+    m.bus.romen = romen;
+    if let Some(pc) = pc {
+        m.cpu.pc = pc;
+    }
+    if let Some(sp) = sp {
+        m.cpu.sp = sp;
+    }
+
+    let mut last: i32 = -1;
+    let mut reason = "budget";
+    for _ in 0..budget {
+        if m.cpu.pc as i32 == last {
+            reason = "halt";
+            break;
+        }
+        last = m.cpu.pc as i32;
+        m.tick();
+    }
+    (reason, m)
+}
+
+fn run_batch(args: &Args) {
+    let image = read_file(args.mem.as_ref().unwrap());
+    let (reason, m) = batch_run(&image, args.pc, args.sp, args.romen,
+                                args.budget);
+    if let Some(p) = args.outmem.as_ref() {
+        std::fs::write(p, m.bus.mem.as_ref())
+            .unwrap_or_else(|e| die(format!("cannot write {}: {}", p, e)));
+    }
+    println!("-- reason={} instructions={} cycles={}",
+             reason, m.cpu.instructions, m.cpu.cycles);
+}
+
+/// `+serve`: batch runs over stdin, one per line, so a suite of a
+/// hundred cases pays for one process rather than a hundred. The
+/// fields are tab-separated because they carry paths:
+///
+///     run \t mem.bin \t out.bin \t pc \t sp \t romen \t budget
+///
+/// answered, after out.bin is written, with
+///
+///     ok <reason> <instructions> <cycles>
+///
+/// Every run is a fresh machine — state does not carry over, which is
+/// also cool8vm's shape: one Machine per test case.
+fn run_serve() {
+    use std::io::BufRead;
+    let stdin = std::io::stdin();
+    let stdout = std::io::stdout();
+    let mut out = stdout.lock();
+    for line in stdin.lock().lines() {
+        let line = line.unwrap_or_default();
+        let f: Vec<&str> = line.split('\t').collect();
+        if line.is_empty() || f[0] == "quit" {
+            break;
+        }
+        if f[0] != "run" || f.len() != 7 {
+            writeln!(out, "err bad command").unwrap();
+            out.flush().unwrap();
+            continue;
+        }
+        let num = |s: &str| s.parse::<u64>()
+            .unwrap_or_else(|_| die(format!("bad number {:?}", s)));
+        let image = read_file(f[1]);
+        let (reason, m) = batch_run(&image, Some(num(f[3]) as u16),
+                                    Some(num(f[4]) as u16),
+                                    num(f[5]) != 0, num(f[6]));
+        std::fs::write(f[2], m.bus.mem.as_ref())
+            .unwrap_or_else(|e| die(format!("cannot write {}: {}", f[2], e)));
+        writeln!(out, "ok {} {} {}",
+                 reason, m.cpu.instructions, m.cpu.cycles).unwrap();
+        out.flush().unwrap();
+    }
+}
+
 fn main() {
+    if std::env::args().any(|a| a == "+serve") {
+        run_serve();
+        return;
+    }
     let args = parse_args();
-    if args.rom.is_some() {
+    if args.mem.is_some() {
+        run_batch(&args);
+    } else if args.rom.is_some() {
         run_machine(&args);
     } else {
         run_cpu(&args);

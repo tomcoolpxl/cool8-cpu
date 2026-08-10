@@ -108,6 +108,7 @@ and it is diffed against the specification instruction by instruction.
 | `rust/src/optab.rs` | **generated** by `tools/mkrsopc.py` — do not edit |
 | `rust/src/main.rs` | the harness: both CLIs, the run loops, trace, dumps |
 | `tools/mkrsopc.py` | the generator, and `--check` |
+| `tools/cool8rsvm.py` | the Python client: a `cool8vm.Machine` stand-in for batch runs, backed by one shared `+serve` process |
 | `sim/rustsim.py` | both parity suites and the speed measurements |
 
 `rust/target/` is gitignored; `Cargo.lock` is committed. There are no
@@ -210,13 +211,37 @@ are known edges:
   sample stream is not part of the parity compare; nothing CPU-visible
   reads back from it.
 
-How tests consume the fast machine is still open: today it is a
-subprocess speaking script files, which the parity suite needs anyway.
-A PyO3 wrapper around the *whole* Rust machine would also work — the
-original idea of a Rust core under the Python `Machine` was rejected
-because the per-bus-access FFI boundary eats the speedup, so any such
-boundary must sit at machine-API granularity or coarser. Build it when
-a consumer exists, not before.
+## How tests consume it: the batch machine
+
+`tools/cool8rsvm.py` is the consumer path, and `sim/test_interp.py` is
+its first user. `cool8rsvm.machine()` hands back a `cool8vm.Machine`
+stand-in whose surface is exactly the batch slice — `bus.mem`,
+`cpu.pc`/`cpu.sp`, `romen`, `run(budget=…)` → `"halt"`/`"budget"`,
+`cpu.cycles` after — and falls back to the reference machine when the
+runner is not built and cargo is absent, so `npm test` still works on a
+clone with only Node and Python. `COOL8_PYVM=1` forces the reference —
+the second opinion when a failure needs one.
+
+The plumbing: one `cool8rs +serve` process per test process, batch runs
+sent over stdin (tab-separated, because the fields carry paths), each
+run a fresh machine on the far side whose loop is `Machine.run`'s own —
+halt test before the tick, budget in ticks — so stopping behaviour
+moves unchanged. One spawn per suite, not per case; per-case cost is a
+64 KB file each way. `run()` works once per RustMachine and raises on a
+second call — registers do not round-trip, so a resume would be a
+different machine.
+
+What stays on the reference machine, deliberately: anything that
+watches the machine *while it runs* — tick loops (test_interp's SP
+high-water case), `watch`, `trace`, the keyboard, the screen. The rule
+from the original investigation stands: the boundary must sit at
+machine-API granularity or coarser, which is why there is no PyO3
+wrapper and no per-bus-access FFI. Measured on `sim/test_interp.py`:
+1.9 s on the reference machine, 0.7 s on the batch machine — the
+remaining time is Python start-up and assembling the harness. The
+suites this pattern is really for are the minutes-long ones
+(`test_run`, `test_basic`), which need the script vocabulary extended
+(keyboard, screen reads) before they can move.
 
 ## Measured
 

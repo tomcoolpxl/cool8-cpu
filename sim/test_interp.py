@@ -30,6 +30,7 @@ os.makedirs(BUILD, exist_ok=True)
 sys.path.insert(0, os.path.join(ROOT, "tools"))
 
 import cool8vm as vm                                     # noqa: E402
+import cool8rsvm                                         # noqa: E402
 
 CODE = 0x0200
 PROG = 0x3000
@@ -946,11 +947,15 @@ def main():
     print()
     code, syms = build("interp", HARNESS)
     print(f"  interpreter: {syms['prog'] - syms['irun']:,} bytes")
+    # The batch runs use the Rust machine when it is available
+    # (tools/cool8rsvm.py; parity-gated by sim/rustsim.py). COOL8_PYVM=1
+    # forces the reference machine when a failure needs a second opinion.
+    print(f"  machine: {'rust' if cool8rsvm.available() else 'python'}")
     print()
     for case in CASES:
         name_, prog, want = case[0], case[1], case[2]
         wantstr = case[3] if len(case) > 3 else None
-        m = vm.Machine()
+        m = cool8rsvm.machine()
         m.bus.mem[CODE:CODE + len(code)] = code
         at = syms["prog"]
         m.bus.mem[at:at + len(prog)] = bytes(prog)
@@ -986,7 +991,7 @@ def main():
     # wrapping and running the wrong program, which is what the
     # one-level version did.
     def run_err(prog):
-        m = vm.Machine()
+        m = cool8rsvm.machine()
         m.bus.mem[CODE:CODE + len(code)] = code
         at = syms["prog"]
         m.bus.mem[at:at + len(prog)] = bytes(prog)
@@ -1096,6 +1101,9 @@ def main():
         prog = program(line(10, name("A"), "=",
                             "(" * d, num(7), ")" * d),
                        line(20, [K["END"]]))
+        # The reference machine, not the batch one: the high-water mark
+        # needs a look at SP after every instruction, which is exactly
+        # the "anything finer" cool8rsvm.py sends back here.
         m = vm.Machine()
         m.bus.mem[CODE:CODE + len(code)] = code
         at = syms["prog"]
@@ -1154,7 +1162,7 @@ def main():
         line(20, name("A"), "=", name("K"), "+", num(3), "-", name("K")),
         line(30, [K["NEXT"]]),
         line(40, [K["END"]]))
-    m = vm.Machine()
+    m = cool8rsvm.machine()
     m.bus.mem[CODE:CODE + len(code)] = code
     at = syms["prog"]
     m.bus.mem[at:at + len(bench)] = bytes(bench)
@@ -1204,7 +1212,7 @@ top:    MOV  R0,#$E8
         JMP  top
 done:   HALT
 """)
-    mn = vm.Machine()
+    mn = cool8rsvm.machine()
     mn.bus.mem[CODE:CODE + len(nat)] = nat
     mn.cpu.pc = CODE
     mn.cpu.sp = 0x7FF0
