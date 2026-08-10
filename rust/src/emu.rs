@@ -56,8 +56,11 @@ use sdl2::pixels::PixelFormatEnum;
 use sdl2::video::FullscreenType;
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 const SND_HZ: f64 = 8_375_000.0 / 256.0;
+/// The machine's own frame rate: 266 cycles a line, 525 lines a frame.
+const FRAME_HZ: f64 = 8_375_000.0 / (266.0 * 525.0);
 
 fn die(msg: String) -> ! {
     eprintln!("{}", msg);
@@ -304,6 +307,14 @@ pub fn run(args: &Args) {
     let mut rgb = vec![0u8; H_VIS * V_VIS * 3];
     let mut shot = 0;
 
+    // The machine runs at its own 59.97 Hz against the wall clock;
+    // vsync only decides how often the picture is *shown*. Pacing by
+    // presented frames ran the whole machine — cursor blink included —
+    // at whatever the monitor refreshes at, which on a 144 Hz panel
+    // was a very nervous cursor.
+    let started = Instant::now();
+    let mut machine_frames: u64 = 0;
+
     'main: loop {
         for ev in events.poll_iter() {
             match ev {
@@ -414,9 +425,17 @@ pub fn run(args: &Args) {
             }
         }
 
-        let target = m.frames + 1;
-        while m.frames < target {
-            m.tick();
+        let due = (started.elapsed().as_secs_f64() * FRAME_HZ) as u64;
+        if due > machine_frames + 8 {
+            // A stall (window drag, a debugger): skip, don't sprint.
+            machine_frames = due.saturating_sub(1);
+        }
+        while machine_frames < due {
+            let target = m.frames + 1;
+            while m.frames < target {
+                m.tick();
+            }
+            machine_frames += 1;
         }
 
         {
