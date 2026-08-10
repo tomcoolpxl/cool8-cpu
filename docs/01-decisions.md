@@ -1960,6 +1960,50 @@ other casualty: its memory map put the stack at `$FF00-$FFFF`; the
 shipped machine keeps the stack in page 1 and `$FF00` became the
 interpreter's workspace page.
 
+## D54 -- The restart chords are decoded in the keyboard, not in software
+
+The machine had no way back from a wedged program. `SW[0]` reaches
+`NMI`, which BASIC now handles, but a game may take that vector; and
+**the board has no reset pin at all**, so the only true recovery was
+the power switch.
+
+Software cannot fix this by itself, and that is the whole argument. A
+chord BASIC watches for is invisible exactly when it is needed: a
+program that has disabled interrupts, taken the vectors and stopped
+reading the FIFO cannot be asked to restart. Decoding it where the
+bytes arrive cannot be masked, intercepted or ignored.
+
+So `cool8_ps2` tracks Shift, Ctrl and Alt across break codes and
+raises two outputs: **Ctrl+Shift+Esc restarts `cool8_top`'s power-on
+stretch** — indistinguishable from switching the machine off and on,
+and it survives anything software can do — and **Ctrl+Esc raises NMI**
+and latches a flag at `KBD_MOD` bit 3, so the warm restart is a
+request BASIC honours by putting the editor back without losing the
+program. A program that takes the NMI vector swallows *that* one,
+which is the price of a warm start being a software idea.
+
+The modifiers come out at `$FE44` because the tracking exists anyway:
+games get "is Ctrl held" in one read instead of walking `kdbit` three
+times, and the editor can grow shortcuts with no state to keep. **They
+are not usable for character translation** — they say "now" and the
+FIFO says "earlier", so a queued byte must still be translated with
+the in-stream shift `sw/kbd.asm` tracks. Recorded here because it is
+exactly the mistake the register invites.
+
+**Measured, and it is not cheap.** 5022 logic cells became **5164 of
+5280 — 95 % to 97 %**, so the pair cost **142 LC of the 258 that were
+left**. The LUT4 delta was only +46; packing is why the estimate made
+from it was 2.4x optimistic, and why LC is the number
+[00-goals.md](00-goals.md) says to quote. Timing is unchanged at
+11.90 MHz against the 8.38 required. `synth_ice40 -abc9` and `-relut`
+were both measured on the whole design and returned **exactly the same
+5164** — there is no free area in the flags, so anything further has to
+come out of the design.
+
+The software side is 68 bytes: BASIC's NMI handler asks which chord it
+was and the editor's loop does the warm restart. 26 bytes are left
+below the I/O page.
+
 ## D53 -- The cursor position is frame-latched, like VID_BASE
 
 The pixel stage sampled `CUR_X`/`CUR_Y` live, so a move mid-frame drew

@@ -250,6 +250,21 @@ interrupted. The three `_DATA` ports are write-only and read `$FF`.
 | `$FE41` | `KBD_DATA` | R | Pop one raw scancode byte from the FIFO. **Read has a side effect.** |
 | `$FE42` | `KBD_CTRL` | R/W | `0` FIFO clear, `4` interrupt enable |
 | `$FE43` | `KBD_TX` | W | Byte to send to the keyboard (LED/typematic commands) |
+| `$FE44` | `KBD_MOD` | R/W | `0` Shift held, `1` Ctrl held, `2` Alt held, `3` the Ctrl+Esc chord fired (write 1 to clear) |
+
+**Ctrl+Shift+Esc resets the machine and Ctrl+Esc raises `NMI`**, both
+decoded in `cool8_ps2` from the arriving bytes ([D54](01-decisions.md)).
+The reset is the only way back from a program that has taken the
+vectors and stopped reading the FIFO — the board has no reset pin — and
+being in hardware it cannot be masked, intercepted or ignored. The warm
+chord is an NMI plus bit 3, so the break button and the restart share
+one unmaskable path and are told apart by asking.
+
+**Bits `2:0` say "now"; the FIFO says "earlier".** A byte is read out of
+the queue long after it arrived, so a shift read from here may already
+have been released — these bits are for chords and for asking what is
+held this instant, never for translating a queued character. That stays
+with the in-stream state `sw/kbd.asm` keeps.
 
 Bits 1, 2 and 4 of `KBD_STAT` are sticky and are cleared by writing a 1
 to the bit's own position, the same shape `UART_STAT` and `VID_IRQ` use.

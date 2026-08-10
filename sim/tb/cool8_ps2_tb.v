@@ -44,9 +44,12 @@ module cool8_ps2_tb;
     localparam integer T100US = 150;
     localparam integer TXTO   = 4;
 
+    reg saw_reset;
+
     localparam integer HP = 20;          // clocks per PS/2 half period
 
     localparam [7:0] A_STAT = 8'h40,
+                     A_MOD  = 8'h44,
                      A_DATA = 8'h41,
                      A_CTRL = 8'h42,
                      A_TX   = 8'h43;
@@ -71,6 +74,7 @@ module cool8_ps2_tb;
 
     wire         dut_clk_oe, dut_dat_oe;
     wire         o_sel, o_irq;
+    wire         o_reset, o_warm;        // the two keyboard chords
     wire [7:0]   o_rdata;
 
     // Open drain: either end pulls down, the pull-up does the rest.
@@ -85,7 +89,8 @@ module cool8_ps2_tb;
         .ps2_clk_i(ps2_clk), .ps2_dat_i(ps2_dat),
         .ps2_clk_oe(dut_clk_oe), .ps2_dat_oe(dut_dat_oe),
         .io_a(io_a), .io_rd(io_rd), .io_we(io_we), .io_wdata(io_wdata),
-        .o_sel(o_sel), .o_rdata(o_rdata), .o_irq(o_irq)
+        .o_sel(o_sel), .o_rdata(o_rdata), .o_irq(o_irq),
+        .o_reset(o_reset), .o_warm(o_warm)
     );
 
     // The I/O page captures a read on the launch edge. Doing the same
@@ -312,7 +317,8 @@ module cool8_ps2_tb;
         io_a = 8'h40; #1; check(o_sel, "$FE40 claimed");
         io_a = 8'h43; #1; check(o_sel, "$FE43 claimed");
         io_a = 8'h3F; #1; check(!o_sel, "$FE3F is somebody else's");
-        io_a = 8'h44; #1; check(!o_sel, "$FE44 is somebody else's");
+        io_a = 8'h44; #1; check(o_sel, "$FE44 claimed: the modifiers");
+        io_a = 8'h45; #1; check(!o_sel, "$FE45 is somebody else's");
 
         io_read(A_STAT);
         check_eq(got, 8'h00, "everything quiet at reset");
@@ -593,6 +599,87 @@ module cool8_ps2_tb;
         // is eventually plugged in never gets to talk.
         check(!dut_clk_oe, "the clock line is released");
         check(!dut_dat_oe, "and so is the data line");
+
+        // ------------------------------------- the modifiers and the chords
+        //
+        // The state is tracked here rather than in software because a
+        // program that has taken the vectors and stopped reading the
+        // FIFO still has to be interruptible -- see the module header.
+        // What is checked is that it follows the byte stream, break
+        // codes included, and that neither chord fires by accident.
+        // The frames above were sent as data, and some of them happen to
+        // be modifier scancodes -- which the tracker believed, correctly.
+        // So this phase starts by putting everything back up.
+        io_write(A_MOD, 8'h08);                  // and clear a stale flag
+        kb_send(8'hF0); kb_send(8'h11);          // Alt up
+        wait_avail; io_read(A_DATA);
+        wait_avail; io_read(A_DATA);
+        kb_send(8'hF0); kb_send(8'h12);          // Shift up
+        wait_avail; io_read(A_DATA);
+        wait_avail; io_read(A_DATA);
+        kb_send(8'hF0); kb_send(8'h14);          // Ctrl up
+        wait_avail; io_read(A_DATA);
+        wait_avail; io_read(A_DATA);
+        io_read(A_MOD);
+        check_eq(got, 8'h00, "nothing is held to begin with");
+
+        kb_send(8'h14);                          // Ctrl down
+        wait_avail; io_read(A_DATA);
+        io_read(A_MOD);
+        check_eq(got, 8'h02, "Ctrl down shows in the modifiers");
+
+        kb_send(8'h12);                          // Shift down as well
+        wait_avail; io_read(A_DATA);
+        io_read(A_MOD);
+        check_eq(got, 8'h03, "...and Shift beside it");
+
+        kb_send(8'hF0); kb_send(8'h12);          // Shift up again
+        wait_avail; io_read(A_DATA);
+        wait_avail; io_read(A_DATA);
+        io_read(A_MOD);
+        check_eq(got, 8'h02, "a break code takes Shift away");
+        check(!o_reset && !o_warm, "and no chord fired on the way");
+
+        // Ctrl is still down, so Esc is the warm chord: a pulse, and a
+        // flag that stays until it is acknowledged.
+        kb_send(8'h76);
+        wait_avail; io_read(A_DATA);
+        io_read(A_MOD);
+        check_eq(got, 8'h0A, "Ctrl+Esc latches the warm-restart flag");
+        io_write(A_MOD, 8'h08);
+        io_read(A_MOD);
+        check_eq(got, 8'h02, "...and writing the bit back clears it");
+
+        // With Shift held it is the cold one, which resets the machine
+        // rather than asking anybody.
+        kb_send(8'h12);
+        wait_avail; io_read(A_DATA);
+        fork
+            begin
+                kb_send(8'h76);
+                wait_avail; io_read(A_DATA);
+            end
+            begin : watch_reset
+                integer k;
+                saw_reset = 1'b0;
+                for (k = 0; k < 40000; k = k + 1) begin
+                    @(posedge clk);
+                    if (o_reset) saw_reset = 1'b1;
+                end
+            end
+        join
+        check(saw_reset, "Ctrl+Shift+Esc asks for a reset");
+
+        // Esc on its own is a key like any other -- the chord must not
+        // fire for it, or Escape would restart the machine.
+        io_write(A_MOD, 8'h08);
+        kb_send(8'hF0); kb_send(8'h14);          // Ctrl up
+        wait_avail; io_read(A_DATA);
+        wait_avail; io_read(A_DATA);
+        kb_send(8'h76);
+        wait_avail; io_read(A_DATA);
+        io_read(A_MOD);
+        check_eq(got, 8'h01, "a plain Escape is not a chord");
 
         $display("\n  %0d checks, %0d failures", checks, errors);
         if (errors == 0) $display("PASS");

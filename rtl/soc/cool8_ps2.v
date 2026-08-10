@@ -94,19 +94,27 @@ module cool8_ps2 #(
     output wire        o_sel,
     output reg  [7:0]  o_rdata,
 
-    output wire        o_irq
+    output wire        o_irq,
+
+    // Ctrl+Shift+Esc and Ctrl+Esc, decoded from the byte stream -- see
+    // "modifiers, and the chords" below for why they live here and not
+    // in software.
+    output wire        o_reset,
+    output wire        o_warm
 );
 
     localparam [7:0] A_STAT = 8'h40,
                      A_DATA = 8'h41,
                      A_CTRL = 8'h42,
-                     A_TX   = 8'h43;
+                     A_TX   = 8'h43,
+                     A_MOD  = 8'h44;
 
     localparam AB = 4;                   // FIFO address bits: 16 bytes
     localparam DEPTH = 1 << AB;
 
     assign o_sel = (io_a == A_STAT) | (io_a == A_DATA) |
-                   (io_a == A_CTRL) | (io_a == A_TX);
+                   (io_a == A_CTRL) | (io_a == A_TX) |
+                   (io_a == A_MOD);
 
     // ------------------------------------------------- the lines, filtered
     //
@@ -361,6 +369,70 @@ module cool8_ps2 #(
         end
     end
 
+    // ------------------------------------------- modifiers, and the chords
+    //
+    // Ctrl+Shift+Esc resets the machine and Ctrl+Esc asks for a warm
+    // restart. **They are decoded here because software cannot be
+    // relied on to do it**: a game may take the interrupt vectors,
+    // disable interrupts and never read the FIFO, and the board has no
+    // reset pin -- so without this the only way out of a wedged machine
+    // is the power switch. A reset driven from the byte stream cannot
+    // be masked, intercepted or ignored.
+    //
+    // The state is taken from the arriving bytes rather than the FIFO,
+    // and on `push` rather than on a successful enqueue: a key really
+    // did go down or come up even if the queue was full and dropped it.
+    //
+    // $E0 is not consumed here. Left and right Ctrl differ only by that
+    // prefix, and treating them as one key is what sw/kdown.asm already
+    // does with the same justification -- there is no keypad on this
+    // machine, so the shared code cannot be ambiguous.
+    //
+    // **These bits say "now", and the FIFO says "earlier".** A byte is
+    // read out of the queue long after it arrived, so translating a
+    // queued character with these would use a shift that may already
+    // have been released. Character translation stays with the
+    // in-stream state sw/kbd.asm keeps; these are for chords and for
+    // games asking what is held this instant.
+    reg m_shift, m_ctrl, m_alt, brk_p, warm_l;
+
+    wire [7:0] rxb      = rx_next[8:1];
+    wire       is_brk   = (rxb == 8'hF0);
+    wire       is_ext   = (rxb == 8'hE0);
+    wire       key_byte = push & ~is_brk & ~is_ext;
+    wire       chord    = key_byte & ~brk_p & (rxb == 8'h76) & m_ctrl;
+
+    assign o_reset = chord &  m_shift;
+    assign o_warm  = chord & ~m_shift;
+
+    always @(posedge clk) begin
+        if (!rst_n) begin
+            m_shift <= 1'b0;
+            m_ctrl  <= 1'b0;
+            m_alt   <= 1'b0;
+            brk_p   <= 1'b0;
+            warm_l  <= 1'b0;
+        end else begin
+            if (push) begin
+                if (is_brk)      brk_p <= 1'b1;
+                else if (!is_ext) begin
+                    brk_p <= 1'b0;
+                    case (rxb)
+                        8'h12, 8'h59: m_shift <= ~brk_p;
+                        8'h14:        m_ctrl  <= ~brk_p;
+                        8'h11:        m_alt   <= ~brk_p;
+                        default: ;
+                    endcase
+                end
+            end
+            // Set after the acknowledge, so a chord struck in the very
+            // cycle a handler clears the flag is not lost -- the shape
+            // VID_IRQ and UART_STAT already use.
+            if (io_we && io_a == A_MOD && io_wdata[3]) warm_l <= 1'b0;
+            if (o_warm) warm_l <= 1'b1;
+        end
+    end
+
     // ---------------------------------------------------------- read back
 
     // KBD_TX is write-only and reads $FF, the same answer the page gives
@@ -370,6 +442,7 @@ module cool8_ps2 #(
             A_STAT:  o_rdata = {3'b000, tx_err, txing, par_err, over, avail};
             A_DATA:  o_rdata = head;
             A_CTRL:  o_rdata = {3'b000, irq_en, 4'b0000};
+            A_MOD:   o_rdata = {4'b0000, warm_l, m_alt, m_ctrl, m_shift};
             default: o_rdata = 8'hFF;
         endcase
     end

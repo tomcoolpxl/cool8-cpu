@@ -85,22 +85,76 @@ pub struct Ps2 {
     pub q: VecDeque<u8>,
     pub overrun: bool,
     pub irq_en: bool,
+    // The modifiers and the two chords, as cool8_ps2.v decodes them
+    // from the arriving bytes. Tracked on arrival rather than on a
+    // successful enqueue: a key really did move even if the queue was
+    // full and dropped the byte.
+    pub m_shift: bool,
+    pub m_ctrl: bool,
+    pub m_alt: bool,
+    brk_p: bool,
+    pub warm_l: bool,
+    /// Set when a chord arrives; the machine services them on its next
+    /// tick, which is where an NMI or a reset can actually be applied.
+    pub warm_pending: bool,
+    pub reset_pending: bool,
 }
 
 impl Ps2 {
     const DEPTH: usize = 16;
 
     fn new() -> Ps2 {
-        Ps2 { q: VecDeque::new(), overrun: false, irq_en: false }
+        Ps2 {
+            q: VecDeque::new(),
+            overrun: false,
+            irq_en: false,
+            m_shift: false,
+            m_ctrl: false,
+            m_alt: false,
+            brk_p: false,
+            warm_l: false,
+            warm_pending: false,
+            reset_pending: false,
+        }
     }
 
     pub fn feed(&mut self, codes: &[u8]) {
         for &b in codes {
+            self.track(b);
             if self.q.len() < Ps2::DEPTH {
                 self.q.push_back(b);
             } else {
                 self.overrun = true;
             }
+        }
+    }
+
+    /// The modifier and chord decode of cool8_ps2.v, byte for byte.
+    /// $E0 is not consumed: left and right Ctrl differ only by that
+    /// prefix and are one key here, the same call sw/kdown.asm makes.
+    fn track(&mut self, b: u8) {
+        if b == 0xF0 {
+            self.brk_p = true;
+            return;
+        }
+        if b == 0xE0 {
+            return;
+        }
+        let down = !self.brk_p;
+        self.brk_p = false;
+        match b {
+            0x12 | 0x59 => self.m_shift = down,
+            0x14 => self.m_ctrl = down,
+            0x11 => self.m_alt = down,
+            0x76 if down && self.m_ctrl => {
+                if self.m_shift {
+                    self.reset_pending = true;
+                } else {
+                    self.warm_pending = true;
+                    self.warm_l = true;
+                }
+            }
+            _ => {}
         }
     }
 
@@ -116,6 +170,12 @@ impl Ps2 {
             }
             0x41 => self.q.pop_front().unwrap_or(0xFF),
             0x42 => if self.irq_en { 0x10 } else { 0x00 },
+            0x44 => {
+                (if self.m_shift { 0x01 } else { 0 })
+                    | (if self.m_ctrl { 0x02 } else { 0 })
+                    | (if self.m_alt { 0x04 } else { 0 })
+                    | (if self.warm_l { 0x08 } else { 0 })
+            }
             _ => 0xFF,
         }
     }
@@ -131,6 +191,11 @@ impl Ps2 {
                 self.irq_en = v & 0x10 != 0;
                 if v & 0x01 != 0 {
                     self.q.clear();
+                }
+            }
+            0x44 => {
+                if v & 0x08 != 0 {
+                    self.warm_l = false;
                 }
             }
             _ => {}
@@ -725,7 +790,7 @@ impl MachineBus {
             0x02 => self.build_id,
             0x03 => self.led,
             0x10..=0x3F | 0xC0..=0xFF => self.video.read(a),
-            0x40..=0x43 => self.kbd.read(a),
+            0x40..=0x44 => self.kbd.read(a),
             0x50..=0x51 => 0xFF, // sound is write-only, as the hardware is
             0x70..=0x73 => self.uart.read(a),
             0x88..=0x8F => self.flash.read(a),
@@ -738,7 +803,7 @@ impl MachineBus {
             0x00 => self.romen = v & 1 != 0,
             0x03 => self.led = v & 7,
             0x10..=0x3F | 0xC0..=0xFF => self.video.write(a, v),
-            0x40..=0x43 => self.kbd.write(a, v),
+            0x40..=0x44 => self.kbd.write(a, v),
             0x50..=0x51 => self.sound.write(a, v),
             0x70..=0x73 => self.uart.write(a, v),
             0x88..=0x8F => self.flash.write(a, v),
@@ -844,7 +909,48 @@ impl Machine {
 
     /// One instruction, with the raster and the interrupts kept in step
     /// with it — cool8vm.Machine.tick, minus the profiling hooks.
+    /// Ctrl+Shift+Esc. The hardware restarts its power-on stretch, which
+    /// resets every register and leaves memory alone -- RAM, VRAM, the
+    /// palette and the font are all still there, and it is BASIC's own
+    /// init, once the boot ROM has reloaded it, that wipes user RAM.
+    /// So this resets state, not storage.
+    pub fn kbd_reset(&mut self) {
+        let vram = std::mem::replace(&mut self.bus.video.vram,
+                                     vec![0u8; 0x10000].into_boxed_slice()
+                                         .try_into().unwrap());
+        let pal = self.bus.video.pal;
+        let spr = self.bus.video.spr;
+        self.bus.video = Video::new();
+        self.bus.video.vram = vram;
+        self.bus.video.pal = pal;
+        self.bus.video.spr = spr;
+
+        self.bus.uart = Uart::new();
+        self.bus.kbd = Ps2::new();
+        self.bus.sound = Sound::new();
+        self.bus.romen = true;
+        self.bus.led = 0;
+        self.line = 0;
+        self.snd_owed = 0;
+        self.tick_owed = 0;
+        self.cpu.reset(&mut self.bus);
+        if let Some(r) = self.renderer.as_mut() {
+            *r = crate::render::Renderer::new(r.font);
+        }
+    }
+
     pub fn tick(&mut self) {
+        // The chords, serviced where they can be: an NMI needs an
+        // instruction boundary and a reset needs the whole machine.
+        if self.bus.kbd.reset_pending {
+            self.bus.kbd.reset_pending = false;
+            self.kbd_reset();
+            return;
+        }
+        if self.bus.kbd.warm_pending {
+            self.bus.kbd.warm_pending = false;
+            self.cpu.pulse_nmi();
+        }
         self.cpu.irq_line = self.irq();
         let before = self.cpu.cycles;
         self.cpu.step(&mut self.bus);

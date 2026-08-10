@@ -32,7 +32,7 @@ BUILD = os.path.join(ROOT, "build")
 sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.join(ROOT, "sim"))
 
-import cosim                                    # noqa: E402
+import toolchain as T                           # noqa: E402
 import mkrom                                    # noqa: E402
 import mkfont                                   # noqa: E402
 
@@ -84,15 +84,15 @@ def main():
     print(f"  boot ROM: {len(img)} bytes at ${base:04X}")
 
     read = "; ".join(f'read_verilog "{f}"' for f in SRC)
-    step("yosys  ", [cosim._tool("yosys"), "-q", "-p",
+    step("yosys  ", [T.tool("yosys"), "-q", "-p",
                      f"{read}; synth_ice40 -dsp -top cool8_top -json cool8.json"])
 
-    pnr = step("nextpnr", [cosim._tool("nextpnr-ice40"),
+    pnr = step("nextpnr", [T.tool("nextpnr-ice40"),
                            "--up5k", "--package", "sg48",
                            "--pcf", PCF, "--json", "cool8.json",
                            "--asc", "cool8.asc", "--freq", str(args.freq)])
 
-    step("icepack", [cosim._tool("icepack"), "cool8.asc", "cool8.bin"])
+    step("icepack", [T.tool("icepack"), "cool8.asc", "cool8.bin"])
 
     for line in pnr.splitlines():
         m = re.search(r"(SB_LUT4|SB_DFF\w*|SB_CARRY|SB_RAM40_4K|"

@@ -135,7 +135,13 @@ module cool8_soc #(
     input  wire        irq,
     input  wire        nmi,
 
-    output wire        o_halted
+    output wire        o_halted,
+
+    // Ctrl+Shift+Esc, straight off the keyboard's byte stream. The
+    // board has no reset pin, so this is the machine's only way back
+    // from a program that has stopped listening -- cool8_top restarts
+    // its power-on stretch from it.
+    output wire        o_kbd_reset
 );
 
     localparam RX_DEPTH = 1 << RX_ABITS;
@@ -282,7 +288,7 @@ module cool8_soc #(
     wire        vid_sel, vid_dp_sel, vid_stall, vid_irq;
     wire [7:0]  vid_rdata, vid_dout;
 
-    wire        ps2_sel, ps2_irq;
+    wire        ps2_sel, ps2_irq, ps2_warm;
     wire [7:0]  ps2_rdata;
 
     wire        fls_sel, fls_dp_sel, fls_stall;
@@ -485,7 +491,12 @@ module cool8_soc #(
         .clk(clk), .rst_n(cpu_rst_n),
         .mem_addr(cpu_addr), .mem_wdata(cpu_wdata), .mem_rdata(bus_rdata),
         .mem_read(cpu_read), .mem_write(cpu_write), .mem_ready(bus_ready),
-        .irq(irq | vid_irq | ps2_irq), .nmi(nmi),
+        // Ctrl+Esc joins the break button on NMI: unmaskable, so it
+        // reaches a program that has disabled interrupts. A program
+        // that takes the NMI vector for itself swallows it, which is
+        // the price of a warm restart being a software idea -- the
+        // cold one is `o_kbd_reset` and cannot be taken away.
+        .irq(irq | vid_irq | ps2_irq), .nmi(nmi | ps2_warm),
         .busrq(busrq), .busak(busak),
         .o_fetch(), .o_halted(o_halted), .o_iack(), .o_retire()
     );
@@ -533,7 +544,8 @@ module cool8_soc #(
         .ps2_clk_i(ps2_clk_i), .ps2_dat_i(ps2_dat_i),
         .ps2_clk_oe(ps2_clk_oe), .ps2_dat_oe(ps2_dat_oe),
         .io_a(io_a), .io_rd(io_rd), .io_we(io_we), .io_wdata(bus_wdata),
-        .o_sel(ps2_sel), .o_rdata(ps2_rdata), .o_irq(ps2_irq)
+        .o_sel(ps2_sel), .o_rdata(ps2_rdata), .o_irq(ps2_irq),
+        .o_reset(o_kbd_reset), .o_warm(ps2_warm)
     );
 
     cool8_flash u_fls (

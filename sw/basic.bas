@@ -88,7 +88,8 @@ CONST K_INS   = 263
 ' of what makes an interpreted FOR slow. Appended, so saved programs
 ' keep working -- TOKTAB order is frozen.
 CONST T_LIT   = $A4
-CONST T_REM   = $C5             ' the comment keyword, sw/toktab.asm
+CONST T_REM   = $C5
+CONST IRST    = $FF86           ' the NMI handler's restart flag             ' the comment keyword, sw/toktab.asm
 
 DIM cx AS BYTE                  ' cursor column on screen
 DIM cy AS BYTE                  ' cursor row on screen
@@ -2114,6 +2115,24 @@ END SUB
 ' it, free count included: a freshly booted machine is empty by
 ' definition, so the number is a build-time constant.
 
+' Ctrl+Esc: put the machine back where the editor can be used, and keep
+' the program. That is the state a program ruins rather than the memory
+' it fills -- MODE 4 with sprites over an unreadable screen is a working
+' machine nobody can see, and the listing is the thing worth not losing.
+' Ctrl+Shift+Esc does not come here: the keyboard resets the machine
+' itself, because a program that has stopped listening cannot be asked
+' to.
+SUB doreset()
+  POKE IRST, 0
+  POKE VID_MODE, $80
+  POKE VID_BASE_L, SCREEN AND 255
+  POKE VID_BASE_H, SCREEN >> 8
+  POKE $FE2C, 0                 ' sprites off
+  vtop = 0
+  CALL setgeom()
+  CALL cls()
+END SUB
+
 ' ---------------------------------------------------------------------
 ' The loop.
 ' ---------------------------------------------------------------------
@@ -2194,6 +2213,9 @@ POKE $FE03, 0
 
 DO
   k = getkey()
+  IF PEEK(IRST) <> 0 THEN
+    CALL doreset()
+  END IF
   IF k = 13 THEN
     CALL enter(cy)
   ELSE
@@ -2499,6 +2521,10 @@ kshift  = $FF12
 kbrk    = $FF13
 kext    = $FF14
 kdown   = $FF15                 ; 16
+; Between FORSTK's last frame ($FF85) and DIRBUF ($FF88). Set by the
+; NMI handler when the keyboard reports Ctrl+Esc, cleared by the
+; restart it asks for.
+irst    = $FF86
 
 ; The break button. SW[0]'s NMI lands here now that BASIC owns the
 ; machine: the ROM's bare-RETI handler went away with the overlay, and
@@ -2507,7 +2533,19 @@ kdown   = $FF15                 ; 16
 ; reboot. One flag, the same one Ctrl+Pause and the serial Ctrl-C set,
 ; so every way of asking for a break is the same break.
 inmi:   PUSH R0
+        ; Ctrl+Esc arrives here too -- the keyboard raises NMI for it and
+        ; latches a flag saying which it was, so the break button and the
+        ; restart chord share one unmaskable path and are told apart by
+        ; asking. Acknowledged by writing the bit back, the shape
+        ; VID_IRQ and UART_STAT use.
+        LD   R0,[$FE44]
+        BTST R0,#$08
+        BEQ  .brk
+        MOV  R0,#$08
+        ST   [$FE44],R0
         MOV  R0,#1
+        ST   [irst],R0          ; the editor's loop does the restart
+.brk:   MOV  R0,#1
         ST   [ibreak],R0
         POP  R0
         RETI

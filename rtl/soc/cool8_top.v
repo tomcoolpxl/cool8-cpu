@@ -113,12 +113,20 @@ module cool8_top #(
     // board. It can be added once the board is known to work, which is
     // the only state in which it is worth anything.
 
+    wire kbd_reset;                    // Ctrl+Shift+Esc, from the SoC
+
     reg [POR_BITS-1:0] por = {POR_BITS{1'b0}};
     wire rst_n = &por;
 
     always @(posedge sclk)
-        if (!pll_lock)   por <= {POR_BITS{1'b0}};
-        else if (!rst_n) por <= por + 1'b1;
+        if (!pll_lock)       por <= {POR_BITS{1'b0}};
+        // Ctrl+Shift+Esc restarts the stretch, so the machine comes up
+        // exactly as it does from power-on. The pulse comes out of the
+        // SoC's keyboard, which is still running when it fires; the
+        // reset it causes then clears the pulse's own source, and the
+        // counter takes it from there.
+        else if (kbd_reset)  por <= {POR_BITS{1'b0}};
+        else if (!rst_n)     por <= por + 1'b1;
 
     // The raster's reset: the system's, brought into the pixel domain
     // through two flip-flops. Nothing coordinates the two releases and
@@ -276,7 +284,8 @@ module cool8_top #(
         .audio(audio),
         .led(led),
         .irq(1'b0), .nmi(brk_nmi),
-        .o_halted()
+        .o_halted(),
+        .o_kbd_reset(kbd_reset)
     );
 
 endmodule
