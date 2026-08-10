@@ -107,9 +107,12 @@ and it is diffed against the specification instruction by instruction.
 | `rust/src/machine.rs` | the machine: memory map, ROM overlay, UART, PS/2, flash, sound, the video register file and VRAM, and the scanline accounting. A port of `cool8vm.py`, minus rendering and the font, which no register exposes |
 | `rust/src/optab.rs` | **generated** by `tools/mkrsopc.py` — do not edit |
 | `rust/src/main.rs` | the harness: both CLIs, the run loops, trace, dumps |
+| `rust/src/render.rs` | the scanline renderer, modeled on the RTL — see below |
+| `rust/src/emu.rs` | the window, the speaker and the host keyboard (`--features gui` only) |
 | `tools/mkrsopc.py` | the generator, and `--check` |
 | `tools/cool8rsvm.py` | the Python client: a `cool8vm.Machine` stand-in for batch runs, backed by one shared `+serve` process |
-| `sim/rustsim.py` | both parity suites and the speed measurements |
+| `tools/cool8rsrun.py` | the launcher: builds the ROM, font, keymap and disk with the ordinary tools, then hands over to `cool8rs +emu` |
+| `sim/rustsim.py` | all the parity suites and the speed measurements |
 
 `rust/target/` is gitignored; `Cargo.lock` is committed. There are no
 dependencies.
@@ -195,21 +198,111 @@ The gate is the same contract one level up, in `sim/rustsim.py`:
   All of it is the emulator's behaviour, ported — resist "fixing" flag
   behaviour in Rust on the way through.
 
+## The display: modeled on the RTL, because now it can be
+
+`rust/src/render.rs` is a scanline renderer derived from the Verilog —
+`cool8_fetch.v`, `cool8_pixel.v`, `cool8_sprite.v`, `cool8_vga.v` —
+rather than a port of cool8vid.py. The reason is stated in cool8vid's
+own header: at CPython speed a frame costs 0.88 s, so the Python
+renderer draws whole frames from a register snapshot and **a mid-frame
+register change is not visible**. At Rust speed the hardware's real
+structure costs nothing, so it is modeled:
+
+- **The line buffer, filled a source row ahead of the raster**, with
+  `row_ptr` walking by stride from a base captured at frame start —
+  so `VID_BASE` is latched at vblank exactly as docs/04-system.md
+  section 12 promises, page flips cannot tear, and a mid-frame base
+  write behaves as the hardware's accumulator does.
+- **Registers sampled per line**, so a raster split lands on the line
+  the write preceded and a palette change colours only the lines below
+  it.
+- **Text cells latched for sixteen lines, tile rows every line**, the
+  circular `stride * 32` wrap, patterns flipped at fetch time, the
+  256-word bank clamp on long bitmap strides.
+- **Sprites per line**: eight slots with trailing rows counting,
+  descriptor-order priority, the shared palette bank, `behind` losing
+  to a non-zero background. The slot scan itself lives in the
+  *machine* (both of them — see the findings below), because the
+  overrun flag is CPU-visible.
+
+Not modeled: fetch and sprite *bandwidth*. A line here always
+completes, where eight 16x16 sprites outrun the RTL's 266-clock line;
+the slot rule is exact, the cycle budget is not.
+
+**The gate**: `test_render` in sim/rustsim.py drives both machines
+through poke-built scenes — the monitor's text screen, tiles with
+every attribute bit and fine scroll under fifteen sprites, a scrolled
+8 bpp bitmap with `behind` sprites — and compares the Rust frame
+against `cool8vid.render_np` **per pixel**. render_np is the model
+sim/test_vm.py holds against the RTL's own rendered output, so
+agreement chains back to hardware. Static frames only, necessarily:
+the per-line behaviour that a whole-frame model cannot check rests on
+the RTL derivation.
+
+## The window: `npm run emu:rust`
+
+`tools/cool8rsrun.py` builds the ROM, the font, the machine-layout
+keymap and a BASIC disk with the ordinary tools, then launches
+`cool8rs +emu` (`--monitor` boots just the ROM). The front end is
+`rust/src/emu.rs`, behind `--features gui` so the parity suite's build
+stays dependency-free; minifb owns the window, cpal the speaker.
+
+- The CPU gets **exactly 266 system clocks per scanline**, 525 lines a
+  frame, 139,650 cycles a frame at 60 Hz — 8.375 MHz of machine time,
+  the same constant the Python machine and D32 state. Real time costs
+  about 4 % of a core; the renderer adds 18.4 M pixels/s and does not
+  change that picture.
+- Audio is the machine's own 32.7 kHz `level` stream, resampled to the
+  device rate; the queue takes the drift.
+- Host keys become Set 2 make/break codes into the same PS/2 FIFO the
+  tests feed; the *machine's* layout stays sw/keymap.asm's business.
+- **Alt+Enter** toggles aspect-ratio-scaled fullscreen (a borderless
+  screen-sized window; the picture letterboxes). **Right click**
+  pastes the clipboard as keystrokes, one character a frame so the
+  16-byte FIFO never overruns — the mapping is derived from
+  sw/keymap.asm by the launcher at run time, never a second copy.
+
+## Python-model errors found against the RTL, and what was done
+
+Reading the Verilog for the renderer turned up three places where
+`cool8vm.py` disagreed with the hardware. Per the project rule the
+reference was fixed first and the Rust machine follows it; parity
+gates both, and the software suites that exercise machine timing
+(`basic`, `boot_basic`, `autoboot`, `interp`, and `test_run`'s VSYNC
+and sprite-pacing checks) pass on the corrected phase. (At the time of
+the fix, `names` and parts of `test_run` were failing for an unrelated
+reason — the in-progress editor rewrite and CONST removal — so "the
+whole suite is green" was not available as a gate; what was green
+before the fix stayed green after it.)
+
+1. **The vblank flag fired 45 lines late.** cool8_vga raises
+   `frame_start` at line 480 — the start of vertical blanking, which
+   is also what docs/04-system.md section 6 specifies — and cool8vm
+   raised it at the counter wrap, line 525/0. **Fixed** in
+   `cool8vm._end_line` (and the cursor-blink tick with it, which the
+   RTL also advances at frame start).
+2. **The sprite overrun flag was never set.** cool8_sprite sets it on
+   the ninth hit of a line — trailing rows counting — and on a render
+   outrun by the next line. **Fixed** for the slot half: the scan now
+   runs in both machines' end-of-line step whenever sprites are
+   enabled ($FE2C bit 1 reads correctly). The bandwidth half needs a
+   cycle-cost model and is documented as not modeled.
+3. **Whole-frame rendering itself** — the snapshot model cannot show a
+   raster split, a mid-frame palette change, or the vblank `VID_BASE`
+   latch. Not fixable at CPython speed; that is what render.rs is for,
+   and cool8vid.py remains correct for what its header claims.
+
 ## What this is not (yet): the scope line
 
-The machine boots, runs BASIC and takes the keyboard, but three things
-are known edges:
-
-- **No renderer, no `m.text()`.** Reading the screen, drawing frames
-  and the font stay Python-only. A workload that needs to *look* at the
-  display runs on `cool8vm.py`; the Rust machine's VRAM is compared
-  against it, not rendered.
+- **`m.text()`-style screen reads stay Python-only** in the test
+  suites; the Rust machine's VRAM is compared byte-for-byte and its
+  frames pixel-for-pixel instead.
 - **No NMI/break op in the script vocabulary** yet — add one to both
   executors when a workload needs `press_break()`.
-- **Sound samples are generated but not diffed.** The sound engine is
-  ported (it costs one sample per 256 cycles either way) but the
-  sample stream is not part of the parity compare; nothing CPU-visible
-  reads back from it.
+- **Sound samples are generated but not diffed.** The engine is ported
+  and audible, but the sample stream is not part of the parity
+  compare; nothing CPU-visible reads back from it.
+- **Sprite/fetch bandwidth is not modeled** — see the display section.
 
 ## How tests consume it: the batch machine
 

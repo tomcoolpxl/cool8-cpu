@@ -221,19 +221,32 @@ def _script_file(tag, ops):
         for kind, arg in ops:
             if kind == "frames":
                 f.write(f"frames {arg}\n")
+            elif kind == "poke":
+                addr, data = arg
+                f.write("poke %04x " % addr
+                        + " ".join("%02x" % b for b in data) + "\n")
             else:
                 f.write(kind + " " + " ".join("%02x" % b for b in arg)
                         + "\n")
     return path
 
 
-def machine_pair(tag, ops, flash_path=None, sanity=None):
+def machine_pair(tag, ops, flash_path=None, sanity=None, fb=False):
     """Run one script on both machines, comparing in lockstep.
 
-    `ops` is [("type", bytes) | ("scan", bytes) | ("frames", n), ...].
-    `sanity(m)` may return an error string; it guards against the trap
-    of a workload that diverges nowhere because it silently stopped
-    doing anything.
+    `ops` is [("type", bytes) | ("scan", bytes) | ("frames", n) |
+    ("poke", (addr, bytes)), ...] — a poke writes every byte to that
+    one address through the bus, which is what makes the
+    auto-incrementing data ports scriptable. `sanity(m, said)` may
+    return an error string; it guards against the trap of a workload
+    that diverges nowhere because it silently stopped doing anything.
+
+    With `fb=True` the Rust side renders every scanline as it runs and
+    the final frame is compared against cool8vid.render_np on the
+    Python machine — the model that is itself checked against the
+    RTL's own pixels by sim/test_vm.py. The registers must be static
+    over the last full frame for the two to be comparable, cursor
+    included: poke it off and idle before ending the script.
     """
     import cool8vm as vm
 
@@ -246,8 +259,14 @@ def machine_pair(tag, ops, flash_path=None, sanity=None):
     mem_p = os.path.join(BUILD, f"{tag}.rstmem")
     vram_p = os.path.join(BUILD, f"{tag}.rstvram")
     said_p = os.path.join(BUILD, f"{tag}.rstsaid")
+    fb_p = os.path.join(BUILD, f"{tag}.rstfb")
     cmd = [EXE, f"+rom={rom_path}", f"+script={script}", "+trace=-",
            f"+memdump={mem_p}", f"+vramdump={vram_p}", f"+said={said_p}"]
+    if fb:
+        font_path = os.path.join(BUILD, "machine_font.bin")
+        with open(font_path, "wb") as f:
+            f.write(font)
+        cmd += [f"+font={font_path}", f"+fbdump={fb_p}"]
     if flash_path:
         cmd.append(f"+flash={flash_path}")
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
@@ -262,6 +281,10 @@ def machine_pair(tag, ops, flash_path=None, sanity=None):
                 m.uart.feed(bytes(arg))
             elif kind == "scan":
                 m.scancode(bytes(arg))
+            elif kind == "poke":
+                addr, data = arg
+                for b in data:
+                    m.bus.write(addr, b)
             else:
                 target = m.frames + arg
                 while m.frames < target:
@@ -310,6 +333,24 @@ def machine_pair(tag, ops, flash_path=None, sanity=None):
                          or mine[i] != theirs[i])
             print(f"    {tag}: {name} differs, first at ${first:04X}")
             return False, idx
+    if fb:
+        try:
+            import numpy as np
+            import cool8vid
+        except ImportError:
+            print(f"    {tag}: numpy not available, frame not compared")
+        else:
+            want = np.asarray(cool8vid.render_np(m))
+            with open(fb_p, "rb") as f:
+                got = np.frombuffer(f.read(), dtype="<u2")
+            got = got.reshape(480, 640).astype(np.int64)
+            if not np.array_equal(want, got):
+                bad = np.argwhere(want != got)
+                y, x = bad[0]
+                print(f"    {tag}: frame differs at {len(bad)} pixels, "
+                      f"first at ({x},{y}): py ${want[y, x]:03X} "
+                      f"rs ${got[y, x]:03X}")
+                return False, idx
     if sanity:
         err = sanity(m, said)
         if err:
@@ -406,6 +447,127 @@ def test_machine_basic():
     return ok
 
 
+# ---- building a display scene by poking the real I/O ports
+
+def _pal(entries):
+    """PAL_IDX/PAL_DATA writes for [(index, rgb12), ...]."""
+    ops = []
+    for idx, rgb in entries:
+        ops.append(("poke", (0xFE1E, [idx])))
+        ops.append(("poke", (0xFE1F, [(rgb >> 8) & 0x0F, rgb & 0xFF])))
+    return ops
+
+
+def _vram(addr, data):
+    """VADDR/VSTEP/VDATA writes: `data` bytes from `addr`, step 1."""
+    return [("poke", (0xFE26, [addr & 0xFF])),
+            ("poke", (0xFE27, [addr >> 8])),
+            ("poke", (0xFE28, [1])),
+            ("poke", (0xFE29, list(data)))]
+
+
+def _sprites(descs, ctrl):
+    """SPR_IDX/SPR_DATA for 8-byte descriptors from index 0, then CTRL."""
+    data = []
+    for d in descs:
+        data += list(d)
+    return [("poke", (0xFE2A, [0])), ("poke", (0xFE2B, data)),
+            ("poke", (0xFE2C, [ctrl]))]
+
+
+def _desc(x, y, pat, big=False, hflip=False, vflip=False, behind=False):
+    """One descriptor, packed as cool8_sprite's scan reads it."""
+    v = pat >> 5
+    return [y & 0xFF,
+            (0x80 if big else 0) | 0x40 | ((y >> 8) & 1),
+            x & 0xFF, (x >> 8) & 3,
+            v & 0xFF, (v >> 8) & 7,
+            (0x80 if vflip else 0) | (0x40 if hflip else 0)
+            | (0x20 if behind else 0),
+            0]
+
+
+def _asym(n):
+    """An asymmetric 4 bpp pattern, n rows of n pixels, colour 0 in the
+    top-left quarter so transparency and `behind` have something to
+    show through."""
+    out = []
+    for r in range(n):
+        row = [(0 if (r < n // 2 and c < n // 2) else ((r + c) % 15) + 1)
+               for c in range(n)]
+        for i in range(0, n, 2):
+            out.append((row[i] << 4) | row[i + 1])
+    return out
+
+
+def test_render():
+    """The scanline renderer against cool8vid.render_np, per pixel.
+
+    render_np is the model sim/test_vm.py compares against the RTL's
+    own rendered output, so agreement here chains back to hardware.
+    Static frames only — the per-line renderer's whole point, a
+    mid-frame change, is exactly what a whole-frame model cannot
+    check, so that part rests on the RTL derivation in render.rs.
+    """
+    print("machine — the scanline renderer against cool8vid, per pixel")
+    ok = True
+
+    # ---- text: the monitor's own boot screen, cursor off
+    ops = [("frames", 8), ("type", b"D F000\r"), ("frames", 4),
+           ("poke", (0xFE24, [0x00])), ("frames", 2)]
+    t0 = time.time()
+    good, _ = machine_pair("rs_fb_text", ops, fb=True)
+    print(f"  text, the monitor's screen : "
+          f"{'ok' if good else 'FAIL'} ({time.time() - t0:.1f}s)")
+    ok &= good
+
+    # ---- tiles: every attribute bit, fine scroll, sprites over them
+    ops = [("frames", 8), ("poke", (0xFE10, [0x82]))]      # preset 2 + enable
+    ops += [("poke", (0xFE20, [0x00])), ("poke", (0xFE21, [0x40]))]
+    ops += _pal([(i, 0x111 * (i & 15)) for i in range(16)]
+                + [(0x10 + i, (i << 8) | 0x0F0) for i in range(16)]
+                + [(0x50 + i, (i << 4) | 0xF00) for i in range(16)])
+    ops += _vram(0x4020, _asym(8))                          # tile 1
+    row0 = []
+    for i, attr in enumerate([0x01, 0x41, 0x81, 0xC1, 0x00, 0x01] * 6):
+        row0 += [0x01 if attr != 0x00 else 0x00, attr]
+    ops += _vram(0x0000, row0)                              # map row 0
+    ops += _vram(128, [0x01, 0x01] * 20)                    # map row 1
+    ops += _vram(0x0800, _asym(8))                          # sprite 8x8
+    ops += _vram(0x0900, _asym(16))                         # sprite 16x16
+    descs = [_desc(20 + 12 * i, 40, 0x0800) for i in range(10)]
+    descs += [_desc(60, 100, 0x0900, big=True),
+              _desc(90, 100, 0x0800, hflip=True),
+              _desc(110, 100, 0x0800, vflip=True),
+              _desc(130, 100, 0x0800, behind=True),
+              _desc(130, 10, 0x0800, behind=True)]
+    ops += _sprites(descs, 0x51)                            # bank 5, enable
+    ops += [("poke", (0xFE16, [3])), ("poke", (0xFE18, [5]))]
+    ops += [("frames", 3)]
+    t0 = time.time()
+    good, _ = machine_pair("rs_fb_tile", ops, fb=True)
+    print(f"  tiles, flips, scroll, 15 sprites : "
+          f"{'ok' if good else 'FAIL'} ({time.time() - t0:.1f}s)")
+    ok &= good
+
+    # ---- bitmap: 8 bpp, scrolled, sprites with `behind` over it
+    ops = [("frames", 8), ("poke", (0xFE10, [0x86]))]      # preset 6 + enable
+    ops += _pal([(i, i * 0x011) for i in range(16)])
+    rows = bytes((x * (y + 1)) & 0xFF if x > 40 else 0
+                 for y in range(6) for x in range(256))
+    ops += _vram(0x0000, rows)
+    ops += _vram(0x0800, _asym(8))
+    ops += _sprites([_desc(30, 1, 0x0800),
+                     _desc(60, 1, 0x0800, behind=True)], 0x11)
+    ops += [("poke", (0xFE16, [7])), ("frames", 3)]
+    t0 = time.time()
+    good, _ = machine_pair("rs_fb_bmp", ops, fb=True)
+    print(f"  bitmap 8 bpp, scrolled, behind : "
+          f"{'ok' if good else 'FAIL'} ({time.time() - t0:.1f}s)")
+    ok &= good
+    return ok
+
+
 def speed_machine():
     """The machine-level number: the same boot, no trace being compared.
 
@@ -458,6 +620,7 @@ def main():
     if not args.quick:
         ok &= test_mul()
         ok &= test_machine_basic()
+        ok &= test_render()
         speed()
         speed_machine()
 

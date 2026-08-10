@@ -15,9 +15,13 @@
 // Python side can compare in lockstep without a quarter-gigabyte file.
 
 mod cpu;
+#[cfg(feature = "gui")]
+mod emu;
 mod machine;
 mod optab;
+mod render;
 
+use cpu::Bus as _;
 use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::process::exit;
@@ -30,10 +34,10 @@ const IGNORED: [&str; 6] = ["+ws=", "+wsrnd=", "+maxcycles=", "+busrqat=",
                             "+busrqlen=", "+busrqafter="];
 
 #[derive(Default)]
-struct Args {
+pub struct Args {
     hex: Option<String>,
-    rom: Option<String>,
-    flash: Option<String>,
+    pub rom: Option<String>,
+    pub flash: Option<String>,
     script: Option<String>,
     said: Option<String>,
     vramdump: Option<String>,
@@ -48,6 +52,10 @@ struct Args {
     sp: Option<u16>,
     romen: bool,
     budget: u64,
+    pub font: Option<String>,
+    pub keymap: Option<String>,
+    fbdump: Option<String>,
+    emu: bool,
 }
 
 fn parse_args() -> Args {
@@ -97,6 +105,14 @@ fn parse_args() -> Args {
             a.romen = num(v) != 0;
         } else if let Some(v) = arg.strip_prefix("+budget=") {
             a.budget = num(v);
+        } else if let Some(v) = arg.strip_prefix("+font=") {
+            a.font = Some(v.to_string());
+        } else if let Some(v) = arg.strip_prefix("+keymap=") {
+            a.keymap = Some(v.to_string());
+        } else if let Some(v) = arg.strip_prefix("+fbdump=") {
+            a.fbdump = Some(v.to_string());
+        } else if arg == "+emu" {
+            a.emu = true;
         } else if IGNORED.iter().any(|p| arg.starts_with(p)) {
             // a hardware-only knob; nothing to do in software
         } else {
@@ -259,9 +275,13 @@ enum Op {
     Type(Vec<u8>),
     Scan(Vec<u8>),
     Frames(u64),
+    Poke(u16, Vec<u8>),
 }
 
-/// One op per line: `type <hex bytes>`, `scan <hex bytes>`, `frames N`.
+/// One op per line: `type <hex bytes>`, `scan <hex bytes>`, `frames N`,
+/// `poke <hex addr> <hex bytes>` — every byte written to that one
+/// address through the bus, which is what makes the auto-incrementing
+/// data ports (VRAM, palette, sprites, sound) scriptable.
 /// Blank lines and `#` comments are skipped. sim/rustsim.py writes and
 /// executes the very same file against the Python machine.
 fn load_script(path: &str) -> Vec<Op> {
@@ -291,22 +311,52 @@ fn load_script(path: &str) -> Vec<Op> {
                 ops.push(if word == "type" { Op::Type(bytes) }
                          else { Op::Scan(bytes) });
             }
+            "poke" => {
+                let addr = it.next().unwrap_or_else(|| bad());
+                let addr = u16::from_str_radix(addr, 16)
+                    .unwrap_or_else(|_| bad());
+                let bytes: Vec<u8> = it
+                    .map(|w| u8::from_str_radix(w, 16)
+                        .unwrap_or_else(|_| bad()))
+                    .collect();
+                ops.push(Op::Poke(addr, bytes));
+            }
             _ => bad(),
         }
     }
     ops
 }
 
-fn run_machine(args: &Args) {
-    let rom_bytes = read_file(args.rom.as_ref().unwrap());
+pub fn load_rom(path: &str) -> [u8; 4096] {
+    let rom_bytes = read_file(path);
     if rom_bytes.len() > 4096 {
         die(format!("ROM is {} bytes; the window is 4096", rom_bytes.len()));
     }
     let mut rom = [0u8; 4096];
     rom[..rom_bytes.len()].copy_from_slice(&rom_bytes);
+    rom
+}
 
+pub fn load_font(path: &str) -> [u8; 4096] {
+    let b = read_file(path);
+    if b.len() > 4096 {
+        die(format!("font is {} bytes; the ROM is 4096", b.len()));
+    }
+    let mut font = [0u8; 4096];
+    font[..b.len()].copy_from_slice(&b);
+    font
+}
+
+fn run_machine(args: &Args) {
+    let rom = load_rom(args.rom.as_ref().unwrap());
     let flash = args.flash.as_ref().map(|p| read_file(p));
     let mut m = machine::Machine::new(rom, flash);
+    if args.fbdump.is_some() {
+        let font = args.font.as_ref().unwrap_or_else(|| {
+            die("+fbdump needs +font=".to_string())
+        });
+        m.renderer = Some(render::Renderer::new(load_font(font)));
+    }
 
     let script = args.script.as_ref()
         .map(|p| load_script(p))
@@ -320,6 +370,11 @@ fn run_machine(args: &Args) {
         match op {
             Op::Type(b) => m.bus.uart.feed(b),
             Op::Scan(b) => m.bus.kbd.feed(b),
+            Op::Poke(a, b) => {
+                for &v in b {
+                    m.bus.write(*a, v);
+                }
+            }
             Op::Frames(k) => {
                 let target = m.frames + k;
                 while m.frames < target {
@@ -344,6 +399,15 @@ fn run_machine(args: &Args) {
     if let Some(p) = args.said.as_ref() {
         let mut out = create(p);
         out.write_all(&m.bus.uart.tx).unwrap();
+        out.flush().unwrap();
+    }
+    if let Some(p) = args.fbdump.as_ref() {
+        // 640x480 of 12-bit palette colours, u16 little-endian.
+        let r = m.renderer.as_ref().unwrap();
+        let mut out = create(p);
+        for px in r.fb.iter() {
+            out.write_all(&px.to_le_bytes()).unwrap();
+        }
         out.flush().unwrap();
     }
 
@@ -449,6 +513,16 @@ fn main() {
         return;
     }
     let args = parse_args();
+    if args.emu {
+        #[cfg(feature = "gui")]
+        {
+            emu::run(&args);
+            return;
+        }
+        #[cfg(not(feature = "gui"))]
+        die("this build has no window: rebuild with \
+             `cargo build --release --features gui`".to_string());
+    }
     if args.mem.is_some() {
         run_batch(&args);
     } else if args.rom.is_some() {

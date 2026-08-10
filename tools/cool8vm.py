@@ -748,6 +748,31 @@ class Video:
         elif a == 0x38:
             self._plot(v)
 
+    def scan_sprites(self, line):
+        """The per-line slot scan, as cool8_sprite.v runs it.
+
+        Eight sprites fit on a scanline and the ninth sets the overrun
+        flag — including the two trailing rows past a sprite's bottom
+        edge, which take slots like anything else, and which are the
+        only thing rendered past line 480. This is CPU-visible state
+        ($FE2C bit 1), so it lives here in the machine, not in a
+        renderer; what the RTL also flags — a render outrun by the next
+        line — needs a cycle-level cost model and is not modelled.
+        """
+        hits = 0
+        for si in range(0, 256, 8):
+            d1 = self.spr[si + 1]
+            if not (d1 & 0x40):
+                continue
+            h = 16 if (d1 & 0x80) else 8
+            dy = (line - (((d1 & 0x01) << 8) | self.spr[si])) & 0x3FF
+            if not (dy < h + 2 and (line < 480 or dy >= h)):
+                continue
+            if hits == 8:
+                self.spr_overrun = True
+            else:
+                hits += 1
+
     def _plot(self, colour):
         """PIX_DATA: one pixel at (X, Y), then X advances. Write-only."""
         bpp = 1 << self.bpp_log
@@ -1102,11 +1127,18 @@ class Machine:
         if self.line >= V_TOTAL:
             self.line = 0
             self.frames += 1
+        if self.line == V_VIS:
+            # At the *start* of vertical blanking, as the hardware
+            # raises it (cool8_vga's frame_start, docs section 6). This
+            # fired at the counter wrap for years — 45 lines late — and
+            # a handler racing the top border would have seen it.
             self.video.blink += 1
             self.video.irq_fl |= 0x02           # vblank
         self.video.raster = self.line
         if (self.line & 0xFF) == self.video.rcmp:
             self.video.irq_fl |= 0x01           # raster compare
+        if self.video.spr_en:
+            self.video.scan_sprites(self.line)
 
     def run_line(self):
         """One scanline: the CPU, then the raster, then the interrupts."""

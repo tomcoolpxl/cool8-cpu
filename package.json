@@ -37,6 +37,7 @@
     "board:screen": "python tools/board.py --screen",
     "board:ports": "python tools/board.py --ports",
     "emu": "python tools/cool8run.py",
+    "emu:rust": "python tools/cool8rsrun.py",
     "console": "python tools/cool8screen.py",
     "load": "python tools/cool8load.py"
   },
@@ -117,6 +118,7 @@
       {"id": "flash:system", "about": "BASIC only, to flash offset $100000"},
       {"id": "flash:verify", "about": "read both halves back off the board and compare byte for byte"},
       {"id": "emu",          "about": "the machine in a window: screen, keyboard, speaker"},
+      {"id": "emu:rust",     "about": "the same window on the Rust machine: scanline-accurate video, full speed. Needs cargo"},
       {"id": "console",      "about": "the board's text screen in a terminal. --port COM6"},
       {"id": "load",         "about": "the hardware loader: --load, --dump, --go, --halt"},
       {"id": "synth",        "about": "hygiene, LUT/FF count, gate estimate"},

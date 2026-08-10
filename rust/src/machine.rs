@@ -370,9 +370,9 @@ pub struct Video {
     pub spr: [u8; 256],
     spr_idx: u8,
     spr_hold: u8,
-    spr_en: bool,
-    spr_overrun: bool,
-    spr_bank: u8,
+    pub spr_en: bool,
+    pub spr_overrun: bool,
+    pub spr_bank: u8,
 }
 
 // Mode presets, as cool8vm.Video.PRESETS: (ctrl, base, stride, vactive).
@@ -425,8 +425,33 @@ impl Video {
         }
     }
 
-    fn bpp_log(&self) -> u8 {
+    pub fn bpp_log(&self) -> u8 {
         (self.ctrl >> 2) & 3
+    }
+
+    /// The per-line slot scan, as cool8_sprite.v runs it and exactly as
+    /// cool8vm.Video.scan_sprites states it: eight sprites fit on a
+    /// scanline, the ninth sets the overrun flag, and the two trailing
+    /// rows past a sprite's bottom edge take slots like anything else.
+    pub fn scan_sprites(&mut self, line: u32) {
+        let mut hits = 0;
+        for si in (0..256).step_by(8) {
+            let d1 = self.spr[si + 1];
+            if d1 & 0x40 == 0 {
+                continue;
+            }
+            let h = if d1 & 0x80 != 0 { 16u32 } else { 8 };
+            let y = ((d1 as u32 & 0x01) << 8) | self.spr[si] as u32;
+            let dy = line.wrapping_sub(y) & 0x3FF;
+            if !(dy < h + 2 && (line < 480 || dy >= h)) {
+                continue;
+            }
+            if hits == 8 {
+                self.spr_overrun = true;
+            } else {
+                hits += 1;
+            }
+        }
     }
 
     fn irq(&self) -> bool {
@@ -681,6 +706,9 @@ pub struct Machine {
     pub frames: u64,
     snd_owed: u64,
     tick_owed: u64,
+    /// Display only, never CPU-visible: parity with cool8vm.Machine is
+    /// untouched whether this is attached or not.
+    pub renderer: Option<crate::render::Renderer>,
 }
 
 impl Machine {
@@ -704,6 +732,7 @@ impl Machine {
             frames: 0,
             snd_owed: 0,
             tick_owed: 0,
+            renderer: None,
         };
         m.cpu.reset(&mut m.bus);
         m
@@ -724,12 +753,22 @@ impl Machine {
         if self.line >= V_TOTAL {
             self.line = 0;
             self.frames += 1;
+        }
+        if self.line == 480 {
+            // At the start of vertical blanking, as cool8_vga raises
+            // frame_start — cool8vm.py's rule, corrected to the RTL's.
             self.bus.video.blink += 1;
             self.bus.video.irq_fl |= 0x02; // vblank
         }
         self.bus.video.raster = self.line;
         if self.line & 0xFF == self.bus.video.rcmp as u32 {
             self.bus.video.irq_fl |= 0x01; // raster compare
+        }
+        if self.bus.video.spr_en {
+            self.bus.video.scan_sprites(self.line);
+        }
+        if let Some(r) = self.renderer.as_mut() {
+            r.line_event(self.line, &self.bus);
         }
     }
 
