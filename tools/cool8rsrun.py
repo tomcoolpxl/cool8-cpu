@@ -68,9 +68,13 @@ def main():
         import rustsim
         cmd.append(f"+flash={rustsim._basic_image()}")
 
+    env = dict(os.environ)
+    # SDL2's cmake_minimum_required predates what cmake 4 will still
+    # speak to; this is cmake's own documented floor for exactly that.
+    env.setdefault("CMAKE_POLICY_VERSION_MINIMUM", "3.5")
     r = subprocess.run(["cargo", "build", "--release", "--features", "gui"],
                        cwd=os.path.join(ROOT, "rust"),
-                       capture_output=True, text=True)
+                       capture_output=True, text=True, env=env)
     if r.returncode != 0:
         print(r.stdout, r.stderr)
         return 1
