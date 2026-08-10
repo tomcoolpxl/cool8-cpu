@@ -39,6 +39,7 @@
 EXTERN TOKTAB
 EXTERN RUNTAB
 EXTERN iisr
+EXTERN inmi
 EXTERN irring
 EXTERN irhead
 EXTERN irtail
@@ -2145,6 +2146,10 @@ fdrv = 0
 ' frame later. Both sources land in one handler and one ring.
 POKE $FFFC, iisr AND 255
 POKE $FFFD, iisr >> 8
+' ...and the break button. The ROM's NMI handler went away with the
+' overlay, so an uninstalled vector would send SW[0] into image bytes.
+POKE $FFFA, inmi AND 255
+POKE $FFFB, inmi >> 8
 POKE $FE1D, $20                 ' enable the vertical blank interrupt
 POKE $FE42, $11                 ' clear the keyboard FIFO and enable its
 POKE $FE42, $10                 ' interrupt -- stale codes are not input
@@ -2496,6 +2501,18 @@ kshift  = $FF12
 kbrk    = $FF13
 kext    = $FF14
 kdown   = $FF15                 ; 16
+
+; The break button. SW[0]'s NMI lands here now that BASIC owns the
+; machine: the ROM's bare-RETI handler went away with the overlay, and
+; an unhandled NMI executed whatever image bytes sat at the stale
+; vector -- a break that half worked and an interpreter that needed a
+; reboot. One flag, the same one Ctrl+Pause and the serial Ctrl-C set,
+; so every way of asking for a break is the same break.
+inmi:   PUSH R0
+        MOV  R0,#1
+        ST   [ibreak],R0
+        POP  R0
+        RETI
 
 iisr:   PUSH R0
         PUSH R1

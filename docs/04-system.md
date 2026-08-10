@@ -1147,8 +1147,12 @@ auto-repeat work with no effort at all.
 | Keyboard data available | IRQ | `KBD_CTRL` bit 4 enables it. **BASIC uses this** |
 | Break button, `SW[0]` | NMI | Debounced, edge-triggered |
 
-`SW[0]` is wired to `NMI` as a **break button**: press it and a hung
-program lands in the monitor with all of its state intact, since an NMI
+`SW[0]` is wired to `NMI` as a **break button**. Under the boot ROM a
+hung program lands in the monitor with all of its state intact; under
+BASIC — whose relocation turns the overlay off, taking the ROM's
+handler with it — BASIC installs its own NMI handler, which sets the
+break flag the interpreter polls, so the button is the same break as
+Ctrl+Pause and the serial Ctrl-C. An NMI
 pushes `PC` and `F` and changes nothing else. It is the escape hatch that
 makes a machine with no other input device debuggable, and it matters
 more since [D40](01-decisions.md#d40--the-hardware-loader-is-a-build-option-and-it-is-off)
