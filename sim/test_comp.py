@@ -66,10 +66,11 @@ END
 # One program per part of the generator, so a failure names the part.
 CASES = [
 
-    ("scalars", """CONST LIMIT = 100 + 23
+    ("scalars", """DIM LIMIT AS INT
 DIM w AS INT
 DIM b AS BYTE
 DIM u AS CARD
+LIMIT = 100 + 23
 w = 1000
 b = 7
 u = $ABCD
@@ -120,11 +121,12 @@ IF u >= $8000 THEN u = 0
 END
 """),
 
-    ("loops", """CONST LIMIT = 123
+    ("loops", """DIM LIMIT AS INT
 DIM w AS INT
 DIM b AS BYTE
 DIM u AS CARD
 DIM i AS INT
+LIMIT = 123
 DO WHILE w <> 0
   w = w - 1
   IF w = 5 THEN

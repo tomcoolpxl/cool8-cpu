@@ -183,6 +183,35 @@ kdbit:  CLR  R0                 ; a zero mask: KEY() is always false
         LDW  X,#kdstub
         RET
 kdstub: .byte 0
+; The former editor commands are tokens now, and their handlers call
+; the editor's compiled cores. Standalone, each core is a RET and the
+; shared buffers are bytes -- the same stubs sim/test_interp.py
+; carries, because this file tests the assembler and not the editor.
+s_parsename:
+        CLR  R0
+        CLR  R1
+        RET
+s_list:
+s_deleterange:
+s_renumber:
+s_new:
+s_dofree:
+s_cls:
+s_dodir:
+s_docompact:
+s_drivecore:
+s_eracore:
+s_savecore:
+s_savedata:
+s_loadcore:
+s_loaddata:
+s_dorun:
+        RET
+a_lbuf: .space 4
+v_llen: .byte 0
+v_ip:   .byte 0
+v_fok:  .byte 0
+v_progend: .word 0
         .include "zp.asm"
         .include "interp.asm"
         .include "toktab.asm"
@@ -313,6 +342,35 @@ kdbit:  CLR  R0                 ; a zero mask: KEY() is always false
         LDW  X,#kdstub
         RET
 kdstub: .byte 0
+; The former editor commands are tokens now, and their handlers call
+; the editor's compiled cores. Standalone, each core is a RET and the
+; shared buffers are bytes -- the same stubs sim/test_interp.py
+; carries, because this file tests the assembler and not the editor.
+s_parsename:
+        CLR  R0
+        CLR  R1
+        RET
+s_list:
+s_deleterange:
+s_renumber:
+s_new:
+s_dofree:
+s_cls:
+s_dodir:
+s_docompact:
+s_drivecore:
+s_eracore:
+s_savecore:
+s_savedata:
+s_loadcore:
+s_loaddata:
+s_dorun:
+        RET
+a_lbuf: .space 4
+v_llen: .byte 0
+v_ip:   .byte 0
+v_fok:  .byte 0
+v_progend: .word 0
         .include "zp.asm"
         .include "interp.asm"
         .include "toktab.asm"

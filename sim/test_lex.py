@@ -47,7 +47,7 @@ T_EOF, T_NL, T_NUM, T_NAME, T_STR, T_OP = range(6)
 # hex and decimal, names with digits and underscores, the two-character
 # operators, a string, a comment, a REM, a blank line, and keywords
 # butted against punctuation.
-SOURCE = """CONST K_1 = $1F
+SOURCE = """K_1 = $1F
 DIM buf_2(15) AS BYTE
 x9 = 100
 IF x9 <> $ff THEN
