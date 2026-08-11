@@ -29,7 +29,7 @@ blue](docs/img/readme-mode4.png)
 | **Sound** | 8 voices — squares and noise, 4-bit volume, 1-bit sigma-delta out |
 | **Input** | PS/2 keyboard and a serial console as equals: `INKEY` reads a queue, `KEY(c)` reads which keys are down right now |
 | **Storage** | 8 MB SPI flash — the bitstream, the system, and a filesystem for `SAVE`/`LOAD`/`DIR` |
-| **Software** | BASIC with a full-screen editor that works **in every screen mode** (80/40/32 columns, C64 editing rules, direct mode, program chaining), graphics, sound, an inline assembler and 8.8 fixed point — 24 KB, resident in the top of RAM |
+| **Software** | BASIC with a full-screen editor that works **in every screen mode** (80/40/32 columns, C64 editing rules, direct mode, program chaining), graphics, sound, SYS for machine code and resident floating point — 24 KB, resident in the top of RAM |
 | **Board** | iCESugar v1.5 — Lattice iCE40UP5K, 5280 logic cells |
 
 ## Prerequisites
@@ -94,9 +94,7 @@ Something to type at it:
 RUN
 ```
 
-The language — every statement, operator, graphics and sound command,
-`ASM` for inline machine code, and the size ledger the whole thing is
-accountable to — is documented in [docs/13-basic.md](docs/13-basic.md).
+The language — every statement, operator, graphics and sound command, and the size ledger — is documented in [docs/13-basic.md](docs/13-basic.md).
 
 ## What's inside
 

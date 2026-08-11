@@ -1231,33 +1231,25 @@ SUB dorun()
         MOV  R0,#$7E
         ST   [$002B],R0
   END ASM
-  ' PEND and the code base need progend, which is a BASIC variable
+  ' PEND and the name table need progend, which is a BASIC variable.
+  ' **The name table starts at progend now.** It used to start wherever
+  ' the assembly pass had finished laying code down; there is no pass
+  ' any more ([D63]), so nothing sits between the program and the names.
   POKE $0016, progend AND 255
   POKE $0017, progend >> 8
-  POKE $00DC, progend AND 255
-  POKE $00DD, progend >> 8
+  POKE $0027, progend AND 255
+  POKE $0028, progend >> 8
   ASM
         MOV  R0,#$00            ; ERR is cleared HERE, at the entry of
-        ST   [$0018],R0         ;   the code that reads it. aprog and
-                                ;   irun only ever SET it, so a stale
-                                ;   ?BREAK from the last run must not
-                                ;   be able to fail the fault check
-                                ;   below and skip the run
-        MOV  R1,#$02            ; the assembly pass, over the whole
-        CALL aprog              ;   program, before a statement runs
-        LD   R0,[$0018]         ; did it fault?
-        TST  R0
-        BNE  .out
-        LD   R0,[$00DA]         ; the name table starts where the
-        ST   [$0027],R0         ;   assembled code ended
-        LD   R0,[$00DB]
-        ST   [$0028],R0
-        MOV  R0,#$00            ; and LREC goes back to the first
-        ST   [$0014],R0         ;   record: the assembly pass walked it
-        MOV  R0,#$02            ;   all the way to the end
+        ST   [$0018],R0         ;   the code that reads it. irun only
+                                ;   ever SETS it, so a stale ?BREAK from
+                                ;   the last run must not survive into
+                                ;   this one
+        MOV  R0,#$00            ; LREC to the first record
+        ST   [$0014],R0
+        MOV  R0,#$02
         ST   [$0015],R0
         CALL irun
-.out:
   END ASM
   ' NOTHING is restored, by ruling: mode, palette, scroll, sprites and
   ' sound all stay exactly as the program left them, and the editor
@@ -2035,26 +2027,16 @@ SUB dodirect()
   END ASM
   POKE $0016, progend AND 255
   POKE $0017, progend >> 8
-  POKE $00DC, progend AND 255
-  POKE $00DD, progend >> 8
+  POKE $0027, progend AND 255
+  POKE $0028, progend >> 8
   ASM
         MOV  R0,#$00            ; ERR cleared at the entry of the
         ST   [$0018],R0         ;   code that reads it, as in dorun
-        MOV  R1,#$02
-        CALL aprog
-        LD   R0,[$0018]
-        TST  R0
-        BNE  dirout
-        LD   R0,[$00DA]
-        ST   [$0027],R0
-        LD   R0,[$00DB]
-        ST   [$0028],R0
         MOV  R0,#$00            ; LREC back to PROG for subscan
         ST   [$0014],R0
         MOV  R0,#$02
         ST   [$0015],R0
         CALL idrct
-dirout:
   END ASM
   ' a direct MODE just took effect: the editor follows it, here
   CALL setgeom()
@@ -2604,17 +2586,29 @@ irpush: LD   R1,[irhead]
         ST   [irhead],R1
         RET
 
-; ---- the interpreter and the on-machine assembler. Both are written
-; ---- without .org for exactly this: every address in the image is
-; ---- relative and nothing hardcodes one, so joining them here shifts
-; ---- everything and breaks nothing.
+; ---- the interpreter. Written without .org for exactly this: every
+; ---- address in the image is relative and nothing hardcodes one, so
+; ---- joining it here shifts everything and breaks nothing.
 ;
-; zp.asm comes first and exactly once. Neither of the two includes it,
-; because in the built system both are present and a second copy would
-; redefine every name.
+; zp.asm comes first and exactly once; interp.asm does not include it,
+; because more than one copy would redefine every name.
+;
+; **asm.asm is not here any more** -- see [D63]. The on-machine
+; assembler was never wired up: nothing in the interpreter ever invoked
+; it, so no ASM block was ever assembled and no label was ever defined.
+; It cost 2,886 bytes of the image and 38 bytes of page 0, and page 0 is
+; the resource with no slack anywhere. The file stays in the tree, and
+; tools/cool8asm.py is the assembler now -- assemble on the host, load
+; the bytes, and reach them with SYS.
         .include "zp.asm"
         .include "interp.asm"
-        .include "asm.asm"
+
+; ---- floating point, resident. [D63] spent the assembler's 2,886 bytes
+; ---- on this: the package that was a loadable library in D62 is part
+; ---- of the system now, so SIN, LOG, SQR and ^ are ordinary functions
+; ---- and a float can appear in an expression.
+        .include "fp.asm"
+        .include "fpbas.asm"
 
 ; ---- the keyboard, the same source the boot ROM's monitor is built
 ; ---- from. It cannot be shared at run time: this image ends at $F20A,

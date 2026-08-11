@@ -37,6 +37,14 @@ ASIC.
 
 ## 2. Memory map
 
+**This section is normative for what the hardware decodes.
+[`tools/memmap.py`](../tools/memmap.py) is the machine-readable copy and
+follows it**, the same arrangement `tools/opcodes.py` has for the
+encoding: Python imports addresses from there rather than writing one
+down twice, and `poe check` fails on drift. The *software* allocation of
+page 0 belongs to [`sw/zp.asm`](../sw/zp.asm), which is what the
+assembler reads, and `memmap.py` verifies itself against those equates.
+
 | Range | Size | Contents |
 |---|---|---|
 | `$0000–$FDFF` | 65024 B | RAM |
@@ -48,6 +56,13 @@ Plus a reset-time overlay:
 | Range | While `ROMEN=1` |
 |---|---|
 | `$F000–$FDFF`, `$FF00–$FFFF` | Boot ROM (EBR) on **reads** |
+
+**Nothing decodes into page 0.** It is worth saying because it is the
+question asked every time something wants cheap storage there, and the
+answer has to hold for the whole machine and not just BASIC: the boot
+ROM, the monitor and the disassembler declare no page-0 storage at all,
+and the I/O page starts at `$FE00`. `memmap.py --check` is what keeps
+that true as things move.
 
 **Writes always go to RAM**, even where the ROM overlay is active. That
 is what lets the boot code install the interrupt vectors at

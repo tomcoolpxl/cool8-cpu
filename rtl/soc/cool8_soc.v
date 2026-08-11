@@ -146,15 +146,15 @@ module cool8_soc #(
 
     localparam RX_DEPTH = 1 << RX_ABITS;
 
-    localparam [7:0] A_SYSCTRL  = 8'h00,
-                     A_SYSSTAT  = 8'h02,
-                     A_LED      = 8'h03,
-                     A_UARTSTAT = 8'h70,
-                     A_UARTDATA = 8'h71,
-                     A_UARTDIVL = 8'h72,
-                     A_UARTDIVH = 8'h73,
-                     A_LDRCTRL  = 8'h80,
-                     A_LDRSTAT  = 8'h81;
+    localparam [7:0] A_SYSCTRL = 8'h00,        //: SYS_CTRL     system control: reset and bank selects
+                     A_SYSSTAT = 8'h02,        //: SYS_STAT     system status, read-only
+                     A_LED = 8'h03,            //: LED          the board's LEDs, one per bit
+                     A_UARTSTAT = 8'h70,       //: UART_STAT    transmit ready, receive ready
+                     A_UARTDATA = 8'h71,       //: UART_DATA    read receives, write transmits
+                     A_UARTDIVL = 8'h72,       //: UART_DIV_L   baud divisor, low
+                     A_UARTDIVH = 8'h73,       //: UART_DIV_H   baud divisor, high
+                     A_LDRCTRL = 8'h80,        //: LDR_CTRL     boot loader control
+                     A_LDRSTAT = 8'h81;        //: LDR_STAT     boot loader status
 
     // ---------------------------------------------------------- state
 

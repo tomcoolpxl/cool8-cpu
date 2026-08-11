@@ -90,8 +90,11 @@ module cool8_pixport (
     input  wire [15:0] vr_rdata
 );
 
-    localparam [7:0] A_PXL = 8'h34, A_PXH = 8'h35,
-                     A_PYL = 8'h36, A_PYH = 8'h37, A_PDAT = 8'h38;
+    localparam [7:0] A_PXL = 8'h34,            //: PIX_X_L      plot X, low
+                     A_PXH = 8'h35,            //: PIX_X_H      plot X, high
+                     A_PYL = 8'h36,            //: PIX_Y_L      plot Y, low
+                     A_PYH = 8'h37,            //: PIX_Y_H      plot Y, high
+                     A_PDAT = 8'h38;           //: PIX_DATA     write plots the pixel at X,Y
 
     localparam [2:0] S_IDLE = 3'd0, S_MUL = 3'd1, S_RD = 3'd2,
                      S_WR   = 3'd3, S_END = 3'd4;

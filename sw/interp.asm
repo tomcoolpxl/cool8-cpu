@@ -171,6 +171,8 @@ irun:
         ST   [EDEPTH],R0        ; at statement level, not inside a paren
         ST   [NNAME],R0         ; and no long name is defined yet
         ST   [CDEPTH],R0        ; nor a call in progress
+        ST   [FSP],R0           ; nor a float operand pending -- see
+                                ;   idrct for why this one matters most
         CALL drst               ; the DATA pointer rewinds, unpositioned
         CLR  R0
         ST   [ibreak],R0        ; and nothing is asking it to stop
@@ -527,6 +529,17 @@ idrct:  CLR  R0
         ST   [EDEPTH],R0
         ST   [NNAME],R0
         ST   [CDEPTH],R0
+        ST   [FSP],R0           ; **not optional.** fsav refuses past
+                                ;   FSDEEP without pushing, and its
+                                ;   caller pops regardless, so one
+                                ;   over-nested expression leaves FSP
+                                ;   five below zero -- and a byte
+                                ;   underflows to 251, past every
+                                ;   depth test. Every expression for
+                                ;   the rest of the session then failed
+                                ;   ?COMPLEX and returned rubbish:
+                                ;   2 + 2 printed 1538. Resetting here
+                                ;   bounds it to the statement.
         CALL drst               ; READ starts at the first DATA
         CLR  R0
         ST   [ibreak],R0
@@ -672,77 +685,131 @@ bad:    MOV  R0,#E_SYN
 ; honest answer and costs one slot each.
 sttab:
         .word h_print           ; $80 PRINT
+                                ;: PRINT [item][; | ,]...  strings and numbers; a trailing separator holds the newline
         .word h_sub             ; $81 SUB -- a definition, skipped
+                                ;: SUB name  a definition; stepped over when execution reaches it
         .word h_sub             ; $82 FUNCTION
+                                ;: FUNCTION name  parsed as SUB; there are no return values
         .word h_dim             ; $83 DIM
+                                ;: DIM name(size:int)  one dimension, integer elements !intonly
         .word h_run             ; $84 RUN, up from the tail when
+                                ;: RUN
                                 ;   CONST left
         .word h_for             ; $85 FOR
+                                ;: FOR var = from:int TO to:int [STEP step:int]  eight deep !intonly
         .word h_next            ; $86 NEXT
+                                ;: NEXT [var]  naming an outer var closes the inner loops
         .word bad               ; $87 TO
         .word h_do              ; $88 DO
+                                ;: DO [WHILE cond | UNTIL cond]
         .word h_loop            ; $89 LOOP
+                                ;: LOOP [WHILE cond | UNTIL cond]
         .word bad               ; $8A WHILE
         .word bad               ; $8B UNTIL
         .word h_exit            ; $8C EXIT
+                                ;: EXIT DO
         .word h_if              ; $8D IF
+                                ;: IF cond THEN stmt [ELSE stmt]  single line; the arm is one statement
         .word bad               ; $8E THEN
         .word h_else            ; $8F ELSE
+                                ;: ELSE stmt
         .word h_else            ; $90 ELSEIF
+                                ;: ELSEIF cond THEN stmt
         .word h_end             ; $91 END
+                                ;: END
         .word h_ret             ; $92 RETURN
+                                ;: RETURN
         .word h_call            ; $93 CALL
+                                ;: CALL name  no parameters and no locals
         .word bad               ; $94 AS
         .word bad               ; $95 INT
+                                ;: INT(a:float) -> int  floors; the float-to-integer crossing
         .word bad               ; $96 BYTE
         .word bad               ; $97 PEEK
+                                ;: PEEK(addr:int) -> int  a function, not a statement !intonly
         .word h_poke            ; $98 POKE
+                                ;: POKE addr:int, value:int !intonly
         .word bad               ; $99 AND
         .word bad               ; $9A OR
         .word bad               ; $9B XOR
         .word bad               ; $9C CARD
         .word bad               ; $9D AT
-        .word h_asm             ; $9E ASM
+        .word h_sys             ; $9E SYS
+                                ;: SYS addr:int  jumps; the routine's own RET comes back !intonly
         .word bad               ; $9F EXTERN
         .word bad               ; $A0 INCLUDE
         .word bad               ; $A1 INLINE
         .word h_goto            ; $A2 GOTO
+                                ;: GOTO line:int
         .word bad               ; $A3 WEND
         .word bad               ; $A4 NUM
+                                ;: (reserved)  K_NUM: a numeric literal with two binary bytes after it. The "?" entry in TOKTAB holds the slot open
         .word h_mode            ; $A5 MODE
+                                ;: MODE n:int !intonly
         .word h_vsync           ; $A6 VSYNC
+                                ;: VSYNC  waits for the next frame
         .word h_scroll          ; $A7 SCROLL
+                                ;: SCROLL dx:int, dy:int !intonly
         .word h_palette         ; $A8 PALETTE
+                                ;: PALETTE slot:int, colour:int !intonly
         .word h_sprite          ; $A9 SPRITE
+                                ;: SPRITE n:int, x:int, y:int, pattern:int, attr:int !intonly
         .word h_vpoke           ; $AA VPOKE
+                                ;: VPOKE addr:int, value:int  video memory !intonly
         .word h_sound           ; $AB SOUND
+                                ;: SOUND voice:int, pitch:int, volume:int, length:int !intonly
         .word h_hline           ; $AC HLINE
+                                ;: HLINE x1:int, x2:int, y:int, colour:int !intonly
         .word h_plot            ; $AD PLOT
+                                ;: PLOT x:int, y:int, colour:int !intonly
         .word h_line            ; $AE LINE
+                                ;: LINE x1:int, y1:int, x2:int, y2:int, colour:int !intonly
         .word h_input           ; $AF INPUT
+                                ;: INPUT var  digits and a leading minus; no float can be typed !intonly
         .word h_else            ; $B0 DATA -- executed, it is a line to
+                                ;: DATA n[, n]...  numbers only; skipped when execution reaches it
                                 ;   step over, which is ELSE's whole job
         .word h_read            ; $B1 READ
+                                ;: READ var[, var]...  scalar targets only
         .word h_restore         ; $B2 RESTORE
+                                ;: RESTORE
         .word bad               ; $B3 STEP -- a clause, like TO
         .word h_on              ; $B4 ON
+                                ;: ON e:int GOTO line[, line]...  literal lines; out of range falls through
         .word h_tile            ; $B5 TILE
+                                ;: TILE x:int, y:int, tile:int, attr:int !intonly
         .word h_clg             ; $B6 CLG
+                                ;: CLG colour:int !intonly
         .word h_pitch           ; $B7 PITCH
+                                ;: PITCH voice:int, pitch:int !intonly
         .word h_gtext           ; $B8 GTEXT
+                                ;: GTEXT x:int, y:int, text:string !intonly
         .word h_list            ; $B9 LIST -- the former editor
+                                ;: LIST [from:int][, to:int]
         .word h_new             ; $BA NEW     commands, one vocabulary
+                                ;: NEW
         .word h_free            ; $BB FREE    now: every one runs in a
+                                ;: FREE  prints the bytes left
         .word h_renum           ; $BC RENUMBER  program or typed direct
+                                ;: RENUMBER
         .word h_del             ; $BD DELETE
+                                ;: DELETE from:int[, to:int]
         .word h_cls             ; $BE CLS
+                                ;: CLS
         .word h_save            ; $BF SAVE
+                                ;: SAVE name:string [AT addr:int]
         .word h_load            ; $C0 LOAD
+                                ;: LOAD name:string [AT addr:int]
         .word h_dir             ; $C1 DIR
+                                ;: DIR
         .word h_era             ; $C2 ERA
+                                ;: ERA name:string
         .word h_compact         ; $C3 COMPACT
+                                ;: COMPACT
         .word h_drive           ; $C4 DRIVE
+                                ;: DRIVE n:int
         .word h_rem             ; $C5 REM -- the last token
+                                ;: REM text  stored verbatim; nothing inside is tokenised
 
 ; ---------------------------------------------------------------------
 ; REM, and the apostrophe stmt sends here: a comment.
@@ -777,10 +844,15 @@ h_let:
         CMP  R0,#52
         BCC  .notstr            ; resident A-Z is never a string
         PUSH R0
+        CALL isflt
+        POP  R0
+        BCC  .flt
+        PUSH R0
         CALL isstr
         POP  R0
         BCS  .notstr
         JMP  h_lets             ; X is on its descriptor already
+.flt:   JMP  h_letf
 .notstr:
         SKIPSP
         CMP  R2,#$28            ; '(' -- a subscripted assignment
@@ -1097,8 +1169,18 @@ h_print:
         JMP  stmt
 .item:  CALL eval
         LD   R2,[STYPE]
+        BNE  .nn
+        BRA  .num
+        ; A float renders into FSBUF and goes out through the string
+        ; path: `fstr` answers exactly the (pointer, count) pair
+        ; s_putsn wants, so PRINT grew a branch and not a printer.
+.nn:    CMP  R2,#2
         BNE  .str
-        PUSHW Y                 ; saved *first*: the argument has to be
+        PUSHW Y
+        CALL fprint
+        POPW Y
+        BRA  .str
+.num:   PUSHW Y                 ; saved *first*: the argument has to be
         PUSH R1                 ;   on top when the call reads [SP+2]
         PUSH R0
         CALL s_putn
@@ -1504,77 +1586,68 @@ eval:   CALL erel
 
 erel:
         CALL prim               ; the first operand
-        ; ---- { * operand }, highest precedence, checked inline
+        ; ---- { ^ * / MOD operand }, highest precedence.
         ;
-        ; One peek serves all three levels. skipsp leaves the character
-        ; in R2, and *, + - and the relationals are each tested against
-        ; it in turn without touching Y again -- so an operand costs one
-        ; skip, not three. Every arm that consumes an operator rejoins
-        ; at .mul, which is where the next peek happens.
-.mul:   SKIPSP
-        CMP  R2,#$2A            ; '*'
-        BEQ  .m1
-        CMP  R2,#$2F            ; '/'
-        BEQ  .d1
-        CMP  R2,#$4D            ; 'M' -- only then is MOD worth probing
-        BEQ  .m2                ;   for; the probe is three calls deep
-        CMP  R2,#$6D            ;   and every operand would pay it
-        BNE  .sum
-.m2:    PUSH R1                 ; ismod needs R0, and R0:R1 is the value
-        PUSH R0                 ;   being accumulated. POP leaves C.
-        CALL ismod
-        POP  R0
-        POP  R1
-        BCS  .sum
-        CALL mdrhs
-        CALL idiv16
-        LD   R0,[DREM]          ; the same pass already produced it
-        LD   R1,[DREM+1]
-        BRA  .mul
-.m1:    INCW Y
-        CALL mdrhs
-        CALL imul16
-        BRA  .mul
-.d1:    INCW Y
-        CALL mdrhs
-        CALL idiv16
-        BRA  .mul
+        ; **This level used to be written twice** -- inline here, and
+        ; again as `mulrest` for the callers that need the mul level
+        ; without the two above it. The copies drifted, and every float
+        ; bug in [D63] came out of the gap: `mulrest` was integer-only,
+        ; so `A# = B# + C# * D#` dropped the multiply, and it never knew
+        ; `^` at all, so `0 - 2 ^ 2` was -2. One evaluator now, called
+        ; from both places, which is the only way the two stay equal.
+        ;
+        ; It returns with the character that stopped it still in R2, so
+        ; `.sum` reads it without touching Y again -- one skip per
+        ; operand, not three, which is what the two copies were for.
+.mul:   CALL mulrest
         ; ---- { + operand | - operand }
 .sum:   CMP  R2,#$2B            ; '+', on the character .mul already has
         BEQ  .add
         CMP  R2,#$2D            ; '-'
         BEQ  .sub
-        BRA  .rel
+        JMP  .rel
+        ; A float left goes the same way an integer one does -- fsav
+        ; puts either on the stack and fpair sorts them out once the
+        ; right is known. Only a string still peels off here, and the
+        ; test for it is unchanged: any non-zero type that is not 2.
 .add:   INCW Y
         LD   R2,[STYPE]
+        CMP  R2,#2
+        BEQ  .adds
+        TST  R2
         BNE  .cat               ; the left was a string: append, not add
-        PUSH R1
-        PUSH R0
+.adds:  CALL fsav
         CALL prim
         CALL mulrest
-        MOV  R2,R0
-        MOV  R3,R1
-        POP  R0
-        POP  R1
+        CALL fpair
+        BCS  .fadd
         ADD  R0,R2
         ADC  R1,R3
-        BRA  .mul
+        JMP  .mul
+.fadd:  CALL fopadd
+        ; The value is in FACC now, not R0:R1, and the type says so --
+        ; then straight back to .mul, which looks for the next operator
+        ; exactly as it does after an integer one.
+        ; The float arms pushed .mul past a branch's reach, so the tail
+        ; of this level jumps. Three bytes each, and the alternative is
+        ; a trampoline that costs the same and reads worse. The type is
+        ; set by the fop* wrappers now, which all end at fretf.
+.fdone: JMP  .mul
         ; Concatenation is the accumulator doing nothing special: the
         ; operand appends where the last one stopped.
 .cat:   CALL prim
-        BRA  .mul
+        JMP  .mul
 .sub:   INCW Y
-        PUSH R1
-        PUSH R0
+        CALL fsav
         CALL prim
         CALL mulrest
-        MOV  R2,R0
-        MOV  R3,R1
-        POP  R0
-        POP  R1
+        CALL fpair
+        BCS  .fsub
         SUB  R0,R2
         SBC  R1,R3
-        BRA  .mul
+        JMP  .mul
+.fsub:  CALL fopsub
+        BRA  .fdone
         ; ---- << and >>, at the same level the compiler holds them.
         ; A lone < or > is a relation and falls through with R2 put
         ; back the way .rel expects it.
@@ -1632,7 +1705,8 @@ erel:
 
 .req:   INCW Y
         LD   R2,[STYPE]
-        BEQ  .nreq
+        CMP  R2,#1              ; 1 is a string; 0 and 2 both go to rhs,
+        BNE  .nreq              ;   which sorts an integer from a float
         CALL srhs
         CALL scmp
         TST  R0
@@ -1660,7 +1734,8 @@ erel:
 .y2:    JMP  true
 .rne:   INCW Y
         LD   R2,[STYPE]
-        BEQ  .nrne
+        CMP  R2,#1              ; as .req
+        BNE  .nrne
         CALL srhs
         CALL scmp
         TST  R0
@@ -1726,21 +1801,52 @@ srhs:   LD   R2,[SLEN]
 
 ; rhs -- the right-hand side of a relation, with its own * and +/-.
 ; The left side is preserved in R0:R1 across it.
-rhs:    PUSH R1
-        PUSH R0
-        CALL prim
-        CALL mulrest
-        CALL sumrest
-        MOV  R2,R0
-        MOV  R3,R1
-        POP  R0
-        POP  R1
-        RET
+; rhs -- the right of a relational, and the one place all six of them
+; go through, which is why the float case is handled here and not in
+; each arm.
+;
+; **A comparison does not need a float comparison.** `fpair` has already
+; promoted both sides, `fcmp` already answers $FF/0/1 for below, equal
+; and above, and every arm below already subtracts R0:R1 - R2:R3 and
+; branches on the result. So the float case rewrites the pair as
+; (sign, 0) and lets the integer arms run unchanged -- six operators
+; for one arm's worth of code. The push/pop the integer path used is
+; now fsav/fpair, which is the same save with a type on it.
+; `erel` rather than prim/mulrest/sumrest: the latter three are the
+; integer-only continuation, so `IF A# > B# / C#` evaluated the right in
+; integers and compared against rubbish, while the same expression on
+; the *left* was correct because erel's own arms promote. Calling erel
+; is one call instead of three and gets the promotion for nothing.
+;
+; It also consumes a second relational, and **right to left**, not the
+; left-to-right an earlier version of this comment claimed: the right
+; operand is a whole `erel`, so `1 < 2 < 3` is `1 < (2 < 3)` and is
+; false. Measured, not reasoned -- it is pinned in sim/test_run.py.
+; Chained relationals are not meaningful in any BASIC of this era, so
+; this is documented rather than defended.
+rhs:    CALL fsav
+        CALL erel
+        CALL fpair
+        BCC  .ri                ; both integers: R0:R1 and R2:R3, as before
+        PUSHW Y                 ; fp.asm owns Y
+        CALL fcmp
+        POPW Y
+        CLR  R1                 ; the right becomes 0 and the left the sign
+        CLR  R2
+        CLR  R3
+        CMP  R0,#$80
+        BCC  .ri
+        MOV  R1,#$FF            ; $FF is -1: sign-extend it
+.ri:    RET
 
 ; mulrest -- { * operand } applied to whatever is in R0:R1.
 mulrest:
         SKIPSP
-        CMP  R2,#$2A
+        CMP  R2,#$5E            ; '^', the level above this one. Tested
+        BNE  .nopw              ;   inline: `CALL pwrest` here would pay
+        CALL pwapply            ;   a CALL and a RET on every operand
+        BRA  mulrest            ;   and every loop pass to discover the
+.nopw:  CMP  R2,#$2A            ;   common case, that there is no '^'
         BEQ  .go
         CMP  R2,#$2F            ; '/'
         BEQ  .dv
@@ -1760,14 +1866,71 @@ mulrest:
         LD   R1,[DREM+1]
         BRA  mulrest
 .out:   RET
+        ; fsav/fpair rather than mdrhs, for the same reason `rhs` gave
+        ; up prim/mulrest/sumrest: this is the continuation the *float*
+        ; arms of .add and .sub call to get `b * c` before adding it,
+        ; and while it was integer-only `A# = B# + C# * D#` silently
+        ; lost the multiply. Every one of mulrest's callers wanted the
+        ; promotion; none of them could have it.
 .go:    INCW Y
-        CALL mdrhs
+        CALL fopnd
+        BCS  .fg
         CALL imul16
         BRA  mulrest
+.fg:    CALL fopmul
+        BRA  mulrest
 .dv:    INCW Y
-        CALL mdrhs
+        CALL fopnd
+        BCS  .fv
         CALL idiv16
         BRA  mulrest
+.fv:    CALL fopdiv
+        BRA  mulrest
+
+; ---------------------------------------------------------------------
+; pwrest -- { ^ operand }, the level between unary minus and `*`.
+;
+; **`^` binds tighter than a leading minus, because that is what the
+; notation means.** -x^2 is -(x^2) in mathematics, where the exponent
+; belongs to the x and the sign belongs to the result; writing (-x)^2
+; is how you say the other thing. Microsoft's 6502 BASIC agrees and
+; prices it exactly here -- its OPTAB gives `^` 127 and negation 125,
+; with `*` on 123 below both. This used to be a level lower: `.neg`
+; took a whole primary and negated it, so -A^2 was (-A)^2, which then
+; met a negative base and came back as -A.
+;
+; It is its own routine rather than an arm of mulrest so that `.neg`
+; can call it without also taking the `*` and `/` that must stay
+; outside the minus -- -A*B is (-A)*B in both dialects.
+;
+; Left-associative, so 2^3^2 is 64: the loop applies each `^` before
+; looking for the next, and the right operand is a bare `prim`. MS
+; BASIC lands the same way, and for the same reason -- FRMEVL compares
+; the pending precedence with `BCS`, so equal binds left.
+;
+; `^` is exp(y ln x) and has no integer form, so two integers are
+; promoted rather than given a second power routine.
+; ---------------------------------------------------------------------
+; Two routines, because the callers want different halves. `mulrest`
+; has already tested the character and wants one application; `.neg`
+; and `fopnd` are starting cold and want the loop. Splitting them keeps
+; the operator itself written once -- the duplication that cost this
+; project three bugs -- while leaving mulrest's test inline.
+pwapply:
+        INCW Y
+        CALL fsav               ; not fopnd: that applies pwrest to the
+        CALL prim               ;   right operand, which would make `^`
+        CALL fpair              ;   right-associative
+        BCS  .pf
+        CALL fprom
+.pf:    JMP  foppow
+
+pwrest: SKIPSP
+        CMP  R2,#$5E            ; '^'
+        BNE  .pout
+        CALL pwapply
+        BRA  pwrest
+.pout:  RET
 
 ; sumrest -- { + operand | - operand } applied to R0:R1.
 sumrest:
@@ -1855,11 +2018,13 @@ prim:
         BEQ  .paren
         CMP  R2,#$2D            ; unary minus
         BEQ  .neg
+        ; Both of these arms are past a conditional branch's +-127 now
+        ; that the float paths sit between, so each inverts and lets a
+        ; JMP carry the distance -- sw/disasm.asm's macros, by hand.
         CMP  R2,#K_PEEK
-        BEQ  .peek
-        ; A keyword token, not a btab name -- see K_INT. The arm is past
-        ; a conditional branch's +-127, so the test is inverted and a JMP
-        ; carries the distance, the way sw/disasm.asm's macros do it.
+        BNE  .npeek
+        JMP  .peek
+.npeek:
         CMP  R2,#K_INT
         BNE  .nint
         JMP  .int
@@ -1885,10 +2050,15 @@ prim:
         BCC  .built
         POPW X
         PUSH R0
+        CALL isflt
+        POP  R0
+        BCC  .fvar
+        PUSH R0
         CALL isstr
         POP  R0
         BCS  .notstr
         JMP  sload              ; X is already on its descriptor
+.fvar:  JMP  floadv
 .built: ADDW SP,#2              ; not a variable after all
         JMP  [X]
 .notstr:
@@ -1936,8 +2106,13 @@ prim:
         CALL edin
         BCS  .deep
         CALL prim
+        CALL pwrest             ; -x^2 is -(x^2); see pwrest's header
         CALL edout
-        MOV  R2,R0
+        LD   R2,[STYPE]         ; a float's sign is its own byte, and
+        CMP  R2,#2              ;   negating R0:R1 would silently drop it
+        BNE  .negi
+        JMP  fneg
+.negi:  MOV  R2,R0
         MOV  R3,R1
         CLR  R0
         CLR  R1
@@ -1995,35 +2170,37 @@ imul16:
         RET
 
 ; ---------------------------------------------------------------------
-; h_asm -- an ASM block met while running.
+; h_sys -- `SYS expr`: call machine code at an address.
 ;
-; The block was assembled at RUN, before a single statement executed, so
-; there is nothing to do here but step over it. That is `h_sub`'s job
-; done across records rather than within a line, and it is why the
-; assembler runs as one linear pass first: a forward CALL into a block
-; that had not been reached yet would otherwise fail, and a block inside
-; an untaken IF would never be assembled at all.
+; **This is what replaced the on-machine assembler** ([D63]). Removing
+; `asm.asm` took 2,886 bytes and 38 of page 0 with it, and took away the
+; only route from BASIC to machine code -- `CALL name` needs the
+; assembler to have defined the name. Ten bytes put the route back:
+; assemble on the host with tools/cool8asm.py, `LOAD "x" AT addr`, and
+; `SYS addr`.
+;
+; **There is no `CALL [X]`**, so the call is a `CALL` to a one-
+; instruction trampoline that jumps. Falling straight into `JMP [X]`
+; instead looks tidier and is wrong: the callee's `RET` then returns
+; past the dispatcher, and the statement after `SYS` never runs. The
+; symptom is a program that prints nothing and does not error.
+;
+; Y is the token pointer and a called routine owns every register, so it
+; is saved across -- the same reason `h_print` saves it around the
+; editor's own screen routines.
 ;
 ; It lives at the end of the file, not beside `bad`. Twelve bytes
 ; between the dispatcher and `h_let` already put `BCC h_let` out of
 ; range once.
 ; ---------------------------------------------------------------------
-h_asm:  CALL nextline
-        BCC  .off
-        SKIPSP
-        CMP  R2,#K_END
-        BNE  h_asm
-        INCW Y
-        SKIPSP
-        CMP  R2,#$9E            ; ASM -- so this is END ASM
-        BNE  h_asm
-        INCW Y                  ; and run whatever follows on that line
+h_sys:  CALL eval
+        MOV  XL,R0
+        MOV  XH,R1
+        PUSHW Y
+        CALL .go
+        POPW Y
         JMP  stmt
-        ; Falling off the end inside a block is not an error: the
-        ; program simply finished.
-.off:   MOV  R0,#E_DONE
-        ST   [ERR],R0
-        RET
+.go:    JMP  [X]
 
 ; ---------------------------------------------------------------------
 ; Arrays, and the heap they live in.
@@ -2327,9 +2504,15 @@ sappend:
         POPW Y
 .done:  RET
 
-; isstr -- C clear if the name in NBUF ends with '$'. The suffix is the
-; type, so this is the whole of the type system.
-isstr:  PUSHW X
+; isstr / isflt -- C clear if the name in NBUF ends with '$' or '#'.
+; **The suffix is the type, and that is the whole of the type system**:
+; A, A# and A$ are three unrelated variables because the character is
+; part of the name, so nothing needs a type field and nothing needs to
+; agree about one. Six bytes bought the float half of it.
+isflt:  MOV  R3,#$23            ; '#'
+        BRA  issuf
+isstr:  MOV  R3,#$24            ; '$'
+issuf:  PUSHW X
         LD   R0,[NLEN]
         CMP  R0,#NSIG
         BCC  .in
@@ -2340,7 +2523,7 @@ isstr:  PUSHW X
         LDW  X,#NBUF
         ADDW X,R0
         LD   R0,[X]
-        CMP  R0,#$24            ; '$'
+        CMP  R0,R3              ; the suffix the caller asked about
         BNE  .no
         POPW X
         CLC
@@ -2647,7 +2830,9 @@ mdrhs:  PUSH R1
 ctab:
         .byte $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
         .byte $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
-        .byte $00,$00,$00,$00,$80,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+        ; $23 '#' and $24 '$' both carry bit 7, so a suffix scans as
+        ; part of the name and `A`, `A#` and `A$` are three names.
+        .byte $00,$00,$00,$80,$80,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
         .byte $80,$80,$80,$80,$80,$80,$80,$80,$80,$80,$00,$00,$00,$00,$00,$00
         .byte $00,$C0,$C1,$C2,$C3,$C4,$C5,$C6,$C7,$C8,$C9,$CA,$CB,$CC,$CD,$CE
         .byte $CF,$D0,$D1,$D2,$D3,$D4,$D5,$D6,$D7,$D8,$D9,$00,$00,$00,$00,$80
@@ -3081,34 +3266,79 @@ btab:   .byte 3,"L","E","N"
         .word slen
         .byte 5,"L","E","F","T","$"
         .word sleft
+                                ;: LEFT$(s:string, n:int) -> string  clamps past the end
         .byte 6,"R","I","G","H","T","$"
         .word sright
+                                ;: RIGHT$(s:string, n:int) -> string  clamps past the end
         .byte 4,"M","I","D","$"
         .word smid
+                                ;: MID$(s:string, start:int, n:int) -> string  empty past the end
         .byte 4,"C","H","R","$"
         .word schr
+                                ;: CHR$(n:int) -> string !intonly
         .byte 3,"A","S","C"
         .word sasc
+                                ;: ASC(s:string) -> int
         .byte 4,"S","T","R","$"
         .word sstr
+                                ;: STR$(n:int|float) -> string  a float renders as PRINT would
         .byte 3,"V","A","L"
         .word sval
+                                ;: VAL(s:string) -> int  stops at a decimal point; nonsense is 0
         .byte 5,"I","N","S","T","R"
         .word sinstr
+                                ;: INSTR(hay:string, needle:string) -> int
         .byte 5,"I","N","K","E","Y"
         .word inkey
+                                ;: INKEY -> int  0 when nothing was typed
         .byte 3,"K","E","Y"
         .word ikey
+                                ;: KEY(code:int) -> int  is that key held down !intonly
         .byte 3,"R","N","D"
         .word irnd
+                                ;: RND(n:int) -> int  0..n-1; RND(0) is the raw word !intonly
         .byte 5,"T","I","M","E","R"
         .word itimer
+                                ;: TIMER -> int  frames since boot
         .byte 5,"V","P","E","E","K"
         .word ivpeek
-        .byte 4,"F","M","U","L"
-        .word ifmul
-        .byte 4,"F","D","I","V"
-        .word ifdiv
+                                ;: VPEEK(addr:int) -> int !intonly
+        ; FMUL and FDIV are gone -- [D63] made a real multiply and a
+        ; real divide resident, and 8.8 was only ever the fraction that
+        ; fitted a 16-bit cell.
+        ; ---- floating point ([D63]). Six bytes an entry, and six more
+        ; ---- for the handler in sw/fpbas.asm, because fp.asm already
+        ; ---- holds the arithmetic.
+        .byte 3,"S","I","N"
+        .word i_sin
+                                ;: SIN(x:float) -> float  radians
+        .byte 3,"C","O","S"
+        .word i_cos
+                                ;: COS(x:float) -> float  radians
+        .byte 3,"T","A","N"
+        .word i_tan
+                                ;: TAN(x:float) -> float  radians; unchecked at a pole
+        .byte 3,"A","T","N"
+        .word i_atn
+                                ;: ATN(x:float) -> float  radians
+        .byte 3,"S","Q","R"
+        .word i_sqr
+                                ;: SQR(x:float) -> float  a negative returns the argument, silently
+        .byte 3,"L","O","G"
+        .word i_log
+                                ;: LOG(x:float) -> float  natural; not-positive returns the argument
+        .byte 3,"E","X","P"
+        .word i_exp
+                                ;: EXP(x:float) -> float
+        .byte 3,"F","L","T"
+        .word i_flt
+                                ;: FLT(n:int) -> float
+        .byte 3,"A","B","S"
+        .word i_abs
+                                ;: ABS(n:int|float) -> same  keeps the type it was given
+        .byte 3,"S","G","N"
+        .word i_sgn
+                                ;: SGN(n:int|float) -> int  -1, 0 or 1, always an integer
         .byte 0
 
 ; ---------------------------------------------------------------------
@@ -3297,6 +3527,9 @@ h_sub:  CALL nextline
 ; pushed backwards and popped forwards, which costs one byte each and
 ; no buffer at all.
 sstr:   CALL earg               ; ( expression )
+        LD   R2,[STYPE]         ; a float renders itself; see .flt
+        CMP  R2,#2
+        BEQ  .flt
         CLR  R2
         ST   [SDIG],R2
         TST  R1
@@ -3332,6 +3565,24 @@ sstr:   CALL earg               ; ( expression )
 .done:  MOV  R0,#1
         ST   [STYPE],R0
         RET
+        ; STR$ of a float, and it needed no printer: `fstr` renders into
+        ; FSBUF and answers a length, and `sappend` takes exactly a
+        ; (pointer, count) -- the same pair PRINT hands to s_putsn. So
+        ; the digits come from the code that already prints them, and
+        ; STR$(X#) and PRINT X# cannot disagree about a value.
+        ;
+        ; **Appended, not assigned.** `fprint` points SACC at FSBUF,
+        ; which is right for PRINT and wrong here: STR$ builds onto the
+        ; accumulator, so `A$ + STR$(X#)` must keep what is already
+        ; there. sappend copies, and sets STYPE to 1 on the way out.
+.flt:   PUSHW Y                 ; fstr walks Y over its output
+        CALL fstr
+        POPW Y
+        MOV  R2,R0              ; the length it answered
+        LDW  X,#FSBUF
+        MOV  R0,XL
+        MOV  R1,XH
+        JMP  sappend
 
 ; sval -- VAL(a$). The argument has appended itself, so this reads the
 ; accumulator's tail and then forgets it again.
@@ -4328,147 +4579,47 @@ h_gtext:
         JMP  .ch
 
 ; ---------------------------------------------------------------------
-; 8.8 fixed point, as three functions. A value cell is 16 bits on this
-; machine, so the fraction that fits it is 8.8: -128..127 and change,
-; 1/256 steps -- sub-pixel positions and speeds, which is what games
-; want a fraction for. + and - already work; FMUL and FDIV carry the
-; point; INT drops it. F(2.5) is spelled 640, or 2*256+128.
+; 8.8 fixed point: FMUL and FDIV are gone, INT stays.
+;
+; They existed because a 16-bit cell was the only number this machine
+; had, and 8.8 was the fraction that fitted it. [D63] made floating
+; point resident, so a real multiply and a real divide now exist with
+; range and an exponent -- and ffargs, fsign, ifmul and ifdiv were 234
+; bytes of a worse answer to the same question.
+;
+; **INT is not part of that and stays.** It is the way a float or a
+; fixed-point value crosses back to an integer, which is what PLOT and
+; POKE and a subscript need, and docs/13-basic.md section 8 turns on it.
 ; ---------------------------------------------------------------------
 
-; ffargs -- (a, b) parsed, signs folded into garg+4, both made positive.
-ffargs: CALL sopen
-        CALL eval
-        ST   [garg],R0
-        ST   [garg+1],R1
-        INCW Y
-        CALL eval
-        CALL sopen
-        ST   [garg+2],R0
-        ST   [garg+3],R1
-        LD   R2,[garg+1]
-        XOR  R2,R1
-        AND  R2,#$80
-        ST   [garg+4],R2
-        LD   R0,[garg+1]
-        AND  R0,#$80
-        BEQ  .p0
-        LD   R0,[garg]
-        LD   R1,[garg+1]
-        CALL negp16
-        ST   [garg],R0
-        ST   [garg+1],R1
-.p0:    LD   R0,[garg+3]
-        AND  R0,#$80
-        BEQ  .p2
-        LD   R0,[garg+2]
-        LD   R1,[garg+3]
-        CALL negp16
-        ST   [garg+2],R0
-        ST   [garg+3],R1
-.p2:    RET
-
-; fsign -- the R0/R1 result negated if the folded sign says so, then
-; the usual number-return dance.
-fsign:  LD   R2,[garg+4]
-        TST  R2
-        BEQ  retnum
-        CALL negp16
-        ; retnum -- R0/R1 as a number: the tail every value-returning
-        ; builtin needs, kept once.
+; retnum -- R0:R1 as a number: the tail every value-returning builtin
+; returns through, and `fretf` in sw/fpbas.asm is its float twin. It sat
+; inside the fixed-point block and is nothing to do with it.
 retnum: PUSH R0
         CLR  R0
         ST   [STYPE],R0
         POP  R0
         RET
 
-; FMUL(a,b) -- (a*b) >> 8, by four hardware multiplies. MUL leaves the
-; product in X and its operands alone, which is what makes this short.
-ifmul:  CALL ffargs
-        LD   R0,[garg]
-        LD   R1,[garg+2]
-        MUL  R0,R1              ; al*bl -- only its high byte survives
-        MOV  R2,XH
-        CLR  R3
-        LD   R0,[garg]
-        LD   R1,[garg+3]
-        MUL  R0,R1              ; al*bh
-        MOV  R0,XL
-        ADD  R2,R0
-        MOV  R0,XH
-        ADC  R3,R0
-        LD   R0,[garg+1]
-        LD   R1,[garg+2]
-        MUL  R0,R1              ; ah*bl
-        MOV  R0,XL
-        ADD  R2,R0
-        MOV  R0,XH
-        ADC  R3,R0
-        LD   R0,[garg+1]
-        LD   R1,[garg+3]
-        MUL  R0,R1              ; ah*bh, shifted left eight
-        MOV  R0,XL
-        ADD  R3,R0
-        MOV  R0,R2
-        MOV  R1,R3
-        JMP  fsign
-
-; FDIV(a,b) -- (a<<8)/b: the integer quotient takes the high byte and
-; eight more restoring steps make the fraction, on the remainder udiv16
-; hands back with the divisor still parked in DVSR.
-ifdiv:  CALL ffargs
-        LD   R0,[garg+2]
-        LD   R1,[garg+3]
-        MOV  R2,R0
-        OR   R2,R1
-        BNE  .go
-        MOV  R0,#E_DIV0
-        ST   [ERR],R0
-        RET
-.go:    MOV  R2,R0
-        MOV  R3,R1
-        LD   R0,[garg]
-        LD   R1,[garg+1]
-        CALL udiv16             ; q in R0/R1, remainder in R2/R3
-        ST   [garg],R0          ; q's low byte becomes the high byte
-        CLR  R0                 ; the fraction, a bit at a time
-        MOV  R1,#8
-.fd:    ADD  R2,R2
-        ADC  R3,R3
-        ADD  R0,R0
-        PUSH R1
-        LD   R1,[DVSR]
-        SUB  R2,R1
-        LD   R1,[DVSR+1]
-        SBC  R3,R1
-        BCS  .yes               ; C is *no borrow*: it fitted
-        LD   R1,[DVSR]
-        ADD  R2,R1
-        LD   R1,[DVSR+1]
-        ADC  R3,R1
-        BRA  .nf
-.yes:   ADD  R0,#1
-.nf:    POP  R1
-        SUB  R1,#1
-        BNE  .fd
-        LD   R1,[garg]
-        JMP  fsign
-
-; INT(a) -- an arithmetic shift right by the point, so it **floors**:
-; INT(-384), which is -1.5, is -2. That is BBC BASIC's INT and it is the
-; right rounding for motion -- every value gets a cell of equal width, so
-; a constant velocity gives constant pixel steps. Truncation towards zero
-; would give the origin a double-width cell and stall an object crossing
-; it for a frame.
+; INT(a) -- a float to the integer at or below it, and **the last of the
+; 8.8 fixed point to go**.
 ;
-; It was called FIX until the rename, which was the bug: FIX means
-; truncate-towards-zero wherever both names exist, and the reference
-; described the function the name promised rather than the one here.
-; The behaviour never changed; only the spelling did.
+; It used to be an arithmetic shift right by eight, because 8.8 was the
+; only fraction a 16-bit cell could hold and dropping the point meant
+; dropping a byte. [D63] made real floats resident, so 8.8 is over and
+; that shift is simply wrong now: `INT(7)` must be 7, not 0.
+;
+; It still **floors**, which is BBC BASIC's INT and the right rounding
+; for motion -- every value gets a cell of equal width, so a constant
+; velocity gives constant pixel steps, where truncation towards zero
+; would give the origin a double-width cell and stall an object crossing
+; it. `ftoi` in sw/fp.asm does that and says why at length.
+;
+; An integer argument comes back unchanged; there is nothing to drop.
 iint:   CALL earg               ; ( expression )
-        MOV  R0,R1
-        CLR  R1
-        MOV  R2,R0
-        AND  R2,#$80
-        BEQ  .fx
-        MOV  R1,#$FF
-.fx:    JMP  retnum
+        LD   R2,[STYPE]
+        CMP  R2,#2
+        BNE  .already
+        CALL ftoi
+.already:
+        JMP  retnum

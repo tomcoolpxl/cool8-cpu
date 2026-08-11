@@ -221,12 +221,18 @@ src:
 # The boot screen's text. The free count is a build-time constant: the
 # user area is $0200-$7EDF and a freshly booted machine holds nothing.
 FREE = 0x7EDF - 0x0200
+
+# BASIC's version, and the only place it is written down. The banner is
+# the machine's own statement of what it is running, so tests that want
+# to name the version import this rather than repeating the string.
+VERSION = "1.2"
+
 BANNER = [
     (1, 0x0B, "    COOL8"),
     (2, 0x0F, "    8-bit home computer"),
     (4, 0x08, "    CPU     COOL8 @ 8.375 MHz        RAM    64K main, 64K video"),
     (5, 0x08, "    VIDEO   640x480, 32 sprites      SOUND  8 voices, 1-bit DAC"),
-    (7, 0x0E, "COOLBASIC 1.0"),
+    (7, 0x0E, f"COOLBASIC {VERSION}"),
     (8, 0x07, f"{FREE} BYTES FREE"),
 ]
 

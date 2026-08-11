@@ -147,7 +147,9 @@ module cool8_sprite (
     output wire [3:0]  o_bank
 );
 
-    localparam [7:0] A_IDX = 8'h2A, A_DATA = 8'h2B, A_CTRL = 8'h2C;
+    localparam [7:0] A_IDX = 8'h2A,            //: SPR_IDX      sprite to address
+                     A_DATA = 8'h2B,           //: SPR_DATA     that sprite's attribute bytes
+                     A_CTRL = 8'h2C;           //: SPR_CTRL     per-sprite enable bits
 
     localparam [3:0] S_IDLE  = 4'd0, S_SCAN = 4'd1, S_TALLY = 4'd2,
                      S_SEL   = 4'd3, S_D0   = 4'd4, S_D1    = 4'd5,

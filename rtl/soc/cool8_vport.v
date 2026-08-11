@@ -98,10 +98,10 @@ module cool8_vport (
     input  wire [15:0] vram_rdata
 );
 
-    localparam [7:0] A_ADDR_L = 8'h26,
-                     A_ADDR_H = 8'h27,
-                     A_STEP   = 8'h28,
-                     A_DATA   = 8'h29;
+    localparam [7:0] A_ADDR_L = 8'h26,         //: VRAM_ADDR_L  indirect VRAM address, low
+                     A_ADDR_H = 8'h27,         //: VRAM_ADDR_H  indirect VRAM address, high
+                     A_STEP = 8'h28,           //: VRAM_STEP    added to the address after each access
+                     A_DATA = 8'h29;           //: VRAM_DATA    the byte at that address; access auto-steps
 
     // ------------------------------------------------------- the decode
 

@@ -5,18 +5,24 @@
 ; entry is $80 and programs already saved to disk hold the old numbering,
 ; so entries are appended and never inserted or reordered.
 ;
-; Three things read this and they must read the same bytes:
+; These read this and must read the same bytes:
 ;
 ;   sw/basic.bas   tokenise() turns a word into a byte, list() turns it
 ;                  back
-;   sw/asm.asm     agetc turns it back again, because the editor
-;                  tokenises the inside of an ASM block too
-;   sim/test_lex.py, sim/test_interp.py, sim/test_asm.py
+;   sw/interp.asm  sttab dispatches $80+n, one .word per entry here, in
+;                  this order -- the two tables are one table in two
+;                  files and NTOK is their shared length
+;   sim/test_lex.py, sim/test_interp.py
 ;
-; $A4 is the next value and is taken: it is T_NUM, a numeric literal
-; followed by two binary bytes. A 37th keyword would collide with it, so
-; growing the language past here needs a second table rather than one
-; more line.
+; **$A4 is K_NUM**, the marker for a numeric literal with two binary
+; bytes after it, so no keyword may have that value. It is held open by
+; the one-character `"?"` entry below rather than by stopping the table:
+; an earlier header said a 37th keyword would collide and that growth
+; past here needed a second table. It did not -- the slot is reserved
+; and the table simply continues. There are 70 keywords now, $80-$C5.
+;
+; sw/asm.asm was the third reader until [D63] deleted the on-machine
+; assembler; nothing tokenises the inside of an ASM block any more.
 ; ---------------------------------------------------------------------
 TOKTAB:
         .byte 5, "P","R","I","N","T"
@@ -55,7 +61,12 @@ TOKTAB:
 ; ---- programs already saved to disk hold the old ones.
         .byte 4, "C","A","R","D"
         .byte 2, "A","T"
-        .byte 3, "A","S","M"
+; ---- $9E was ASM. The on-machine assembler is gone ([D63]) and this
+; ---- slot is SYS, which is what replaced it: three letters for three,
+; ---- so every token after it keeps its number and saved programs are
+; ---- undisturbed except for the one keyword that no longer did
+; ---- anything anyway.
+        .byte 3, "S","Y","S"
         .byte 6, "E","X","T","E","R","N"
         .byte 7, "I","N","C","L","U","D","E"
         .byte 6, "I","N","L","I","N","E"

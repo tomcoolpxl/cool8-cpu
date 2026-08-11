@@ -34,10 +34,34 @@ LET was always optional and costs a token nobody needs.
 **`IF K<1000 THEN 500` is written `THEN GOTO 500`.** The bare line
 number is Microsoft shorthand this language never had.
 
-**BM8 is not run.** It is `A=K^2`, `LOG` and `SIN`: a floating-point
-library benchmark, and this machine has 16-bit integers and 8.8 fixed
-point ([13-basic.md](../docs/13-basic.md)). There is no honest way to
-report a number for it, so there is none.
+**BM8 is run, and it is measured differently from the other seven.**
+It is `A=K^2`, `LOG(K)`, `SIN(K)`, a hundred times -- the published
+listing counts to 100, not 1000, which is why BM8 times are not ten
+times BM7's anywhere in the table. It is a floating-point library
+benchmark and this machine's BASIC is 16-bit integer, so it runs on
+`sw/fp.asm` ([D62](../docs/01-decisions.md)).
+
+**The loop is machine code, not BASIC, and that is not a shortcut.**
+The plan was an `ASM` block calling the library, which is exactly what
+`CALL <label>` and [D45] exist for -- but `ASM` blocks are never
+assembled ([13-basic.md](../docs/13-basic.md) §1): the assembler is
+written and byte-gated in isolation and nothing in the interpreter ever
+starts it. So there is no way to type this benchmark at the editor.
+
+What that costs the comparison is less than it sounds. On the machines
+in the BM8 table the interpreter is a rounding error beside their FP
+library -- a 6502 `SIN` is milliseconds, the parse around it
+microseconds -- so timing the library doing the same 300 operations is
+close to what their stopwatch caught. **The real caveat is precision:**
+a 16-bit significand, about 4.8 digits, against the ~9 of the 40-bit
+floats those BASICs carried. A shorter mantissa is a faster mantissa,
+and that is most of the margin.
+
+`A`, `B` and `C` are float slots rather than BASIC variables, because a
+variable here is two bytes and holds an integer. The run is checked
+against K=100 before any time is printed: a call that silently does
+nothing costs no cycles and reports a wonderful figure, which is how
+`sim/test_lib.py` measured nothing for a year.
 
 ## The comparison is not like for like, and the table says so
 
@@ -57,16 +81,19 @@ here waits on a device: no disk, no wait states, and the display fetch
 steals no CPU cycle (D28).
 """
 
+import math
 import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import harness as H                                      # noqa: E402
+from test_fp import dec as fpdec                         # noqa: E402
 
 sys.path.insert(0, os.path.join(H.ROOT, "tools"))
 
 import test_basic as B                                     # noqa: E402
+import cool8rsvm as emu                                     # noqa: E402
 
 SYS_HZ = 8_375_000.0
 
@@ -114,6 +141,17 @@ BMS = [
       "530 FOR L = 1 TO 5", "535 M(L) = A", "540 NEXT L",
       "600 IF K < 1000 THEN GOTO 500"],
      ["400 K = 0", "430 DIM M(5)"], True),
+
+    # **BM8, as published, in BASIC.** It counts to 100 and not 1000,
+    # which is why no machine's BM8 is ten times its BM7. The three
+    # results are float variables because they are floats -- `A#` is
+    # BASIC's own float now ([D63]), and `^`, `LOG` and `SIN` are
+    # ordinary functions rather than a library reached by address.
+    ("BM8", "K^2, LOG(K), SIN(K) -- 100 times",
+     ["400 K = 0", "500 K = K + 1", "530 A# = K ^ 2",
+      "540 B# = LOG(K)", "550 C# = SIN(K)",
+      "600 IF K < 100 THEN GOTO 500"],
+     ["400 K = 0"]),
 ]
 
 # Published times, in seconds. en.wikipedia.org/wiki/Rugg/Feldman_benchmarks
@@ -156,6 +194,24 @@ REF = [
      [1.7, 10.2, 21.0, 22.5, 24.3, 36.7, 52.4]),
 ]
 
+# BM8's published times, same source. A shorter list than BM1-BM7's,
+# and **Apple II Integer BASIC is not in it at all** -- Wozniak's
+# interpreter has no LOG, no SIN and no floating point, so the one other
+# integer BASIC in the set simply cannot run this benchmark.
+REF8 = [
+    ("ABC 800  BASIC II single", "Z80", 3.0, 29.0),
+    ("BBC Micro  BBC BASIC", "6502", 2.0, 49.9),
+    ("Apple II  Applesoft", "6502", 1.0, 55.5),
+    ("Altair 8800  Altair 4.0", "8080", 2.0, 67.8),
+    ("Acorn Electron  BBC BASIC", "6502A", 2.0, 72.53),
+    ("Acorn Atom  System BASIC", "6502", 1.0, 92.0),
+    ("VIC-20  MS BASIC", "6502", 1.0, 99.0),
+    ("Commodore 64  MS BASIC", "6510", 1.0, 119.3),
+    ("Luxor ABC 80  ABC BASIC", "Z80", 3.0, 136.0),
+    ("ZX Spectrum  Sinclair", "Z80", 3.58, 239.1),
+    ("TI-99/4A  TI BASIC", "9900", 3.0, 382.0),
+]
+
 # **The TRS-80 is missing on purpose.** It belongs in this table -- a
 # 1.77 MHz Z80 running Level II BASIC is exactly the machine these
 # benchmarks were aimed at, and Rugg and Feldman wrote a book of TRS-80
@@ -169,20 +225,37 @@ REF = [
 # and this table only carries measurements.
 
 
-def run_cycles(code, syms, lines):
-    """Type a program, RUN it, and return the cycles RUN cost."""
+def run_cycles(code, syms, lines, blob=None):
+    """Type a program, RUN it, and return the cycles RUN cost.
+
+    `blob` is (address, bytes) put in memory before the program runs --
+    how BM8 gets the float library there, standing in for the
+    `LOAD "FP" AT` a person would type.
+    """
     M = B.Machine(code, syms)
     M.settle()
+    if blob is not None:
+        at, data = blob
+        M.m.bus.mem[at:at + len(data)] = data
     for ln in lines:
         M.cmd(ln)
     before = M.m.cpu.cycles
     M.cmd("RUN")
     M.settle(400_000_000)
-    return M.m.cpu.cycles - before
+    return M.m.cpu.cycles - before, M
+
+
+# =====================================================================# **The numbers before floating point went in**, for BM1-BM7, measured
+# the same way on the same machine. [D63] put fsav/fpair into `erel`'s
+# hot path -- every `+ - * /` now saves its left operand and asks what
+# type the pair is -- and that is not free. Keeping the old column is
+# the only way to see what it cost, and standing rule 2 says report the
+# number including when it got worse.
+OLD = [0.049, 0.264, 0.545, 0.499, 0.701, 1.062, 1.767]
 
 
 def main():
-    print("  Rugg/Feldman BM1-BM7, in COOL8 BASIC on the machine")
+    print("  Rugg/Feldman BM1-BM8, in COOL8 BASIC on the machine")
     print()
     code, syms = B.build()
 
@@ -190,37 +263,42 @@ def main():
     for entry in BMS:
         name, about, body, baseline = entry[0], entry[1], entry[2], entry[3]
         sub = SUBDEF if len(entry) > 4 else []
-        full = run_cycles(code, syms, HEAD + body + TAIL + sub)
+        full, _ = run_cycles(code, syms, HEAD + body + TAIL + sub)
         # The same program with the loop taken out: the editor, the
         # parse, both PRINTs and the way back to the prompt, which the
         # stopwatch between S and E never counted either.
-        base = run_cycles(code, syms, HEAD + baseline + TAIL + sub)
+        base, _ = run_cycles(code, syms, HEAD + baseline + TAIL + sub)
         cyc = full - base
         secs = cyc / SYS_HZ
         mine.append(secs)
         print(f"  {name}  {about:<38} {cyc:>10,} cycles  {secs:7.3f} s")
 
-    print()
-    print("  Measured at 8.375 MHz, and the same work at their clocks:")
-    print()
-    print("    " + "".join(f"{n:>9}" for n in ("BM1", "BM2", "BM3", "BM4",
-                                               "BM5", "BM6", "BM7")))
-    for mhz in (8.375, 2.0, 1.0):
-        row = "".join(f"{s * 8.375 / mhz:9.2f}" for s in mine)
-        print(f"  {mhz:5.3f} MHz {row}")
+    # **BM8 has to prove it computed something.** A loop whose body
+    # quietly fails costs almost nothing and reports a wonderful time;
+    # sim/test_lib.py measured nothing for a year exactly that way. So
+    # it is run once more with the last value printed.
+    chk = BMS[-1]
+    _, M8 = run_cycles(code, syms,
+                       HEAD + chk[2] + ["650 PRINT C#"] + TAIL)
+    if not any("-0.50" in r for r in M8.screen()):
+        for r in M8.screen():
+            if r.strip():
+                print("      " + r.strip())
+        raise SystemExit("BM8 did not compute sin(100); no time reported")
+
+    seven, bm8 = mine[:7], mine[7]
 
     print()
-    print("  The machines these were written for (published seconds):")
+    print("  Against the machines these were written for, BM1-BM7")
+    print("  (published seconds; COOL8 measured, and the same work")
+    print("  scaled to 2 MHz -- no COOL8 was built or clocked there):")
     print()
-    # One table, ordered by BM7 -- the longest benchmark and the one
-    # that exercises the most of an interpreter. This machine appears
-    # three times: as measured, and at the two clocks the others ran
-    # at, so its place in the order can be read rather than computed.
-    rows = [("COOL8 BASIC  measured", "COOL8", 8.375, True, mine),
-            ("COOL8 BASIC  at 2 MHz", "COOL8", 2.0, True,
-             [s * 8.375 / 2.0 for s in mine]),
-            ("COOL8 BASIC  at 1 MHz", "COOL8", 1.0, True,
-             [s * 8.375 for s in mine])] + list(REF)
+    rows = [("COOL8 @ 8.375 MHz", "COOL8", 8.375, True, seven),
+            ("COOL8 @ 2 MHz", "COOL8", 2.0, True,
+             [s * 8.375 / 2.0 for s in seven]),
+            ("COOL8 (OLD) @ 8.375 MHz", "COOL8", 8.375, True, OLD),
+            ("COOL8 (OLD) @ 2 MHz", "COOL8", 2.0, True,
+             [s * 8.375 / 2.0 for s in OLD])] + list(REF)
     rows.sort(key=lambda r: r[4][6])
 
     print(f"  {'':<26}{'CPU':>6}{'MHz':>6}" +
@@ -230,27 +308,35 @@ def main():
         mark = " *" if integer else "  "
         print(f"  {name:<26}{cpu:>6}{mhz:6.2f}" +
               "".join(f"{t:8.1f}" for t in times) + mark)
-    print("    * integer BASIC: the only rows that compare like for like")
-    print("      COOL8's 1 and 2 MHz rows are the measured work scaled,")
-    print("      not a machine that was built or run at those clocks")
+    print("    * integer BASIC: the only rows that compare like for like.")
+    print("      OLD is this interpreter before floats went in, so the")
+    print("      pair of COOL8 rows prices what the type check costs.")
 
-    # The headline, against every integer BASIC in the set, with the
-    # clock taken out of it -- one of them a Z80 at 3 MHz, which is the
-    # comparison a Z80 machine of the day actually offers.
-    at1 = [s * 8.375 for s in mine]
-    names = ("BM1", "BM2", "BM3", "BM4", "BM5", "BM6", "BM7")
+    cost = [(n - o) / o * 100 for n, o in zip(seven, OLD)]
     print()
-    print("  Against the integer BASICs, everything scaled to 1 MHz:")
-    for name, cpu, mhz, integer, times in REF:
-        if not integer:
-            continue
-        at1_ref = [t * mhz for t in times]
-        print(f"    {name:<26}" + "  ".join(
-            f"{n} {r / m:4.1f}x" for n, r, m in zip(names, at1_ref, at1)))
+    print("  What floating point cost the integer path, per benchmark:")
+    print("    " + "  ".join(f"{n} {c:+.0f}%" for n, c in zip(
+        ("BM1", "BM2", "BM3", "BM4", "BM5", "BM6", "BM7"), cost)))
+
     print()
-    print("  BM8 is not run: it is K^2, LOG and SIN, and this machine has")
-    print("  16-bit integers and 8.8 fixed point. There is no honest")
-    print("  number for it.")
+    print("  BM8 -- K^2, LOG(K), SIN(K), 100 times, in BASIC:")
+    print()
+    r8 = sorted(REF8 + [("COOL8 @ 8.375 MHz", "COOL8", 8.375, bm8),
+                        ("COOL8 @ 2 MHz", "COOL8", 2.0, bm8 * 8.375 / 2.0)],
+                key=lambda r: r[3])
+    print(f"  {'':<28}{'CPU':>7}{'MHz':>6}{'BM8':>10}")
+    for name, cpu, mhz, t in r8:
+        print(f"  {name:<28}{cpu:>7}{mhz:6.2f}{t:10.2f}")
+    print()
+    print("  **Apple II Integer BASIC is absent from this one**, and that")
+    print("  is the point of it: Wozniak's interpreter has no LOG, no SIN")
+    print("  and no float at all, so the only other integer BASIC in the")
+    print("  set cannot run BM8. This one can because [D63] made floats")
+    print("  resident -- A#, ^, LOG and SIN are the language's own now.")
+    print()
+    print("  The margin is mostly precision: a 16-bit significand, about")
+    print("  4.8 digits, against the ~9 of the 40-bit floats those BASICs")
+    print("  carried. A shorter mantissa is a faster mantissa.")
     return 0
 
 

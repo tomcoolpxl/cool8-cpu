@@ -94,7 +94,8 @@ module cool8_snd #(
     output reg        o_pwm
 );
 
-    localparam [7:0] A_IDX = 8'h50, A_DATA = 8'h51;
+    localparam [7:0] A_IDX = 8'h50,            //: SND_IDX      voice to address
+                     A_DATA = 8'h51;           //: SND_DATA     that voice's registers
 
     assign o_sel = (io_a == A_IDX) || (io_a == A_DATA);
 

@@ -76,14 +76,14 @@ module cool8_flash (
     output wire        o_stall
 );
 
-    localparam [7:0] A_ADDR_L = 8'h88,
-                     A_ADDR_M = 8'h89,
-                     A_ADDR_H = 8'h8A,
-                     A_DATA   = 8'h8B,
-                     A_CTRL   = 8'h8C,
-                     A_STAT   = 8'h8D,
-                     A_WDATA  = 8'h8E,
-                     A_WCTRL  = 8'h8F;
+    localparam [7:0] A_ADDR_L = 8'h88,         //: FLS_ADDR_L   SPI flash address, low
+                     A_ADDR_M = 8'h89,         //: FLS_ADDR_M   SPI flash address, middle
+                     A_ADDR_H = 8'h8A,         //: FLS_ADDR_H   SPI flash address, high
+                     A_DATA = 8'h8B,           //: FLS_DATA     read the byte at that address
+                     A_CTRL = 8'h8C,           //: FLS_CTRL     start a read, select the device
+                     A_STAT = 8'h8D,           //: FLS_STAT     busy and done
+                     A_WDATA = 8'h8E,          //: FLS_WDATA    byte to program
+                     A_WCTRL = 8'h8F;          //: FLS_WCTRL    program and erase control
 
     // The five opcodes this master has, and there are no others in the
     // gates. A sixth would have to be added here to exist at all.

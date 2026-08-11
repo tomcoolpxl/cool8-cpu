@@ -103,11 +103,11 @@ module cool8_ps2 #(
     output wire        o_warm
 );
 
-    localparam [7:0] A_STAT = 8'h40,
-                     A_DATA = 8'h41,
-                     A_CTRL = 8'h42,
-                     A_TX   = 8'h43,
-                     A_MOD  = 8'h44;
+    localparam [7:0] A_STAT = 8'h40,           //: KBD_STAT     PS/2 status: byte ready, error
+                     A_DATA = 8'h41,           //: KBD_DATA     the scancode; reading clears ready
+                     A_CTRL = 8'h42,           //: KBD_CTRL     interrupt enable and reset
+                     A_TX = 8'h43,             //: KBD_TX       byte to send to the keyboard
+                     A_MOD = 8'h44;            //: KBD_MOD      modifier state, decoded in hardware
 
     localparam AB = 4;                   // FIFO address bits: 16 bytes
     localparam DEPTH = 1 << AB;

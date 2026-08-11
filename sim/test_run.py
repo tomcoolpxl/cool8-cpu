@@ -59,6 +59,393 @@ CASES = [
     ("a variable survives between lines",
      ["10 A = 6", "20 A = A * 7", "30 PRINT A", "40 END"], "42"),
 
+    # [D45] puts assembler labels in the same table as SUB names, so
+    # `CALL name` on a plain label runs the machine code at it. That is
+    # the only way a BASIC program executes an ASM block -- h_asm itself
+    # just steps over one -- and it is what a loadable library is
+    # reached through, so it is worth a case of its own. A stores at
+    # VARS, which sw/zp.asm puts at $0040.
+    # `ASM` is no longer a keyword ([D63]) -- $9E is SYS now -- so a
+    # program that says ASM is assigning to a variable of that name.
+    # Nothing errors, which is the right outcome for a word that never
+    # did anything.
+    ("ASM is an ordinary name now",
+     ["10 ASM = 5", "20 PRINT ASM", "30 END"], "5"),
+
+    # ---- floating point, resident ([D63]). A float is STYPE 2 with the
+    # ---- value in FACC, the same shape strings have always had, so
+    # ---- PRINT renders it through the string path.
+    ("SQR of a perfect square", ["10 PRINT SQR(9)", "20 END"], "3"),
+    ("SQR of one that is not", ["10 PRINT SQR(2)", "20 END"], "1.414"),
+    ("LOG", ["10 PRINT LOG(1)", "20 END"], "0"),
+    ("EXP", ["10 PRINT EXP(0)", "20 END"], "1"),
+    ("SIN of zero", ["10 PRINT SIN(0)", "20 END"], "0"),
+    ("COS of zero", ["10 PRINT COS(0)", "20 END"], "1"),
+    ("FLT promotes an integer", ["10 PRINT FLT(7)", "20 END"], "7"),
+    # The argument may itself be a float, which is what fargf's type
+    # test is for -- without it this would convert FACC's bit pattern.
+    ("a float argument is not converted twice",
+     ["10 PRINT SQR(SQR(16))", "20 END"], "2"),
+
+    # ---- the operators promote. Either side being a float makes the
+    # ---- whole thing float; two integers still take the integer path,
+    # ---- which is what every other test in this file depends on.
+    ("float on the left of +", ["10 PRINT SQR(2) + 1", "20 END"], "2.414"),
+    ("float on the right of +", ["10 PRINT 1 + SQR(2)", "20 END"], "2.414"),
+    ("float minus float",
+     ["10 PRINT SQR(9) - SQR(4)", "20 END"], "1"),
+    ("float times integer", ["10 PRINT SQR(9) * 3", "20 END"], "9"),
+    ("integer divided by float, which integer division would floor",
+     ["10 PRINT 1 / FLT(4)", "20 END"], "0.25"),
+    # 0.9999, not 1, and that is the format being honest rather than a
+    # fault: a third does not fit 16 significand bits, the divide
+    # truncates, and multiplying back cannot recover what was dropped.
+    # Every small float does this; expecting 1 here would be expecting
+    # 4.8 digits to behave like infinite ones.
+    ("a whole expression of them, and it does not round-trip",
+     ["10 PRINT FLT(1) / FLT(3) * FLT(3)", "20 END"], "0.9999"),
+
+    # ---- A#-Z#. The suffix is the type, so A, A# and A$ are three
+    # ---- variables, and a float needs no storage of its own: the name
+    # ---- table entry's value and aux are four contiguous bytes and a
+    # ---- packed float is three.
+    ("a float variable holds a float",
+     ["10 X# = SQR(2)", "20 PRINT X#", "30 END"], "1.414"),
+    ("an integer right-hand side is promoted",
+     ["10 X# = 1", "20 PRINT X#", "30 END"], "1"),
+    ("a float variable in an expression",
+     ["10 X# = FLT(1) / FLT(4)", "20 PRINT X# + 1", "30 END"], "1.25"),
+    ("A and A# are different variables",
+     ["10 A = 7", "20 A# = SQR(9)", "30 PRINT A", "40 END"], "7"),
+    ("and the float one kept its own value",
+     ["10 A = 7", "20 A# = SQR(9)", "30 PRINT A#", "40 END"], "3"),
+    ("a float survives into the next statement",
+     ["10 X# = FLT(1) / FLT(3)", "20 Y# = X# * FLT(3)", "30 PRINT Y#",
+      "40 END"], "0.9999"),
+    ("INT crosses a float variable back",
+     ["10 X# = FLT(7) / FLT(2)", "20 PRINT INT(X#)", "30 END"], "3"),
+
+    # 1023, not 1024. `^` is exp(y * ln x), and a 15-bit fraction cannot
+    # make that round trip exactly -- the same last-digit artifact the
+    # period Microsoft BASICs had. Pinned so a change in fexp/flog shows up.
+    ("the power operator, and two integers still promote",
+     ["10 PRINT 2 ^ 10", "20 END"], "1023"),
+
+    # ---- Comparisons. All six operators, both orders, and both sides
+    # ---- of each boundary -- `rhs` folds a float pair to (sign, 0) and
+    # ---- the integer arms decide, so a sign error would flip a whole
+    # ---- operator rather than one case.
+    ("a float compares greater",
+     ["10 X# = FLT(1) / FLT(2)", "20 IF X# > 0 THEN PRINT 7",
+      "30 END"], "7"),
+    ("and is not greater when it is not",
+     ["10 X# = FLT(1) / FLT(2)", "20 IF X# > 1 THEN PRINT 7",
+      "30 PRINT 9", "40 END"], "9"),
+    ("an integer on the left promotes too",
+     ["10 X# = FLT(1) / FLT(2)", "20 IF 1 > X# THEN PRINT 7",
+      "30 END"], "7"),
+    ("less-than",
+     ["10 IF SQR(2) < 2 THEN PRINT 7", "20 END"], "7"),
+    ("equality on a value that is exact",
+     ["10 X# = FLT(4) / FLT(2)", "20 IF X# = 2 THEN PRINT 7",
+      "30 END"], "7"),
+    ("inequality",
+     ["10 IF SQR(2) <> 1 THEN PRINT 7", "20 END"], "7"),
+    ("<= at the boundary, where equal must still pass",
+     ["10 X# = FLT(4) / FLT(2)", "20 IF X# <= 2 THEN PRINT 7",
+      "30 END"], "7"),
+    (">= at the boundary",
+     ["10 X# = FLT(4) / FLT(2)", "20 IF X# >= 2 THEN PRINT 7",
+      "30 END"], "7"),
+    ("a negative float compares below zero",
+     ["10 X# = FLT(0) - FLT(3)", "20 IF X# < 0 THEN PRINT 7",
+      "30 END"], "7"),
+    ("two floats against each other, not just against integers",
+     ["10 X# = SQR(2)", "20 Y# = SQR(3)", "30 IF Y# > X# THEN PRINT 7",
+      "40 END"], "7"),
+    ("a float loop condition runs to completion",
+     ["10 X# = FLT(0)", "20 X# = X# + FLT(1)",
+      "30 IF X# < FLT(4) THEN GOTO 20", "40 PRINT INT(X#)",
+      "50 END"], "4"),
+    # 4 > 10/2 is false. If the right were evaluated as its last operand
+    # alone it would be 4 > 2, which is true -- so this case tells the
+    # two apart where 3 > 1/2 does not.
+    # A float *expression* on the right, which needs rhs to go through
+    # erel. Each pair is chosen so that evaluating the right as its last
+    # operand alone gives the opposite answer -- `3 > 1/2` would pass
+    # either way and proves nothing.
+    ("a float expression on the right, false side",   # 4 > 5
+     ["10 IF FLT(4) > FLT(10) / FLT(2) THEN PRINT 7",
+      "20 PRINT 9", "30 END"], "9"),
+    ("a float expression on the right, true side",    # 4 > 2
+     ["10 IF FLT(4) > FLT(10) / FLT(5) THEN PRINT 7",
+      "20 END"], "7"),
+    ("a sum on the right",                            # 4 > 11
+     ["10 IF FLT(4) > FLT(10) + FLT(1) THEN PRINT 7",
+      "20 PRINT 9", "30 END"], "9"),
+    ("a float expression on the left",                # 2 < 4
+     ["10 IF FLT(10) / FLT(5) < FLT(4) THEN PRINT 7",
+      "20 END"], "7"),
+    ("an expression on both sides at once",           # 2.5 > 1.5
+     ["10 IF FLT(10) / FLT(4) > FLT(3) / FLT(2) THEN PRINT 7",
+      "20 END"], "7"),
+    # Strings still take the string path -- STYPE 1, not "non-zero".
+    ("a string comparison is untouched by the float arm",
+     ['10 IF "AB" = "AB" THEN PRINT 7', "20 END"], "7"),
+    ("and an unequal one",
+     ['10 IF "AB" = "AC" THEN PRINT 7', "20 PRINT 9", "30 END"], "9"),
+
+    # ---- Unary minus.
+    ("unary minus on a float keeps the sign",
+     ["10 X# = SQR(2)", "20 PRINT -X#", "30 END"], "-1.414"),
+    ("unary minus twice returns it",
+     ["10 X# = SQR(2)", "20 PRINT -(-X#)", "30 END"], "1.414"),
+    ("unary minus on an integer is unchanged",
+     ["10 A = 5", "20 PRINT -A", "30 END"], "-5"),
+    ("negating zero does not invent a sign",
+     ["10 X# = FLT(0)", "20 PRINT -X#", "30 END"], "0"),
+
+    ("binary minus promotes, as every operator does",
+     ["10 PRINT 0 - SQR(2)", "20 END"], "-1.414"),
+
+    # ---- The silent class that remains. Each reads R0:R1, which a
+    # ---- float does not write, so it acts on whatever the integer
+    # ---- registers last held and says nothing. Pinned at the wrong
+    # ---- answer deliberately: these are tripwires, and a failure here
+    # ---- most likely means someone closed the gap. See D63.
+
+    # Should be 65, or an error. POKE reads a stale register instead.
+    ("POKE of a float stores a stale integer",
+     ["10 X# = FLT(65)", "20 POKE 700, X#",
+      "30 PRINT PEEK(700)", "40 END"], "2"),
+
+    # Should run three times. The limit reads as 1, so the body runs once.
+    ("FOR to a float limit runs once",
+     ["10 X# = FLT(3)", "20 FOR I = 1 TO X#",
+      "30 PRINT I", "40 NEXT", "50 END"], "1"),
+
+    # No float arrays: DIM accepts the name and makes an ordinary
+    # two-byte-per-element integer array called "A#(".
+    ("DIM of a float array is accepted and is not one",
+     ["10 DIM A#(4)", "20 PRINT 5", "30 END"], "5"),
+
+    # The one that fails loudly, and the only one that does: there is no
+    # decimal point in the tokeniser, so `1.5` is `1` and then rubbish.
+    ("a float literal is a syntax error",
+     ["10 PRINT 1.5", "20 END"], "?SYNTAX IN 10"),
+
+    # ---- ABS and SGN. ABS keeps the type, SGN always answers an
+    # ---- integer, so the pair is checked on both argument types and
+    # ---- on zero, where a sign byte could invent one.
+    ("ABS of a negative integer stays an integer",
+     ["10 PRINT ABS(0 - 5)", "20 END"], "5"),
+    ("ABS of a positive integer is unchanged",
+     ["10 PRINT ABS(5)", "20 END"], "5"),
+    ("ABS of zero",
+     ["10 PRINT ABS(0)", "20 END"], "0"),
+    ("ABS of a negative float keeps the fraction",
+     ["10 X# = FLT(0) - FLT(7)", "20 X# = X# / FLT(2)",
+      "30 PRINT ABS(X#)", "40 END"], "3.5"),
+
+    # ---- Precedence across a promotion. `mulrest` is the continuation
+    # ---- the + and - arms call to bind `b * c` before adding it, and
+    # ---- while it was integer-only the multiply was silently dropped:
+    # ---- FLT(1) + FLT(7)/FLT(2) gave 8, not 4.5. The integer pair is
+    # ---- here so a regression cannot hide by breaking both.
+    ("a divide binds tighter than a minus, in floats",
+     ["10 PRINT FLT(0) - FLT(7) / FLT(2)", "20 END"], "-3.5"),
+    ("and tighter than a plus",
+     ["10 PRINT FLT(1) + FLT(7) / FLT(2)", "20 END"], "4.5"),
+    ("a multiply binds tighter than a plus, in floats",
+     ["10 PRINT FLT(1) + FLT(3) * FLT(2)", "20 END"], "7"),
+    ("the same in integers, which never broke",
+     ["10 PRINT 1 + 6 / 2", "20 END"], "4"),
+    ("a float multiply after a minus",
+     ["10 PRINT FLT(10) - FLT(3) * FLT(2)", "20 END"], "4"),
+    ("ABS of a float stays a float, so it still divides",
+     ["10 X# = FLT(0) - FLT(7)", "20 PRINT ABS(X#) / FLT(2)",
+      "30 END"], "3.5"),
+    ("SGN of a negative integer",
+     ["10 PRINT SGN(0 - 9)", "20 END"], "-1"),
+    ("SGN of a positive integer",
+     ["10 PRINT SGN(9)", "20 END"], "1"),
+    ("SGN of zero is zero, not a sign",
+     ["10 PRINT SGN(0)", "20 END"], "0"),
+    ("SGN of a negative float",
+     ["10 X# = FLT(0) - SQR(2)", "20 PRINT SGN(X#)", "30 END"], "-1"),
+    ("SGN of a positive float",
+     ["10 PRINT SGN(SQR(2))", "20 END"], "1"),
+    ("SGN of float zero",
+     ["10 X# = FLT(0)", "20 PRINT SGN(X#)", "30 END"], "0"),
+    # SGN answers an integer even for a float, which is the point: it
+    # has to be usable where a float is not.
+    ("SGN of a float is an integer, so POKE accepts it",
+     ["10 X# = FLT(0) - SQR(2)", "20 POKE 700, SGN(X#) + 66",
+      "30 PRINT PEEK(700)", "40 END"], "65"),
+
+    # ---- Nesting. MAXEXPR is 24 but the float frame stack is 7 deep,
+    # ---- so the frame stack is what a deep expression hits first.
+    ("nesting within the frame stack is fine",
+     ["10 PRINT 1+(1+(1+(1+(1+1))))", "20 END"], "6"),
+    # Eight pending operators against seven frames. It refuses -- and
+    # prints rubbish on the way, because PRINT has already been handed
+    # a value by the time `stmt` looks at ERR. Ugly, and acceptable:
+    # the error is loud, the line is abandoned, and the *session*
+    # survives, which is what fstack() below actually guards.
+    ("past the frame stack it refuses",
+     ["10 PRINT 1+(1+(1+(1+(1+(1+(1+(1+1)))))))", "20 END"],
+     "?COMPLEX IN 10"),
+
+    # ---- Getting a fraction out of two integer literals. **Declaring
+    # ---- the destination is not enough** -- the right-hand side is a
+    # ---- complete expression, evaluated before the assignment sees
+    # ---- it, so `X# = 1 / 4` divides in integers and promotes the 0.
+    # ---- One *operand* has to be a float when the operator runs.
+    ("declaring the target float does not make the divide one",
+     ["10 X# = 1 / 4", "20 PRINT X#", "30 END"], "0"),
+    ("promoting either operand does",
+     ["10 X# = 1 / FLT(4)", "20 PRINT X#", "30 END"], "0.25"),
+    ("either one, not just the right",
+     ["10 PRINT FLT(1) / 4", "20 END"], "0.25"),
+    # Once a float is in a variable it carries its own type, so the
+    # FLT() is needed once rather than at every use.
+    ("a float variable promotes the divide by itself",
+     ["10 X# = 1", "20 PRINT X# / 4", "30 END"], "0.25"),
+    ("and accumulates without another FLT",
+     ["10 X# = 1", "20 X# = X# / 4", "30 PRINT X#", "40 END"], "0.25"),
+
+    # ---- AND/OR bind looser than the relationals -- BBC's order, and
+    # ---- Microsoft's (OPTAB: relationals 100, AND 80, OR 70). So the
+    # ---- common idiom needs no parentheses. The whole truth table,
+    # ---- because a precedence error here shows up in only one corner.
+    ("AND of two true relations",
+     ["10 A = 1", "20 B = 1", "30 IF A > 0 AND B > 0 THEN PRINT 7",
+      "40 PRINT 9", "50 END"], "7"),
+    ("AND with the right false",
+     ["10 A = 1", "20 B = 0", "30 IF A > 0 AND B > 0 THEN PRINT 7",
+      "40 PRINT 9", "50 END"], "9"),
+    ("AND with the left false",
+     ["10 A = 0", "20 B = 1", "30 IF A > 0 AND B > 0 THEN PRINT 7",
+      "40 PRINT 9", "50 END"], "9"),
+    ("OR with one true",
+     ["10 A = 1", "20 B = 0", "30 IF A > 0 OR B > 0 THEN PRINT 7",
+      "40 PRINT 9", "50 END"], "7"),
+    ("OR with neither",
+     ["10 A = 0", "20 B = 0", "30 IF A > 0 OR B > 0 THEN PRINT 7",
+      "40 PRINT 9", "50 END"], "9"),
+
+    # ---- Power, and its precedence. Verified against Microsoft's own
+    # ---- 6502 source: OPTAB gives `^` 127, negation 125, `*` 123, and
+    # ---- FRMEVL compares the pending precedence with BCS -- greater
+    # ---- *or equal* applies the pending operator, so equal binds left.
+    # ---- COOL8 matches on both counts.
+    # (2^3)^2 = 64, not 2^(3^2) = 512. 63.96 rather than 64 is exp/log,
+    # compounding across two of them, which is the honest argument
+    # against chaining `^` at all.
+    ("`^` is left-associative, as in MS BASIC, and the error compounds",
+     ["10 PRINT 2 ^ 3 ^ 2", "20 END"], "63.96"),
+    ("a power binds tighter than a binary minus",   # 0 - 4, via exp/log
+     ["10 PRINT 0 - 2 ^ 2", "20 END"], "-3.999"),
+    # -x^2 is -(x^2): the exponent belongs to the x and the sign to the
+    # result, which is what the notation means and what MS BASIC does.
+    ("a power binds tighter than a leading minus",
+     ["10 A = 2", "20 PRINT -A ^ 2", "30 END"], "-3.999"),
+    ("but a leading minus still binds tighter than a multiply",
+     ["10 A = 2", "20 PRINT -A * 3", "30 END"], "-6"),
+    ("and the right operand of a multiply takes its power first",
+     ["10 PRINT 2 * 3 ^ 2", "20 END"], "17.99"),
+    ("a parenthesised negative base is still the other thing",
+     ["10 A = 2", "20 PRINT (0 - A) ^ 2", "30 END"], "-2"),
+    # A negative base cannot go through exp(y ln x): flog refuses and
+    # hands back its argument, so (-2)^2 is -2 rather than 4. Silent,
+    # and now much harder to reach by accident -- it took a written
+    # parenthesis above, where -A^2 used to land on it.
+    ("a negative base returns the base, silently",
+     ["10 X# = FLT(0) - FLT(2)", "20 PRINT X# ^ FLT(2)", "30 END"], "-2"),
+
+    # ---- Range and division.
+    ("INT of a float past 16 bits saturates rather than wrapping",
+     ["10 X# = FLT(30000) * FLT(30000)", "20 PRINT INT(X#)",
+      "30 END"], "32767"),
+    ("a big float prints in exponent form, at four digits",
+     ["10 PRINT FLT(30000) * FLT(30000)", "20 END"], "8.999E+08"),
+    ("integer divide by zero errors",
+     ["10 PRINT 1 / 0", "20 END"], "?DIV BY 0 IN 10"),
+    ("MOD by zero errors the same way",
+     ["10 PRINT 5 MOD 0", "20 END"], "?DIV BY 0 IN 10"),
+    ("and a float divide by zero now errors too, not silently",
+     ["10 PRINT FLT(1) / FLT(0)", "20 END"], "?DIV BY 0 IN 10"),
+
+    # ---- Statements and strings at their edges.
+    # The body runs once even though the limit is already passed: the
+    # test is at NEXT, which is what MS BASIC does too.
+    ("a backwards FOR still runs its body once",
+     ["10 FOR I = 5 TO 1", "20 PRINT 8", "30 NEXT", "40 END"], "8"),
+    ("MID$ past the end is empty, not an error",
+     ['10 PRINT MID$("ABC", 5, 1)', "20 PRINT 8", "30 END"], "8"),
+    ("LEFT$ past the end clamps",
+     ['10 PRINT LEFT$("AB", 10)', "20 END"], "AB"),
+    ("a subscript past DIM errors",
+     ["10 DIM A(3)", "20 A(5) = 1", "30 PRINT 8", "40 END"],
+     "?INDEX IN 20"),
+    ("an unassigned float reads as zero",
+     ["10 PRINT Q#", "20 END"], "0"),
+    # `rhs` evaluates a whole erel, so a chain folds right to left:
+    # 1 < (2 < 3). Not meaningful in any BASIC of the era; pinned so
+    # the associativity is at least written down.
+    ("a chained relational folds right to left",
+     ["10 IF 1 < 2 < 3 THEN PRINT 7", "20 PRINT 9", "30 END"], "9"),
+
+    # ---- Text and floats, in both directions. Neither works, and the
+    # ---- reasons are not the same one.
+    ("VAL of an integer string is fine",
+     ['10 PRINT VAL("3")', "20 END"], "3"),
+    ("VAL of a negative integer string",
+     ['10 PRINT VAL("-7")', "20 END"], "-7"),
+    ("VAL of nonsense is zero, not an error",
+     ['10 PRINT VAL("ABC")', "20 END"], "0"),
+    # **VAL stops at the point.** No error, no float -- "3.5" is 3, and
+    # assigning it to a float variable promotes the 3. There is no
+    # decimal parser anywhere in the machine, which is the same missing
+    # piece as the float literal and INPUT of a float.
+    ("VAL truncates at the decimal point, silently",
+     ['10 PRINT VAL("3.5")', "20 END"], "3"),
+    ("and assigning that to a float promotes the truncation",
+     ['10 X# = VAL("3.5")', "20 PRINT X#", "30 END"], "3"),
+    # ---- STR$ of a float works, and shares PRINT's renderer, so the
+    # ---- two can never disagree about a value. It appends rather than
+    # ---- assigns, which is what concatenation needs.
+    ("STR$ of a float renders it",
+     ["10 X# = FLT(7) / FLT(2)", "20 PRINT STR$(X#)", "30 END"], "3.5"),
+    ("and concatenates, rather than replacing the accumulator",
+     ["10 X# = FLT(7) / FLT(2)", '20 PRINT "N=" + STR$(X#) + "!"',
+      "30 END"], "N=3.5!"),
+    ("STR$ of a negative float keeps the sign",
+     ["10 X# = FLT(0) - FLT(7) / FLT(2)", "20 PRINT STR$(X#)",
+      "30 END"], "-3.5"),
+    ("STR$ agrees with PRINT on the same value",
+     ["10 X# = SQR(2)", "20 PRINT STR$(X#)", "30 END"], "1.414"),
+    ("STR$ of an integer is unchanged",
+     ['10 PRINT STR$(42) + "!"', "20 END"], "42!"),
+    ("LEN of a rendered float, so the length is right too",
+     ["10 X# = FLT(7) / FLT(2)", "20 PRINT LEN(STR$(X#))", "30 END"], "3"),
+
+    # ---- Domain errors, and the surprising part: fp.asm *detects*
+    # ---- every one and sets carry -- the jump table promises "fsqrt C
+    # ---- set if negative", "flog C set if not positive" -- and the
+    # ---- bindings in fpbas.asm never test it. The library knows and
+    # ---- the language throws the knowledge away, returning the
+    # ---- argument. Only fdiv's is wired up, because leaving that one
+    # ---- silent made floats disagree with integers about `/ 0`.
+    # ---- Pinned: if one starts erroring, a binding grew a check.
+    ("LOG of a negative returns the argument, silently",
+     ["10 X# = FLT(0) - FLT(4)", "20 PRINT LOG(X#)", "30 END"], "-4"),
+    ("SQR of a negative does the same",
+     ["10 X# = FLT(0) - FLT(9)", "20 PRINT SQR(X#)", "30 END"], "-9"),
+    # Both integers must still be integers -- 7/2 is 3, not 3.5.
+    ("two integers keep the integer path", ["10 PRINT 7 / 2", "20 END"],
+     "3"),
+
     # Two arithmetic edges that are surprising, documented in
     # docs/13-basic.md sections 2 and 8, and would regress silently.
     #
@@ -69,14 +456,15 @@ CASES = [
     ("`>>` is logical, not arithmetic",
      ["10 PRINT -8 >> 1", "20 END"], "32764"),
 
-    # INT floors rather than truncating -- an arithmetic shift right by
-    # the point, so INT(-384), which is -1.5, is -2 and not -1. That is
-    # BBC BASIC's INT and it is deliberate: equal-width cells give a
-    # constant velocity constant pixel steps. The function was called FIX
-    # until the rename, which was the bug -- FIX means truncate-towards-
-    # zero wherever both names exist.
-    ("INT floors towards minus infinity",
-     ["10 PRINT INT(-384)", "20 END"], "-2"),
+    # INT is the float-to-integer crossing now, not 8.8's shift ([D63]).
+    # An integer comes back unchanged -- INT(7) is 7, where the old shift
+    # made it 0 -- and a float floors, which is BBC BASIC's rule and the
+    # right one for motion: equal-width cells give a constant velocity
+    # constant pixel steps.
+    ("INT leaves an integer alone", ["10 PRINT INT(7)", "20 END"], "7"),
+    ("INT of a positive float", ["10 PRINT INT(SQR(2))", "20 END"], "1"),
+    ("INT floors a negative float towards minus infinity",
+     ["10 PRINT INT(0 - SQR(2))", "20 END"], "-2"),
 
     # Comments. The tokeniser copies both forms verbatim to the end of
     # the line (sw/basic.bas tokenise), so what is stored begins with a
@@ -174,10 +562,6 @@ CASES = [
     ("ON picks the nth target",
      ["10 ON 2 GOTO 40, 60", "20 PRINT 0", "30 END",
       "40 PRINT 40", "50 END", "60 PRINT 99", "70 END"], "99"),
-
-    ("8.8 fixed point: FMUL, FDIV and INT agree",
-     ["10 PRINT FMUL(640, 384); FDIV(768, 512); INT(1000)",
-      "20 END"], "9603843"),
 
     ("TILE writes the map entry where the mode 2 engine looks",
      ["10 TILE 3, 2, 65, 7", "20 PRINT VPEEK(262); VPEEK(263)",
@@ -413,7 +797,87 @@ def sprites(code, syms):
     return out
 
 
+def syscall(code, syms):
+    """`SYS addr` runs machine code, which is D63's whole replacement.
+
+    Removing the on-machine assembler took away the only route from
+    BASIC to machine code. This is the route that replaced it, and it is
+    what a loadable library is reached through -- so it is the one case
+    that has to work or D62's float package is unreachable from a
+    program. The blob is assembled on the host, which is now the only
+    assembler there is.
+    """
+    blob, _ = H.assemble_text(
+        "        .org $6000\n"
+        "        MOV  R0,#7\n"
+        "        ST   [$0040],R0\n"        # A, at VARS
+        "        CLR  R0\n"
+        "        ST   [$0041],R0\n"
+        "        RET\n", "sysblob")
+    M = B.Machine(code, syms)
+    M.settle()
+    M.m.bus.mem[0x6000:0x6000 + len(blob)] = blob
+    for ln in ["10 SYS $6000", "20 PRINT A", "30 END"]:
+        M.cmd(ln)
+    M.cmd("RUN")
+    M.settle()
+    return M
+
+
+def asmdump():
+    """`python sim/test_run.py --asmdump` -- what an ASM block produced.
+
+    Nothing in this tree had ever *executed* an ASM block: the only
+    existing case proves one is stepped over. So when `CALL FOO` says
+    `?CALL IN 10` there is no working example to diff against, and the
+    question is the plainest one there is -- did the assembler run, and
+    where did it put the bytes. sim/test_asm.py says $7000.
+    """
+    code, syms = B.build()
+    for label, prog in (
+            # `FOO:` is cool8asm.py's syntax. **The on-machine assembler
+            # takes BBC BASIC's `.FOO`** -- asm.asm's header says so and
+            # `aisid` tests for '.'. A colon label is simply not a label
+            # here, which is why the first attempt at this saw a block
+            # assemble and no name appear.
+            ("colon label, which is not one", ["10 PRINT FOO", "20 END",
+             "900 ASM", "910 FOO:    RET", "990 END ASM"]),
+            ("dot label", ["10 PRINT FOO", "20 END",
+             "900 ASM", "910 .FOO", "920         RET", "990 END ASM"]),
+            ("dot label, called", ["10 CALL FOO", "20 PRINT A", "30 END",
+             "900 ASM", "910 .FOO", "920         MOV  R0,#7",
+             "930         ST   [$0040],R0", "940         CLR  R0",
+             "950         ST   [$0041],R0", "960         RET",
+             "990 END ASM"])):
+        M = run(code, syms, prog)
+        print(f"  ---- {label}")
+        for r in M.screen():
+            if r.strip():
+                print("      " + r.strip())
+
+        # **Not $7000.** sw/basic.bas seeds the assembler's output
+        # pointer from `progend` ($00DC) and reads back where it stopped
+        # ($00DA), so a block's code lands straight after the program.
+        # $7000 is sim/test_asm.py's own arrangement for testing the
+        # assembler in isolation, and reading the system's behaviour out
+        # of a test's scaffolding is how this went wrong the first time.
+        def w(a):
+            return M.m.bus.mem[a] | (M.m.bus.mem[a + 1] << 8)
+
+        pend, aout, atop = w(0x0016), w(0x00DC), w(0x00DA)
+        print(f"      progend ${pend:04X}   asm out ${aout:04X}"
+              f"   asm end ${atop:04X}   nametab ${w(0x0027):04X}")
+        for base in (pend & ~0xF, (pend & ~0xF) + 16):
+            print("      $%04X  %s" % (
+                base, bytes(M.m.bus.mem[base:base + 16]).hex(" ")))
+        print()
+    return 0
+
+
 def main():
+    if len(sys.argv) > 1 and sys.argv[1] == "--asmdump":
+        return asmdump()
+
     print("  I5 -- RUN, typed at the editor")
     print()
     code, syms = B.build()
@@ -430,6 +894,11 @@ def main():
         check(shows(M, want), what,
               "screen:\n      " + "\n      ".join(
                   r for r in M.screen() if r.strip()))
+    print()
+    M = syscall(code, syms)
+    check(shows(M, "7"), "SYS runs machine code at an address",
+          " | ".join(r.strip() for r in M.screen() if r.strip()))
+
     print()
     M = breaks_out(code, syms)
     check(shows(M, "?BREAK IN 10") or shows(M, "?BREAK IN 20"),
@@ -476,7 +945,40 @@ def main():
     check(shows(M, "42"), "INPUT takes a number typed at a waiting program",
           " | ".join(r.strip() for r in M.screen() if r.strip())[:100])
 
+    print()
+    fstack(code, syms)
+
     return H.report()
+
+
+def fstack(code, syms):
+    """Does overrunning the float frame stack poison the machine?
+
+    `fsav` refuses past FSDEEP and returns *without pushing*, but every
+    caller goes on to `fpair`, which pops unconditionally. So a too-deep
+    expression pops one more frame than it pushed and FSP -- a byte --
+    underflows. Nothing resets it: `idrct` clears EDEPTH, FDEPTH,
+    DDEPTH, CDEPTH and NNAME, and FSP is not in that list. The question
+    is whether one bad expression costs a line or the whole session.
+    """
+    M = B.Machine(code, syms)
+    M.settle()
+    for ln in ["10 PRINT 1+(1+(1+(1+(1+(1+(1+(1+1)))))))", "20 END"]:
+        M.cmd(ln)
+    M.m.type("RUN\r")
+    M.m.run(cycles=8_000_000)
+    check(shows(M, "?COMPLEX IN 10"), "a too-deep expression is refused",
+          " | ".join(r.strip() for r in M.screen() if r.strip())[:160])
+
+    # ...and now the same machine is asked to do trivial arithmetic.
+    M.cmd("NEW")
+    for ln in ["10 PRINT 2 + 2", "20 END"]:
+        M.cmd(ln)
+    M.m.type("RUN\r")
+    M.m.run(cycles=8_000_000)
+    check(shows(M, "4"),
+          "and the machine can still add afterwards -- FSP recovered",
+          " | ".join(r.strip() for r in M.screen() if r.strip())[:200])
 
 
 if __name__ == "__main__":

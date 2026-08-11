@@ -111,6 +111,8 @@ above.
 | `corpus` | the compiler against its corpus |
 | `fs` | the filesystem, both implementations |
 | `bas` | the code-size gate: within 15 % of hand-written |
+| `memmap` | in the `check` group — [`tools/memmap.py`](../tools/memmap.py) is the one machine-readable memory map, the same arrangement `opcodes.py` has for the encoding. It verifies itself against the equates every `sw/*.asm` actually declares, and refuses two names on one byte of page 0. **Import from it rather than writing an address down twice**: `sim/test_interp.py` used to carry its own `VARS = 0x0040` and `sim/build_basic.py` its own `ORG`/`TOP` |
+| `fp` | the loadable float package of [D62](01-decisions.md#d62--floating-point-ships-as-a-loadable-library-not-as-part-of-the-system) — arithmetic, decimal text, trig. **It also prints its own size and timing table**, which is what the decision entries quote rather than a hand-typed copy. `--trace <op> <x> <y> <label> <n>` breakpoints a routine and decodes forward; that is how `fdiv16` was caught answering the wrong question |
 | `names` | global name collisions across the system image |
 
 The shelved on-machine compiler's gates — `sim/test_comp.py`,

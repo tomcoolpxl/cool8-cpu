@@ -95,17 +95,28 @@ module cool8_vregs (
     output wire        o_irq
 );
 
-    localparam [7:0] A_MODE   = 8'h10, A_CTRL   = 8'h11,
-                     A_BASEL  = 8'h12, A_BASEH  = 8'h13,
-                     A_STRDL  = 8'h14, A_STRDH  = 8'h15,
-                     A_SCXL   = 8'h16, A_SCXH   = 8'h17,
-                     A_SCYL   = 8'h18, A_SCYH   = 8'h19,
-                     A_BORDER = 8'h1A, A_RASTER = 8'h1B,
-                     A_RCMP   = 8'h1C, A_IRQ    = 8'h1D,
-                     A_PALIDX = 8'h1E, A_PALDAT = 8'h1F,
-                     A_PATL   = 8'h20, A_PATH   = 8'h21,
-                     A_CURX   = 8'h22, A_CURY   = 8'h23,
-                     A_CURCTL = 8'h24, A_CURLIN = 8'h25;
+    localparam [7:0] A_MODE = 8'h10,           //: VID_MODE     screen mode, low nibble
+                     A_CTRL = 8'h11,           //: VID_CTRL     display enable, sprite enable, blanking
+                     A_BASEL = 8'h12,          //: VID_BASE_L   character/bitmap base, low
+                     A_BASEH = 8'h13,          //: VID_BASE_H   character/bitmap base, high
+                     A_STRDL = 8'h14,          //: VID_STRIDE_L bytes per row, low
+                     A_STRDH = 8'h15,          //: VID_STRIDE_H bytes per row, high
+                     A_SCXL = 8'h16,           //: VID_SCX_L    horizontal scroll, low
+                     A_SCXH = 8'h17,           //: VID_SCX_H    horizontal scroll, high
+                     A_SCYL = 8'h18,           //: VID_SCY_L    vertical scroll, low
+                     A_SCYH = 8'h19,           //: VID_SCY_H    vertical scroll, high
+                     A_BORDER = 8'h1A,         //: VID_BORDER   border colour index
+                     A_RASTER = 8'h1B,         //: VID_RASTER   current raster line, read-only
+                     A_RCMP = 8'h1C,           //: VID_RCMP     raster line to compare against
+                     A_IRQ = 8'h1D,            //: VID_IRQ      interrupt enable and acknowledge
+                     A_PALIDX = 8'h1E,         //: PAL_IDX      palette entry to address
+                     A_PALDAT = 8'h1F,         //: PAL_DATA     that entry's colour
+                     A_PATL = 8'h20,           //: VID_PAT_L    pattern/tile base, low
+                     A_PATH = 8'h21,           //: VID_PAT_H    pattern/tile base, high
+                     A_CURX = 8'h22,           //: CUR_X        text cursor column
+                     A_CURY = 8'h23,           //: CUR_Y        text cursor row
+                     A_CURCTL = 8'h24,         //: CUR_CTRL     cursor enable and blink
+                     A_CURLIN = 8'h25;         //: CUR_LINES    first and last scanline of the cursor cell
 
     reg [7:0]  mode_r;
     reg [5:0]  ctrl_r;

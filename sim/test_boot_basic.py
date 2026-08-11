@@ -110,7 +110,7 @@ def main():
           "BASIC installed its own interrupt vector",
           "$%04X, wanted $%04X" % (vec, syms["iisr"]))
     check(m.kbd.irq_en, "and enabled the keyboard's interrupt")
-    check(m.shows("COOLBASIC 1.0"),
+    check(m.shows("COOLBASIC " + mkboot.VERSION),
           "it booted to its banner with nothing attached",
           " | ".join(r.strip() for r in m.text() if r.strip())[:120])
 
@@ -159,7 +159,7 @@ def main():
     m.scancode([0x14, 0x12, 0x76, 0xF0, 0x76, 0xF0, 0x12, 0xF0, 0x14])
     for _ in range(90):
         m.run_frame()
-    check(m.shows("COOLBASIC 1.0"),
+    check(m.shows("COOLBASIC " + mkboot.VERSION),
           "Ctrl+Shift+Esc reboots the machine from flash",
           " | ".join(r.strip() for r in m.text() if r.strip())[:120])
     settle(m, syms)

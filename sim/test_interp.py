@@ -36,7 +36,7 @@ ROOT, BUILD = H.ROOT, H.BUILD
 
 CODE = 0x0200
 PROG = 0x3000
-VARS = 0x0040
+from memmap import VARS                                    # noqa: E402
 FAILS = H.FAILS
 
 # the editor's tokens, TOKTAB order
@@ -240,6 +240,11 @@ v_fok:  .byte 0
 v_progend: .word 0
         .include "zp.asm"
         .include "interp.asm"
+; Floating point is part of the interpreter now ([D63]): `erel` calls
+; fsav/fpair on every + - * /, and h_print calls fprint. interp.asm no
+; longer assembles without them.
+        .include "fp.asm"
+        .include "fpbas.asm"
 prog:
 """
 
@@ -404,18 +409,13 @@ CASES = [
              line(30, [K["END"]])),
      {0: 9, 1: 77}),
 
-    # An ASM block met while running is stepped over, across records.
-    # It was assembled at RUN, before a statement executed, so there is
-    # nothing to do here -- and B proves execution resumed after END ASM
-    # rather than falling into the block or off the end.
-    ("an ASM block is skipped at run time",
-     program(spaced(10, name("A"), "=", num(1)),
-             line(20, [K["ASM"]]),
-             line(30, name("NOP")),
-             spaced(40, [K["END"]], [K["ASM"]]),
-             spaced(50, name("B"), "=", num(2)),
-             line(60, [K["END"]])),
-     {0: 1, 1: 2}),
+    # **There is no ASM block any more.** [D63] took the on-machine
+    # assembler out of the image and gave token $9E to `SYS`, so what
+    # used to be `ASM` is now a statement that calls machine code at an
+    # address. The case that lived here proved a block was stepped over;
+    # there is nothing to step over. `SYS` is exercised end to end in
+    # sim/test_run.py, which can poke a routine into memory for it to
+    # call -- this suite drives the interpreter without one.
 
     # ---- long names. A-Z stay resident and stay the fast path; a name
     # of two characters or more goes in the table, and `count` and `n`

@@ -2310,6 +2310,670 @@ implementation nobody is checking, which is how `test_lib` came to
 measure two programs against a third, private model of the I/O page
 and report 1.00x for a year.
 
+## D64 — The vocabulary is read out of the tables, and a signature is compulsory
+
+**Done.** `tools/vocab.py` emits
+[13a-vocabulary.md](13a-vocabulary.md) from `TOKTAB`, `sttab` and
+`btab`. `poe build` regenerates it; `poe check` fails if it is stale,
+if any entry has lost its signature, or if a declared return type
+disagrees with the tail its handler leaves through. 93 entries — 70
+keywords, of which 51 are statements, and 24 builtins. **Zero bytes on
+the machine**: the annotations are comments.
+
+### Three sources of truth, and only one of them is a promise
+
+- **Names are read.** `TOKTAB`'s order *is* the token byte and `sttab`
+  is the same table in another file, so the tool checks their lengths
+  match and pairs them by position. A name cannot drift because nobody
+  writes it down twice.
+- **Return types are read *and* declared**, and compared. `-> float`
+  on a handler that returns through `retnum` is a lie the gate catches;
+  the negative test that proved it does bite is in this entry's own
+  history — `SGN` was temporarily made to claim `-> float` and the
+  check named it.
+- **Argument types are declared and believed.** There is no argument
+  type anywhere in the interpreter and inferring one would be the
+  mistake this project keeps making. Worse, the honest answer is
+  usually "it does not check": `!intonly` marks the 23 entries that
+  read `R0:R1` without testing `STYPE`, so the list of places a float
+  goes silently wrong is generated rather than remembered.
+
+### Why not generate the reference itself
+
+Because the valuable half is not derivable. `2 ^ 3 ^ 2` is 63.96, a
+backwards `FOR` runs its body once, `VAL("3.5")` is 3, `LOG(-4)`
+returns −4 — none of that exists in the source in any form, and only
+`sim/test_run.py` knows it. So the generator emits the *table* and
+13-basic.md keeps its hand-written prose, with the gate making sure
+the two are talking about the same words.
+
+### What it found on the first run
+
+The header of `sw/toktab.asm` claimed `$A4` was the next free token,
+that a 37th keyword would collide with `K_NUM`, and that growing past
+it needed a second table. There are **70** keywords, `$A4` is held
+open by a one-character `"?"` entry, and the table simply continued.
+The same header listed `sw/asm.asm` as one of three readers; [D63]
+deleted that file. Both corrected — and both are exactly the drift a
+generated inventory exists to prevent, sitting in the file that
+defines the language.
+
+## D63 — The inline assembler is gone, `SYS` replaced it, and floats are resident
+
+**Done, and measured at each step.** `python sim/build_basic.py`:
+
+| | image | free |
+|---|---|---|
+| before | 24,043 | 21 |
+| assembler removed | 21,163 | 2,901 |
+| `SYS` added | 21,139 | 2,925 |
+| float package resident | 23,665 | 399 |
+| language binding | 23,876 | 188 |
+| `A#`–`Z#` and `^` | 23,975 | 89 |
+| comparisons, unary minus | 23,999 | 65 |
+| `ABS`, `SGN`, precedence fix | 24,052 | 12 |
+| mul level unified (−70) | **23,993** | **71** |
+
+The assembler returned **2,880 bytes and 38 of page 0** — within four
+bytes of the 2,886 estimated from the symbol table, which is the closest
+an estimate has come all project. `SYS` cost −24: it is *smaller* than
+the `h_asm` it replaced.
+
+Resident floating point, everything included, is **2,854 bytes** — it
+fits in what the assembler gave back, with 71 to spare. That was the
+whole bet of this entry and it came in just under. It was down to 12
+bytes before the mul level was unified, which gave 70 back by deleting
+a duplicate rather than a feature.
+
+**Floats are real in the language now.** `SIN COS TAN ATN SQR LOG EXP`
+and `FLT` are ordinary functions, `PRINT` renders a float, and `+ − * /`
+promote — `1 + SQR(2)` and `SQR(2) + 1` are both 2.414, `1 / FLT(4)` is
+0.25 where `1 / 4` is still 0. Two integers keep the integer path
+untouched, and everything else in the language stays integer: `FOR`,
+`POKE`, `PLOT`, subscripts and line numbers read R0:R1 and a float never
+puts anything there. `INT` crosses back, flooring.
+
+### It cost almost nothing because strings had already paid
+
+The evaluator has had a type byte since strings needed one: `STYPE` is
+0 for a number and non-zero for a string, and a string's value is not in
+R0:R1 either — it lives in `SACC`/`SLEN` and `erel`'s `.cat` arm tests
+the type and takes the other path. **A float is the same shape with a
+third value: `STYPE` 2, and the number in `FACC`.** Nothing new was
+invented; `PRINT` grew a branch rather than a printer, and it renders
+through `s_putsn` because `fstr` answers exactly the pointer and count
+that wants.
+
+### The 8.8 fixed point is gone with it
+
+`FMUL` and `FDIV` were a worse answer to the question real floats
+answer, and `INT` was an arithmetic shift right by eight. That is 234
+bytes returned and one semantic corrected: **`INT(7)` is 7 now**, where
+the shift made it 0. `INT` is the float-to-integer crossing, still
+flooring, still for the reason [D62] gives.
+
+### Four bugs, and three were the package meeting a caller it never had
+
+- **`fsav` pushed to the CPU stack.** It is reached by `CALL`, so its
+  pushes buried its own return address and `fpair`'s first `POP` took
+  that instead of the type. Every expression in the language evaluated
+  to 0. It has a five-byte frame stack of its own now.
+- **`fp.asm` owns Y, and Y is the token pointer.** `fcp4` and `fswap`
+  take a destination in it, `fstr` walks it, `fmul` does `MOVW Y,X`.
+  Free while the package was a library called from a driver; not free
+  from BASIC. The symptom was not a crash — `PRINT SQR(2)` worked
+  because a wrecked Y reads as end-of-line, while `PRINT SQR(2) + 1`
+  printed nothing, the `+ 1` lost with the program position. Callers
+  save it inline: two instructions against 350 cycles for a multiply.
+  **A trampoline was tried first and was worse on both axes**, adding an
+  indirect jump *and* bytes.
+- **`fpair` did not promote a left-hand integer**, copying its two bytes
+  into `FACC` as though they were a float. A wild exponent, and the
+  symptom was a hang rather than a wrong number, because `fstr` scales
+  by dividing until the value is under 10000.
+- **`prim` never cleared `STYPE` for an integer**, and never had to:
+  only strings used the type and `sreset` cleared it per statement. With
+  floats in the language that leaks forward — the `1` in `SQR(2) + 1`
+  inherited type 2. `fsav` clears it, being the one point always
+  immediately before the right operand.
+
+### `A#`–`Z#`, `^`, and BM8 as published
+
+Float *variables* were the gap this entry first recorded, and they are
+built: `A#`–`Z#`, 26 of them, three bytes each, `#` made a name
+character by a bit in `ctab`. `^` followed, as `EXP(y * LOG(x))` — two
+transcendentals and the last digit, so `2 ^ 10` prints 1023. That is
+the artifact the period Microsoft BASICs had for the same reason and it
+is pinned as behaviour; an integer-exponent path would be more bytes
+and a second rounding rule to explain.
+
+Together they make **BM8 runnable as published** — the first time the
+eighth Rugg/Feldman benchmark could be typed in unmodified here. 0.39 s
+against ABC 800's 29 s and a C64's 119 s, and `poe bench` will not
+report the time unless the run also prints sin(100) as `-0.50`.
+The table and the caveat about what that margin does and does not mean
+are in [13-basic.md §9c](13-basic.md).
+
+The operand stack got its overflow check with the frame stack: seven
+frames, `?TOO DEEP` past that, rather than four and silence.
+
+### What is still owed
+
+The arithmetic is finished. The language around it is not, and the
+gaps are measured and listed in [13-basic.md §8](13-basic.md).
+
+**This entry first said the remaining gaps "error or simply do not
+parse". They do not — they are silent.** `STYPE` is read at six sites
+in the whole interpreter, and everywhere else a float leaves `R0:R1`
+holding whatever was there before and the statement proceeds on it.
+`IF X# > 0` branches on stale integers; `PRINT -X#` **drops the sign**,
+because `.neg` negates `R0:R1` without asking; `POKE`, `FOR`'s limit,
+`STR$` and the ten builtins behind `earg` all do their own version of
+the same thing. Only the float *literal* fails loudly, and only because
+the tokeniser has no decimal point.
+
+The error was the same shape as this entry's earlier one about the
+assembler: a property was asserted from how the code was *meant* to be
+organised rather than from running it. Eight programs through the
+harness settled it in one pass.
+
+**Comparisons and unary minus are fixed — 24 bytes, and no type check
+was added.** `fpair` was already the type check and `fcmp` already
+answered `$FF`/0/1, so the float case rewrites the operand pair as
+`(sign, 0)` and the six existing integer arms decide as they always
+did. `rhs` is the single point all six reach, so the arm is written
+once; it now calls `erel` instead of the integer-only
+`prim`/`mulrest`/`sumrest`, which is one call rather than three, six
+bytes *smaller*, and the reason `IF A# > B# / C#` had been wrong on
+the right while correct on the left. Unary minus was a `CMP` and a
+`JMP fneg`.
+
+**It cost 0.8–5.3% on BM1–BM7**, worst on BM2, which tests a condition
+every iteration of a `GOTO` loop. Recorded because the rule is to
+report the number even when it is worse: every comparison now runs
+`fsav`/`fpair` whether a float is involved or not.
+
+**Two of the first probes passed by luck and nearly hid the bug.**
+`3 > 1/2` and `4 > 10/2` both gave the right answer with the right
+side evaluated wrongly, because the wrong evaluation happened to land
+on the same side of the boundary. `4 > 10/5` — true, where the broken
+path says false — is what exposed it. The tests kept are the
+discriminating ones, and each says in a comment what wrong answer it
+would give if the fix were reverted.
+
+**Then the same bug turned up a second time, and worse.** The float
+arms of `+` and `−` call `mulrest` to bind a higher-precedence
+operator before adding — and `mulrest` was the integer-only
+continuation too. So `A# = B# + C# * D#` **silently dropped the
+multiply**: `FLT(1) + FLT(7) / FLT(2)` gave 8, not 4.5, while the
+integer `1 + 6 / 2` was always right. That is not a missing feature,
+it is a wrong answer in the most ordinary arithmetic a program can
+contain, and it shipped inside an entry that called the arithmetic
+finished.
+
+Both bugs are one mistake made twice: **a float-aware arm calling an
+integer-only helper.** A third would look the same — `prim`,
+`mulrest`, `sumrest` or `mdrhs` reached from something that has
+already promoted.
+
+The fix was 17 bytes over budget, and two factorings paid for it:
+`fsav / prim / fpair` opened five arms and became `fopnd`; the five
+`fop*` wrappers all ended alike and now share a tail at `fretf`, which
+also retired two copies of "set the type to 2". `ABS` and `SGN` went
+in beside it — `ABS` keeps the type, `SGN` always answers an integer,
+which is both the useful form and the one that lets a single path
+serve either argument.
+
+**The domain errors are silent, and the library already knows.**
+`LOG(-4)` returns −4, `SQR(-9)` returns −9, `X# / FLT(0)` returns the
+numerator. `fp.asm` sets carry for every one of them and documents it
+in the jump table; `fpbas.asm` never tests it. That makes them the
+cheapest gap left — a `BCS` per site, nothing to detect — and they are
+open only because 12 bytes remain.
+
+**The `earg` class was considered and dropped.** One choke point, ten
+builtins, a few bytes; but `RND`, `CHR$`, `ASC` and `VPEEK` all take
+integers naturally and nobody passes them a float. Cheap is not the
+same as worth buying.
+
+What stays silent by choice: `POKE`, the `FOR` limit, subscripts,
+`STR$`. Pinned at their wrong answers as tripwires.
+
+### The review, and the two it found that mattered
+
+A full read of the package afterwards found the same duplication a
+third time and one bug worse than any of them.
+
+**`mulrest` did not know `^` either**, so `0 - 2 ^ 2` was −2. Three
+bugs, one cause, three separate discoveries — at which point the answer
+is not another patch. **The mul level was written twice**, inline in
+`erel` and again as `mulrest`, and the copies had drifted apart on
+floats and then on `^`. It is one routine now, called from both places.
+That deleted **70 bytes** — the largest reclaim since the assembler —
+and it is the only change here that makes a fourth instance impossible
+rather than merely absent. It cost 1.3–2% on BM1–BM7: what was inline
+in `erel` is a `CALL` now.
+
+**One over-nested expression bricked the session.** `fsav` refuses past
+`FSDEEP` and returns *without* pushing, but its callers go on to
+`fpair`, which pops unconditionally — so the expression pops one more
+frame than it pushed, and `FSP`, a byte, underflows to 251. Nothing
+reset it: `idrct` and `irun` clear EDEPTH, FDEPTH, DDEPTH, CDEPTH and
+NNAME, and FSP was in neither list. Past that point *every* expression
+in the session failed `?COMPLEX` and returned rubbish — after `NEW`,
+`PRINT 2 + 2` printed **1538**. Two `ST [FSP],R0`, one in each reset,
+bound it to the statement. `sim/test_run.py`'s `fstack()` runs the
+poisoning expression and then asks the same machine to add.
+
+**A documented flag was only half true.** `fdiv`'s header promises "C
+set on return means division by zero", but the success path ended
+`JMP fnorm` and inherited whatever carry the normalise left. The first
+caller to believe the contract — `fopdiv`, so that `X# / FLT(0)` errors
+like `1 / 0` does — broke on `FLT(1)/FLT(3)`. A flag stated in a header
+has to be set on every path or it is not stated. Fixed in `fp.asm`, at
+two bytes.
+
+Also corrected: 40 lines of duplicated `ASM` post-mortem in
+13-basic.md, a header still calling values "16-bit signed integers
+only", an operator table without `^`, and a note claiming `INT` is an
+arithmetic shift by 8 — true when §8 was fixed point, false since.
+
+### Floats cost the integer path 1–15%
+
+BM1–BM7 never call `fp.asm` and got slower anyway — BM3 and BM4 by
+13–15%, BM1 by 1%. The promotion check runs on every operator whether
+a float is present or not. Worth recording because it is the kind of
+cost that is easy not to look for: the feature was measured, the code
+that did not use the feature was not, and it moved.
+
+### The finding that opens it — and three wrong versions of it first
+
+**`ASM … END ASM` emits code, but its labels never become usable.**
+`PRINT FOO` gives 0 and `CALL FOO` gives `?CALL IN 10`, while the
+assembled `RET` is demonstrably sitting at `progend`. Full write-up in
+[13-basic.md §1](13-basic.md); the leading hypothesis is that the name
+table is rebased *after* `aprog` runs, stranding every label the pass
+created, and that is unproven.
+
+**This entry first claimed the assembler was never invoked at all.**
+That was wrong, and the way it was wrong is worth more than the entry:
+a grep of `interp.asm` came back empty and the conclusion was drawn from
+it, when the call is in `sw/basic.bas`. Two more followed — that blocks
+land at `$7000` (that is `sim/test_asm.py`'s scaffolding, not the
+system's), and that labels want BBC's `.name` (that is a *directive*
+here; `aline`'s grammar takes `label:`).
+
+Three wrong diagnoses in a row, each confidently held, each from reading
+one file and inferring the rest. **The corrective is the project's own
+standing rule 4** — the answer came from `--asmdump` printing what the
+machine actually did, and every wrong turn came from reasoning about
+source instead.
+
+So the honest position: the assembler is 2,886 bytes of code that is
+*mostly* working and has one unidentified defect between it and being
+usable. That is a materially weaker case for deleting it than "it has
+never worked", and this entry is not to be acted on until the defect is
+understood — because if it is a one-line ordering fix, the whole
+argument below evaporates.
+
+### So the choice is not "keep a feature or lose it"
+
+| | cost |
+|---|---|
+| **Wire it up** — one scan pass, like `subscan` | ~40–60 bytes |
+| **Remove it** — `asm.asm`, `asmtab.asm`, `h_asm`, `h_call`'s label arm | **~2,900 bytes, and 38 of page 0** |
+
+There are 21 bytes free, so *either* needs a cut. Nothing that works
+today is lost by removing it, because nothing works today.
+
+Page 0 is the sharper half. [zp.asm](../sw/zp.asm) hands out every byte;
+`$00DA-$00FF` is the assembler's. That 38 bytes is why `HIMEM` cannot
+exist ([D62](#d62--floating-point-ships-as-a-loadable-library-not-as-part-of-the-system)),
+and page 0 is the one resource with no slack anywhere.
+
+### `SYS addr` is what actually has to replace it
+
+Removing `ASM` removes the only way BASIC reaches machine code, because
+`CALL <label>` needs the assembler to have defined the label. A loadable
+library would have no entry point. **The replacement is one statement:**
+
+```
+SYS addr            call machine code, ~25 bytes
+```
+
+That is all D62's library ever needed. Assembling on the machine is not
+required to *use* machine code — only to write it — and
+`tools/cool8asm.py` is a better assembler than the resident one and is
+the gate the resident one is measured against. On a machine with a flash
+filesystem and a serial console to a host, "type assembly without a PC"
+is a thin benefit for 2,900 bytes.
+
+### What the 2,900 buys, and this is the redesign
+
+**Real floating point, resident, in expressions** — not the gated calls
+of D62:
+
+| | bytes |
+|---|---|
+| the package, measured | 2,526 |
+| type dispatch on the four operators and six relations | ~300 |
+| `SYS` | ~25 |
+| **total** | **~2,850** |
+
+against ~2,900 reclaimed. It fits, with nothing to spare and nothing
+needed.
+
+**Floats get their own namespace, `A#`–`Z#`**, the way BBC BASIC gives
+integers `A%`. Packed three bytes, 78 bytes of RAM, outside page 0 —
+[D6](#d6--no-zero-page-addressing-mode) means there is no reason to want
+page 0 for them. Integer variables and every integer path are untouched,
+so no existing program changes behaviour and no graphics command needs a
+coercion. `SIN`, `COS`, `LOG`, `SQR` and `^` become ordinary functions.
+BM8 becomes runnable as published.
+
+The alternative spend is the cheap spread — `ABS`, `SGN`, 16.16 fixed
+point, `MERGE`, `HIMEM`, better errors — around 1,200 bytes, leaving
+1,700 for whatever comes next.
+
+### Against it
+
+- **2,886 bytes of working, gated code get deleted.** `test_asm.py` is a
+  real suite proving a real thing. Deleting it to make room is a
+  judgement that cannot be undone cheaply.
+- **An on-machine assembler is a character feature.** BBC BASIC's is
+  famous, and D45 exists because someone thought carefully about how it
+  should share the variable namespace. This machine is meant to be a
+  pleasant retro computer, not only an efficient one.
+- **Fixing it is 40–60 bytes**, which is two orders cheaper than the
+  benefit being claimed for the space. If the 21-byte ceiling were
+  relieved some other way, "wire it up" is obviously right and this
+  entry is obviously wrong.
+- Dead tokens stay either way: `ASM` cannot leave `toktab.asm`, whose
+  order is fixed by saved programs — though `AS`, `INT`, `BYTE`, `CARD`,
+  `EXTERN`, `INCLUDE` and `INLINE` are already dead there, so the
+  precedent is established and cheap.
+
+### What would settle it
+
+Two numbers nobody has: **what the editor (`basic.bas`) actually costs**
+— it is 13 KB of the image and the only file `--by-file` cannot
+attribute, because it has no assembly labels — and whether the sigil
+dispatch really is ~300 bytes. Both are measurable, and this entry
+should not be acted on before they are.
+
+`python sim/build_basic.py --by-file` is the tool the first of those
+wants.
+
+## D62 — Floating point ships as a loadable library, not as part of the system
+
+**Supersedes [D61](#d61--real-floating-point-costs-1074-bytes-measured-and-it-still-does-not-fit)'s
+conclusion without contradicting its measurement.** D61 established that
+real floats cost about a kilobyte and that the system has 21 bytes. The
+error in it was treating "resident" as the only option.
+
+**Floats are not a language feature here. They are a file you load when
+you need one**, the way the era actually did it — BBC `*LOAD`ed machine
+code, Simons' BASIC on a cartridge, toolkit tapes you merged. Someone
+plotting an integral for a school assignment loads the library; everyone
+else never pays a byte for it.
+
+**The resident cost is zero**, and that is the entire argument. No drops,
+no cuts to `LINE` or `GTEXT`, the image stays where it is. And once the
+package is not competing for resident space the transcendentals become
+affordable, which is what makes `SIN`, `LOG` and `^` possible at all —
+they were unthinkable against 21 bytes and cost nothing in a file.
+
+### What it does not fix
+
+The ergonomics. The API is address-based calls, so `X = X + V*T` is four
+of them and a hand-allocated set of addresses. **This makes floats
+available, not pleasant**, and the pleasant option for game arithmetic
+is still 16.16 fixed point, which is a different job and still
+unmeasured.
+
+### The one gap, and the two ways round it
+
+**There is no `HIMEM`.** `LOAD "FP" AT addr` puts raw bytes in memory and
+nothing stops the heap growing into them. Adding one is 20–40 bytes and
+there are 21, so it is not available.
+
+- **Ship the package inside a BASIC source file as one `ASM … END ASM`
+  block.** BASIC's own program storage holds it, so the heap cannot
+  reach it and `SAVE`/`LOAD`/`LIST` all work unchanged. It costs ~10 KB
+  of assembly *source text* for ~1.7 KB of code and re-assembles on
+  every `RUN` — affordable against 40 KB of user RAM, and it needs no
+  new feature whatsoever. **This is the supported route.**
+- Ship the assembled binary with a documented safe load address, for
+  anyone who wants instant start and will not `DIM` into it.
+
+### The jump table is the ABI
+
+Because the package is loaded rather than linked, a caller cannot know
+where anything landed. Every entry point is at a fixed offset from the
+base, and **entries are appended, never inserted or reordered** — the
+same rule and the same reason as `toktab.asm`'s. The table is at the
+head of [`sw/fp.asm`](../sw/fp.asm) and lists its own offsets.
+
+### Measured, complete
+
+**2,526 bytes**, 22 entry points, 155 checks. **`python sim/test_fp.py`
+prints the whole table below as part of its run — quote it, and if it
+disagrees with what is written here then it is right and this is stale.**
+The figures were transcribed by hand once and that is exactly how the
+Fmax and cell counts in [05-board.md](05-board.md) came to be wrong.
+
+Cycles measured at 8.375 MHz:
+
+| | bytes | cycles | per second |
+|---|---|---|---|
+| `fmul` | 99 | 350 | 23,900 |
+| `fadd` | 137 | 376 | 22,300 |
+| `fdiv` | 56 | 1,249 | 6,700 |
+| `fstr` | 398 | 2,082 | 4,000 |
+| `fsin` | 204 | 4,371 | 1,920 |
+| `fcos` | 13 | 4,846 | 1,730 |
+| `fexp` | 133 | 4,671 | 1,790 |
+| `flog` | 249 | 5,244 | 1,600 |
+| `fsqrt` | 115 | 6,389 | 1,310 |
+| `fatan` | 296 | 6,744 | 1,240 |
+| `ftan` | 64 | 10,509 | 800 |
+| `fpow` | 34 | 10,074 | 830 |
+
+plus `fabs` 5, `fneg` 16, `fsgn` 22, `fcmp` 65, `fatan` 296, the pack,
+unpack, normalise and int-conversion core from [D61](#d61--real-floating-point-costs-1074-bytes-measured-and-it-still-does-not-fit),
+and **71 bytes of workspace that lives inside the package**.
+
+That workspace is worth its own note. It was first written at fixed
+page-0 addresses out of 6502 habit, and [zp.asm](../sw/zp.asm) hands out
+every byte of page 0 — `FACC` landed in the filesystem's variables and
+the temporaries sat on top of **`FORSTK`**. An integral plot is a `FOR`
+loop calling these routines, so it would have corrupted itself on the
+first iteration. [D6](#d6--no-zero-page-addressing-mode) means there was
+never anything to gain: `$0040` costs exactly what `$9040` costs. Inside
+the package the workspace also relocates with the code, which is what a
+loadable library wants — one base address and nothing else to place.
+
+**Nothing here is a separate series that could have shared one.**
+`fcos` is `fsin(x + pi/2)` and costs 13 bytes; `ftan` is the quotient
+and costs 64; `fpow` is `exp(y ln x)` and costs 34. Building log and exp
+before power, and the quadrant reduction before cosine, is why the tail
+of this table is nearly free.
+
+**`fcmp` is in the table because a float library without a comparison is
+unusable.** A caller cannot build one out of `fsub` without knowing the
+representation, and the moment they do the representation can never
+change.
+
+### BM8 is now reachable
+
+`A=K^2 : B=LOG(K) : C=SIN(K)` is 10,074 + 5,244 + 4,371 = **19,689
+cycles an iteration, about 2.35 s over a thousand** — extrapolated from
+measured single calls, excluding whatever the interpreter costs around
+them. Placing that against the published Rugg/Feldman table would need
+the table itself verified, which has not been done here.
+
+### The estimates, scored
+
+| | estimated | actual | |
+|---|---|---|---|
+| arithmetic core | 570 | 676 | 19 % low |
+| decimal printer | 250 | 398 | 59 % low |
+| transcendentals | 400–700 | 636 | inside |
+| trig, sign, compare | — | 745 | not estimated |
+
+Series arithmetic is predictable; formatting and range reduction are
+not. `fatan` at 296 bytes is the largest routine in the package after
+the printer, and both are large for the same reason — the work is case
+analysis, not maths.
+
+## D61 — Real floating point costs 1,074 bytes, measured, and it still does not fit
+
+**Built, run and weighed rather than estimated.** `sw/fp.asm` is a
+working 3-byte binary float and `sim/test_fp.py` puts 71 checks through
+it on the machine. The number this entry exists for is **1,074 bytes**,
+and the system has **21 free**.
+
+### The design that was measured
+
+Not a float that can appear in an expression. That shape was priced at
+1.5–2 KB and most of it was not arithmetic: every value slot in the
+interpreter widens, and every graphics command needs a coercion at each
+argument. **Gating the type removes all of it** — floats live at
+addresses, are reached only through calls, and convert out to an integer
+or a string. Nothing else in the language learns they exist, so `FOR`,
+arrays, `DATA`, `PLOT` and the evaluator are untouched.
+
+Gating also buys the format. Because a float never lives in a variable,
+nothing forces the mantissa to a convenient width, so it is 16 bits —
+exactly what `mul16` and `udiv16` already work in. A 24-bit mantissa
+would need new wide routines.
+
+    byte 0   exponent, excess-128; 0 means zero
+    byte 1   bit 7 sign, bits 6-0 the top 7 fraction bits
+    byte 2   the low 8 fraction bits
+
+15 stored fraction bits and an implied leading 1 is about 4.8 decimal
+digits over roughly 10^±38.
+
+### Where the bytes went
+
+| | bytes |
+|---|---|
+| add, subtract | 170 |
+| int↔float, including the floor | 150 |
+| divide | 120 |
+| multiply | 99 |
+| pack, unpack | 58 |
+| normalise | 36 |
+| compare | 26 |
+| constants | 17 |
+| **arithmetic subtotal** | **676** |
+| **decimal print** | **398** |
+| **total** | **1,074** |
+
+**The printer is 37 % of the package**, and it was estimated at 250
+against an actual 398 — 59 % low, where the arithmetic estimate was only
+12 % low. That is the lesson worth keeping: the hard part of floating
+point is not the floating point.
+
+### And it is fast enough that speed was never the problem
+
+Measured at 8.375 MHz, `python sim/test_fp.py` timings, each figure
+including the driver's own load and store:
+
+| op | cycles | per second |
+|---|---|---|
+| `fmul` | 350 | 23,900 |
+| `fadd` | 376 | 22,300 |
+| `fsub` | 415 | 20,200 |
+| `fdiv` | 1,249 | 6,700 |
+| `fstr` | 2,082 | 4,000 |
+
+Divide is three and a half times multiply because it is sixteen
+restoring-division steps while multiply gets four hardware 8×8 `MUL`s.
+Printing is the slowest operation in the package, which follows from the
+scaling loop calling `fmul` or `fdiv` several times before the first
+digit exists.
+
+**"Can be slow, must be small" turned out to be the wrong trade to
+offer.** Nothing here is slow — a four-operation loop over a thousand
+iterations is about 0.18 s of arithmetic. Every constraint that bit was
+a size constraint.
+
+### BM1–BM8, and why the comparison is awkward
+
+The Rugg/Feldman benchmarks are the obvious way to place this against
+period machines. **BM8's arithmetic is now complete** — `^`, `LOG` and
+`SIN` all exist, at about 19,700 cycles an iteration or 2.35 s over a
+thousand; see
+[D62](#d62--floating-point-ships-as-a-loadable-library-not-as-part-of-the-system).
+
+Two things still stand in the way of a like-for-like run, and neither is
+about space:
+
+- **Nothing is callable from BASIC.** The token and dispatch glue was
+  costed at ~120 bytes and has not been built.
+- **The comparison would be false anyway.** Those times come from
+  machines where *all* BASIC arithmetic is floating point. COOL8's is
+  integer and this float is a gated type, so BM1–BM7 here would measure
+  statement dispatch rather than arithmetic. **Cycles per operation is
+  the honest comparison**, and that is the table above.
+
+Add roughly 120 for `btab` entries and dispatch and the delivered cost
+is **~1,200 bytes**.
+
+### The verdict
+
+The measured drop list is nowhere near it. The fixed-point trio is 256
+and goes for free because floats supersede it, which leaves ~950 to find
+from `LINE`, `GTEXT`, `INPUT`, `SPRITE` and `CLG` — whose figures are
+still the unverified ones, and whose sum as claimed is ~1,056. **Cutting
+literally every drop candidate in the table pays for this and nothing
+else**, and leaves a machine with no `LINE`, no `GTEXT`, no `INPUT` and
+no `SPRITE`.
+
+So it is built, it works, and it is not affordable **as part of the
+system image** — which turned out to be the wrong place to put it. See
+[D62](#d62--floating-point-ships-as-a-loadable-library-not-as-part-of-the-system),
+which keeps every number in this entry and changes only where the code
+lives. The package has since grown transcendentals and stands at 1,710
+bytes.
+
+### What it costs beyond bytes
+
+`X = X + V*T` becomes four calls and a hand-allocated set of addresses.
+That is an assembler wearing a BASIC hat, and this project's aim is a
+*pleasant* retro machine. Even at half the size it would be a wart.
+
+**The cheaper thing remains unmeasured and is the one to try**: 16.16
+fixed point in four bytes, ±32,767 at 1/65,536. No exponent, no
+normalise, no alignment — add and subtract are plain 32-bit integer
+work, multiply and divide are the existing routines widened, and it
+needs no new type in the language because it is still an integer
+expression. The estimate is 400–600 bytes and the estimate is the point:
+this entry is what happens when one goes unchecked.
+
+### Three bugs, all of them flag behaviour
+
+Recorded because each cost a round and each is general:
+
+- **`POP` sets Z.** A routine that computed its answer into the flags
+  and *then* restored registers handed the caller the flags of whatever
+  came off the stack. It made `ftoi` floor an exact −1.0 to −2, and
+  separately ran a loop counter until a data byte happened to hit zero.
+  The counter now lives in `X` with `DECW`, which is what `udiv16` does
+  and why.
+- **A fractional divide is not `udiv16`.** Feeding the dividend in one
+  bit at a time computes the *integer* quotient; a float needs
+  `D × 2^16 / SB`, so the remainder has to **start** as the dividend.
+  The first version returned 1 for 1.0/1.0 — the right answer to the
+  wrong question.
+- **`CLR` between `SUB` and `SBC`.** The normative flag table in
+  [02-isa.md §1.2](02-isa.md#12-flag-effects) says nothing about what
+  `CLR` does to carry, so every negate written that way was an
+  assumption. They are all complement-and-increment now, as `negp16`
+  does it, because `XOR` is documented to leave `C` alone.
+
 ## D59 — CPI is 2.59, and pipelining the fetch is a bet rather than an optimisation
 
 **Answers the arithmetic the open question was waiting on**, and the

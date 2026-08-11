@@ -54,7 +54,7 @@ between sessions, it is worth a commit.
 | [10-debugging.md](docs/10-debugging.md) | **The debug and profiling tooling, and the rules that came out of using it** |
 | [11-compiler.md](docs/11-compiler.md) | The shelved self-hosted compiler, and the size arithmetic that shelved it |
 | [12-tasks.md](docs/12-tasks.md) | **Every command, and the runner that names them.** What each job proves, the gates, and how to add one |
-| [13-basic.md](docs/13-basic.md) | **COOL8 BASIC, the language reference** — every statement, function, operator, the graphics/sound set, 8.8 fixed point, and the size ceiling |
+| [13-basic.md](docs/13-basic.md) | **COOL8 BASIC, the language reference** — every statement, function, operator, the graphics/sound set, floating point, and the size ceiling |
 
 `README.md` is a summary derived from those. Keep it in step, but do not
 put anything in it that is not already recorded properly somewhere else.

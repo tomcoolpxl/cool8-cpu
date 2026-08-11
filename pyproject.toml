@@ -114,10 +114,10 @@ id = "interp"
 run = "sim/test_interp.py"
 about = "I2 -- the interpreter on the editor's stored form"
 
-[[tool.cool8.jobs.sw]]
-id = "asm"
-run = "sim/test_asm.py"
-about = "I3b -- the on-machine assembler, byte-identical to cool8asm"
+# `asm` is not here any more. The on-machine assembler left the image in
+# [D63] and sim/test_asm.py gates code that now ships nowhere -- the same
+# standing as the shelved compiler's test_comp/test_emit/test_lex. See
+# docs/12-tasks.md.
 
 [[tool.cool8.jobs.sw]]
 id = "basic"
@@ -128,6 +128,11 @@ about = "S1 -- the screen editor, typed at"
 id = "run"
 run = "sim/test_run.py"
 about = "I5 -- RUN, plus INKEY and KEY from the keyboard"
+
+[[tool.cool8.jobs.sw]]
+id = "fp"
+run = "sim/test_fp.py"
+about = "the loadable float package -- arithmetic, decimal text, trig, and its own size and timing report"
 
 [[tool.cool8.jobs.sw]]
 id = "boot_basic"
@@ -251,6 +256,24 @@ args = ["--check"]
 about = "the encoding table against the documented examples"
 
 [[tool.cool8.jobs.check]]
+id = "memmap"
+run = "tools/memmap.py"
+args = ["--check"]
+about = "the memory map against the equates the assembler reads, and no two names on one byte of page 0"
+
+[[tool.cool8.jobs.check]]
+id = "ioregs"
+run = "tools/ioregs.py"
+args = ["--check"]
+about = "every I/O register the RTL decodes is named, and no $FExx equate in sw/ points at an address no peripheral answers at"
+
+[[tool.cool8.jobs.check]]
+id = "vocab"
+run = "tools/vocab.py"
+args = ["--check"]
+about = "every keyword and builtin carries a signature, the declared return types match the tails, and docs/13a-vocabulary.md is current"
+
+[[tool.cool8.jobs.check]]
 id = "asmtab"
 run = "tools/mkasmtab.py"
 args = ["--check"]
@@ -272,6 +295,18 @@ about = "the 4 KB boot ROM"
 id = "basic"
 run = "sim/build_basic.py"
 about = "basic.bin and BOOT.BIN, with the sizes"
+
+[[tool.cool8.jobs.build]]
+id = "ioregs"
+run = "tools/ioregs.py"
+args = ["--emit"]
+about = "docs/04a-registers.md, the I/O map read back out of the Verilog that decodes it"
+
+[[tool.cool8.jobs.build]]
+id = "vocab"
+run = "tools/vocab.py"
+args = ["--emit"]
+about = "docs/13a-vocabulary.md, the keywords and builtins read back out of the tables that implement them"
 
 [[tool.cool8.jobs.bench]]
 id = "bm"

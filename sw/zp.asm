@@ -16,9 +16,18 @@
 ;   $0027-$0032   long names: the table, the heap floor, the scan buffer
 ;   $0040-$0073   VARS, A-Z, two bytes each
 ;   $0074-$00A1   sw/fs.asm's FSVARS, 46 bytes
-;   $00A2-$00D9   FORSTK, 8 frames of 7
-;   $00DA-$00FF   the assembler
+;   $00A2-$00A3   FDEPTH and EDEPTH
+;   $00A4-$00D9   free, 54 bytes -- FORSTK's until STEP made it too big
+;   $00DA-$00FE   floating point's operand stack (was the assembler)
 ;   $0100-$01FF   the CPU stack, growing down from $0200
+;
+; **This comment is not the source of truth and has been wrong.** It
+; still listed FORSTK in page 0 long after it left. `tools/memmap.py`
+; holds the map machine-readably, `poe check` verifies it against the
+; equates below, and it also refuses two names on one byte -- which is
+; the mistake page 0 invites, being full and tempting. The equates in
+; this file are what the assembler reads and remain authoritative; the
+; prose above is a convenience that a check now keeps honest.
 ;
 ; **Include this exactly once**, before interp.asm or asm.asm. Both
 ; assume it and neither includes it, because in the built system both
@@ -131,35 +140,29 @@ MAXFOR  = 8                     ; nesting levels, as it always was
 ; absolutes in sw/interp.asm now, and **$00A2-$00D9 is free** -- the
 ; first 56 bytes page 0 has ever gained back.
 
-; ---- the assembler
-ACP     = $00DA                 ; 2: where the next byte goes
-ACBASE  = $00DC                 ; 2: where this block started
-APASS   = $00DE                 ; 1: 0 = laying out, 1 = emitting
-ACH     = $00E0                 ; 1: the character the scanner stopped on
-AKSRC   = $00E1                 ; 2: TOKTAB expansion in progress
-AKLEN   = $00E3                 ; 1: characters left in it
-ATK     = $00E4                 ; 1: the token class
-AVAL    = $00E5                 ; 2: its value, for AT_NUM
-AFAM    = $00E7                 ; 1
-ABASE   = $00E8                 ; 1
-AOP0    = $00E9                 ; 1: first operand shape
-ASUB0   = $00EA                 ; 1
-AV0     = $00EB                 ; 2
-AOP1    = $00ED                 ; 1: second operand shape
-ASUB1   = $00EE                 ; 1
-AV1     = $00EF                 ; 2
-ANOPS   = $00F1                 ; 1: how many operands were given
-APRE    = $00F2                 ; 1: $00 or $2F
-AOPC    = $00F3                 ; 1
-AEXTRA  = $00F4                 ; 1: what trails the opcode, see asm.asm
-AKEY    = $00F5                 ; 3: first, second and last of a name
-AVT     = $00F8                 ; 2: one operand's value, before aline
-                                ;    files it as AV0 or AV1
-ADW     = $00FA                 ; 1: .word rather than .byte
-; $00FB-$00FF is free. It held ANAME, ANLEN and ASYMS -- the assembler's
-; own copy of a name and its own symbol table -- until D45 made a label
-; a BASIC variable and left the scan in NBUF/NLEN, which is what the
-; name table already wanted.
+; ---- floating point's operand stack, in what the assembler left
+;
+; **$00DA-$00FF was the on-machine assembler's**, all 38 bytes of it,
+; until [D63] took the assembler out of the image. This is what the
+; space went to.
+;
+; `erel` pushes the left operand here before evaluating the right, so
+; one frame is one pending operator and the depth is the expression's.
+; Five bytes a frame: a type and four of value, the same size whether
+; the value is a two-byte integer or a four-byte unpacked float, so the
+; pop does not have to branch before it knows which.
+;
+; **Seven frames because thirty-eight bytes is what there was.** It sat
+; at four in the image while the binding was being written, which was a
+; size compromise and is paid off here: this is RAM the image no longer
+; carries, and deeper besides. `fsav` refuses past the top with
+; ?FORMULA TOO COMPLEX rather than writing off the end -- the same error
+; `edin` gives, and for the same reason.
+FSDEEP  = 7                     ; frames
+FSTK    = $00DA                 ; 35: FSDEEP frames of five
+FSP     = $00FD                 ; 1: the next free byte, an offset
+FLTY    = $00FE                 ; 1: the left's type, across fpair
+; $00FF is free.
 
 ; ---- error codes. The interpreter's caller reads ERR; 255 is a clean
 ; ---- stop and everything else is a fault.
