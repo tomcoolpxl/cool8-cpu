@@ -29,12 +29,7 @@ Names come from `TOKTAB` and `btab`, the bytes the matcher compares against. Ret
 | `$A2` | `GOTO line:int` |  |
 | `$A5` | `MODE n:int` | `!intonly` |
 | `$A6` | `VSYNC` | waits for the next frame |
-| `$A7` | `SCROLL dx:int, dy:int` | `!intonly` |
-| `$A8` | `PALETTE slot:int, colour:int` | `!intonly` |
-| `$A9` | `SPRITE n:int, x:int, y:int, pattern:int, attr:int` | `!intonly` |
-| `$AA` | `VPOKE addr:int, value:int` | video memory `!intonly` |
 | `$AB` | `SOUND voice:int, pitch:int, volume:int, length:int` | `!intonly` |
-| `$AC` | `HLINE x1:int, x2:int, y:int, colour:int` | `!intonly` |
 | `$AD` | `PLOT x:int, y:int, colour:int` | `!intonly` |
 | `$AE` | `LINE x1:int, y1:int, x2:int, y2:int, colour:int` | `!intonly` |
 | `$AF` | `INPUT var` | digits and a leading minus; no float can be typed `!intonly` |
@@ -42,7 +37,6 @@ Names come from `TOKTAB` and `btab`, the bytes the matcher compares against. Ret
 | `$B1` | `READ var[, var]...` | scalar targets only |
 | `$B2` | `RESTORE` |  |
 | `$B4` | `ON e:int GOTO line[, line]...` | literal lines; out of range falls through |
-| `$B5` | `TILE x:int, y:int, tile:int, attr:int` | `!intonly` |
 | `$B6` | `CLG colour:int` | `!intonly` |
 | `$B7` | `PITCH voice:int, pitch:int` | `!intonly` |
 | `$B8` | `GTEXT x:int, y:int, text:string` | `!intonly` |
@@ -62,7 +56,7 @@ Names come from `TOKTAB` and `btab`, the bytes the matcher compares against. Ret
 
 ## Tokenised, but not statements
 
-These hold a token because the tokeniser matches them inside something else — `TO` in a `FOR`, `THEN` in an `IF` — so `sttab` sends them to `bad`. **Two are functions**, reached from `prim` rather than dispatched: they are marked below. Everything else here is a clause, an operator, or a word that was reserved and never implemented, and meeting one where a statement was expected is `?SYNTAX`.
+These hold a token but `sttab` sends them to `bad`, so meeting one where a statement was expected is `?SYNTAX`. Three reasons, all marked below: a **clause** the tokeniser matches inside something else (`TO` in a `FOR`, `THEN` in an `IF`); a **function** reached from `prim` rather than dispatched; or a command that was **removed**, whose token stays because the order of `TOKTAB` fixes every byte after it and programs on disk hold the old numbering.
 
 | token | | |
 |---|---|---|
@@ -84,7 +78,13 @@ These hold a token because the tokeniser matches them inside something else — 
 | `$A1` | `INLINE` | |
 | `$A3` | `WEND` | |
 | `$A4` | `(reserved)` | K_NUM: a numeric literal with two binary bytes after it. The "?" entry in TOKTAB holds the slot open |
+| `$A7` | `(removed)` | was SCROLL dx, dy -- POKE VID_SCX/VID_SCY, see 04a-registers.md |
+| `$A8` | `(removed)` | was PALETTE slot, colour -- POKE PAL_IDX then PAL_DATA twice, high byte first |
+| `$A9` | `(removed)` | was SPRITE n, x, y, pattern, attr -- POKE SPR_IDX = n*8, eight bytes to SPR_DATA, then SPR_CTRL |
+| `$AA` | `(removed)` | was VPOKE addr, value -- POKE VRAM_ADDR_L/H, VRAM_STEP, then VRAM_DATA, which auto-steps |
+| `$AC` | `(removed)` | was HLINE x, y, n, colour -- set PIX_X/PIX_Y, then POKE PIX_DATA n times; the port steps X itself |
 | `$B3` | `STEP` | |
+| `$B5` | `(removed)` | was TILE x, y, tile, attr -- the map entry through the VRAM port |
 
 ## Functions
 
@@ -98,7 +98,7 @@ Matched by name, not tokenised — they have no token byte.
 | `CHR$(n:int) -> string` | `!intonly` |
 | `ASC(s:string) -> int` |  |
 | `STR$(n:int\|float) -> string` | a float renders as PRINT would |
-| `VAL(s:string) -> int` | stops at a decimal point; nonsense is 0 |
+| `VAL(s:string) -> same` | a fraction gives a float, four digits of it; nonsense is 0 |
 | `INSTR(hay:string, needle:string) -> int` |  |
 | `INKEY -> int` | 0 when nothing was typed |
 | `KEY(code:int) -> int` | is that key held down `!intonly` |
@@ -118,6 +118,6 @@ Matched by name, not tokenised — they have no token byte.
 
 ## The `!intonly` list
 
-23 of them. Each reads `R0:R1` and never tests `STYPE`, so handing one a float does not raise an error — it acts on whatever the integer registers last held. This list is generated so it cannot quietly grow.
+17 of them. Each reads `R0:R1` and never tests `STYPE`, so handing one a float does not raise an error — it acts on whatever the integer registers last held. This list is generated so it cannot quietly grow.
 
-`DIM`, `FOR`, `PEEK`, `POKE`, `SYS`, `MODE`, `SCROLL`, `PALETTE`, `SPRITE`, `VPOKE`, `SOUND`, `HLINE`, `PLOT`, `LINE`, `INPUT`, `TILE`, `CLG`, `PITCH`, `GTEXT`, `CHR$`, `KEY`, `RND`, `VPEEK`.
+`DIM`, `FOR`, `PEEK`, `POKE`, `SYS`, `MODE`, `SOUND`, `PLOT`, `LINE`, `INPUT`, `CLG`, `PITCH`, `GTEXT`, `CHR$`, `KEY`, `RND`, `VPEEK`.

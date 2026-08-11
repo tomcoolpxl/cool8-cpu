@@ -404,14 +404,16 @@ CASES = [
      ['10 PRINT VAL("-7")', "20 END"], "-7"),
     ("VAL of nonsense is zero, not an error",
      ['10 PRINT VAL("ABC")', "20 END"], "0"),
-    # **VAL stops at the point.** No error, no float -- "3.5" is 3, and
-    # assigning it to a float variable promotes the 3. There is no
-    # decimal parser anywhere in the machine, which is the same missing
-    # piece as the float literal and INPUT of a float.
-    ("VAL truncates at the decimal point, silently",
-     ['10 PRINT VAL("3.5")', "20 END"], "3"),
-    ("and assigning that to a float promotes the truncation",
-     ['10 X# = VAL("3.5")', "20 PRINT X#", "30 END"], "3"),
+    # The parser's own edges are in sim/test_interp.py, which drives the
+    # interpreter without booting. What belongs here is the end-to-end
+    # fact: a fraction typed at the editor survives to a float variable
+    # and arithmetic on it.
+    ("VAL of a fraction, typed at the editor",
+     ['10 PRINT VAL("3.5")', "20 END"], "3.5"),
+    ("and it is a real float, not a rendering",
+     ['10 X# = VAL("3.5")', "20 PRINT X# + FLT(1)", "30 END"], "4.5"),
+    ("an integer string is still an integer",
+     ['10 PRINT VAL("12AB")', "20 END"], "12"),
     # ---- STR$ of a float works, and shares PRINT's renderer, so the
     # ---- two can never disagree about a value. It appends rather than
     # ---- assigns, which is what concatenation needs.
@@ -563,17 +565,24 @@ CASES = [
      ["10 ON 2 GOTO 40, 60", "20 PRINT 0", "30 END",
       "40 PRINT 40", "50 END", "60 PRINT 99", "70 END"], "99"),
 
-    ("TILE writes the map entry where the mode 2 engine looks",
-     ["10 TILE 3, 2, 65, 7", "20 PRINT VPEEK(262); VPEEK(263)",
-      "30 END"], "657"),
+    # `TILE` and `VPOKE` were dropped as thin register wrappers, so the
+    # map entry goes in through the VRAM port directly: address low,
+    # address high, then two auto-stepped writes. Same registers the
+    # command wrote, one line each because there is no `:` separator.
+    ("a tile map entry, written through the VRAM port",
+     ["10 A = 2 * 128 + 3 * 2", "20 POKE $FE26, A AND 255",
+      "30 POKE $FE27, A / 256", "40 POKE $FE28, 1",
+      "50 POKE $FE29, 65", "60 POKE $FE29, 7",
+      "70 PRINT VPEEK(262); VPEEK(263)", "80 END"], "657"),
 
     # CLG's fill is read back beside the glyph, and GTEXT's glyph comes
     # from a font row the program itself poked -- the stub seeds the
     # real font only on a flash boot, which this harness is not.
     ("CLG fills and GTEXT draws through the seeded font",
-     ["10 MODE 4", "20 CLG 3", "30 VPOKE $FC08, $FF", "40 PITCH 0, 500",
-      "50 GTEXT 0, 0, \"!\", 9", "60 PRINT VPEEK(0); VPEEK(200)",
-      "70 END"], "15351"),
+     ["10 MODE 4", "20 CLG 3", "30 POKE $FE26, 8", "40 POKE $FE27, $FC",
+      "50 POKE $FE29, $FF", "60 PITCH 0, 500",
+      "70 GTEXT 0, 0, \"!\", 9", "80 PRINT VPEEK(0); VPEEK(200)",
+      "90 END"], "15351"),
 
     # Graphics and sound. Every check that can be is made by the
     # machine itself: VPEEK reads back what PLOT and LINE drew through
@@ -582,8 +591,9 @@ CASES = [
     # main RAM, so drawing in mode 4 never disturbs the row the answer
     # lands on -- and dorun's restore is itself under test here, since
     # reading that row back needs VID_BASE pointed at $8000 again.
-    ("VPOKE and VPEEK round-trip the VRAM port",
-     ["10 VPOKE $1234, 77", "20 PRINT VPEEK($1234)", "30 END"], "77"),
+    ("the VRAM port round-trips by hand, now VPOKE is gone",
+     ["10 POKE $FE26, $34", "20 POKE $FE27, $12", "30 POKE $FE29, 77",
+      "40 PRINT VPEEK($1234)", "50 END"], "77"),
 
     ("RND stays in range and is not stuck",
      ["10 A = 0", "20 B = 1", "30 FOR I = 1 TO 20", "40 C = RND(10)",
@@ -599,12 +609,25 @@ CASES = [
      ["10 MODE 4", "20 PLOT 10, 3, 15", "30 A = VPEEK(3 * 160 + 5)",
       "40 IF A <> 0 THEN PRINT 1", "50 END"], "1"),
 
-    ("SCROLL, PALETTE, SPRITE, SOUND, HLINE and LINE all execute",
-     ["10 MODE 4", "20 SCROLL 0, 0", "30 PALETTE 17, $0F00",
-      "40 SPRITE 0, 100, 50, 4, 64", "50 SOUND 0, 881, 0, 0",
-      "60 HLINE 0, 0, 8, 3", "70 LINE 0, 0, 7, 7, 5",
-      "80 A = VPEEK(3 * 160 + 1)", "90 IF A <> 0 THEN PRINT 1",
-      "99 END"], "1"),
+    # SCROLL, PALETTE and SPRITE are POKEs now; what is left of the old
+    # omnibus is the commands that still exist, plus their registers
+    # written by hand so the same hardware paths are still exercised.
+    # `HLINE` went the same way, and it was never an algorithm: the
+    # pixel port advances X itself after each plot, so a run is four
+    # register writes and then one POKE per pixel -- exactly the store
+    # the command did. Both halves are asserted: A is LINE's pixel, B
+    # is the first byte of the hand-written run, so a port that stopped
+    # stepping would fail here rather than pass quietly.
+    ("SOUND and LINE execute, and a pixel run by hand still fills",
+     ["10 MODE 4", "20 POKE $FE16, 0", "30 POKE $FE1E, 17",
+      "40 POKE $FE1F, 0", "50 POKE $FE2A, 0", "60 POKE $FE2C, 0",
+      "70 SOUND 0, 881, 0, 0",
+      "80 POKE $FE34, 0", "81 POKE $FE35, 0",
+      "82 POKE $FE36, 0", "83 POKE $FE37, 0",
+      "84 FOR I = 1 TO 8", "85 POKE $FE38, 3", "86 NEXT I",
+      "90 LINE 0, 0, 7, 7, 5", "95 A = VPEEK(3 * 160 + 1)",
+      "96 B = VPEEK(0)",
+      "97 IF A <> 0 AND B <> 0 THEN PRINT 1", "99 END"], "1"),
 
     # A shallow line, both directions. Slope 1 is the one case a broken
     # Bresenham gets right -- the e2-recomputed-mid-step bug walked every
@@ -760,12 +783,22 @@ def keyboard(code, syms):
 
 
 def sprites(code, syms):
-    """SPRITE, animated the way a game animates it: the pattern VPOKEd
-    into VRAM, the descriptor rewritten once per VSYNC, one pixel per
-    frame. The frame comes from the machine's own scanline renderer
-    (rust/src/render.rs, derived from the RTL) over the session `fb`
-    command -- the same renderer the window shows, so what this checks
-    is the path a person actually sees, timing included.
+    """Sprites, animated the way a game animates them: the pattern
+    written into VRAM, the descriptor rewritten once per VSYNC, one
+    pixel per frame. The frame comes from the machine's own scanline
+    renderer (rust/src/render.rs, derived from the RTL) over the
+    session `fb` command -- the same renderer the window shows, so what
+    this checks is the path a person actually sees, timing included.
+
+    **`SPRITE`, `PALETTE` and `VPOKE` were dropped**, so this drives
+    the registers itself, which is what a program has to do now: eight
+    descriptor bytes through `SPR_DATA` after selecting with `SPR_IDX`,
+    then the global gate at `SPR_CTRL` -- the same sequence the command
+    used to run, and the same hardware under test.
+
+    The pattern fill got *shorter* rather than longer. `VPOKE` reset
+    the address on every call; setting it once and letting the port's
+    auto-step carry it is one `POKE` per byte.
     """
     out = {}
     M = B.Machine(code, syms, render=True)
@@ -776,11 +809,27 @@ def sprites(code, syms):
     # Sprites live in raster space, undoubled: descriptor (x, 120) is
     # screen (x, 120) and eight pixels are eight pixels, whatever the
     # playfield mode is doing.
-    for ln in ["10 MODE 4", "20 CLG 0", "25 PALETTE 14, $0FFF",
-               "30 FOR J = 0 TO 31", "40 VPOKE 64000 + J, $EE",
+    for ln in ["10 MODE 4", "20 CLG 0",
+               "21 POKE $FE1E, 14",         # PAL_IDX
+               "22 POKE $FE1F, $0F",        # PAL_DATA, high byte first
+               "23 POKE $FE1F, $FF",
+               "30 POKE $FE26, 0",          # VRAM_ADDR_L: 64000 = $FA00
+               "31 POKE $FE27, $FA",
+               "32 POKE $FE28, 1",          # VRAM_STEP, and it carries
+               "33 FOR J = 0 TO 31", "40 POKE $FE29, $EE",
                "50 NEXT J", "60 X = 20",
-               "70 DO", "80 VSYNC", "90 SPRITE 0, X, 120, 2000, 64",
-               "94 X = X + 1", "97 LOOP"]:
+               "70 DO", "80 VSYNC",
+               "90 POKE $FE2A, 0",          # SPR_IDX, sprite 0
+               "91 POKE $FE2B, 120",        # b0: Y
+               "92 POKE $FE2B, 64",         # b1: size/enable, Y bit 8
+               "93 POKE $FE2B, X",          # b2, b3: X
+               "94 POKE $FE2B, 0",
+               "95 POKE $FE2B, 208",        # b4, b5: pattern 2000
+               "96 POKE $FE2B, 7",
+               "97 POKE $FE2B, 0",          # b6: flips and priority
+               "98 POKE $FE2B, 0",          # b7: unread bank
+               "99 POKE $FE2C, 1",          # SPR_CTRL, the global gate
+               "110 X = X + 1", "120 LOOP"]:
         M.cmd(ln)
     M.m.type("RUN\r")
     M.m.run(cycles=8_000_000)

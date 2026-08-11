@@ -69,6 +69,10 @@ LSTEP   = $0021                 ; 2: the step, 1 unless STEP said otherwise.
                                 ;    block-copies the frame, so the frame
                                 ;    is an address range, not a struct.
 FDEPTH  = $00A2                 ; 1: FOR loops active, 0 = none. Moved
+SFRAC   = $00A4                 ; 1: VAL's fraction digits, $FF until a
+                                ;    '.' is met. Doubles as the flag and
+                                ;    the count, which is why $FF rather
+                                ;    than a second byte for "seen one"
 EDEPTH  = $00A3                 ; 1: expression nesting -- STEP took their
                                 ;    old $21-$22, and $12-$13 is BENT's,
                                 ;    which the first draft of this move

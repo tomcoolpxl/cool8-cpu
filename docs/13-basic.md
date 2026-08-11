@@ -159,7 +159,7 @@ Which to pick:
   pixels, and 25 KB of VRAM left over for sprite patterns and
   off-screen work. The demos in this chapter use it.
 - **Mode 2 is what a game should use.** Nothing is redrawn: scrolling
-  is a register write, animation is `TILE` writes at the edges.
+  is a register write, animation is map writes at the edges.
   Map + 256 tiles + sprite patterns is ~20 KB, leaving 44 KB free.
 - **Mode 5 is the one that double-buffers** — two 24 KB buffers fit.
   Mode 4 cannot (76,800 bytes does not fit 64 KB); when you want a
@@ -194,7 +194,7 @@ window repaints before it would reach them.
 ## 5. Graphics commands
 
 All are thin wrappers over the auto-increment hardware ports — fast
-enough to draw with, honest enough that `VPOKE` can do anything they
+enough to draw with, honest enough that the ports can do anything they
 cannot. Pixel coordinates are the **logical** grid of the current mode
 (the table above), except sprites, which live on the raster.
 
@@ -204,68 +204,120 @@ cannot. Pixel coordinates are the **logical** grid of the current mode
 | `HLINE x, y, n, c` | `n` pixels rightward from (x,y), one store each — the fast fill |
 | `LINE x0, y0, x1, y1, c` | Bresenham, any slope, endpoints included |
 | `CLG c` | the whole surface to colour `c`, ~30 ms. Do it once, not per frame |
-| `SCROLL x, y` | the fine-scroll registers, 0-7 within a tile/cell; whole-tile motion is `VID_BASE`, see [04-system.md §5.5](04-system.md) |
-| `PALETTE i, v` | entry `i` (0-255) = `$0RGB`, 4 bits per gun: `$0F00` is red, `$0FFF` white. Entries 0-15 are what 4-bpp modes and text use; 16-31 are bank 1. Boot seeds 0-15 with the editor's sixteen and 16-31 with the Pico-8 sixteen |
-| `TILE x, y, t, a` | one mode-2 map entry: tile index `t` (0-255) at tile column `x`, row `y`. `a`: bits 7:6 V/H flip, 5:4 pattern bank, 3:0 palette bank |
-| `VPOKE a, b` | one byte of VRAM — the master key that makes everything without a command possible |
-| `GTEXT x, y, s$, c` | 8×8-cell text in any bitmap mode: set pixels paint `c`, clear pixels paint 0 (opaque). The face is the editor's own Spleen, resampled to 8×8, ASCII 32-127, seeded by boot at VRAM `$FC00` — 8 bytes a glyph, so `$FC00 + (ASC(ch)-32)*8`, and `VPOKE` can restyle it |
+| `MODE n` | one of the seven presets in §4 — loads base, stride and depth together, which is why it is a command and the rest are not |
+| `GTEXT x, y, s$, c` | 8×8-cell text in any bitmap mode: set pixels paint `c`, clear pixels paint 0 (opaque). The face is the editor's own Spleen, resampled to 8×8, ASCII 32-127, seeded by boot at VRAM `$FC00` — 8 bytes a glyph, so `$FC00 + (ASC(ch)-32)*8` |
 | `VSYNC` | hold until the next frame starts — **the pacing primitive**. A loop doing `VSYNC` once per pass runs at exactly 60 Hz |
+
+### The five that are `POKE`s now
+
+`SCROLL`, `PALETTE`, `TILE`, `VPOKE` and `SPRITE` were removed. Each
+was a short sequence of writes to registers, and none of them did
+anything a program cannot do itself now that every register is
+documented in [04a-registers.md](04a-registers.md). It returned **234
+bytes** — see §10 for how that was measured, and D65 for why these
+five and not `MODE`.
+
+| was | is |
+|---|---|
+| `VPOKE a, b` | `POKE $FE26, a AND 255` · `POKE $FE27, a / 256` · `POKE $FE28, 1` · `POKE $FE29, b` |
+| `PALETTE i, v` | `POKE $FE1E, i` · `POKE $FE1F, v / 256` · `POKE $FE1F, v AND 255` — **high byte first** |
+| `SCROLL x, y` | `POKE $FE16, x` · `POKE $FE18, y` |
+| `TILE x, y, t, a` | the map entry through the VRAM port: address `y * 128 + x * 2`, then `t` and `a` |
+| `SPRITE n, x, y, img, a` | `POKE $FE2A, n * 8`, then eight bytes to `$FE2B`, then `POKE $FE2C, 1` — laid out below |
+
+**A VRAM run is now cheaper, not dearer.** `VPOKE` reset the address
+on every call; setting it once and letting the port's own step carry
+it is one `POKE` per byte:
+
+```
+10 POKE $FE26, 0        ' VRAM_ADDR_L -- 64000 is $FA00
+20 POKE $FE27, $FA      ' VRAM_ADDR_H
+30 POKE $FE28, 1        ' VRAM_STEP, and it carries from here
+40 FOR J = 0 TO 31
+50 POKE $FE29, $EE      ' VRAM_DATA, auto-stepping
+60 NEXT J
+```
 
 Mode-2 patterns: a tile is 32 bytes (8 rows × 4 bytes, 4 bpp, high
 nibble left). The map occupies VRAM `$0000`-`$0FFF`; put patterns
 above it and reach them with pattern bank bits or `PAT_BASE`. Writing
-one is a `FOR` loop of `VPOKE`s, exactly as it is an assembly
-programmer's job.
+one is the loop above, exactly as it is an assembly programmer's job.
 
 Not provided, and why: `POINT` (the pixel port is write-only — `VPEEK`
 the byte instead), palette cycling and sprite collision as commands
-(`PALETTE`+`VSYNC` cycles; your own coordinates bounding-box test),
-`CIRCLE`/`PAINT` (the C128 trap), text in *tile* mode (`GTEXT` covers
-the bitmap modes; tiles want a font as patterns).
+(the palette registers plus `VSYNC` cycle; your own coordinates
+bounding-box test), `CIRCLE`/`PAINT` (the C128 trap), text in *tile*
+mode (`GTEXT` covers the bitmap modes; tiles want a font as patterns).
 
 ## 6. Sprites
 
+There is no `SPRITE` command. A descriptor is eight bytes pushed
+through `SPR_DATA` after `SPR_IDX` selects which one, and then the
+global gate at `SPR_CTRL` — **which the editor closes again when the
+program ends**, so a crash never leaves sprites over your listing.
+
 ```
-SPRITE n, x, y, img, a
+POKE $FE2A, n * 8       ' SPR_IDX, eight bytes per descriptor
+POKE $FE2B, <b0..b7>    ' SPR_DATA, auto-stepping
+POKE $FE2C, 1           ' SPR_CTRL, the global gate
 ```
 
-Writes descriptor `n` (0-31) whole, and opens the global sprite gate —
-which the editor closes again when the program ends, so a crash never
-leaves sprites over your listing.
+| byte | |
+|---|---|
+| b0 | Y, low eight bits |
+| b1 | bits 7:6 of the attribute, OR bit 8 of Y |
+| b2, b3 | X, low eight and then the top two bits |
+| b4, b5 | the pattern address in 32-byte units, low eight then top three |
+| b6 | attribute bits 5:3 (flips, behind), shifted up two |
+| b7 | the per-sprite bank, which nothing reads |
 
 - `x`, `y` — **raster coordinates**, not logical ones: over a 320×240
   mode a sprite positions twice as finely as the background, and
   reaches the borders. 0-1023, wrapping; park a sprite at `x = 700` to
   hide it.
-- `img` — the pattern's VRAM address in 32-byte units (`address / 32`).
-  A pattern is 4 bpp, high nibble left: 32 bytes for 8×8, 128 for
-  16×16. Colour 0 is transparent; 1-15 index the sprite palette bank
-  (bank 0 unless `SPR_CTRL[7:4]` says otherwise — all sprites share
-  one bank).
-- `a` — the attribute byte: bit 7 size (0 = 8×8, 1 = 16×16), bit 6
-  **enable**, bit 5 V-flip, bit 4 H-flip, bit 3 behind (the sprite
-  shows only where the background is colour 0). So 64 is the plain
-  "on" value.
+- the pattern address is in 32-byte units (`address / 32`). A pattern
+  is 4 bpp, high nibble left: 32 bytes for 8×8, 128 for 16×16. Colour
+  0 is transparent; 1-15 index the sprite palette bank (bank 0 unless
+  `SPR_CTRL[7:4]` says otherwise — all sprites share one bank).
+- the attribute: bit 7 size (0 = 8×8, 1 = 16×16), bit 6 **enable**,
+  bit 5 V-flip, bit 4 H-flip, bit 3 behind (the sprite shows only
+  where the background is colour 0). So 64 is the plain "on" value.
 
 Eight sprites per scanline; descriptor 0 is in front of descriptor 31.
-Patterns are yours to `VPOKE`. A complete floating sprite:
+A complete floating sprite, pattern and all:
 
 ```
 10 MODE 4
 20 CLG 1
-30 FOR J = 0 TO 31
-40 VPOKE 64000 + J, $EE
-50 NEXT J
-60 X = 0
-70 DO
-80 VSYNC
-90 SPRITE 0, X, 120, 2000, 64
-92 X = X + 1
-93 IF X > 319 THEN X = 0
-95 LOOP
+30 POKE $FE26, 0
+40 POKE $FE27, $FA
+50 POKE $FE28, 1
+60 FOR J = 0 TO 31
+70 POKE $FE29, $EE
+80 NEXT J
+90 X = 0
+100 DO
+110 VSYNC
+120 POKE $FE2A, 0
+130 POKE $FE2B, 120
+140 POKE $FE2B, 64
+150 POKE $FE2B, X
+160 POKE $FE2B, 0
+170 POKE $FE2B, 208
+180 POKE $FE2B, 7
+190 POKE $FE2B, 0
+200 POKE $FE2B, 0
+210 POKE $FE2C, 1
+220 X = X + 1
+230 IF X > 319 THEN X = 0
+240 LOOP
 ```
 
-(64000/32 = 2000; `$EE` is two pixels of colour 14 per byte.)
+(64000/32 = 2000, which is 208 and 7; `$EE` is two pixels of colour 14
+per byte.) **This is the honest cost of the removal**: eleven lines
+where `SPRITE 0, X, 120, 2000, 64` was one. It is
+[`sim/test_run.py`](../sim/test_run.py)'s sprite case verbatim, so it
+is known to run.
 
 ## 7. Sound and the keyboard
 
@@ -480,10 +532,29 @@ It needed no printer of its own — `fstr` already writes the digits into
 a count, so **`STR$` and `PRINT` cannot disagree about a value.** It
 appends rather than assigns, which is what concatenation needs.
 
-**`VAL` cannot go the other way.** `VAL("3.5")` is **3**, silently:
-there is no decimal parser anywhere in the machine. That one absence is
-also the float literal and `INPUT A#` — all three want the same routine
-and none of them can have it until something is removed to pay for it.
+**`VAL` reads one back.** `VAL("3.5")` is a float, and `VAL("567")`
+is still an integer — the point is what decides. Four fraction digits
+are kept, which is what 4.8 decimal digits can carry and also what
+holds 10ⁿ inside sixteen bits; anything past the fourth is consumed and
+ignored, and a second point ends the number as any non-digit does.
+
+**One divide, and no new constant.** The digits go into the same 16-bit
+accumulator the integer path already fills with `imul16`; only the
+count of those after the point is new. 10ⁿ for n ≤ 4 is 10000, so the
+scale is built as an *integer* and converted once — where dividing by
+ten n times would have wanted a float ten in the image and up to four
+times the work. **96 bytes.**
+
+The parser's edges are pinned in
+[`sim/test_interp.py`](../sim/test_interp.py), which drives the
+interpreter without booting: `.5`, `3.`, `3.5.7`, and
+`INT(VAL("1.2345678") * FLT(10000))` = **12344** — not 12340, which is
+what four significant digits would give, so the fifth is really there;
+the missing one is the 15-bit fraction and `INT` flooring.
+
+**The float literal still does not exist.** `1.5` in source is
+`?SYNTAX`, and so is `INPUT A#`. Both want the *editor* changed —
+tokenise, `LIST`, and a renderer — where `VAL` needed one routine.
 
 **Absent.** `MOD` is integer by intent; a float remainder is a
 different operation.
@@ -719,6 +790,28 @@ citable source. The V20 was a pin-compatible 8088 replacement and an
 land near" is an argument, not a measurement, and this table carries
 only measurements.
 
+**Looking up a builtin was a quarter of the clocks, and mostly
+bookkeeping.** A builtin carries no token — it is matched by name in a
+linear walk of `btab`, at evaluation time, *every time*. `A`–`Z` and
+`A$`–`Z$` are resident and never arrive there, but every builtin call
+and every long variable name does, and a long name walks the whole
+table and misses.
+
+`poe prof` measures it: in `FOR K = 1 TO 200: A = RND(10): NEXT`,
+`isbuilt` was **24.4 %** of the run — more than the divide `RND`
+itself performs. The cause was not the search but what surrounded it:
+the entry pointer was written to page 0 on every iteration and read
+back on every rejection, twelve instructions of bookkeeping per entry.
+X has not moved when the *length* disagrees, which is what nearly
+every entry does, so that case now steps over the entry from where it
+stands and the save happens only for entries whose length matches.
+
+**24.4 % to 19.1 %, the run 6.6 % shorter, for 8 bytes.** Ordering the
+table by frequency would cut it further — `RND` is twelfth, so a hit
+walks eleven entries — but that is a second, smaller win on top of a
+structural one, and it should be generated from measured hit counts
+rather than guessed at.
+
 **Floats cost the integer path 1–20%.** BM1–BM7 are all integer and
 none of them touches `sw/fp.asm`, but they got slower anyway: BM3 and
 BM4 by 18–20%, BM1 by 1%. The promotion check runs on every operator
@@ -744,16 +837,16 @@ measurement.
 count rather than leaving it to arithmetic:
 
 ```
-  basic.bin   24,050 bytes  $A000-$FDF1
-  BOOT.BIN    26,812 bytes  (2762 of relocating stub)
-  free            14 bytes  to $FDFF
+  basic.bin   23,885 bytes  $A000-$FD4C
+  BOOT.BIN    26,647 bytes  (2762 of relocating stub)
+  free           179 bytes  to $FDFF
 ```
 
 `--by-file` breaks that down per source file, attributing each gap
 between consecutive labels to whichever file opened it, so interleaving
 does not distort a total.
 
-**14 bytes of 24,064, and it was 21 before
+**179 bytes of 24,064, and it was 21 before
 [D63](01-decisions.md#d63--the-inline-assembler-is-gone-sys-replaced-it-and-floats-are-resident).**
 That entry deleted the on-machine assembler — 2,880 bytes and 38 of page
 0 — and spent it on resident floating point, which is why §8 exists and
@@ -765,20 +858,76 @@ stub, C64-terse messages, the peephole and direct-push compiler passes,
 
 **Very little further fits.** A `btab` entry alone is six bytes — a
 length, the name, a handler word — before the handler exists. **Any
-sizeable new feature still costs an old one**, and the drop candidates
-in order of bytes returned against pain are `LINE` (~400), `GTEXT`
-(~232), `INPUT` (~198), `SPRITE` (~120), `CLG` (~106).
+sizeable new feature still costs an old one.**
 
-**Those five figures are unverified and the one that was checked came
-back 1.7× out** — the fixed-point trio was claimed at 446 and measured
-256, because shared code was counted against it: `earg` is the prologue
-ten one-argument builtins use, `retnum` the tail every value-returning
-builtin returns through, and `udiv16` the divider `/` and `MOD` already
-need. Removing a feature reclaims none of that. Weigh before cutting.
+### What each graphics command is actually worth
+
+**Measured, by deleting each one and rebuilding** — not estimated.
+Every figure below is the difference in `basic.bin`, with the handler
+removed, its table entry pointed at `bad`, and whatever that orphaned
+removed too. Nothing shared is counted: `earg`, `retnum`, `negp16`,
+`pixxy` and `udiv16` all stay, because the rest of the language still
+calls them.
+
+| | bytes | |
+|---|---|---|
+| `LINE` | **274** | Bresenham; painful to lose, slow to rewrite in BASIC |
+| `GTEXT` | **168** | text on the graphics screen; the text layer still works |
+| `SPRITE` | **92** | a wrapper over `SPR_IDX`/`SPR_DATA`/`SPR_CTRL` |
+| `CLG` | **86** | a fill loop |
+| `TILE` | **61** | a wrapper over the tile registers |
+| `HLINE` | **43** | a run of pixels |
+| `SCROLL` | **40** | a wrapper over `VID_SCX`/`VID_SCY` |
+| `VPOKE` | **39** | a wrapper over the indirect VRAM port |
+| `PALETTE` | **34** | a wrapper over `PAL_IDX`/`PAL_DATA` |
+| `MODE` | **26** | one write to `VID_MODE` |
+| `PLOT` | **25** | the primitive everything else falls back to |
+
+**The old table here was five guesses and every one was high** —
+`LINE` 400 against 274, `GTEXT` 232 against 168, `SPRITE` 120 against
+92, `CLG` 106 against 86. Same direction and same cause as the
+fixed-point trio that started this note: shared code counted against
+whichever feature happened to call it.
+
+**Five of them are gone.** `PALETTE`, `SCROLL`, `VPOKE`, `TILE` and
+`SPRITE` were removed for the 234 bytes above — see §5 for what a
+program writes instead, and [D65](01-decisions.md) for the reasoning.
+The figures below are what each was worth when it existed, kept
+because the *method* is the point and because the four that remain are
+the next decision.
+
+**The useful split is not by size, it is by what a program loses.**
+`MODE`, `PALETTE`, `SCROLL`, `VPOKE`, `TILE` and `SPRITE` are thin
+wrappers over registers that [04a-registers.md](04a-registers.md) now
+documents completely — `POKE VID_MODE, 4` is `MODE 4`, and six `POKE`s
+are a `SPRITE`. Measured as groups, with the handler gone, its table
+entry pointed at `bad`, and everything that orphaned gone too:
+
+| | bytes back |
+|---|---|
+| all six | **252** |
+| **the five, keeping `MODE`** | **234** |
+
+`MODE` is worth 18 in company and 26 alone, which is the shape of the
+whole table: **groups are not the sum of their singles** (the six add
+to 292 and measure 252), because a drop changes what the next drop can
+reach. Rank with the singles, plan with the group figure.
+
+**Nothing shipped uses any of the five.** Neither `sw/demo.bas`, nor
+`sw/lib.bas`, nor the editor mentions them; only `sim/test_run.py`
+does, deliberately, and those cases rewrite as `POKE` sequences that
+exercise the same registers. So the cost is real but narrow: sprite
+and tile programs get verbose, and with no `:` separator each `POKE`
+is its own line. `LINE`, `CLG`, `GTEXT` and `HLINE` are
+loops you would not want to write in interpreted BASIC, and `PLOT` at
+25 bytes is never worth touching.
+
+`sim/build_basic.py --by-command` prints the handler spans, which are
+a floor — `LINE`'s handler is 32 bytes and reclaims 274.
 
 Treat any number here as stale unless `sim/build_basic.py` just printed
 it. This entry has read 24,024, then 24,043, then 24,057, then 23,930,
-then 23,975, then 23,999, then 24,052, then 23,993, then 24,017, and each was right when written.
+then 23,975, then 23,999, then 24,052, then 23,993, then 24,017, then 24,050, then 23,816, and each was right when written.
 
 It reached 12 bytes free before the mul-level evaluator was unified
 (section 8), which gave 70 back. That is the largest single reclaim

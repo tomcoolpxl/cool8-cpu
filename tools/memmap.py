@@ -68,6 +68,8 @@ PAGE0 = [
     (0x0040, 0x0073, "VARS", "A-Z, two bytes each"),
     (0x0074, 0x00A1, "FSVARS", "sw/fs.asm's workspace"),
     (0x00A2, 0x00A3, "FDEPTH", "FOR depth, then expression depth"),
+    (0x00A4, 0x00A4, "SFRAC",
+     "VAL's fraction digits, $FF until a point is met"),
     (0x00A4, 0x00D9, None, "free -- 54 bytes, FORSTK's when it left"),
     (0x00DA, 0x00FE, "FSTK", "floating point's operand stack; was the "
                              "on-machine assembler until D63"),

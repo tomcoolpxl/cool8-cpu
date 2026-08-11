@@ -63,16 +63,23 @@ def by_command(syms):
     landed, so a handler's own span is the distance to whatever label
     comes next.
 
-    **Read it as a floor, not a promise.** The span covers the handler
-    and nothing else, which is right for shared code -- `earg`,
-    `retnum` and `udiv16` stay behind because the rest of the language
-    still calls them -- but it also stops at the first private helper
-    the handler owns, so a command with subroutines of its own is worth
-    more than it says here. The `block` column is the other bound: the
-    distance to the next *handler*, which sweeps up anything sitting
-    between the two and is therefore optimistic. The truth is between
-    them, and the only way to get it exactly is to delete the command
-    and rebuild.
+    **Read it as a floor.** The span covers the handler and nothing
+    else, which is right for shared code -- `earg`, `retnum` and
+    `udiv16` stay behind because the rest of the language still calls
+    them -- but it stops at the first private helper the handler owns,
+    so a command with subroutines of its own is worth more than this
+    says. `LINE` measures 32 here and reclaims 274 when actually
+    deleted.
+
+    **The real figure needs a deletion**, and the measured ones are in
+    docs/13-basic.md section 10: remove the handler, point its table
+    entry at `bad`, then remove whatever that orphaned -- iteratively,
+    counting references across *every* file in sw/, because the editor
+    and the boot ROM call into the interpreter too. Stopping at the
+    next handler instead is what the old guesses effectively did, and
+    it is wrong: `earg` and `negp16` sit inside h_line's reach,
+    `retnum` inside h_gtext's, `pixxy` inside h_vpoke's, and all three
+    are shared.
     """
     sys.path.insert(0, os.path.join(ROOT, "tools"))
     import vocab                                            # noqa: E402
@@ -117,16 +124,17 @@ def by_command(syms):
     print()
     print("  What each command's handler costs, biggest first:")
     print()
-    print(f"    {'command':<18} {'own':>6} {'block':>7}")
+    print(f"    {'command':<18} {'own':>6}")
     for own, blk, name, h in folded[:22]:
-        print(f"    {name:<18} {own:>6,} {blk:>7,}")
+        print(f"    {name:<18} {own:>6,}")
     print()
     print(f"    {'measured total':<18} {sum(o for o, _, _, _ in folded):>6,}")
     print()
-    print("    `own` is the handler alone and is certain. `block` runs to")
-    print("    the next handler and sweeps up private helpers with it, so")
-    print("    it is optimistic. Neither counts shared code -- removing a")
-    print("    command does not reclaim earg, retnum or udiv16.")
+    print("    The handler alone, so this is a floor: private helpers")
+    print("    are not counted, and neither is shared code -- removing a")
+    print("    command reclaims neither earg nor retnum nor udiv16. The")
+    print("    measured figures, from actually deleting each one, are in")
+    print("    docs/13-basic.md section 10.")
 
 
 def by_file(syms):

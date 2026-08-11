@@ -2310,6 +2310,81 @@ implementation nobody is checking, which is how `test_lib` came to
 measure two programs against a third, private model of the I/O page
 and report 1.00x for a year.
 
+## D65 — Five graphics commands are gone, and the register map is why it was safe
+
+**Done.** `PALETTE`, `SCROLL`, `VPOKE`, `TILE` and `SPRITE` are
+removed. `sw/interp.asm` is 120 lines lighter and the image went from
+24,050 to **23,816 — 248 bytes free**, up from 14.
+
+Their tokens stay. `TOKTAB`'s order fixes every byte after it and
+programs on disk hold the old numbering, so `sttab` points them at
+`bad` and the words are `?SYNTAX` where a statement was expected.
+[13a-vocabulary.md](13a-vocabulary.md) lists them as removed with the
+`POKE` sequence that replaces each, because the generator reads the
+same table the interpreter dispatches through.
+
+### Why these five and not `MODE`
+
+All six were called thin register wrappers. Five of them are: each was
+a short run of writes to `PAL_IDX`, `VID_SCX`, the VRAM port, or the
+sprite descriptor, and **[04a-registers.md](04a-registers.md) now
+documents every one of those registers completely** — which is what
+made the removal safe rather than reckless. A month ago the same cut
+would have deleted the only written record of how to drive the
+hardware. [D64]'s generators came first for a reason.
+
+`MODE` was misfiled. It is not a register write but a *preset loader*:
+base, stride, depth and the engine select together, and
+`POKE VID_MODE, 4` does not do what `MODE 4` does. It stays, and it
+was the cheapest of the six anyway — 26 bytes alone, 18 in company.
+
+### Measured, and the method matters more than the number
+
+Every figure came from deleting the command, pointing its table entry
+at `bad`, removing whatever that orphaned, and rebuilding. Two earlier
+attempts got it wrong in exactly the way the old drop table did:
+
+- **Deleting to the next handler** swallows shared code. `earg` and
+  `negp16` sit inside `h_line`'s reach, `retnum` inside `h_gtext`'s,
+  `pixxy` inside `h_vpoke`'s. The build refuses, which at least fails
+  loudly.
+- **Counting references inside `interp.asm` alone** marks everything
+  the editor and the boot ROM call as dead. Every command then looks
+  removable and nothing links.
+
+The old table's five guesses were all high, in the same direction and
+for the same reason as the fixed-point trio that started this note:
+`LINE` 400 against 274, `GTEXT` 232 against 168, `SPRITE` 120 against
+92, `CLG` 106 against 86.
+
+**Groups are not the sum of their singles.** The six add to 292 and
+measure 252; these five add to 266 and measure 234. The cause turned
+out to be worth knowing: `sreset` was **already dead** in the
+committed tree — no caller anywhere — so every individual measurement
+collected it and counted it again. It is gone with the five.
+
+### What it cost
+
+Nothing shipped used any of them: not `sw/demo.bas`, not `sw/lib.bas`,
+not the editor. Five cases in `sim/test_run.py` did, and they were
+rewritten as `POKE` sequences that drive the same registers, so the
+hardware coverage is unchanged — the sprite case still animates a
+descriptor once per `VSYNC` and reads the frame back through the
+renderer.
+
+The honest cost is verbosity, and it is not evenly spread. A sprite
+update is eleven lines where it was one, and with no `:` separator
+every `POKE` is its own line. Against that, **a VRAM run got cheaper**:
+`VPOKE` reset the address on every call, where setting it once and
+letting the port's step carry it is one `POKE` per byte.
+
+### What the 248 bytes are for
+
+The decimal parser. It is the single missing routine behind float
+literals, `INPUT A#` and a float-returning `VAL` — three gaps in
+[13-basic.md §8](13-basic.md) that all want the same code, and none of
+which fitted in 14 bytes.
+
 ## D64 — The vocabulary is read out of the tables, and a signature is compulsory
 
 **Done.** `tools/vocab.py` emits

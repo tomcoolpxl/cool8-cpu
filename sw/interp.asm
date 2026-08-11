@@ -748,18 +748,18 @@ sttab:
                                 ;: MODE n:int !intonly
         .word h_vsync           ; $A6 VSYNC
                                 ;: VSYNC  waits for the next frame
-        .word h_scroll          ; $A7 SCROLL
-                                ;: SCROLL dx:int, dy:int !intonly
-        .word h_palette         ; $A8 PALETTE
-                                ;: PALETTE slot:int, colour:int !intonly
-        .word h_sprite          ; $A9 SPRITE
-                                ;: SPRITE n:int, x:int, y:int, pattern:int, attr:int !intonly
-        .word h_vpoke           ; $AA VPOKE
-                                ;: VPOKE addr:int, value:int  video memory !intonly
+        .word bad          ; $A7 SCROLL
+                                ;: (removed)  was SCROLL dx, dy -- POKE VID_SCX/VID_SCY, see 04a-registers.md
+        .word bad         ; $A8 PALETTE
+                                ;: (removed)  was PALETTE slot, colour -- POKE PAL_IDX then PAL_DATA twice, high byte first
+        .word bad          ; $A9 SPRITE
+                                ;: (removed)  was SPRITE n, x, y, pattern, attr -- POKE SPR_IDX = n*8, eight bytes to SPR_DATA, then SPR_CTRL
+        .word bad           ; $AA VPOKE
+                                ;: (removed)  was VPOKE addr, value -- POKE VRAM_ADDR_L/H, VRAM_STEP, then VRAM_DATA, which auto-steps
         .word h_sound           ; $AB SOUND
                                 ;: SOUND voice:int, pitch:int, volume:int, length:int !intonly
-        .word h_hline           ; $AC HLINE
-                                ;: HLINE x1:int, x2:int, y:int, colour:int !intonly
+        .word bad               ; $AC HLINE
+                                ;: (removed)  was HLINE x, y, n, colour -- set PIX_X/PIX_Y, then POKE PIX_DATA n times; the port steps X itself
         .word h_plot            ; $AD PLOT
                                 ;: PLOT x:int, y:int, colour:int !intonly
         .word h_line            ; $AE LINE
@@ -776,8 +776,8 @@ sttab:
         .word bad               ; $B3 STEP -- a clause, like TO
         .word h_on              ; $B4 ON
                                 ;: ON e:int GOTO line[, line]...  literal lines; out of range falls through
-        .word h_tile            ; $B5 TILE
-                                ;: TILE x:int, y:int, tile:int, attr:int !intonly
+        .word bad            ; $B5 TILE
+                                ;: (removed)  was TILE x, y, tile, attr -- the map entry through the VRAM port
         .word h_clg             ; $B6 CLG
                                 ;: CLG colour:int !intonly
         .word h_pitch           ; $B7 PITCH
@@ -2458,12 +2458,6 @@ h_leta: CALL arrelem
 ; sreset -- begin a string expression. The *statement* does this, not
 ; the evaluator, because a parenthesised sub-expression must go on
 ; appending rather than start again.
-sreset: CLR  R0
-        ST   [SLEN],R0
-        ST   [STYPE],R0
-        RET
-
-; sputc -- append R0 to the accumulator.
 sputc:  PUSHW X
         PUSH R0
         LD   R0,[SLEN]
@@ -3218,18 +3212,35 @@ ikey:   CALL earg               ; ( expression )
         RET
 
 ; isbuilt -- the name in NBUF a builtin? C clear and X on its handler.
+; **The length is the discriminator, so nothing else happens first.**
+; This is 24 % of a run that calls one builtin in a loop -- more than
+; the divide the builtin itself does -- because a name is matched here
+; by walking the table, at evaluation time, every time. A-Z and A$-Z$
+; are resident and never arrive; every builtin call and every long
+; variable name does, and a long name walks all of it and misses.
+;
+; The saved entry pointer used to be written on every iteration, and
+; read back on every rejection: twelve instructions of bookkeeping per
+; entry. But X has not moved when the *length* disagrees, which is what
+; nearly every entry does -- so that case now skips the entry whole
+; from where it stands, and BENT is written only for the handful of
+; entries whose length matches and whose characters are about to walk
+; X destructively.
 isbuilt:
         PUSHW Y
         LDW  X,#btab
-.each:  MOV  R0,XL
-        ST   [BENT],R0
-        MOV  R0,XH
-        ST   [BENT+1],R0
-        LD   R0,[X]
+.each:  LD   R0,[X]             ; the length, X still on the entry head
         BEQ  .miss
         LD   R1,[NLEN]
         CMP  R0,R1
-        BNE  .next
+        BEQ  .try
+        ADDW X,R0               ; wrong length: over it without a save
+        ADDW X,#3
+        BRA  .each
+.try:   MOV  R1,XL              ; the compare below eats X, so keep it
+        ST   [BENT],R1
+        MOV  R1,XH
+        ST   [BENT+1],R1
         INCW X
         LDW  Y,#NBUF
         MOV  R1,R0
@@ -3284,7 +3295,7 @@ btab:   .byte 3,"L","E","N"
                                 ;: STR$(n:int|float) -> string  a float renders as PRINT would
         .byte 3,"V","A","L"
         .word sval
-                                ;: VAL(s:string) -> int  stops at a decimal point; nonsense is 0
+                                ;: VAL(s:string) -> same  a fraction gives a float, four digits of it; nonsense is 0
         .byte 5,"I","N","S","T","R"
         .word sinstr
                                 ;: INSTR(hay:string, needle:string) -> int
@@ -3606,6 +3617,8 @@ sval:   CALL sopen
         CLR  R1
         CLR  R3
         ST   [DSGN],R3          ; no division here, so DSGN is spare
+        MOV  R2,#$FF            ; no '.' seen yet; see sw/zp.asm
+        ST   [SFRAC],R2
         LD   R3,[SDIG]
         TST  R3
         BEQ  .fin
@@ -3622,12 +3635,15 @@ sval:   CALL sopen
         BEQ  .fin
         LD   R2,[Y]
         CMP  R2,#$30
-        BCC  .fin               ; anything but a digit ends it, which is
-        CMP  R2,#$3A            ;   what makes VAL("12AB") twelve
-        BCS  .fin
+        BCC  .dot               ; not a digit -- a '.' continues, and
+        CMP  R2,#$3A            ;   anything else ends it, which is what
+        BCS  .fin               ;   makes VAL("12AB") twelve
         INCW Y
         SUB  R3,#1
         ST   [SDIG],R3
+        LD   R3,[SFRAC]         ; four fraction digits is all 4.8 decimal
+        CMP  R3,#4              ;   digits can carry, and it is also what
+        BEQ  .loop              ;   keeps 10^n inside sixteen bits below
         PUSH R2
         MOV  R2,#10
         CLR  R3
@@ -3637,14 +3653,61 @@ sval:   CALL sopen
         ADD  R0,R2
         MOV  R2,#0
         ADC  R1,R2
+        LD   R2,[SFRAC]
+        CMP  R2,#$FF
+        BEQ  .loop              ; still left of the point: nothing to count
+        ADD  R2,#1
+        ST   [SFRAC],R2
+        BRA  .loop
+        ; A '.' switches the same loop into counting mode. A second one
+        ; ends the number, the way any other non-digit does.
+.dot:   CMP  R2,#$2E
+        BNE  .fin
+        LD   R2,[SFRAC]
+        CMP  R2,#$FF
+        BNE  .fin
+        CLR  R2
+        ST   [SFRAC],R2
+        INCW Y
+        SUB  R3,#1
+        ST   [SDIG],R3
         BRA  .loop
 .fin:   LD   R2,[DSGN]
-        BEQ  .out
+        BEQ  .nsg
         CALL negp16
+.nsg:   LD   R2,[SFRAC]
+        CMP  R2,#$FF
+        BNE  .flt
 .out:   POPW Y
         CLR  R2
         ST   [STYPE],R2
         RET
+        ; **One divide, and no constant.** The digits are already an
+        ; integer; 10^n for n up to four is 10000, which fits sixteen
+        ; bits, so the scale is built with the imul16 already here and
+        ; converted once. Dividing by ten n times instead would need a
+        ; float ten in the image and up to four times the work.
+.flt:   PUSH R1
+        PUSH R0
+        MOV  R0,#1
+        CLR  R1
+.pw:    LD   R2,[SFRAC]
+        TST  R2
+        BEQ  .pwd
+        SUB  R2,#1
+        ST   [SFRAC],R2
+        MOV  R2,#10
+        CLR  R3
+        CALL imul16
+        BRA  .pw
+.pwd:   CALL ffromi             ; FACC = 10^n
+        CALL fa2b               ; FARG = 10^n
+        POP  R0
+        POP  R1
+        CALL ffromi             ; FACC = the digits, sign and all
+        CALL fdiv
+        POPW Y
+        JMP  fretf
 
 ; ---------------------------------------------------------------------
 ; sinstr -- INSTR(a$, b$): where b$ sits inside a$, counting from one,
@@ -3843,49 +3906,6 @@ h_vsync:
 
 ; SCROLL x,y -- the fine-scroll registers, and that is the entire
 ; command: the engine moves where it reads, nothing moves in memory.
-h_scroll:
-        MOV  R3,#2
-        CALL gargs
-        LD   R0,[garg]
-        ST   [GSCRX],R0
-        LD   R0,[garg+1]
-        ST   [GSCRX+1],R0
-        LD   R0,[garg+2]
-        ST   [GSCRX+2],R0
-        LD   R0,[garg+3]
-        ST   [GSCRX+3],R0
-        JMP  stmt
-
-; PALETTE i,v -- entry i becomes $0RGB. The R nibble goes first because
-; that is the byte order the port commits on.
-h_palette:
-        MOV  R3,#2
-        CALL gargs
-        LD   R0,[garg]
-        ST   [GPALI],R0
-        LD   R0,[garg+3]
-        ST   [GPALD],R0
-        LD   R0,[garg+2]
-        ST   [GPALD],R0
-        JMP  stmt
-
-; VPOKE a,b / VPEEK(a) -- the VRAM port. The step is set to +1 every
-; time rather than trusted: some other user may have left it walking
-; backwards by 256.
-h_vpoke:
-        MOV  R3,#2
-        CALL gargs
-        MOV  R0,#1
-        ST   [GVRST],R0
-        LD   R0,[garg]
-        ST   [GVRAL],R0
-        LD   R0,[garg+1]
-        ST   [GVRAH],R0
-        LD   R0,[garg+2]
-        ST   [GVRD],R0
-        JMP  stmt
-
-; pixxy -- garg's first two words into the pixel port.
 pixxy:  LD   R0,[garg]
         ST   [GPIXXL],R0
         LD   R0,[garg+1]
@@ -3906,71 +3926,13 @@ h_plot: MOV  R3,#3
         JMP  stmt
 
 ; HLINE x,y,n,c -- n pixels rightward. One store each: the port steps X.
-h_hline:
-        MOV  R3,#4
-        CALL gargs
-        CALL pixxy
-        LD   R1,[garg+6]
-        LD   R2,[garg+4]
-        LD   R3,[garg+5]
-.hl:    MOV  R0,R2
-        OR   R0,R3
-        BEQ  .hd
-        ST   [GPIXD],R1
-        SUB  R2,#1
-        BCS  .hl                ; C is *no borrow*: the high byte holds
-        SUB  R3,#1
-        BRA  .hl
-.hd:    JMP  stmt
-
-; SPRITE n,x,y,img,a -- descriptor n, whole. `img` is the pattern in
-; 32-byte units; `a` packs what the descriptor scatters: bit 7 size,
-; 6 enable, 5 V-flip, 4 H-flip, 3 behind the background. Setup of the
-; patterns themselves is VPOKE's job, exactly as it is an assembly
-; programmer's.
-h_sprite:
-        MOV  R3,#5
-        CALL gargs
-        LD   R0,[garg]
-        ADD  R0,R0
-        ADD  R0,R0
-        ADD  R0,R0
-        ST   [GSPRI],R0
-        LD   R0,[garg+4]        ; b0: Y low
-        ST   [GSPRD],R0
-        LD   R0,[garg+8]        ; b1: size and enable, plus Y bit 8
-        AND  R0,#$C0
-        LD   R1,[garg+5]
-        AND  R1,#$01
-        OR   R0,R1
-        ST   [GSPRD],R0
-        LD   R0,[garg+2]        ; b2, b3: X
-        ST   [GSPRD],R0
-        LD   R0,[garg+3]
-        AND  R0,#$03
-        ST   [GSPRD],R0
-        LD   R0,[garg+6]        ; b4, b5: the pattern address
-        ST   [GSPRD],R0
-        LD   R0,[garg+7]
-        AND  R0,#$07
-        ST   [GSPRD],R0
-        LD   R0,[garg+8]        ; b6: flips and priority, a<<2
-        AND  R0,#$38
-        ADD  R0,R0
-        ADD  R0,R0
-        ST   [GSPRD],R0
-        CLR  R0                 ; b7: the per-sprite bank nothing reads
-        ST   [GSPRD],R0
-        MOV  R0,#$01            ; the global gate: no descriptor shows
-        ST   [GSPREN],R0        ;   until it opens, and using SPRITE at
-                                ;   all is the statement that sprites
-                                ;   are wanted. dorun closes it again.
-        JMP  stmt
-
-; SOUND v,pitch,vol,noise -- pitch is the phase increment (f ~ inc/2),
-; vol 0-15, noise picks the LFSR over the square. Silence is vol 0.
-; Two seeks because bytes 2-3 are the engine's phase and software
-; leaves them alone.
+; HLINE is gone, and it was never the algorithm it looked like. The
+; pixel port advances X itself after every plot (`S_END: pix_x <=
+; pix_x + 1` in rtl/soc/cool8_pixport.v), which is why the loop here
+; wrote GPIXD over and over without touching a coordinate. So a run of
+; pixels is four register writes and then one POKE each -- the same
+; single store per pixel this did -- and the command was carrying no
+; work the hardware was not already doing. See 13-basic.md section 5.
 h_sound:
         MOV  R3,#4
         CALL gargs
@@ -4424,34 +4386,6 @@ h_on:   CALL eval
 
 ; TILE x,y,t,a -- one map entry in mode 2: the map is stride 128 at the
 ; bottom of VRAM, an entry is index then attribute.
-h_tile: MOV  R3,#4
-        CALL gargs
-        MOV  R0,#1
-        ST   [GVRST],R0
-        LD   R0,[garg+2]        ; y*128: hi = y>>1, lo = (y&1)<<7
-        MOV  R1,R0
-        SHR  R1
-        AND  R0,#$01
-        MOV  R2,#$00
-        TST  R0
-        BEQ  .t0
-        MOV  R2,#$80
-.t0:    LD   R0,[garg]          ; + x*2
-        ADD  R0,R0
-        ADD  R2,R0
-        ADC  R1,#0
-        ST   [GVRAL],R2
-        ST   [GVRAH],R1
-        LD   R0,[garg+4]
-        ST   [GVRD],R0
-        LD   R0,[garg+6]
-        ST   [GVRD],R0
-        JMP  stmt
-
-; CLG c -- the whole surface to one colour, straight through the VRAM
-; port: 240 rows of stride bytes from VID_BASE. The byte pattern is the
-; colour replicated to the mode's depth, and the replication is a
-; multiply: c*$FF at 1 bpp, c*$55 at 2, c*$11 at 4, c*$01 at 8.
 h_clg:  MOV  R3,#1
         CALL gargs
         LD   R0,[$FE11]         ; bpp out of VID_CTRL

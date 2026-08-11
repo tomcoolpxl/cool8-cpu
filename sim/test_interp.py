@@ -602,6 +602,65 @@ CASES = [
              line(30, [K["END"]])),
      {}, "0,-42"),
 
+    # ---- VAL of a fraction. The digits go into the same 16-bit
+    # ---- accumulator the integer path uses, counting those after the
+    # ---- point, and one divide by 10^n at the end turns it into a
+    # ---- float. Asserted on what PRINT rendered, because the value
+    # ---- lands in FACC and not in a variable.
+    ("VAL of a fraction is a float",
+     program(spaced(10, [K["PRINT"]], name("VAL"), "(", name('"3.5"'), ")"),
+             line(20, [K["END"]])),
+     {}, "3.5"),
+
+    ("VAL of a negative fraction keeps the sign",
+     program(spaced(10, [K["PRINT"]], name("VAL"), "(", name('"-3.5"'),
+                    ")"),
+             line(20, [K["END"]])),
+     {}, "-3.5"),
+
+    ("a bare point still has an integer part of zero",
+     program(spaced(10, [K["PRINT"]], name("VAL"), "(", name('".5"'), ")"),
+             line(20, [K["END"]])),
+     {}, "0.5"),
+
+    ("a trailing point is the whole number",
+     program(spaced(10, [K["PRINT"]], name("VAL"), "(", name('"3."'), ")"),
+             line(20, [K["END"]])),
+     {}, "3"),
+
+    ("a quarter, which the format holds exactly",
+     program(spaced(10, [K["PRINT"]], name("VAL"), "(", name('"0.25"'),
+                    ")"),
+             line(20, [K["END"]])),
+     {}, "0.25"),
+
+    # Four fraction digits is the cap: it is what 4.8 decimal digits can
+    # carry, and it is what keeps 10^n inside sixteen bits.
+    #
+    # **Multiplied back out, not printed.** `fstr` renders about four
+    # significant digits -- SQR(2) is 1.414 -- so printing this would
+    # show 1.234 whether the parser kept four fraction digits or five,
+    # and the assertion would be about the printer. Scaling by 10000
+    # and crossing to an integer asks the parser directly.
+    # Into a variable, not printed: INT gives an integer, and an
+    # integer PRINT goes through the s_putn stub while the string one
+    # goes through s_putsn -- so `printed` stays empty and the case
+    # would fail while the value was right.
+    ("digits past the fourth are consumed and ignored",
+     program(spaced(10, name("A"), "=", [K["INT"]], "(", name("VAL"),
+                    "(", name('"1.2345678"'), ")", "*", name("FLT"),
+                    "(", num(10000), ")", ")"),
+             line(20, [K["END"]])),
+     {0: 12344}),        # not 12340, which is what four digits would be;
+                         # the missing one is the 15-bit fraction and
+                         # INT flooring the product, not a lost digit
+
+    ("a second point ends the number, as any other non-digit does",
+     program(spaced(10, [K["PRINT"]], name("VAL"), "(", name('"3.5.7"'),
+                    ")"),
+             line(20, [K["END"]])),
+     {}, "3.5"),
+
     ("VAL takes a sign and stops at the first character that is not a digit",
      program(spaced(10, name("A"), "=", name("VAL"), "(", name('"-12"'),
                     ")"),
@@ -917,7 +976,48 @@ CASES = [
 ]
 
 
+def trace(pattern, n=400):
+    """`python sim/test_interp.py --trace "past the fourth" [n]`
+
+    Run the one case whose name contains `pattern` and print what the
+    machine executed, `n` instructions from the first statement. A case
+    that prints nothing has either faulted or never reached PRINT, and
+    a breakpoint cannot tell those apart -- the trace decodes forward
+    from the live PC, so the boundaries are the ones the CPU used.
+    """
+    code, syms = build("interp", HARNESS)
+    hit = [c for c in CASES if pattern.lower() in c[0].lower()]
+    if not hit:
+        raise SystemExit("no case matching %r" % pattern)
+    name_, prog = hit[0][0], hit[0][1]
+    m = cool8rsvm.machine()
+    m.bus.mem[CODE:CODE + len(code)] = code
+    at = syms["prog"]
+    m.bus.mem[at:at + len(prog)] = bytes(prog)
+    end = at + len(prog)
+    m.cpu.pc, m.cpu.sp, m.romen = CODE, 0x7FF0, False
+    m.bus.mem[0x0016] = end & 0xFF
+    m.bus.mem[0x0017] = end >> 8
+    print("  " + name_)
+    print()
+    why = m.run(budget=20_000_000)
+    err = m.bus.mem[0x0018]              # ERR, sw/zp.asm
+    ln = m.bus.mem[syms["printlen"]]
+    got = bytes(m.bus.mem[syms["printed"]:syms["printed"] + ln])
+    print("  run:     %s" % why)
+    print("  ERR:     $%02X" % err)
+    print("  printed: %r" % got.decode("latin-1"))
+    print()
+    print("  Nothing printed with ERR clear means PRINT was never")
+    print("  reached; a non-zero ERR names the fault -- see E_* in")
+    print("  sw/zp.asm. For instruction-level detail use sim/dbg.py,")
+    print("  which owns disassembly for the batch machine.")
+
+
 def main():
+    if len(sys.argv) > 1 and sys.argv[1] == "--trace":
+        return trace(sys.argv[2],
+                     int(sys.argv[3]) if len(sys.argv) > 3 else 400)
     print("  I2 -- sw/interp.asm, on the editor's stored form")
     print()
     code, syms = build("interp", HARNESS)

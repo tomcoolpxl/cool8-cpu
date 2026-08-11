@@ -291,14 +291,15 @@ def markdown():
     dead = [e for e in stmts if e["handler"] == "bad"]
     o.append("## Tokenised, but not statements")
     o.append("")
-    o.append("These hold a token because the tokeniser matches them "
-             "inside something else — `TO` in a `FOR`, `THEN` in an "
-             "`IF` — so `sttab` sends them to `bad`. **Two are "
-             "functions**, reached from `prim` rather than dispatched: "
-             "they are marked below. Everything else here is a clause, "
-             "an operator, or a word that was reserved and never "
-             "implemented, and meeting one where a statement was "
-             "expected is `?SYNTAX`.")
+    o.append("These hold a token but `sttab` sends them to `bad`, so "
+             "meeting one where a statement was expected is `?SYNTAX`. "
+             "Three reasons, all marked below: a **clause** the "
+             "tokeniser matches inside something else (`TO` in a `FOR`, "
+             "`THEN` in an `IF`); a **function** reached from `prim` "
+             "rather than dispatched; or a command that was "
+             "**removed**, whose token stays because the order of "
+             "`TOKTAB` fixes every byte after it and programs on disk "
+             "hold the old numbering.")
     o.append("")
     o.append("| token | | |")
     o.append("|---|---|---|")
