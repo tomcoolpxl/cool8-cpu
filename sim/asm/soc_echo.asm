@@ -9,8 +9,10 @@
 
         .org  $0400
 
-UARTS   = $FE70                 ; 0 rx available, 1 tx ready
-UARTD   = $FE71
+; Register addresses from sw/io.asm, generated from the RTL ([D67]).
+        .include "io.asm"
+UARTS   = UART_STAT                 ; 0 rx available, 1 tx ready
+UARTD   = UART_DATA
 
 rx:     LD    R0,[UARTS]
         AND   R0,#$01

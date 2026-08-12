@@ -24,6 +24,11 @@
 
 module cool8_boot_tb;
 
+    // The I/O page base -- $FF00 since [D67], and a literal here is a
+    // testbench that goes on probing where the page used to be.
+    localparam [15:0] IOB = 16'hFF00;
+    localparam [15:0] FLS_DATA = IOB + 16'h008B;
+
     reg          clk = 1'b0;
     reg          rst_n = 1'b0;
     reg          hold_cpu = 1'b1;    // the testbench's own CPU reset
@@ -199,14 +204,21 @@ module cool8_boot_tb;
         $readmemh(romfile, u_mem.u_rom.rom);
 
         // This bench is a core and a memory: there is no I/O page, so
-        // the flash port at $FE88-$FE8C is ordinary RAM here. The ROM
-        // now looks on the flash for a BOOT.BIN before it reaches the
-        // monitor, so FLS_DATA has to read as something. All-ones is
-        // what an erased or absent part gives, and an all-ones
-        // directory is an empty volume -- so autoboot finds nothing and
-        // falls through, which is exactly what a blank board does.
-        // $FE8B is the odd byte of word $3F45 in the high SPRAM.
-        u_mem.u_ram.u_hi.mem[14'h3F45][15:8] = 8'hFF;
+        // the flash port is ordinary RAM here. The ROM looks on the
+        // flash for a BOOT.BIN before it reaches the monitor, so
+        // FLS_DATA has to read as something. All-ones is what an erased
+        // or absent part gives, and an all-ones directory is an empty
+        // volume -- so autoboot finds nothing and falls through, which
+        // is exactly what a blank board does.
+        //
+        // **Derived from FLS_DATA, not written down.** This was
+        // `mem[14'h3F45]`, the word under $FE8B, and when [D67] moved
+        // the I/O page to $FF00 the seed stayed behind: autoboot then
+        // read uninitialised SPRAM as a directory, believed a garbage
+        // length, and sat in its copy loop until the testbench gave up.
+        // The symptom was "never reached the monitor", which points at
+        // the boot ROM and not at a stale constant in the harness.
+        u_mem.u_ram.u_hi.mem[(FLS_DATA - 16'h8000) >> 1][15:8] = 8'hFF;
 
         if (!$value$plusargs("stopat=%h", stopat)) begin
             $display("FAIL: no +stopat= given");
@@ -302,7 +314,7 @@ module cool8_boot_tb;
         // The LED store executed. There is no I/O decode in this
         // testbench, so it landed in RAM — which is enough to say the
         // instruction ran.
-        chk("the LED store executed", {24'd0, ram_byte(16'hFE03)}, 32'h01);
+        chk("the LED store executed", {24'd0, ram_byte(IOB + 16'h0003)}, 32'h01);
         end
     endtask
 

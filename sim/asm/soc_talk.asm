@@ -10,8 +10,10 @@
 
         .org  $0400
 
-UARTS   = $FE70
-UARTD   = $FE71
+; Register addresses from sw/io.asm, generated from the RTL ([D67]).
+        .include "io.asm"
+UARTS   = UART_STAT
+UARTD   = UART_DATA
 
         MOV   R2,#$80
 

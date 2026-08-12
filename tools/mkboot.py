@@ -30,6 +30,11 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 
+sys.path.insert(0, HERE)
+
+import ioregs                                              # noqa: E402
+import memmap                                              # noqa: E402
+
 # The stub, with its three constants filled in. Generated rather than
 # committed for the same reason sim/build/boot.hex is: it is derived
 # from the image it carries, and a stale copy would be a loader that
@@ -44,7 +49,7 @@ STUB = """
 
         .org  $@ORG@
 
-SYSCTRL = $FE00
+SYSCTRL = $@SYSCTRL@
 
 reloc:  LDW  X,#src
         LDW  Y,#$@DEST@
@@ -319,7 +324,12 @@ def build(payload, dest=0xA000, org=0x0200, build_dir=None):
                 .replace("@DEST@", "%04X" % dest)
                 .replace("@LO@", "%02X" % (len(payload) & 0xFF))
                 .replace("@HI@", "%02X" % (len(payload) >> 8))
-                .replace("@SIZE@", "%d" % len(payload)))
+                .replace("@SIZE@", "%d" % len(payload))
+                # The stub is assembled standalone, with no sw/ on the
+                # include path, so it cannot reach sw/io.asm -- but it
+                # must not carry a literal either. Substituted from the
+                # one source, like every other number in this template.
+                .replace("@SYSCTRL@", "%04X" % ioregs.addr_of("SYS_CTRL")))
     apath = os.path.join(build_dir, "bootstub.asm")
     with open(apath, "w") as fh:
         fh.write(text)
@@ -337,14 +347,14 @@ def build(payload, dest=0xA000, org=0x0200, build_dir=None):
     end = dest + len(payload)
     if org + len(stub) + len(payload) > dest:
         raise SystemExit("the payload would land on its own destination")
-    if dest == 0xA000 and end > 0xFE00:
+    if dest == 0xA000 and end > memmap.TOP:
         # The relocation would write into the I/O page — poking random
         # registers on the way — and the lost tail is the high code:
         # the blitter, the filesystem, the ISR. That failure presents
         # as an editor that half works, not as a build error, which is
         # how a 7-bytes-over image cost a debugging round once.
         raise SystemExit("the image is %d bytes over the I/O page"
-                         % (end - 0xFE00))
+                         % (end - memmap.TOP))
     if end > 0x10000:
         raise SystemExit("the image does not fit below $10000")
     return stub + payload

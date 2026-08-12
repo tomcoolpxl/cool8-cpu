@@ -27,6 +27,10 @@
 
 module cool8_top_tb;
 
+    // The I/O page base -- $FF00 since [D67], and a literal here is a
+    // testbench that goes on probing where the page used to be.
+    localparam [15:0] IOB = 16'hFF00;
+
     // A short power-on counter, so the test is about the counter
     // finishing rather than about waiting 4096 clocks for it.
     localparam integer POR_BITS = 5;
@@ -282,7 +286,7 @@ module cool8_top_tb;
         // the checksum byte is sent, so the two ends are at different
         // rates for one byte — so it is drained rather than checked.
         // docs/04-system.md section 4.6 says as much.
-        send_frame(C_WRITE, 16'hFE72, 16'd1);
+        send_frame(C_WRITE, IOB + 16'h0072, 16'd1);
         put(DIV0[7:0]);
         send_byte(csum_tx);
         bitclk = DIV0 + 1;
@@ -303,33 +307,33 @@ module cool8_top_tb;
         // its own pin. $FE03 bit 2 is red, bit 1 green, bit 0 blue — the
         // order sw/boot.asm's $01 relies on to mean blue.
 
-        bus_write("LED := $00", 16'hFE03, 8'h00);
+        bus_write("LED := $00", IOB + 16'h0003, 8'h00);
         chk("nothing lit is all pins high",
             {29'd0, led_r, led_g, led_b}, 32'b111);
 
-        bus_write("LED := $04, red", 16'hFE03, 8'h04);
+        bus_write("LED := $04, red", IOB + 16'h0003, 8'h04);
         chk("red pin low, the others high",
             {29'd0, led_r, led_g, led_b}, 32'b011);
 
-        bus_write("LED := $02, green", 16'hFE03, 8'h02);
+        bus_write("LED := $02, green", IOB + 16'h0003, 8'h02);
         chk("green pin low",
             {29'd0, led_r, led_g, led_b}, 32'b101);
 
-        bus_write("LED := $01, blue", 16'hFE03, 8'h01);
+        bus_write("LED := $01, blue", IOB + 16'h0003, 8'h01);
         chk("blue pin low — what the boot ROM leaves behind",
             {29'd0, led_r, led_g, led_b}, 32'b110);
 
-        bus_write("LED := $07, white", 16'hFE03, 8'h07);
+        bus_write("LED := $07, white", IOB + 16'h0003, 8'h07);
         chk("all three low",
             {29'd0, led_r, led_g, led_b}, 32'b000);
 
-        chk_read("the register still reads unnegated", 16'hFE03, 8'h07);
+        chk_read("the register still reads unnegated", IOB + 16'h0003, 8'h07);
 
         // And the machine underneath really is the one with the boot ROM
         // in it, not an empty map — a top wired to the wrong parameters
         // would answer everything above just the same.
-        chk_read("SYSCTRL: ROMEN set", 16'hFE00, 8'h01);
-        chk_read("SYSSTAT is the default build id", 16'hFE02, 8'h05);
+        chk_read("SYSCTRL: ROMEN set", IOB + 16'h0000, 8'h01);
+        chk_read("SYSSTAT is the default build id", IOB + 16'h0002, 8'h05);
 
         $display("\n  %0d checks, %0d failures", checks, errors);
         if (errors == 0) $display("\nPASS");

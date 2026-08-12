@@ -28,6 +28,10 @@
 
 module cool8_soc_boot_tb;
 
+    // The I/O page base -- $FF00 since [D67], and a literal here is a
+    // testbench that goes on probing where the page used to be.
+    localparam [15:0] IOB = 16'hFF00;
+
     localparam integer DIV0  = 72;         // 115200 baud at 8.375 MHz
     localparam [7:0]   BUILD = 8'h05;      // cool8_soc's own default
     localparam [7:0]   ACK = 8'h4B, VERSION = 8'h01;
@@ -282,11 +286,11 @@ module cool8_soc_boot_tb;
         get_reply(rxbyte);
         chk("HALT", {24'd0, rxbyte}, {24'd0, ACK});
 
-        chk_read("SYSSTAT is the default build id", 16'hFE02, BUILD);
-        chk_read("the LED register agrees with the pins", 16'hFE03, 8'h01);
-        chk_read("SYSCTRL: ROMEN is still set",     16'hFE00, 8'h01);
-        chk_read("UART_DIV_L is 72",   16'hFE72, 8'd72);
-        chk_read("UART_DIV_H is 0",    16'hFE73, 8'd0);
+        chk_read("SYSSTAT is the default build id", IOB + 16'h0002, BUILD);
+        chk_read("the LED register agrees with the pins", IOB + 16'h0003, 8'h01);
+        chk_read("SYSCTRL: ROMEN is still set",     IOB + 16'h0000, 8'h01);
+        chk_read("UART_DIV_L is 72",   IOB + 16'h0072, 8'd72);
+        chk_read("UART_DIV_H is 0",    IOB + 16'h0073, 8'd0);
 
         // The vectors the boot ROM installed went to RAM underneath its
         // own read window. Drop the overlay through SYSCTRL and they are
@@ -295,7 +299,7 @@ module cool8_soc_boot_tb;
         // reaching into the arrays.
         chk_read("$FFF8 is the ROM's copy while ROMEN is set",
                  16'hFFF8, u_soc.u_mem.u_rom.rom[12'hFF8]);
-        bus_write("ROMEN := 0", 16'hFE00, 8'h00);
+        bus_write("ROMEN := 0", IOB + 16'h0000, 8'h00);
         chk_read("$FFF8 in RAM is the vector the ROM installed",
                  16'hFFF8, u_soc.u_mem.u_rom.rom[12'hFF8]);
         chk_read("$FFF9 in RAM too",

@@ -49,6 +49,7 @@ from harness import check                                # noqa: E402
 sys.path.insert(0, os.path.join(H.ROOT, "tools"))
 
 import cool8rsvm as emu                                   # noqa: E402
+import memmap                                            # noqa: E402
 
 ROOT, BUILD = H.ROOT, H.BUILD
 
@@ -364,7 +365,7 @@ def run(binpath, extra=None, limit=200_000_000):
         off, blob = extra
         m.bus.mem[off:off + len(blob)] = blob
     m.cpu.pc = CODE
-    m.cpu.sp = 0xFFF7
+    m.cpu.sp = memmap.RAMTOP
     m.romen = False
     if m.run(budget=limit) != "halt":
         raise SystemExit("did not halt: " + binpath)

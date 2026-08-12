@@ -28,6 +28,11 @@ import shutil
 import subprocess
 import sys
 
+# The I/O page base, from the one place it is written down: a client that
+# kept its own copy would poke the old page after a move and report the
+# hardware as broken (D67).
+import ioregs as _ioregs
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, HERE)        # cool8kbd, mkrom, mkfont live beside us
@@ -80,7 +85,9 @@ def _srv():
 class _Cpu:
     def __init__(self):
         self.pc = 0
-        self.sp = 0xFFF8
+        # The top of contiguous RAM, below the I/O page — not $FFF8,
+        # which the page now covers (D67).
+        self.sp = _ioregs.IO_BASE - 1
         self.r = [0, 0, 0, 0]
         self.x = 0
         self.y = 0
@@ -414,15 +421,15 @@ class _SessVideo:
 
     @property
     def ctrl(self):
-        return self._s.bus.read(0xFE11)
+        return self._s.bus.read(_ioregs.addr_of("VID_CTRL"))
 
     @property
     def cur_x(self):
-        return self._s.bus.read(0xFE22)
+        return self._s.bus.read(_ioregs.addr_of("CUR_X"))
 
     @property
     def cur_y(self):
-        return self._s.bus.read(0xFE23)
+        return self._s.bus.read(_ioregs.addr_of("CUR_Y"))
 
 
 class _SessFlash:
@@ -639,16 +646,17 @@ class SessionMachine(_Trace):
         return b"" if h == "-" else bytes.fromhex(h)
 
     def io_write(self, reg, val):
-        """One write to the I/O page, by register offset — `$FE00 |
+        """One write to the I/O page, by register offset — `IO_BASE |
         reg`, through the bus, so the auto-incrementing data ports
         behave as they do for software."""
-        self.bus.write(0xFE00 | (reg & 0xFF), val)
+        self.bus.write(_ioregs.IO_BASE | (reg & 0xFF), val)
 
     def io_writes(self, reg, values):
         """A run of writes to one I/O register, in a single round trip
         — the idiom PAL_DATA, SPR_DATA and SND_DATA are built for."""
         self._cmd("buswr\t%d\t%s"
-                  % (0xFE00 | (reg & 0xFF), bytes(values).hex() or "-"))
+                  % (_ioregs.IO_BASE | (reg & 0xFF),
+                     bytes(values).hex() or "-"))
 
     # ------------------------------------------------- observation, cheap
     #

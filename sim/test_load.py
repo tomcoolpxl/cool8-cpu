@@ -35,6 +35,7 @@ sys.path.insert(0, os.path.join(ROOT, "tools"))
 import toolchain as T                                    # noqa: E402
 import cool8asm                                 # noqa: E402
 import cool8load as L                           # noqa: E402
+import ioregs                                   # noqa: E402
 
 SOC = [os.path.join(ROOT, "rtl", "soc", f)
        for f in ("cool8_rom.v", "cool8_spram.v", "cool8_mem.v",
@@ -120,13 +121,13 @@ def session():
         check=lambda r: chk("memory is right again",
                             L.parse_read(r, len(prog)), prog))
 
-    add("READ SYSCTRL", L.CMD_READ, 0xFE00, 1,
+    add("READ SYSCTRL", L.CMD_READ, ioregs.addr_of("SYS_CTRL"), 1,
         check=lambda r: chk("the I/O page answers a READ",
                             L.parse_read(r, 1), b"\x01"))
 
     add("GO", L.CMD_GO, PROG_AT,
         check=lambda r: chk("GO is accepted", r, bytes([L.ACK])))
-    add("READ the LED", L.CMD_READ, 0xFE03, 1,
+    add("READ the LED", L.CMD_READ, ioregs.addr_of("LED"), 1,
         check=lambda r: chk("the loaded program ran and lit the LED",
                             L.parse_read(r, 1), b"\x06"))
 

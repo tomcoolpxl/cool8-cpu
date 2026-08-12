@@ -39,6 +39,11 @@ module cool8_soc_tb;
     // Verilog-2001 wants declarations ahead of use and Icarus enforces
     // it, so everything the blocks below touch lives here.
 
+    // The I/O page base. It is $FF00 (D67) and it used to be $FE00; the
+    // testbench had eighty-two 16'hFExx literals, which is the same
+    // fault the software side had and fails the same way -- a decode
+    // test that goes on probing the address the page used to be at.
+    localparam [15:0] IOB   = 16'hFF00;
     localparam [15:0] DIV0  = 16'd15;      // fast, so the run is short
     localparam [7:0]  BUILD = 8'h5E;       // nothing else in the map reads this
     localparam [7:0]  ACK = 8'h4B, VERSION = 8'h01;
@@ -331,13 +336,13 @@ module cool8_soc_tb;
         integer k;
         begin
             k = 0;
-            bus_read(16'hFE70, got8);
+            bus_read(IOB + 16'h0070, got8);
             while (got8[0] && k < 64) begin
-                bus_read(16'hFE71, rxbyte);
-                bus_read(16'hFE70, got8);
+                bus_read(IOB + 16'h0071, rxbyte);
+                bus_read(IOB + 16'h0070, got8);
                 k = k + 1;
             end
-            send_hdr(C_WRITE, 16'hFE70, 16'd1);
+            send_hdr(C_WRITE, IOB + 16'h0070, 16'd1);
             put(8'h04);                          // acknowledge any overrun
             send_csum;
             get_reply(rxbyte);
@@ -465,8 +470,11 @@ module cool8_soc_tb;
         // Distinguishable bytes in the RAM immediately below and above
         // the I/O page, deposited before anything runs so that every
         // check from here on can tell a ROM answer from a RAM one.
-        ram_poke(16'hFDFF, 8'h6C);
-        ram_poke(16'hFF00, 8'hC6);
+        // Under the ROM window, on both sides of the I/O page: $FEFF is
+        // the byte just below it and $FFF8 the first vector just above.
+        // Both are RAM once ROMEN drops (D67).
+        ram_poke(16'hFEFF, 8'h6C);
+        ram_poke(16'hFFF8, 8'hC6);
         repeat (4) @(posedge clk);
         rst_n = 1'b1;
         repeat (8) @(posedge clk);
@@ -483,16 +491,16 @@ module cool8_soc_tb;
         // ---------------------------------------------------------- 2
         // The registers that exist.
 
-        chk_read("SYSSTAT is the build id",    16'hFE02, BUILD);
-        chk_read("SYSCTRL: ROMEN after reset", 16'hFE00, 8'h01);
+        chk_read("SYSSTAT is the build id",    IOB + 16'h0002, BUILD);
+        chk_read("SYSCTRL: ROMEN after reset", IOB + 16'h0000, 8'h01);
 
-        bus_write("LED := $05", 16'hFE03, 8'h05);
+        bus_write("LED := $05", IOB + 16'h0003, 8'h05);
         chk("led pins follow the register", {29'd0, led}, 32'd5);
-        chk_read("LED reads back",             16'hFE03, 8'h05);
+        chk_read("LED reads back",             IOB + 16'h0003, 8'h05);
 
-        bus_write("LED := $02", 16'hFE03, 8'h02);
+        bus_write("LED := $02", IOB + 16'h0003, 8'h02);
         chk("led pins changed", {29'd0, led}, 32'd2);
-        chk_read("LED reads back again",       16'hFE03, 8'h02);
+        chk_read("LED reads back again",       IOB + 16'h0003, 8'h02);
 
         // Every register on the page has a write strobe of its own, and
         // a write to one must not be a write to the next. The overlay is
@@ -502,12 +510,12 @@ module cool8_soc_tb;
         chk_read("the LED write left ROMEN alone", 16'hFDFF,
                  rom_at(16'hFDFF));
 
-        chk_read("LDR_CTRL",  16'hFE80, 8'h11);   // BOOTRAM=0, HALT=1, en=1
-        chk_read("LDR_STAT",  16'hFE81, 8'h05);   // owns the bus, seen a frame
+        chk_read("LDR_CTRL",  IOB + 16'h0080, 8'h11);   // BOOTRAM=0, HALT=1, en=1
+        chk_read("LDR_STAT",  IOB + 16'h0081, 8'h05);   // owns the bus, seen a frame
 
-        chk_read("UART_DIV_L is the parameter", 16'hFE72, DIV0[7:0]);
-        chk_read("UART_DIV_H is the parameter", 16'hFE73, DIV0[15:8]);
-        chk_read("UART_STAT: idle",             16'hFE70, 8'h02);
+        chk_read("UART_DIV_L is the parameter", IOB + 16'h0072, DIV0[7:0]);
+        chk_read("UART_DIV_H is the parameter", IOB + 16'h0073, DIV0[15:8]);
+        chk_read("UART_STAT: idle",             IOB + 16'h0070, 8'h02);
 
         // ---------------------------------------------------------- 3
         // The registers that do not. An unlisted address reads $FF and
@@ -519,66 +527,73 @@ module cool8_soc_tb;
         // and blitter ports, inside the video block's neighbourhood but
         // outside its decode, which is where a decode one nibble too
         // wide would show.
-        chk_read("CPUDIV is unimplemented",     16'hFE01, 8'hFF);
-        chk_read("an unused address",           16'hFE0C, 8'hFF);
-        chk_read("below the sprite ports",      16'hFE3F, 8'hFF);
-        bus_write("write to an unused address", 16'hFE0C, 8'hA5);
-        chk_read("...and it is still $FF",      16'hFE0C, 8'hFF);
-        chk_read("...and nothing near it moved", 16'hFE03, 8'h02);
+        chk_read("CPUDIV is unimplemented",     IOB + 16'h0001, 8'hFF);
+        chk_read("an unused address",           IOB + 16'h000C, 8'hFF);
+        chk_read("below the sprite ports",      IOB + 16'h003F, 8'hFF);
+        bus_write("write to an unused address", IOB + 16'h000C, 8'hA5);
+        chk_read("...and it is still $FF",      IOB + 16'h000C, 8'hFF);
+        chk_read("...and nothing near it moved", IOB + 16'h0003, 8'h02);
 
         // ---- the video page, $FE10-$FE3F
         //
         // The registers themselves are cool8_video_tb's; what is only
         // testable here is that the SoC's decode reaches them and that
         // the VRAM data port's alias claims the top quarter of the page.
-        chk_read("VID_MODE out of reset",       16'hFE10, 8'h00);
-        bus_write("VID_MODE := mode 4, on",     16'hFE10, 8'h84);
-        chk_read("...reads back",               16'hFE10, 8'h84);
+        chk_read("VID_MODE out of reset",       IOB + 16'h0010, 8'h00);
+        bus_write("VID_MODE := mode 4, on",     IOB + 16'h0010, 8'h84);
+        chk_read("...reads back",               IOB + 16'h0010, 8'h84);
         // Writing a preset loads three registers software never wrote.
-        chk_read("...and loaded VID_CTRL",      16'hFE11, 8'h3A);
-        chk_read("...and VID_STRIDE low",       16'hFE14, 8'hA0);
-        chk_read("...and VID_STRIDE high",      16'hFE15, 8'h00);
-        bus_write("VID_BORDER := $5C",          16'hFE1A, 8'h5C);
-        chk_read("...reads back",               16'hFE1A, 8'h5C);
-        bus_write("VRAM_ADDR := $1234 low",     16'hFE26, 8'h34);
-        bus_write("VRAM_ADDR := $1234 high",    16'hFE27, 8'h12);
-        chk_read("VRAM_ADDR_L reads back",      16'hFE26, 8'h34);
-        chk_read("VRAM_ADDR_H reads back",      16'hFE27, 8'h12);
-        bus_write("VRAM_DATA := $9E",           16'hFE29, 8'h9E);
-        chk_read("...the address advanced",     16'hFE26, 8'h35);
-        bus_write("VRAM_DATA := $7D",           16'hFE29, 8'h7D);
+        chk_read("...and loaded VID_CTRL",      IOB + 16'h0011, 8'h3A);
+        chk_read("...and VID_STRIDE low",       IOB + 16'h0014, 8'hA0);
+        chk_read("...and VID_STRIDE high",      IOB + 16'h0015, 8'h00);
+        bus_write("VID_BORDER := $5C",          IOB + 16'h001A, 8'h5C);
+        chk_read("...reads back",               IOB + 16'h001A, 8'h5C);
+        bus_write("VRAM_ADDR := $1234 low",     IOB + 16'h0026, 8'h34);
+        bus_write("VRAM_ADDR := $1234 high",    IOB + 16'h0027, 8'h12);
+        chk_read("VRAM_ADDR_L reads back",      IOB + 16'h0026, 8'h34);
+        chk_read("VRAM_ADDR_H reads back",      IOB + 16'h0027, 8'h12);
+        bus_write("VRAM_DATA := $9E",           IOB + 16'h0029, 8'h9E);
+        chk_read("...the address advanced",     IOB + 16'h0026, 8'h35);
+        bus_write("VRAM_DATA := $7D",           IOB + 16'h0029, 8'h7D);
         // The alias: every address in $FEC0-$FEFF is the same
         // auto-incrementing data port, which is what lets one loader
         // READ frame walk 64 consecutive bytes of VRAM instead of
         // re-reading one register 64 times.
-        bus_write("VRAM_ADDR back to $1234",    16'hFE26, 8'h34);
-        bus_write("...high half",               16'hFE27, 8'h12);
-        chk_read("$FEC0 is the data port",      16'hFEC0, 8'h9E);
-        chk_read("...and $FEFF is the same one", 16'hFEFF, 8'h7D);
+        bus_write("VRAM_ADDR back to $1234",    IOB + 16'h0026, 8'h34);
+        bus_write("...high half",               IOB + 16'h0027, 8'h12);
+        chk_read("the $C0 alias is the data port", IOB + 16'h00C0, 8'h9E);
+        // $F7 and not $FF: the page stops eight bytes short of the top
+        // so the CPU's vectors stay RAM (D67), so the last aliased data
+        // port is the last address the page decodes.
+        chk_read("...and the last one aliases too", IOB + 16'h00F7, 8'h7D);
 
         // ---------------------------------------------------------- 4
         // The page wins. There is RAM under every one of these
         // addresses and it must never be what answers.
 
-        ram_poke(16'hFE00, 8'h11);
-        ram_poke(16'hFE03, 8'h22);
-        ram_poke(16'hFE0C, 8'h33);
-        ram_poke(16'hFE3F, 8'h44);
-        chk_read("SYSCTRL, not the RAM under it", 16'hFE00, 8'h01);
-        chk_read("LED, not the RAM under it",     16'hFE03, 8'h02);
-        chk_read("unused, not the RAM under it",  16'hFE0C, 8'hFF);
-        chk_read("$FE3F, not the RAM under it",   16'hFE3F, 8'hFF);
+        ram_poke(IOB + 16'h0000, 8'h11);
+        ram_poke(IOB + 16'h0003, 8'h22);
+        ram_poke(IOB + 16'h000C, 8'h33);
+        ram_poke(IOB + 16'h003F, 8'h44);
+        chk_read("SYSCTRL, not the RAM under it", IOB + 16'h0000, 8'h01);
+        chk_read("LED, not the RAM under it",     IOB + 16'h0003, 8'h02);
+        chk_read("unused, not the RAM under it",  IOB + 16'h000C, 8'hFF);
+        chk_read("$FE3F, not the RAM under it",   IOB + 16'h003F, 8'hFF);
 
         // ...and a write to the page must not reach the RAM either.
-        bus_write("LED := $07", 16'hFE03, 8'h07);
+        bus_write("LED := $07", IOB + 16'h0003, 8'h07);
         chk("the RAM under LED is untouched",
-            {24'd0, ram_byte(16'hFE03)}, 32'h22);
+            {24'd0, ram_byte(IOB + 16'h0003)}, 32'h22);
         chk("led pins", {29'd0, led}, 32'd7);
 
-        // The page is exactly 256 bytes wide. Below it and above it,
-        // with ROMEN still set, is boot ROM.
-        chk_read("$FDFF is the ROM window", 16'hFDFF, rom_at(16'hFDFF));
-        chk_read("$FF00 is the ROM window", 16'hFF00, rom_at(16'hFF00));
+        // The page is 248 bytes wide and sits at the top. Below it, with
+        // ROMEN still set, is boot ROM; above it are the eight vector
+        // bytes, which are ROM on reads too -- that is what a cold boot
+        // fetches RESET from (D67).
+        chk_read("$FEFF is the ROM window", 16'hFEFF, rom_at(16'hFEFF));
+        // $FFFF and not $FFF8: fill_rom overwrites $FF8/$FF9 to aim RESET
+        // at the spin loop, so those two bytes are not the pattern.
+        chk_read("$FFFF is the ROM window", 16'hFFFF, rom_at(16'hFFFF));
         bus_write("$00FF is RAM", 16'h00FF, 8'h3C);
         chk_read("...and reads back",       16'h00FF, 8'h3C);
 
@@ -593,44 +608,44 @@ module cool8_soc_tb;
         bus_write("$1272 is RAM, not UART_DIV", 16'h1272, 8'hFF);
         bus_write("$1270 is RAM, not UART_STAT", 16'h1270, 8'h04);
         chk("led pins did not move", {29'd0, led}, 32'd7);
-        chk_read("LED did not move",      16'hFE03, 8'h07);
-        chk_read("SYSCTRL did not move",  16'hFE00, 8'h01);
-        chk_read("UART_DIV_L did not move", 16'hFE72, DIV0[7:0]);
+        chk_read("LED did not move",      IOB + 16'h0003, 8'h07);
+        chk_read("SYSCTRL did not move",  IOB + 16'h0000, 8'h01);
+        chk_read("UART_DIV_L did not move", IOB + 16'h0072, DIV0[7:0]);
         chk_read("$1203 is what was written", 16'h1203, 8'h05);
 
         // ---------------------------------------------------------- 5
         // SYSCTRL really drives the overlay, through the decode rather
         // than through cool8_mem's own port.
 
-        bus_write("ROMEN := 0", 16'hFE00, 8'h00);
-        chk_read("SYSCTRL reads 0",        16'hFE00, 8'h00);
-        chk_read("$FDFF is RAM now",       16'hFDFF, 8'h6C);
-        chk_read("$FF00 is RAM now",       16'hFF00, 8'hC6);
-        bus_write("ROMEN := 1", 16'hFE00, 8'h01);
-        chk_read("$FDFF is the ROM again", 16'hFDFF, rom_at(16'hFDFF));
+        bus_write("ROMEN := 0", IOB + 16'h0000, 8'h00);
+        chk_read("SYSCTRL reads 0",        IOB + 16'h0000, 8'h00);
+        chk_read("$FEFF is RAM now",       16'hFEFF, 8'h6C);
+        chk_read("$FFF8 is RAM now",       16'hFFF8, 8'hC6);
+        bus_write("ROMEN := 1", IOB + 16'h0000, 8'h01);
+        chk_read("$FEFF is the ROM again", 16'hFEFF, rom_at(16'hFEFF));
 
         // ---------------------------------------------------------- 6
         // The receive path: bytes the sniffer forwards land in the FIFO
         // and come back out of UART_DATA in order.
 
-        chk_read("UART_STAT: nothing received", 16'hFE70, 8'h02);
+        chk_read("UART_STAT: nothing received", IOB + 16'h0070, 8'h02);
         send_byte(8'h41);
         send_byte(8'h42);
         send_byte(8'h43);
         repeat (4 * bitclk) @(posedge clk);
-        chk_read("UART_STAT: data available", 16'hFE70, 8'h03);
-        chk_read("first byte",  16'hFE71, 8'h41);
-        chk_read("second byte", 16'hFE71, 8'h42);
-        chk_read("third byte",  16'hFE71, 8'h43);
-        chk_read("UART_STAT: drained", 16'hFE70, 8'h02);
+        chk_read("UART_STAT: data available", IOB + 16'h0070, 8'h03);
+        chk_read("first byte",  IOB + 16'h0071, 8'h41);
+        chk_read("second byte", IOB + 16'h0071, 8'h42);
+        chk_read("third byte",  IOB + 16'h0071, 8'h43);
+        chk_read("UART_STAT: drained", IOB + 16'h0070, 8'h02);
 
         // Sixteen bytes is the whole FIFO and must fit exactly.
         for (i = 0; i < 16; i = i + 1) send_byte(8'hB0 + i[7:0]);
         repeat (4 * bitclk) @(posedge clk);
-        chk_read("UART_STAT: full but no overrun", 16'hFE70, 8'h03);
+        chk_read("UART_STAT: full but no overrun", IOB + 16'h0070, 8'h03);
         for (i = 0; i < 16; i = i + 1)
-            chk_read("in order", 16'hFE71, 8'hB0 + i[7:0]);
-        chk_read("UART_STAT: drained again", 16'hFE70, 8'h02);
+            chk_read("in order", IOB + 16'h0071, 8'hB0 + i[7:0]);
+        chk_read("UART_STAT: drained again", IOB + 16'h0070, 8'h02);
 
         // ---------------------------------------------------------- 7
         // Eighteen do not. The overflow is reported and it is the tail
@@ -639,17 +654,17 @@ module cool8_soc_tb;
 
         for (i = 0; i < 18; i = i + 1) send_byte(8'h30 + i[7:0]);
         repeat (4 * bitclk) @(posedge clk);
-        chk_read("UART_STAT: overrun", 16'hFE70, 8'h07);
+        chk_read("UART_STAT: overrun", IOB + 16'h0070, 8'h07);
         for (i = 0; i < 16; i = i + 1)
-            chk_read("the head survived", 16'hFE71, 8'h30 + i[7:0]);
-        chk_read("UART_STAT: empty, still flagged", 16'hFE70, 8'h06);
-        bus_write("acknowledge the overrun", 16'hFE70, 8'h04);
-        chk_read("UART_STAT: clear", 16'hFE70, 8'h02);
+            chk_read("the head survived", IOB + 16'h0071, 8'h30 + i[7:0]);
+        chk_read("UART_STAT: empty, still flagged", IOB + 16'h0070, 8'h06);
+        bus_write("acknowledge the overrun", IOB + 16'h0070, 8'h04);
+        chk_read("UART_STAT: clear", IOB + 16'h0070, 8'h02);
 
         // Reading an empty FIFO returns a stale byte, which is fine.
         // What must not happen is the read pointer moving.
-        bus_read(16'hFE71, got8);
-        chk_read("UART_STAT: still empty", 16'hFE70, 8'h02);
+        bus_read(IOB + 16'h0071, got8);
+        chk_read("UART_STAT: still empty", IOB + 16'h0070, 8'h02);
 
         // ---------------------------------------------------------- 8
         // The transmit path, and the share. The byte written to
@@ -657,7 +672,7 @@ module cool8_soc_tb;
         // goes out ahead of the loader's own ACK — that is the arbiter
         // working, not an accident of ordering.
 
-        send_hdr(C_WRITE, 16'hFE71, 16'd1);
+        send_hdr(C_WRITE, IOB + 16'h0071, 16'd1);
         put(8'h96);
         send_csum;
         expect_reply("the CPU's byte goes first", 8'h96);
@@ -672,30 +687,30 @@ module cool8_soc_tb;
         // the next start bit, and so does this — whatever the loader
         // made of the trailing checksum is drained and not checked.
 
-        send_hdr(C_WRITE, 16'hFE72, 16'd1);
+        send_hdr(C_WRITE, IOB + 16'h0072, 16'd1);
         put(8'h1F);
         send_csum;
         bitclk = 32;
         drain;
         send_cmd(C_PING, 16'd0);
         expect_reply("PING at the new rate", VERSION);
-        chk_read("UART_DIV_L took", 16'hFE72, 8'h1F);
+        chk_read("UART_DIV_L took", IOB + 16'h0072, 8'h1F);
 
-        send_hdr(C_WRITE, 16'hFE73, 16'd1);
+        send_hdr(C_WRITE, IOB + 16'h0073, 16'd1);
         put(8'h01);
         send_csum;
         bitclk = 288;                            // div = $011F
         drain;
         send_cmd(C_PING, 16'd0);
         expect_reply("PING at the slow rate", VERSION);
-        chk_read("UART_DIV_H took", 16'hFE73, 8'h01);
+        chk_read("UART_DIV_H took", IOB + 16'h0073, 8'h01);
 
-        send_hdr(C_WRITE, 16'hFE73, 16'd1);
+        send_hdr(C_WRITE, IOB + 16'h0073, 16'd1);
         put(8'h00);
         send_csum;
         bitclk = 32;
         drain;
-        send_hdr(C_WRITE, 16'hFE72, 16'd1);
+        send_hdr(C_WRITE, IOB + 16'h0072, 16'd1);
         put(DIV0[7:0]);
         send_csum;
         bitclk = DIV0 + 1;
@@ -711,7 +726,7 @@ module cool8_soc_tb;
         // different master, a different address source, and the one that
         // has to live with the wait state.
 
-        bus_write("LED := $00 before the program runs", 16'hFE03, 8'h00);
+        bus_write("LED := $00 before the program runs", IOB + 16'h0003, 8'h00);
         chk("led pins cleared", {29'd0, led}, 32'd0);
 
         load_and_go(ledf);
@@ -722,7 +737,7 @@ module cool8_soc_tb;
         end
         chk("the program halted", {31'd0, o_halted}, 32'd1);
         chk("the CPU lit the LED", {29'd0, led}, 32'd6);
-        chk_read("...and the register agrees", 16'hFE03, 8'h06);
+        chk_read("...and the register agrees", IOB + 16'h0003, 8'h06);
 
         // --------------------------------------------------------- 11
         // A program that talks: poll UART_STAT, read UART_DATA, write it
@@ -827,7 +842,7 @@ module cool8_soc_tb;
         drain;
         send_cmd(C_RESET, 16'd0);
         expect_reply("RESET", ACK);
-        chk_read("SYSCTRL: ROMEN is back",        16'hFE00, 8'h01);
+        chk_read("SYSCTRL: ROMEN is back",        IOB + 16'h0000, 8'h01);
         chk_read("$FDFF is the ROM window again", 16'hFDFF, rom_at(16'hFDFF));
 
         $display("\n  %0d checks, %0d failures", checks, errors);

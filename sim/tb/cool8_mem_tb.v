@@ -4,11 +4,14 @@
 // is why it gets a testbench of its own rather than being taken on trust
 // once the CPU boots:
 //
-//   1. Reads at $F000-$FDFF and $FF00-$FFFF come from ROM while ROMEN.
+//   1. Reads at $F000-$FEFF and $FFF8-$FFFF come from ROM while ROMEN.
 //   2. Writes there go to RAM regardless — that is what lets the ROM
 //      install vectors at $FFF8 inside its own read window.
-//   3. $FE00-$FEFF is a hole: the I/O page wins, so the ROM must not
-//      answer for it even though it is inside $F000-$FFFF.
+//   3. $FF00-$FFF7 is a hole: the I/O page wins, so the ROM must not
+//      answer for it even though it is inside $F000-$FFFF. The hole is
+//      at the *end* of the window since [D67] moved the page to the top,
+//      so the ROM's code space is one contiguous run $F000-$FEFF and
+//      only the vectors sit above the hole.
 //   4. ROMEN reloads from ~bootram on every CPU reset, and only a board
 //      reset touches bootram itself.
 //
@@ -26,6 +29,10 @@
 `timescale 1ns / 1ps
 
 module cool8_mem_tb;
+
+    // The I/O page base -- $FF00 since [D67], and a literal here is a
+    // testbench that goes on probing where the page used to be.
+    localparam [15:0] IOB = 16'hFF00;
 
     reg          clk = 1'b0;
     reg          rst_n = 1'b0;
@@ -222,13 +229,12 @@ module cool8_mem_tb;
         expect_ram(16'hEFFF);           // last byte below the window
         expect_rom(16'hF000);           // first byte of it
         expect_rom(16'hF001);
-        expect_rom(16'hFDFF);           // last byte before the I/O page
-        expect_ram(16'hFE00);           // the hole: I/O page, not ROM
-        expect_ram(16'hFE03);
-        expect_ram(16'hFEFF);
-        expect_rom(16'hFF00);           // and ROM again above it
-        expect_rom(16'hFFF8);           // the vectors
-        expect_rom(16'hFFFF);
+        expect_rom(16'hFEFF);           // last byte before the I/O page
+        expect_ram(IOB + 16'h0000);     // the hole: I/O page, not ROM
+        expect_ram(IOB + 16'h0003);
+        expect_ram(IOB + 16'h00F7);     // its last byte (D67: $FFF7)
+        expect_rom(16'hFFF8);           // and ROM again above it: the
+        expect_rom(16'hFFFF);           //   vectors, which stay RAM-backed
 
         // ---- writes went to RAM after all ----------------------------
         // Same addresses, overlay off. If a write had been swallowed the
@@ -239,8 +245,7 @@ module cool8_mem_tb;
 
         expect_ram(16'hF000);
         expect_ram(16'hF001);
-        expect_ram(16'hFDFF);
-        expect_ram(16'hFF00);
+        expect_ram(16'hFEFF);
         expect_ram(16'hFFF8);
         expect_ram(16'hFFFF);
 
@@ -277,8 +282,8 @@ module cool8_mem_tb;
         for (n = 0; n < 4; n = n + 1) begin
             expect_rom(16'hF100);
             expect_ram(16'h2000);
-            expect_rom(16'hFF10);
-            expect_ram(16'hFE80);
+            expect_rom(16'hFE10);
+            expect_ram(IOB + 16'h0080);
         end
 
         // ---- the launch address decides ------------------------------

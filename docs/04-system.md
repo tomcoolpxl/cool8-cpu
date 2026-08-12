@@ -21,7 +21,7 @@ ASIC.
       │              │               │           │
  ┌────▼────┐   ┌─────▼─────┐   ┌─────▼─────┐  ┌──▼─────┐
  │ SPRAM   │   │  I/O page │   │ boot ROM  │  │ video  │
- │ 64 KB   │◀──┤  $FE00    │   │ EBR 4 KB  │  │ engine │
+ │ 64 KB   │◀──┤  $FF00    │   │ EBR 4 KB  │  │ engine │
  │ 2 blocks│   └───────────┘   └───────────┘  └───┬────┘
  └────▲────┘                                      │
       └──────────── arbiter, video priority ──────┘
@@ -47,29 +47,57 @@ assembler reads, and `memmap.py` verifies itself against those equates.
 
 | Range | Size | Contents |
 |---|---|---|
-| `$0000–$FDFF` | 65024 B | RAM |
-| `$FE00–$FEFF` | 256 B | I/O page — **always decoded, always wins** |
-| `$FF00–$FFFF` | 256 B | RAM (or boot ROM while `ROMEN=1`) |
+| `$0000–$FEFF` | 65280 B | RAM |
+| `$FF00–$FFF7` | 248 B | I/O page — **always decoded, always wins** |
+| `$FFF8–$FFFF` | 8 B | RAM — the vectors (§2.1) |
 
 Plus a reset-time overlay:
 
 | Range | While `ROMEN=1` |
 |---|---|
-| `$F000–$FDFF`, `$FF00–$FFFF` | Boot ROM (EBR) on **reads** |
+| `$F000–$FEFF`, `$FFF8–$FFFF` | Boot ROM (EBR) on **reads** |
 
-**Nothing decodes into page 0.** It is worth saying because it is the
-question asked every time something wants cheap storage there, and the
-answer has to hold for the whole machine and not just BASIC: the boot
-ROM, the monitor and the disassembler declare no page-0 storage at all,
-and the I/O page starts at `$FE00`. `memmap.py --check` is what keeps
-that true as things move.
+**The page is at the top, and it stops eight bytes short of it.** It was
+at `$FE00` until
+[D67](01-decisions.md#d67--one-system-storage-region-derived-from-the-claims-and-page-0-stops-being-special),
+which cost two things that both look small and were not: the system
+image could not pass `$FDFF`, and `$FF00–$FFF7` was a stranded 248-byte
+RAM island above the page — outside the boot ROM's `$0000–$EFFF` clear,
+which is why BASIC had to zero it by hand and why the interpreter's
+workspace ended up allocated there rather than anywhere sensible.
+
+Moving the page to `$FF00` makes RAM contiguous to `$FEFF` and hands
+**256 bytes to the system image and 256 contiguous bytes to the ROM**.
+The eight-byte notch is what makes it cheap: the CPU fetches its vectors
+from `$FFF8–$FFFF`, so leaving those as RAM means `rtl/core/` is not
+involved at all — the whole change is `io_sel` in
+[`cool8_soc.v`](../rtl/soc/cool8_soc.v) and the ROM window in
+[`cool8_mem.v`](../rtl/soc/cool8_mem.v).
+
+**No software writes the base down.** `tools/ioregs.py` holds it, reads
+every register's offset out of the Verilog localparams that decode it,
+and generates `sw/io.asm` and `sw/io.bas`; `poe check` fails on a bare
+`$FFxx` anywhere in `sw/`. Before that it was sixty hand-written equates
+across five files, and moving the page would have meant editing them all
+and hoping.
+
+**Nothing decodes into page 0**, and page 0 has no addressing advantage
+either — [D6](01-decisions.md) dropped the zero page and the direct-page
+register both, so `$0040` costs exactly what `$7E40` costs. It is
+ordinary RAM, and [D67](01-decisions.md) is where it stopped being
+treated as scarce: system storage is one packed region below the screen
+now, and `tools/memmap.py --check` refuses a byte with two owners.
 
 **Writes always go to RAM**, even where the ROM overlay is active. That
 is what lets the boot code install the interrupt vectors at
 `$FFF8–$FFFF` before it switches the overlay off.
 
-The I/O page punches a 256-byte hole in the ROM image at ROM offset
-`$0E00–$0EFF`. Don't put code there.
+The I/O page punches a 248-byte hole in the ROM image at ROM offset
+`$0F00–$0FF7`. Don't put code there — but note it is now at the *end* of
+the image rather than in the middle of it, so ROM code runs contiguously
+from `$F000` to `$FEFF` and only the vectors sit above the hole. The
+`.org $FF00` that used to exile `sw/keymap.asm` to the island below the
+vectors is gone with it ([D67](01-decisions.md)).
 
 There is no banking, and there will not be. The two remaining SPRAM
 blocks are **video RAM** — a separate 64 KB address space reached
@@ -175,7 +203,7 @@ what you want at M4 when there isn't any.
 
 ## 4. I/O page
 
-Base `$FE00`. Unlisted addresses read as `$FF` and ignore writes — `$FF`
+Base `$FF00`. Unlisted addresses read as `$FF` and ignore writes — `$FF`
 rather than `$00`, so a register that is not there reads like a bus
 nobody is driving instead of like a register holding zero.
 
@@ -183,10 +211,10 @@ The page is decoded on the **bus**, in
 [`rtl/soc/cool8_soc.v`](../rtl/soc/cool8_soc.v), ahead of the memory and
 whoever the master is. Two consequences worth knowing:
 
-- **The loader reaches it.** A `WRITE` frame to `$FE03` lights the LED
+- **The loader reaches it.** A `WRITE` frame to `$FF03` lights the LED
   with no CPU, no program and no working boot ROM. That is deliberate,
   and it is the first useful thing to do to a board that has just come
-  up. The other end of it is that a `WRITE` to `$FE80` is the loader
+  up. The other end of it is that a `WRITE` to `$FF80` is the loader
   writing its own control register mid-frame.
 - **A read costs the same one wait state a RAM read does.** Answering in
   the address cycle would make the read data a combinational function of
@@ -195,16 +223,16 @@ whoever the master is. Two consequences worth knowing:
   page is read on the launch cycle and answers on the next one, exactly
   as the SPRAM and the boot ROM do.
 
-### 4.1 System — `$FE00`
+### 4.1 System — `$FF00`
 
 | Addr | Name | Access | Bits |
 |---|---|---|---|
-| `$FE00` | `SYSCTRL` | R/W | `0`: `ROMEN` (1 = boot ROM overlay on). Reloads from `~BOOTRAM` on every CPU reset, not from a constant — see §4.7. `7:1` read 0. |
-| `$FE01` | `CPUDIV` | — | CPU clock enable divider. **Not implemented**; reads `$FF`. It existed to divide a 25.125 MHz system clock down to something an 8-bit machine plausibly ran at, and [D32](01-decisions.md#d32--the-system-clock-is-8375-mhz-a-third-of-the-pixel-clock) divides it by three in the clock tree instead. Nothing needs it until there is a reason to run slower than that. |
-| `$FE02` | `SYSSTAT` | R | Build identification: a constant carried as a parameter on `cool8_soc`, `$05` at M6. It answers "which bitstream is this board actually running", which is a question that gets asked during bring-up and has no other way to be answered. |
-| `$FE03` | `LED` | R/W | `2:0` = R, G, B on the board LED, active high here. The board's own polarity is [cool8_top](../rtl/soc/) and the `.pcf`'s problem, not software's. |
+| `$FF00` | `SYSCTRL` | R/W | `0`: `ROMEN` (1 = boot ROM overlay on). Reloads from `~BOOTRAM` on every CPU reset, not from a constant — see §4.7. `7:1` read 0. |
+| `$FF01` | `CPUDIV` | — | CPU clock enable divider. **Not implemented**; reads `$FF`. It existed to divide a 25.125 MHz system clock down to something an 8-bit machine plausibly ran at, and [D32](01-decisions.md#d32--the-system-clock-is-8375-mhz-a-third-of-the-pixel-clock) divides it by three in the clock tree instead. Nothing needs it until there is a reason to run slower than that. |
+| `$FF02` | `SYSSTAT` | R | Build identification: a constant carried as a parameter on `cool8_soc`, `$05` at M6. It answers "which bitstream is this board actually running", which is a question that gets asked during bring-up and has no other way to be answered. |
+| `$FF03` | `LED` | R/W | `2:0` = R, G, B on the board LED, active high here. The board's own polarity is [cool8_top](../rtl/soc/) and the `.pcf`'s problem, not software's. |
 
-### 4.2 Video — `$FE10`
+### 4.2 Video — `$FF10`
 
 Registers with more than a handful of fields sit behind an **indexed
 port with auto-increment** — palette, sprite descriptors, blitter
@@ -215,57 +243,57 @@ a straight run of stores with no address recomputation between them.
 
 | Addr | Name | Access | Description |
 |---|---|---|---|
-| `$FE10` | `VID_MODE` | R/W | `3:0` preset number (§5.3) — writing it loads the registers below. `7` = display enable. Presets 7–15 are **undefined**: no bounds check, freedom and consequences. |
-| `$FE11` | `VID_CTRL` | R/W | `1:0` engine (0 text, 1 tile, 2 bitmap). `3:2` bpp (0=1, 1=2, 2=4, 3=8). `4` horizontal doubling. `5` vertical doubling. |
-| `$FE12` | `VID_BASE_L` | R/W | Display base address, low byte |
-| `$FE13` | `VID_BASE_H` | R/W | high byte |
-| `$FE14` | `VID_STRIDE_L` | R/W | Row pitch in bytes, low. Text map stride, tile map width, or bitmap row pitch — see [D30](01-decisions.md#d30--the-text-map-stride-is-a-register-and-the-canonical-map-is-12832) |
-| `$FE15` | `VID_STRIDE_H` | R/W | high |
-| `$FE16` | `VID_SCRL_X_L` | R/W | Horizontal scroll, low |
-| `$FE17` | `VID_SCRL_X_H` | R/W | `1:0` high. 0–1023 |
-| `$FE18` | `VID_SCRL_Y_L` | R/W | Vertical scroll, low |
-| `$FE19` | `VID_SCRL_Y_H` | R/W | `1:0` high |
-| `$FE1A` | `VID_BORDER` | R/W | Border colour, a full 8-bit palette index — so the border and the background can be exactly the same colour |
-| `$FE1B` | `VID_RASTER` | R | Current scanline, bits 7:0 |
-| `$FE1C` | `VID_RCMP` | R/W | Raster compare value |
-| `$FE1D` | `VID_IRQ` | R/W | `0` raster hit (write 1 to clear), `1` vblank. `5:4` enables |
-| `$FE1E` | `PAL_IDX` | R/W | Palette **entry** index, 0–255. The half within an entry is implicit and is reset by writing this register |
-| `$FE1F` | `PAL_DATA` | W | First write `0000RRRR`, second `GGGGBBBB`; the pair commits together and **the second advances `PAL_IDX`**. Matches the 12-bit VGA PMOD exactly. Write-only — a read port on the palette is the one the raster uses, and reading back what software wrote is not worth a second block RAM |
-| `$FE20` | `PAT_BASE_L` | R/W | Glyph/tile pattern base in VRAM. Repointing this swaps a whole tile set in one write |
-| `$FE21` | `PAT_BASE_H` | R/W | |
-| `$FE22` | `CUR_X` | R/W | Text cursor column. The displayed position is latched at the start of vertical blanking, as `VID_BASE` is, so a mid-frame move cannot split the block; reads return the written value at once |
-| `$FE23` | `CUR_Y` | R/W | Text cursor row, latched likewise |
-| `$FE24` | `CUR_CTRL` | R/W | `0` enable, `2:1` style (block/underline/bar/inverse), `4:3` blink rate. Writing `CUR_X` or `CUR_Y` resets the blink phase, effective at the same frame edge |
-| `$FE25` | `CUR_LINES` | R/W | `3:0` first scanline, `7:4` last — an arbitrary slice of the 16-line cell |
-| `$FE26` | `VRAM_ADDR_L` | R/W | VRAM address, low |
-| `$FE27` | `VRAM_ADDR_H` | R/W | high |
-| `$FE28` | `VRAM_STEP` | R/W | `2:0` amount: 0, 1, 2, 4, 8, 16, 256, `VID_STRIDE`. `3` = decrement. Resets to +1 |
-| `$FE29` | `VRAM_DATA` | R/W | **Auto-increments `VRAM_ADDR`. Read has a side effect.** Also aliased at `$FEC0–$FEFF` — see §5.8 |
-| `$FE2A` | `SPR_IDX` | R/W | Sprite descriptor byte index, 0–255 |
-| `$FE2B` | `SPR_DATA` | W | **Auto-increments `SPR_IDX`.** Eight bytes per descriptor (§5.6), written as pairs from an even index. Write-only, for the same reason `PAL_DATA` is |
-| `$FE2C` | `SPR_CTRL` | R/W | `0` sprite engine enable, `1` overrun occurred this frame (write 1 to clear), `7:4` the palette bank **every** sprite uses — see §5.6 |
-| `$FE30–$FE33` | — | — | **Reserved for a blitter, which is not built.** Reads `$FF`. See [D34](01-decisions.md#d34--the-video-engine-ships-with-sprites-and-a-pixel-port-and-no-blitter) and §5.11 |
-| `$FE34` | `PIX_X_L` | R/W | Pixel port X, low |
-| `$FE35` | `PIX_X_H` | R/W | `2:0` high |
-| `$FE36` | `PIX_Y_L` | R/W | Pixel port Y, low |
-| `$FE37` | `PIX_Y_H` | R/W | `2:0` high |
-| `$FE38` | `PIX_DATA` | W | Write one pixel at (X, Y) of the surface `VID_BASE`/`VID_STRIDE` describes, in the current bpp, with sub-byte masking done in hardware. **Auto-increments X**, so a horizontal span is one store per pixel. **Write-only** — reads `$FF`; see §5.7 |
+| `$FF10` | `VID_MODE` | R/W | `3:0` preset number (§5.3) — writing it loads the registers below. `7` = display enable. Presets 7–15 are **undefined**: no bounds check, freedom and consequences. |
+| `$FF11` | `VID_CTRL` | R/W | `1:0` engine (0 text, 1 tile, 2 bitmap). `3:2` bpp (0=1, 1=2, 2=4, 3=8). `4` horizontal doubling. `5` vertical doubling. |
+| `$FF12` | `VID_BASE_L` | R/W | Display base address, low byte |
+| `$FF13` | `VID_BASE_H` | R/W | high byte |
+| `$FF14` | `VID_STRIDE_L` | R/W | Row pitch in bytes, low. Text map stride, tile map width, or bitmap row pitch — see [D30](01-decisions.md#d30--the-text-map-stride-is-a-register-and-the-canonical-map-is-12832) |
+| `$FF15` | `VID_STRIDE_H` | R/W | high |
+| `$FF16` | `VID_SCRL_X_L` | R/W | Horizontal scroll, low |
+| `$FF17` | `VID_SCRL_X_H` | R/W | `1:0` high. 0–1023 |
+| `$FF18` | `VID_SCRL_Y_L` | R/W | Vertical scroll, low |
+| `$FF19` | `VID_SCRL_Y_H` | R/W | `1:0` high |
+| `$FF1A` | `VID_BORDER` | R/W | Border colour, a full 8-bit palette index — so the border and the background can be exactly the same colour |
+| `$FF1B` | `VID_RASTER` | R | Current scanline, bits 7:0 |
+| `$FF1C` | `VID_RCMP` | R/W | Raster compare value |
+| `$FF1D` | `VID_IRQ` | R/W | `0` raster hit (write 1 to clear), `1` vblank. `5:4` enables |
+| `$FF1E` | `PAL_IDX` | R/W | Palette **entry** index, 0–255. The half within an entry is implicit and is reset by writing this register |
+| `$FF1F` | `PAL_DATA` | W | First write `0000RRRR`, second `GGGGBBBB`; the pair commits together and **the second advances `PAL_IDX`**. Matches the 12-bit VGA PMOD exactly. Write-only — a read port on the palette is the one the raster uses, and reading back what software wrote is not worth a second block RAM |
+| `$FF20` | `PAT_BASE_L` | R/W | Glyph/tile pattern base in VRAM. Repointing this swaps a whole tile set in one write |
+| `$FF21` | `PAT_BASE_H` | R/W | |
+| `$FF22` | `CUR_X` | R/W | Text cursor column. The displayed position is latched at the start of vertical blanking, as `VID_BASE` is, so a mid-frame move cannot split the block; reads return the written value at once |
+| `$FF23` | `CUR_Y` | R/W | Text cursor row, latched likewise |
+| `$FF24` | `CUR_CTRL` | R/W | `0` enable, `2:1` style (block/underline/bar/inverse), `4:3` blink rate. Writing `CUR_X` or `CUR_Y` resets the blink phase, effective at the same frame edge |
+| `$FF25` | `CUR_LINES` | R/W | `3:0` first scanline, `7:4` last — an arbitrary slice of the 16-line cell |
+| `$FF26` | `VRAM_ADDR_L` | R/W | VRAM address, low |
+| `$FF27` | `VRAM_ADDR_H` | R/W | high |
+| `$FF28` | `VRAM_STEP` | R/W | `2:0` amount: 0, 1, 2, 4, 8, 16, 256, `VID_STRIDE`. `3` = decrement. Resets to +1 |
+| `$FF29` | `VRAM_DATA` | R/W | **Auto-increments `VRAM_ADDR`. Read has a side effect.** Also aliased at `$FFC0–$FFFF` — see §5.8 |
+| `$FF2A` | `SPR_IDX` | R/W | Sprite descriptor byte index, 0–255 |
+| `$FF2B` | `SPR_DATA` | W | **Auto-increments `SPR_IDX`.** Eight bytes per descriptor (§5.6), written as pairs from an even index. Write-only, for the same reason `PAL_DATA` is |
+| `$FF2C` | `SPR_CTRL` | R/W | `0` sprite engine enable, `1` overrun occurred this frame (write 1 to clear), `7:4` the palette bank **every** sprite uses — see §5.6 |
+| `$FF30–$FF33` | — | — | **Reserved for a blitter, which is not built.** Reads `$FF`. See [D34](01-decisions.md#d34--the-video-engine-ships-with-sprites-and-a-pixel-port-and-no-blitter) and §5.11 |
+| `$FF34` | `PIX_X_L` | R/W | Pixel port X, low |
+| `$FF35` | `PIX_X_H` | R/W | `2:0` high |
+| `$FF36` | `PIX_Y_L` | R/W | Pixel port Y, low |
+| `$FF37` | `PIX_Y_H` | R/W | `2:0` high |
+| `$FF38` | `PIX_DATA` | W | Write one pixel at (X, Y) of the surface `VID_BASE`/`VID_STRIDE` describes, in the current bpp, with sub-byte masking done in hardware. **Auto-increments X**, so a horizontal span is one store per pixel. **Write-only** — reads `$FF`; see §5.7 |
 
-`$FE39–$FE3F` are spare, as is `$FE2D–$FE2F`.
+`$FF39–$FF3F` are spare, as is `$FF2D–$FF2F`.
 
-`$FE29` and `$FE38` have read side effects, and `$FE1E` and `$FE2A` are
+`$FF29` and `$FF38` have read side effects, and `$FF1E` and `$FF2A` are
 readable so an interrupt handler can save and restore the index it
 interrupted. The three `_DATA` ports are write-only and read `$FF`.
 
-### 4.3 Keyboard — `$FE40`
+### 4.3 Keyboard — `$FF40`
 
 | Addr | Name | Access | Description |
 |---|---|---|---|
-| `$FE40` | `KBD_STAT` | R | `0` data available, `1` FIFO overflow, `2` parity error, `3` transmit busy, `4` transmit failed |
-| `$FE41` | `KBD_DATA` | R | Pop one raw scancode byte from the FIFO. **Read has a side effect.** |
-| `$FE42` | `KBD_CTRL` | R/W | `0` FIFO clear, `4` interrupt enable |
-| `$FE43` | `KBD_TX` | W | Byte to send to the keyboard (LED/typematic commands) |
-| `$FE44` | `KBD_MOD` | R/W | `0` Shift held, `1` Ctrl held, `2` Alt held, `3` the Ctrl+Esc chord fired (write 1 to clear) |
+| `$FF40` | `KBD_STAT` | R | `0` data available, `1` FIFO overflow, `2` parity error, `3` transmit busy, `4` transmit failed |
+| `$FF41` | `KBD_DATA` | R | Pop one raw scancode byte from the FIFO. **Read has a side effect.** |
+| `$FF42` | `KBD_CTRL` | R/W | `0` FIFO clear, `4` interrupt enable |
+| `$FF43` | `KBD_TX` | W | Byte to send to the keyboard (LED/typematic commands) |
+| `$FF44` | `KBD_MOD` | R/W | `0` Shift held, `1` Ctrl held, `2` Alt held, `3` the Ctrl+Esc chord fired (write 1 to clear) |
 
 **Ctrl+Shift+Esc resets the machine and Ctrl+Esc raises `NMI`**, both
 decoded in `cool8_ps2` from the arriving bytes ([D54](01-decisions.md)).
@@ -344,7 +372,7 @@ follows.
 FIFO depth 16 bytes. The overflow is the *newest* byte, so a burst that
 outruns software loses the end of it and not the beginning.
 
-### 4.4 Sound — `$FE50`
+### 4.4 Sound — `$FF50`
 
 **Eight voices, one datapath.** Square waves and noise, 4-bit volume
 each, mixed into a 1-bit sigma-delta output on one pin. 141 LUT4, 131
@@ -354,8 +382,8 @@ for why that is smaller than the four dividers it replaced.
 
 | Addr | Name | Access | Description |
 |---|---|---|---|
-| `$FE50` | `SND_IDX` | W | Which byte of the voice array. Auto-increments on every write of `SND_DATA` |
-| `$FE51` | `SND_DATA` | W | ...and it |
+| `$FF50` | `SND_IDX` | W | Which byte of the voice array. Auto-increments on every write of `SND_DATA` |
+| `$FF51` | `SND_DATA` | W | ...and it |
 
 Two addresses rather than twenty-four, the idiom `PAL_IDX`/`PAL_DATA` and
 `SPR_IDX`/`SPR_DATA` already use. Both are write-only: the array's read
@@ -406,14 +434,14 @@ coupling capacitor are the DAC** — see [05-board.md](05-board.md).
 is about twenty instructions and can make shapes no hardware ADSR offers.
 A voice is silenced by clearing its enable bit or its volume.
 
-### 4.5 Timer — `$FE60`
+### 4.5 Timer — `$FF60`
 
 | Addr | Name | Description |
 |---|---|---|
-| `$FE60` | `TMR_RELOAD_L` | 16-bit reload value, low |
-| `$FE61` | `TMR_RELOAD_H` | high |
-| `$FE62` | `TMR_CTRL` | `0` enable, `1` auto-reload, `4` interrupt enable |
-| `$FE63` | `TMR_STAT` | `0` expired (write 1 to clear) |
+| `$FF60` | `TMR_RELOAD_L` | 16-bit reload value, low |
+| `$FF61` | `TMR_RELOAD_H` | high |
+| `$FF62` | `TMR_CTRL` | `0` enable, `1` auto-reload, `4` interrupt enable |
+| `$FF63` | `TMR_STAT` | `0` expired (write 1 to clear) |
 
 Counts down at 8.375 MHz ÷ 256 = 32.7 kHz — a 30.6 µs tick, and up to
 2.00 s from a 16-bit reload.
@@ -424,16 +452,16 @@ frequency: a timer needs enough resolution and enough range, and a
 slower clock improves the range and leaves the resolution far finer than
 any 8-bit machine can act on.
 
-### 4.6 Serial — `$FE70`
+### 4.6 Serial — `$FF70`
 
 Connected to the iCELink USB CDC port. 115200 8N1.
 
 | Addr | Name | Access | Description |
 |---|---|---|---|
-| `$FE70` | `UART_STAT` | R/W | `0` RX data available, `1` TX has room, `2` RX overrun — **write 1 to bit 2 to acknowledge the overrun**, the same shape `VID_IRQ` and `TMR_STAT` use |
-| `$FE71` | `UART_DATA` | R/W | Read pops RX, write pushes TX. **Read has a side effect.** |
-| `$FE72` | `UART_DIV_L` | R/W | Baud divider, low byte |
-| `$FE73` | `UART_DIV_H` | R/W | Baud divider, high byte |
+| `$FF70` | `UART_STAT` | R/W | `0` RX data available, `1` TX has room, `2` RX overrun — **write 1 to bit 2 to acknowledge the overrun**, the same shape `VID_IRQ` and `TMR_STAT` use |
+| `$FF71` | `UART_DATA` | R/W | Read pops RX, write pushes TX. **Read has a side effect.** |
+| `$FF72` | `UART_DIV_L` | R/W | Baud divider, low byte |
+| `$FF73` | `UART_DIV_H` | R/W | Baud divider, high byte |
 
 **Receive is 16 bytes deep** and it is not fed from the wire directly —
 every byte goes into the loader first and arrives here only if the
@@ -472,7 +500,7 @@ learn what the host picked, so both must be set to agree. 115200 is the
 safe default; higher rates are worth testing empirically once the link
 works.
 
-### 4.7 Loader — `$FE80`
+### 4.7 Loader — `$FF80`
 
 **This block is a build option and the shipping bitstream does not have
 it** — `cool8_soc #(.LOADER(0))`, which is the default. Both addresses
@@ -493,8 +521,8 @@ port normally and still be interrupted and reloaded.
 
 | Addr | Name | Access | Description |
 |---|---|---|---|
-| `$FE80` | `LDR_CTRL` | R/W | `0` sniffer enable (resets to 1; reads 1 and is not yet implemented — the sniffer is always on). `4` CPU requests a bus grant for itself. `5` `BOOTRAM` — see below. |
-| `$FE81` | `LDR_STAT` | R | `0` loader currently owns the bus, `1` last frame had a checksum error, `2` a frame has been received since reset |
+| `$FF80` | `LDR_CTRL` | R/W | `0` sniffer enable (resets to 1; reads 1 and is not yet implemented — the sniffer is always on). `4` CPU requests a bus grant for itself. `5` `BOOTRAM` — see below. |
+| `$FF81` | `LDR_STAT` | R | `0` loader currently owns the bus, `1` last frame had a checksum error, `2` a frame has been received since reset |
 
 `BOOTRAM` is the piece that makes the `GO` command work. Concretely, it
 is **`ROMEN`'s reset value**: every CPU reset reloads `ROMEN` from
@@ -507,7 +535,7 @@ board reset clears it.
 
 Wire protocol: [07-loader.md](07-loader.md).
 
-### 4.8 SPI flash — `$FE88`
+### 4.8 SPI flash — `$FF88`
 
 The board's 8 MB configuration flash doubles as mass storage. The iCE40
 releases pins 14–17 to user logic once `CDONE` goes high, so a small SPI
@@ -517,14 +545,14 @@ slot and its disk. This section is the raw device; the filesystem
 
 | Addr | Name | Access | Description |
 |---|---|---|---|
-| `$FE88` | `FLS_ADDR_L` | R/W | Flash address bits 7:0 |
-| `$FE89` | `FLS_ADDR_M` | R/W | bits 15:8 |
-| `$FE8A` | `FLS_ADDR_H` | R/W | bits 23:16 |
-| `$FE8B` | `FLS_DATA` | R | Read one byte and advance the address. **Read has a side effect.** |
-| `$FE8C` | `FLS_CTRL` | R/W | `0` stream open — write 1 to issue a read at `FLS_ADDR` and hold chip-select low; write 0 to close |
-| `$FE8D` | `FLS_STAT` | R | `0` busy, `1` stream open, `2` a write is running |
-| `$FE8E` | `FLS_WDATA` | W | The byte a program will write |
-| `$FE8F` | `FLS_WCTRL` | R/W | Write `1` to program `FLS_WDATA` at `FLS_ADDR`, `2` to erase its 4 KB sector, `4` to acknowledge a refusal. Reads `0` write running, `2` the last request was refused |
+| `$FF88` | `FLS_ADDR_L` | R/W | Flash address bits 7:0 |
+| `$FF89` | `FLS_ADDR_M` | R/W | bits 15:8 |
+| `$FF8A` | `FLS_ADDR_H` | R/W | bits 23:16 |
+| `$FF8B` | `FLS_DATA` | R | Read one byte and advance the address. **Read has a side effect.** |
+| `$FF8C` | `FLS_CTRL` | R/W | `0` stream open — write 1 to issue a read at `FLS_ADDR` and hold chip-select low; write 0 to close |
+| `$FF8D` | `FLS_STAT` | R | `0` busy, `1` stream open, `2` a write is running |
+| `$FF8E` | `FLS_WDATA` | W | The byte a program will write |
+| `$FF8F` | `FLS_WCTRL` | R/W | Write `1` to program `FLS_WDATA` at `FLS_ADDR`, `2` to erase its 4 KB sector, `4` to acknowledge a refusal. Reads `0` write running, `2` the last request was refused |
 
 **A read of `FLS_DATA` stalls until the byte is there.** A byte off the
 wire is sixteen system clocks and the CPU can ask for one in two, so
@@ -545,19 +573,19 @@ Typical use — copy 8 KB from flash offset `$100000` to `$4000`:
 
 ```asm
         MOV  R0,#$00
-        ST   [$FE88],R0        ; addr = $100000
-        ST   [$FE89],R0
+        ST   [$FF88],R0        ; addr = $100000
+        ST   [$FF89],R0
         MOV  R0,#$10
-        ST   [$FE8A],R0
+        ST   [$FF8A],R0
         MOV  R0,#$01
-        ST   [$FE8C],R0        ; open the stream
+        ST   [$FF8C],R0        ; open the stream
         ; X = $4000, R2:R3 = 8192
-.copy:  LD   R1,[$FE8B]        ; byte, address auto-advances
+.copy:  LD   R1,[$FF8B]        ; byte, address auto-advances
         ST   [X],R1
         INCW X
         ...
         SUB  R0,R0
-        ST   [$FE8C],R0        ; close
+        ST   [$FF8C],R0        ; close
 ```
 
 SPI mode 0, and the clock is the system clock divided by two — **4.19 MHz
@@ -661,7 +689,7 @@ CPU ──┬── arbiter ── SPRAM x2, 64 KB main RAM
       │                    │ text map only
       │              ┌─────┴──────┐
       ├── I/O page ──┤   fetch    ├── line buffer ──▶ palette ──▶ VGA
-      │   $FE10-3F   │   engine   │   (EBR, dual clock)   ▲
+      │   $FF10-3F   │   engine   │   (EBR, dual clock)   ▲
       │              └─────┬──────┘                       │
       │                    │                        sprite line buffer
       │                    ▼                              ▲
@@ -748,7 +776,7 @@ is no half-height font.
 
 | | Cost |
 |---|---|
-| Write patterns through `VRAM_DATA` | ~70 cycles for one 8×8 4 bpp tile; ~2 ms for 256 — and `STW` into the `$FEC0` alias block moves two bytes per instruction (§5.8) |
+| Write patterns through `VRAM_DATA` | ~70 cycles for one 8×8 4 bpp tile; ~2 ms for 256 — and `STW` into the `$FFC0` alias block moves two bytes per instruction (§5.8) |
 | Repoint `PAT_BASE` | **one register write, instant** |
 | `[5:4]` pattern bank in the attribute | four sets live at once, per cell, no writes at all |
 
@@ -758,7 +786,7 @@ is no half-height font.
 worst case; redraw from source data instead.)
 
 Animating eight tiles per frame costs about 800 cycles out of ~200,000.
-Loading a set from SPI flash is `LD R0,[$FE8B] ; ST [$FE29],R0` at
+Loading a set from SPI flash is `LD R0,[$FF8B] ; ST [$FF29],R0` at
 ~6 cycles a byte — an 8 KB set in 4 ms, no DMA engine needed.
 
 **The font is 256 glyphs of 8×16 in EBR (4 KB) on its own port**, so
@@ -965,7 +993,7 @@ because the byte has to be fetched before the answer exists. Nothing
 wanted it: this is an output device, and the one use for reading a pixel
 back is collision detection, which §5.11 already answers with software
 bounding-box tests. Software that genuinely needs to read a surface has
-`VRAM_ADDR`/`VRAM_DATA`. A read of `$FE38` returns `$FF`, and the pixel
+`VRAM_ADDR`/`VRAM_DATA`. A read of `$FF38` returns `$FF`, and the pixel
 port no longer holds the bus at all.
 
 | | |
@@ -1016,7 +1044,7 @@ measured at 37 levels of logic before anything was added to it.
 Implemented in [`cool8_vport.v`](../rtl/soc/cool8_vport.v), **170 LUT4
 and 59 flip-flops**.
 
-**`VRAM_DATA` is also aliased across `$FEC0–$FEFF`.** Every address in
+**`VRAM_DATA` is also aliased across `$FFC0–$FFFF`.** Every address in
 that block hits the same auto-incrementing port, so one loader `READ`
 frame pulls 64 consecutive VRAM bytes instead of re-reading one
 register. Without it VRAM would be invisible to
@@ -1127,7 +1155,7 @@ can drive it from a testbench.
 Numbers are hexadecimal and unprefixed. A command letter is folded to
 upper case; a blank line is not an error.
 
-**`D` over `$FE00-$FEFF` really reads the I/O page**, and half of it has
+**`D` over `$FF00-$FFFF` really reads the I/O page**, and half of it has
 side effects — a dump across `UART_DATA` pops the receive FIFO, one
 across `PAL_DATA` advances the palette index. That is not a bug to fix.
 It is the thing a monitor is for, and it is worth knowing before you

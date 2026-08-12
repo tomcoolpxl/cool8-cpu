@@ -297,6 +297,7 @@ class Assembler:
         self.cur_global = ""
         self.symat = {}
         self.relaxed = 0
+        self.included = set()           # include-once, see read()
 
     # ------------------------------------------------------ source prep
 
@@ -316,19 +317,34 @@ class Assembler:
                 return cand
         return here                     # let open() report it
 
-    def read(self, path, seen=None):
-        seen = seen or set()
+    def read(self, path, stack=()):
+        """Read a file, expanding `.include`. **Include-once.**
+
+        A file already pulled into this build is skipped rather than
+        expanded again; only a file including *itself*, directly or
+        through a chain, is circular. The two used to be one check
+        against a single growing set, which made the second, innocent
+        include of a shared header report "circular include" -- and that
+        is not a hypothetical: `sw/io.asm` is wanted by `zp.asm` for the
+        BASIC image and by `fs.asm`, which `sim/test_fs.py` assembles on
+        its own, so the header cannot be reached by exactly one route.
+        A C header has an include guard for this reason; here the
+        assembler simply knows.
+        """
         real = os.path.abspath(path)
-        if real in seen:
-            raise AsmError(f"circular include of {path}")
-        seen.add(real)
+        if real in stack:
+            chain = " -> ".join(os.path.basename(p) for p in stack + (real,))
+            raise AsmError(f"circular include: {chain}")
+        if real in self.included:
+            return []
+        self.included.add(real)
         out = []
         with open(path, encoding="utf-8") as fh:
             for n, raw in enumerate(fh, 1):
                 m = re.match(r'\s*\.include\s+"([^"]+)"', raw, re.I)
                 if m:
                     out.extend(self.read(self.resolve(m.group(1), path),
-                                         seen))
+                                         stack + (real,)))
                 else:
                     out.append((f"{os.path.basename(path)}:{n}", raw))
         return out

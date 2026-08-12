@@ -41,6 +41,7 @@ from harness import check                                # noqa: E402
 sys.path.insert(0, os.path.join(H.ROOT, "tools"))
 
 import cool8rsvm as vm                                   # noqa: E402
+import memmap                                            # noqa: E402
 import cool8disk as disk                                 # noqa: E402
 
 ROOT, BUILD = H.ROOT, H.BUILD
@@ -70,12 +71,20 @@ def run(code, steps=40_000_000):
     m = vm.Machine(flash_path=IMG)
     m.bus.mem[0x200:0x200 + len(code)] = code
     m.cpu.pc = 0x200
-    m.cpu.sp = 0xFFF7
+    m.cpu.sp = memmap.RAMTOP
     m.romen = False
     # run() stops on a HALT — a PC that does not move — which is how
     # every driver here ends; a tick loop over the session boundary
     # would pay a round trip per instruction.
     if m.run(budget=steps) != "halt":
+        # **"did not halt" on its own is a dead end**, and this suite had
+        # no way past it: no symbols, no trace, nothing but the sentence.
+        # A driver that spins is almost always waiting on a flash status
+        # bit that never arrives, so say where it stopped and what it ran
+        # -- the same thing `--trace` gives the editor.
+        print("  the machine did not halt: pc $%04X, sp $%04X"
+              % (m.cpu.pc, m.cpu.sp))
+        print(m.trace_report(m.trace(24, syms)))
         raise SystemExit("the machine did not halt")
     return m
 
@@ -215,14 +224,14 @@ nm:     .ascii "{name8_3('HELLO.TXT')}"
     # --------------------------------------------- 5. the floor holds
     code = build("fs_floor", f"""
         CLR  R0
-        ST   [$FE88],R0
-        ST   [$FE89],R0
-        ST   [$FE8A],R0        ; address $000000 -- the bitstream
+        ST   [FLS_ADDR_L],R0
+        ST   [FLS_ADDR_M],R0
+        ST   [FLS_ADDR_H],R0   ; address $000000 -- the bitstream
         MOV  R0,#$AA
-        ST   [$FE8E],R0
+        ST   [FLS_WDATA],R0
         MOV  R0,#1
-        ST   [$FE8F],R0        ; program
-        LD   R0,[$FE8F]
+        ST   [FLS_WCTRL],R0    ; program
+        LD   R0,[FLS_WCTRL]
         ST   [${OK:04X}],R0
         HALT
 """)

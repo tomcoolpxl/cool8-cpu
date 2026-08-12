@@ -19,6 +19,7 @@ assuming where it is -- the rule docs/10-debugging.md was written about.
 """
 
 import os
+import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -29,10 +30,28 @@ from harness import check                                # noqa: E402
 sys.path.insert(0, os.path.join(H.ROOT, "tools"))
 
 import test_basic as B                                     # noqa: E402
+import ioregs                                              # noqa: E402
 
 ROOT = H.ROOT
 
 FAILS = H.FAILS
+
+
+def reg(line):
+    """`{VRAM_ADDR_L}` in a test program becomes the register's address.
+
+    **Typed BASIC has no symbol table**, so a `POKE` at a register has to
+    carry a number — and a number written into a test file is exactly the
+    literal that goes on addressing the old page after the page moves.
+    Seven of these programs did, and when the I/O page went from $FE00 to
+    $FF00 they poked RAM instead of the video chip and failed with an
+    empty screen and nothing to say why (D67).
+
+    So the programs name the register and this fills in the address from
+    `tools/ioregs.py`, which reads it out of the Verilog that decodes it.
+    """
+    return re.sub(r"\{([A-Z][A-Z0-9_]*)\}",
+                  lambda m: "$%04X" % ioregs.addr_of(m.group(1)), line)
 
 
 def run(code, syms, lines, budget=200_000_000):
@@ -40,7 +59,7 @@ def run(code, syms, lines, budget=200_000_000):
     M = B.Machine(code, syms)
     M.settle()
     for ln in lines:
-        M.cmd(ln)
+        M.cmd(reg(ln))
     M.cmd("RUN")
     M.settle(budget)
     return M
@@ -48,6 +67,24 @@ def run(code, syms, lines, budget=200_000_000):
 
 def shows(M, text):
     return any(r.strip() == text for r in M.screen())
+
+
+def detail(M):
+    """The screen, and the registers that decide where the screen is.
+
+    **A blank screen has two very different causes** and this suite could
+    not tell them apart: the program printed nothing, or it printed
+    somewhere the harness is not looking. `dorun` is supposed to put mode
+    0 and `VID_BASE` back when a program ends, so a graphics case that
+    fails with *no* text at all -- not even the lines that were typed --
+    is a restore that did not happen, not a graphics bug. Printing the
+    three registers turns that from a guess into a reading.
+    """
+    rows = [r for r in M.screen() if r.strip()]
+    regs = " ".join(
+        "%s=$%02X" % (n, M.m.bus.read(ioregs.addr_of(n)))
+        for n in ("VID_MODE", "VID_BASE_L", "VID_BASE_H"))
+    return regs + "\n      screen:\n      " + "\n      ".join(rows)
 
 
 CASES = [
@@ -570,17 +607,17 @@ CASES = [
     # address high, then two auto-stepped writes. Same registers the
     # command wrote, one line each because there is no `:` separator.
     ("a tile map entry, written through the VRAM port",
-     ["10 A = 2 * 128 + 3 * 2", "20 POKE $FE26, A AND 255",
-      "30 POKE $FE27, A / 256", "40 POKE $FE28, 1",
-      "50 POKE $FE29, 65", "60 POKE $FE29, 7",
+     ["10 A = 2 * 128 + 3 * 2", "20 POKE {VRAM_ADDR_L}, A AND 255",
+      "30 POKE {VRAM_ADDR_H}, A / 256", "40 POKE {VRAM_STEP}, 1",
+      "50 POKE {VRAM_DATA}, 65", "60 POKE {VRAM_DATA}, 7",
       "70 PRINT VPEEK(262); VPEEK(263)", "80 END"], "657"),
 
     # CLG's fill is read back beside the glyph, and GTEXT's glyph comes
     # from a font row the program itself poked -- the stub seeds the
     # real font only on a flash boot, which this harness is not.
     ("CLG fills and GTEXT draws through the seeded font",
-     ["10 MODE 4", "20 CLG 3", "30 POKE $FE26, 8", "40 POKE $FE27, $FC",
-      "50 POKE $FE29, $FF", "60 PITCH 0, 500",
+     ["10 MODE 4", "20 CLG 3", "30 POKE {VRAM_ADDR_L}, 8", "40 POKE {VRAM_ADDR_H}, $FC",
+      "50 POKE {VRAM_DATA}, $FF", "60 PITCH 0, 500",
       "70 GTEXT 0, 0, \"!\", 9", "80 PRINT VPEEK(0); VPEEK(200)",
       "90 END"], "15351"),
 
@@ -592,7 +629,7 @@ CASES = [
     # lands on -- and dorun's restore is itself under test here, since
     # reading that row back needs VID_BASE pointed at $8000 again.
     ("the VRAM port round-trips by hand, now VPOKE is gone",
-     ["10 POKE $FE26, $34", "20 POKE $FE27, $12", "30 POKE $FE29, 77",
+     ["10 POKE {VRAM_ADDR_L}, $34", "20 POKE {VRAM_ADDR_H}, $12", "30 POKE {VRAM_DATA}, 77",
       "40 PRINT VPEEK($1234)", "50 END"], "77"),
 
     ("RND stays in range and is not stuck",
@@ -619,12 +656,12 @@ CASES = [
     # is the first byte of the hand-written run, so a port that stopped
     # stepping would fail here rather than pass quietly.
     ("SOUND and LINE execute, and a pixel run by hand still fills",
-     ["10 MODE 4", "20 POKE $FE16, 0", "30 POKE $FE1E, 17",
-      "40 POKE $FE1F, 0", "50 POKE $FE2A, 0", "60 POKE $FE2C, 0",
+     ["10 MODE 4", "20 POKE {VID_SCX_L}, 0", "30 POKE {PAL_IDX}, 17",
+      "40 POKE {PAL_DATA}, 0", "50 POKE {SPR_IDX}, 0", "60 POKE {SPR_CTRL}, 0",
       "70 SOUND 0, 881, 0, 0",
-      "80 POKE $FE34, 0", "81 POKE $FE35, 0",
-      "82 POKE $FE36, 0", "83 POKE $FE37, 0",
-      "84 FOR I = 1 TO 8", "85 POKE $FE38, 3", "86 NEXT I",
+      "80 POKE {PIX_X_L}, 0", "81 POKE {PIX_X_H}, 0",
+      "82 POKE {PIX_Y_L}, 0", "83 POKE {PIX_Y_H}, 0",
+      "84 FOR I = 1 TO 8", "85 POKE {PIX_DATA}, 3", "86 NEXT I",
       "90 LINE 0, 0, 7, 7, 5", "95 A = VPEEK(3 * 160 + 1)",
       "96 B = VPEEK(0)",
       "97 IF A <> 0 AND B <> 0 THEN PRINT 1", "99 END"], "1"),
@@ -684,7 +721,7 @@ def breaks_out(code, syms):
     M = B.Machine(code, syms)
     M.settle()
     for ln in ["10 A = A + 1", "20 GOTO 10", "30 END"]:
-        M.cmd(ln)
+        M.cmd(reg(ln))
     # `cmd` settles after typing, and a program that never ends
     # never settles -- so RUN goes straight to the machine and the
     # ticks are counted here. `M.m.type` feeds; `M.type` waits.
@@ -746,7 +783,7 @@ def keyboard(code, syms):
     M.settle()
     for ln in ["10 DO", '20 IF KEY($1C) AND KEY($29) THEN PRINT "BOTH"',
                "30 LOOP"]:
-        M.cmd(ln)
+        M.cmd(reg(ln))
     M.m.type("RUN\r")
     M.m.run(cycles=4_000_000)
     out["none"] = M.m.shows("BOTH")
@@ -766,7 +803,7 @@ def keyboard(code, syms):
     M.settle()
     for ln in ["10 DO", "20 A = INKEY", "30 IF A <> 0 THEN PRINT A",
                "40 LOOP"]:
-        M.cmd(ln)
+        M.cmd(reg(ln))
     M.m.type("RUN\r")
     M.m.run(cycles=4_000_000)
     out["quiet"] = M.m.shows("90")
@@ -810,27 +847,27 @@ def sprites(code, syms):
     # screen (x, 120) and eight pixels are eight pixels, whatever the
     # playfield mode is doing.
     for ln in ["10 MODE 4", "20 CLG 0",
-               "21 POKE $FE1E, 14",         # PAL_IDX
-               "22 POKE $FE1F, $0F",        # PAL_DATA, high byte first
-               "23 POKE $FE1F, $FF",
-               "30 POKE $FE26, 0",          # VRAM_ADDR_L: 64000 = $FA00
-               "31 POKE $FE27, $FA",
-               "32 POKE $FE28, 1",          # VRAM_STEP, and it carries
-               "33 FOR J = 0 TO 31", "40 POKE $FE29, $EE",
+               "21 POKE {PAL_IDX}, 14",         # PAL_IDX
+               "22 POKE {PAL_DATA}, $0F",        # PAL_DATA, high byte first
+               "23 POKE {PAL_DATA}, $FF",
+               "30 POKE {VRAM_ADDR_L}, 0",          # VRAM_ADDR_L: 64000 = $FA00
+               "31 POKE {VRAM_ADDR_H}, $FA",
+               "32 POKE {VRAM_STEP}, 1",          # VRAM_STEP, and it carries
+               "33 FOR J = 0 TO 31", "40 POKE {VRAM_DATA}, $EE",
                "50 NEXT J", "60 X = 20",
                "70 DO", "80 VSYNC",
-               "90 POKE $FE2A, 0",          # SPR_IDX, sprite 0
-               "91 POKE $FE2B, 120",        # b0: Y
-               "92 POKE $FE2B, 64",         # b1: size/enable, Y bit 8
-               "93 POKE $FE2B, X",          # b2, b3: X
-               "94 POKE $FE2B, 0",
-               "95 POKE $FE2B, 208",        # b4, b5: pattern 2000
-               "96 POKE $FE2B, 7",
-               "97 POKE $FE2B, 0",          # b6: flips and priority
-               "98 POKE $FE2B, 0",          # b7: unread bank
-               "99 POKE $FE2C, 1",          # SPR_CTRL, the global gate
+               "90 POKE {SPR_IDX}, 0",          # SPR_IDX, sprite 0
+               "91 POKE {SPR_DATA}, 120",        # b0: Y
+               "92 POKE {SPR_DATA}, 64",         # b1: size/enable, Y bit 8
+               "93 POKE {SPR_DATA}, X",          # b2, b3: X
+               "94 POKE {SPR_DATA}, 0",
+               "95 POKE {SPR_DATA}, 208",        # b4, b5: pattern 2000
+               "96 POKE {SPR_DATA}, 7",
+               "97 POKE {SPR_DATA}, 0",          # b6: flips and priority
+               "98 POKE {SPR_DATA}, 0",          # b7: unread bank
+               "99 POKE {SPR_CTRL}, 1",          # SPR_CTRL, the global gate
                "110 X = X + 1", "120 LOOP"]:
-        M.cmd(ln)
+        M.cmd(reg(ln))
     M.m.type("RUN\r")
     M.m.run(cycles=8_000_000)
 
@@ -867,7 +904,7 @@ def syscall(code, syms):
     M.settle()
     M.m.bus.mem[0x6000:0x6000 + len(blob)] = blob
     for ln in ["10 SYS $6000", "20 PRINT A", "30 END"]:
-        M.cmd(ln)
+        M.cmd(reg(ln))
     M.cmd("RUN")
     M.settle()
     return M
@@ -934,9 +971,7 @@ def main():
     print()
     for what, lines, want in CASES:
         M = run(code, syms, lines)
-        check(shows(M, want), what,
-              "screen:\n      " + "\n      ".join(
-                  r for r in M.screen() if r.strip()))
+        check(shows(M, want), what, detail(M))
     print()
     for what, lines, want in ERRORS:
         M = run(code, syms, lines)
@@ -986,7 +1021,7 @@ def main():
     M = B.Machine(code, syms)
     M.settle()
     for ln in ["10 INPUT A", "20 PRINT A + 1", "30 END"]:
-        M.cmd(ln)
+        M.cmd(reg(ln))
     M.m.type("RUN\r")
     M.m.run(cycles=3_000_000)
     M.m.type("41\r")
@@ -1014,7 +1049,7 @@ def inputs(code, syms):
         M = B.Machine(code, syms)
         M.settle()
         for ln in prog:
-            M.cmd(ln)
+            M.cmd(reg(ln))
         M.m.type("RUN\r")
         M.m.run(cycles=3_000_000)
         M.m.type(answer + "\r")
@@ -1064,7 +1099,7 @@ def fstack(code, syms):
     M = B.Machine(code, syms)
     M.settle()
     for ln in ["10 PRINT 1+(1+(1+(1+(1+(1+(1+(1+1)))))))", "20 END"]:
-        M.cmd(ln)
+        M.cmd(reg(ln))
     M.m.type("RUN\r")
     M.m.run(cycles=8_000_000)
     check(shows(M, "?COMPLEX IN 10"), "a too-deep expression is refused",
@@ -1073,7 +1108,7 @@ def fstack(code, syms):
     # ...and now the same machine is asked to do trivial arithmetic.
     M.cmd("NEW")
     for ln in ["10 PRINT 2 + 2", "20 END"]:
-        M.cmd(ln)
+        M.cmd(reg(ln))
     M.m.type("RUN\r")
     M.m.run(cycles=8_000_000)
     check(shows(M, "4"),

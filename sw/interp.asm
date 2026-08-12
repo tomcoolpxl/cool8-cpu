@@ -475,7 +475,7 @@ h_load: CALL tname
         CALL s_loadcore
         ADDW SP,#2
         LD   R0,[LREC+1]        ; typed direct: the staged line just
-        CMP  R0,#$FF            ;   ends, and the editor is back
+        CMP  R0,#>DIRBUF        ;   ends, and the editor is back
         BEQ  .done
         LD   R0,[v_fok]         ; from a program, and it loaded:
         TST  R0                 ;   chain into the new program
@@ -513,7 +513,7 @@ h_load: CALL tname
         JMP  cnext
 
 h_run:  LD   R0,[LREC+1]        ; direct only: a program restarting
-        CMP  R0,#$FF            ;   itself stacks a frame per restart
+        CMP  R0,#>DIRBUF        ;   itself stacks a frame per restart
         BEQ  .ok
         JMP  esyn
 .ok:
@@ -557,9 +557,9 @@ idrct:  CLR  R0
         CALL subscan
         POP  R0
         POP  R0
-        MOV  R0,#$88            ; then the record is the staged one
+        MOV  R0,#<DIRBUF        ; then the record is the staged one
         ST   [LREC],R0
-        MOV  R0,#$FF
+        MOV  R0,#>DIRBUF
         ST   [LREC+1],R0
         CALL openline
         JMP  stmt
@@ -582,13 +582,22 @@ openline:
 ; nextline -- LREC = the record after this one. Carry clear when the
 ; program has run out.
 ;
-; A record living at $FFxx is the staged direct line (DIRBUF): it has
-; no next record by construction, and its address is the whole mark --
-; the BBC's immediate-mode test was address-based too, and for the
-; same reason: nothing else can be there.
+; A record on DIRBUF's page is the staged direct line: it has no next
+; record by construction, and its address is the whole mark -- the BBC's
+; immediate-mode test was address-based too, and for the same reason:
+; nothing else can be there. Program records live from $0200 up to
+; progend, which cannot reach USERTOP, and the system storage region
+; starts above USERTOP.
+;
+; **This was `CMP R0,#$FF`**, from when DIRBUF was at $FF88 in the old
+; workspace page. When the I/O page took that page and DIRBUF moved to
+; the storage region ([D67]), the constant did not move with it, so
+; every direct line walked off its own record into the heap: RUN printed
+; nothing and `MODE 4` never reached the hardware. The high byte is
+; taken from DIRBUF now, so the mark follows the buffer.
 nextline:
         LD   R0,[LREC+1]
-        CMP  R0,#$FF
+        CMP  R0,#>DIRBUF
         BNE  .adv
         CLC
         RET
@@ -647,8 +656,8 @@ stmt:
         ST   [LREC],R0
         MOV  R1,YH
         ST   [LREC+1],R1
-        CMP  R1,#$FF            ; a record at $FFxx is the staged
-        BEQ  .stop              ;   direct line: it has no next
+        CMP  R1,#>DIRBUF        ; a record on DIRBUF's page is the
+        BEQ  .stop              ;   staged direct line: it has no next
         LD   R2,[PEND]
         LD   R3,[PEND+1]
         SUB  R0,R2
@@ -3862,7 +3871,7 @@ sinstr: CALL sopen
 ;
 ; `sw/basic.bas` owns the interrupt that sets this. It lives here so
 ; that sim/test_interp.py, which has no editor, still links.
-ibreak  = $FF25                 ; in the workspace page, see basic.bas
+; `ibreak` is in sw/zp.asm's system storage region ([D67]).
 
 ; ipoll -- checked at the loop back-edges only, because those are the
 ; only places a program can spin: NEXT going round, LOOP going round,
@@ -3888,24 +3897,12 @@ ipoll:  LD   R2,[ibreak]
 ; one store per pixel because the hardware steps X.
 ; =====================================================================
 
-GVMODE  = $FE10
-GSCRX   = $FE16                 ; four registers: X L/H then Y L/H
-GPALI   = $FE1E
-GPALD   = $FE1F
-GVRAL   = $FE26
-GVRAH   = $FE27
-GVRST   = $FE28
-GVRD    = $FE29
-GSPRI   = $FE2A
-GSPRD   = $FE2B
-GSPREN  = $FE2C
-GPIXXL  = $FE34
-GPIXXH  = $FE35
-GPIXYL  = $FE36
-GPIXYH  = $FE37
-GPIXD   = $FE38
-GSNDI   = $FE50
-GSNDD   = $FE51
+; The register addresses are `sw/io.asm`'s, which `tools/ioregs.py`
+; generates from the Verilog that decodes them and `zp.asm` includes.
+; They used to be eighteen literals here under a private `G`-prefixed
+; spelling -- `GVMODE` for `VID_MODE` -- which docs/04a-registers.md
+; carried a section apologising for. One name per register now, and the
+; address is written down nowhere in `sw/` at all ([D67]).
 
 ; The frame counter iisr keeps (TIMER reads it, VSYNC waits on it), the
 ; random seed, and scratch for up to five parsed arguments plus LINE's
@@ -3913,14 +3910,12 @@ GSNDD   = $FE51
 ; page 0 is spoken for, and a .space would ship its zeros in the image.
 ; init seeds rseed to 1 after the page clear -- a zeroed xorshift stays
 ; zero forever.
-frames  = $FF26                 ; 2
-rseed   = $FF28                 ; 2
-garg    = $FF2A                 ; 10
-lwk     = $FF34                 ; 10  dx, dy, err, sx, sy -- all words
-FORSTK  = $FF3E                 ; 72  MAXFOR frames of FORFR
-DIRBUF  = $FF88                 ; the staged direct line: a whole
-                                ;   record -- $FFFF, len, tokens, 0 --
-                                ;   built fresh by dodirect each time
+; `frames`, `rseed`, `garg`, `lwk`, `FORSTK` and `DIRBUF` are in
+; sw/zp.asm's system storage region now. They were equates here, in the
+; $FF00 page, "because page 0 is spoken for and a .space would ship its
+; zeros in the image" -- only the second half of which was ever
+; architectural, and the I/O page has since moved on top of that page
+; ([D67]).
 
 ; gargs -- R3 comma-separated expressions into garg, low byte first.
 ; eval leaves Y on the comma (its operator scan has already skipped the
@@ -3948,7 +3943,7 @@ h_mode: MOV  R3,#1
         LD   R0,[garg]
         AND  R0,#$0F
         OR   R0,#$80
-        ST   [GVMODE],R0
+        ST   [VID_MODE],R0
         JMP  stmt
 
 ; VSYNC -- hold until the frame counter moves. Bounded by one frame, so
@@ -3964,13 +3959,13 @@ h_vsync:
 ; SCROLL x,y -- the fine-scroll registers, and that is the entire
 ; command: the engine moves where it reads, nothing moves in memory.
 pixxy:  LD   R0,[garg]
-        ST   [GPIXXL],R0
+        ST   [PIX_X_L],R0
         LD   R0,[garg+1]
-        ST   [GPIXXH],R0
+        ST   [PIX_X_H],R0
         LD   R0,[garg+2]
-        ST   [GPIXYL],R0
+        ST   [PIX_Y_L],R0
         LD   R0,[garg+3]
-        ST   [GPIXYH],R0
+        ST   [PIX_Y_H],R0
         RET
 
 ; PLOT x,y,c -- one pixel, in the current mode's depth, masked by the
@@ -3979,14 +3974,14 @@ h_plot: MOV  R3,#3
         CALL gargs
         CALL pixxy
         LD   R0,[garg+4]
-        ST   [GPIXD],R0
+        ST   [PIX_DATA],R0
         JMP  stmt
 
 ; HLINE x,y,n,c -- n pixels rightward. One store each: the port steps X.
 ; HLINE is gone, and it was never the algorithm it looked like. The
 ; pixel port advances X itself after every plot (`S_END: pix_x <=
 ; pix_x + 1` in rtl/soc/cool8_pixport.v), which is why the loop here
-; wrote GPIXD over and over without touching a coordinate. So a run of
+; wrote PIX_DATA over and over without touching a coordinate. So a run of
 ; pixels is four register writes and then one POKE each -- the same
 ; single store per pixel this did -- and the command was carrying no
 ; work the hardware was not already doing. See 13-basic.md section 5.
@@ -3997,23 +3992,23 @@ h_sound:
         ADD  R0,R0
         ADD  R0,R0
         ADD  R0,R0
-        ST   [GSNDI],R0
+        ST   [SND_IDX],R0
         LD   R1,[garg+2]
-        ST   [GSNDD],R1
+        ST   [SND_DATA],R1
         LD   R1,[garg+3]        ; the word commits on the odd byte
-        ST   [GSNDD],R1
+        ST   [SND_DATA],R1
         ADD  R0,#4
-        ST   [GSNDI],R0
+        ST   [SND_IDX],R0
         LD   R1,[garg+4]
         AND  R1,#$0F
-        ST   [GSNDD],R1
+        ST   [SND_DATA],R1
         LD   R1,[garg+6]
         TST  R1
         BEQ  .sq
         MOV  R1,#$C0
         BRA  .sn
 .sq:    MOV  R1,#$40
-.sn:    ST   [GSNDD],R1
+.sn:    ST   [SND_DATA],R1
         JMP  stmt
 
 ; LINE x0,y0,x1,y1,c -- Bresenham, about six cycles a pixel through the
@@ -4072,7 +4067,7 @@ h_line: MOV  R3,#5
         ST   [lwk+5],R1
 .lp:    CALL pixxy              ; garg 0..3 are the walking x0,y0
         LD   R0,[garg+8]
-        ST   [GPIXD],R0
+        ST   [PIX_DATA],R0
         ; the last pixel is drawn before the walk is tested
         LD   R0,[garg]
         LD   R2,[garg+4]
@@ -4216,10 +4211,10 @@ itimer: LD   R0,[frames]
 ivpeek: CALL earg               ; ( expression )
         MOV  R2,R0
         MOV  R0,#1
-        ST   [GVRST],R0
-        ST   [GVRAL],R2
-        ST   [GVRAH],R1
-        LD   R0,[GVRD]
+        ST   [VRAM_STEP],R0
+        ST   [VRAM_ADDR_L],R2
+        ST   [VRAM_ADDR_H],R1
+        LD   R0,[VRAM_DATA]
         CLR  R1
         JMP  retnum
 
@@ -4476,7 +4471,7 @@ h_on:   CALL eval
 ; bottom of VRAM, an entry is index then attribute.
 h_clg:  MOV  R3,#1
         CALL gargs
-        LD   R0,[$FE11]         ; bpp out of VID_CTRL
+        LD   R0,[VID_CTRL]         ; bpp out of VID_CTRL
         SHR  R0
         SHR  R0
         AND  R0,#$03
@@ -4490,14 +4485,14 @@ h_clg:  MOV  R3,#1
         MUL  R2,R1              ; the pattern lands in XL
         MOV  R2,XL
         MOV  R0,#1
-        ST   [GVRST],R0
-        LD   R0,[$FE12]
-        ST   [GVRAL],R0
-        LD   R0,[$FE13]
-        ST   [GVRAH],R0
+        ST   [VRAM_STEP],R0
+        LD   R0,[VID_BASE_L]
+        ST   [VRAM_ADDR_L],R0
+        LD   R0,[VID_BASE_H]
+        ST   [VRAM_ADDR_H],R0
         MOV  R3,#240
-.row:   LD   R1,[$FE14]         ; stride low; 0 means 256, and the
-.col:   ST   [GVRD],R2          ;   store-first loop makes that true
+.row:   LD   R1,[VID_STRIDE_L]         ; stride low; 0 means 256, and the
+.col:   ST   [VRAM_DATA],R2          ;   store-first loop makes that true
         SUB  R1,#1
         BNE  .col
         SUB  R3,#1
@@ -4515,11 +4510,11 @@ h_pitch:
         ADD  R0,R0
         ADD  R0,R0
         ADD  R0,R0
-        ST   [GSNDI],R0
+        ST   [SND_IDX],R0
         LD   R0,[garg+2]
-        ST   [GSNDD],R0
+        ST   [SND_DATA],R0
         LD   R0,[garg+3]
-        ST   [GSNDD],R0
+        ST   [SND_DATA],R0
         JMP  stmt
 
 ; GTEXT x,y,s$,c -- 8x8 text in any bitmap mode, opaque, from the 1bpp
@@ -4561,28 +4556,28 @@ h_gtext:
         ADD  R0,R0
         ADD  R0,R0
         MOV  R2,#1
-        ST   [GVRST],R2
-        ST   [GVRAL],R0
-        ST   [GVRAH],R1
+        ST   [VRAM_STEP],R2
+        ST   [VRAM_ADDR_L],R0
+        ST   [VRAM_ADDR_H],R1
         CLR  R3                 ; the row
-.grow:  LD   R2,[GVRD]          ; its eight bits, MSB leftmost
+.grow:  LD   R2,[VRAM_DATA]          ; its eight bits, MSB leftmost
         LD   R0,[garg]
-        ST   [GPIXXL],R0
+        ST   [PIX_X_L],R0
         LD   R0,[garg+1]
-        ST   [GPIXXH],R0
+        ST   [PIX_X_H],R0
         LD   R0,[garg+2]
         ADD  R0,R3
-        ST   [GPIXYL],R0
+        ST   [PIX_Y_L],R0
         LD   R0,[garg+3]
         ADC  R0,#0
-        ST   [GPIXYH],R0
+        ST   [PIX_Y_H],R0
         PUSH R3
         MOV  R3,#8
 .gbit:  CLR  R0
         ADD  R2,R2              ; the top bit into C
         BCC  .g0
         LD   R0,[garg+4]
-.g0:    ST   [GPIXD],R0
+.g0:    ST   [PIX_DATA],R0
         SUB  R3,#1
         BNE  .gbit
         POP  R3

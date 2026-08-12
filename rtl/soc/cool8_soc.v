@@ -229,7 +229,14 @@ module cool8_soc #(
     wire        bus_read  = busak ? ldr_read  : cpu_read;
     wire        bus_write = busak ? ldr_write : cpu_write;
 
-    wire        io_sel = (bus_addr[15:8] == 8'hFE);
+    // The I/O page is $FF00-$FFF7: the top page, less the eight bytes the
+    // CPU fetches its vectors from. Stopping short of $FFF8 is what keeps
+    // rtl/core/ out of this change -- RESET/NMI/IRQ/BRK stay where the
+    // core reads them, and stay RAM, so the boot code still installs them
+    // (D67). Below the page, RAM is now contiguous to $FEFF, which is
+    // 256 bytes the system image gets and the boot ROM gets.
+    wire        io_sel = (bus_addr[15:8] == 8'hFF) &&
+                         (bus_addr[7:3]  != 5'b11111);
     wire [7:0]  io_a   = bus_addr[7:0];
 
     // ------------------------------------------- the video's memory port

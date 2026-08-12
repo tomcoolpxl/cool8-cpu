@@ -47,6 +47,9 @@ import os
 import sys
 import time
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import ioregs                                              # noqa: E402
+
 def _config():
     """The board's settings, out of pyproject.toml.
 
@@ -82,7 +85,7 @@ GAP = 0.035
 
 SCREEN = 0x8000
 COLS, ROWS = 80, 30
-UART_STAT, UART_DATA = 0xFE70, 0xFE71
+UART_STAT, UART_DATA = ioregs.addr_of("UART_STAT"), ioregs.addr_of("UART_DATA")
 
 
 def _pieces(data, chunk=CHUNK):

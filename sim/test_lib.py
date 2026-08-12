@@ -56,6 +56,7 @@ from harness import check                                # noqa: E402
 sys.path.insert(0, os.path.join(H.ROOT, "tools"))
 
 import cool8rsvm as vm                                   # noqa: E402
+import memmap                                            # noqa: E402
 import cool8bas as bas                                   # noqa: E402
 
 ROOT, BUILD = H.ROOT, H.BUILD
@@ -77,7 +78,7 @@ def start(code):
     """The program loaded at $0200, ready to run."""
     m = vm.Machine()
     m.bus.mem[0x200:0x200 + len(code)] = code
-    m.cpu.pc, m.cpu.sp, m.romen = 0x200, 0xFFF7, False
+    m.cpu.pc, m.cpu.sp, m.romen = 0x200, memmap.RAMTOP, False
     return m
 
 

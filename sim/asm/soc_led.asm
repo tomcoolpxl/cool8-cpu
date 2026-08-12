@@ -7,7 +7,11 @@
 
         .org  $0400
 
-LED     = $FE03
+; The register addresses come from sw/io.asm, which tools/ioregs.py
+; generates from the Verilog that decodes them. This file used to carry
+; `LED = $FE03`, which is exactly the literal that goes on addressing
+; the old page after the page moves ([D67]).
+        .include "io.asm"
 
         MOV   R0,#$06           ; bit 2 red + bit 1 green; the ROM uses $01, blue
         ST    [LED],R0

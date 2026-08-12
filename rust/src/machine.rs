@@ -812,9 +812,21 @@ impl MachineBus {
     }
 }
 
+/// The I/O page: $FF00-$FFF7, the top page less the eight vector bytes.
+///
+/// Mirrors `io_sel` in `rtl/soc/cool8_soc.v` and must keep mirroring it --
+/// the two models are diffed instruction by instruction and a decode that
+/// disagreed would show up as a wrong load rather than as a decode bug.
+/// The notch at $FFF8 is what leaves RESET/NMI/IRQ/BRK in RAM, so the
+/// core is unchanged by the move and the boot still installs them (D67).
+#[inline]
+fn is_io(addr: u16) -> bool {
+    addr >= 0xFF00 && addr < 0xFFF8
+}
+
 impl Bus for MachineBus {
     fn read(&mut self, addr: u16) -> u8 {
-        if addr & 0xFF00 == 0xFE00 {
+        if is_io(addr) {
             return self.io_read(addr as u8);
         }
         if self.romen && addr & 0xF000 == 0xF000 {
@@ -824,7 +836,7 @@ impl Bus for MachineBus {
     }
 
     fn write(&mut self, addr: u16, value: u8) {
-        if addr & 0xFF00 == 0xFE00 {
+        if is_io(addr) {
             self.io_write(addr as u8, value);
             return;
         }

@@ -69,10 +69,17 @@ module cool8_mem #(
 
     // $F000-$FFFF less the I/O page. The hole is stated here as well as
     // in the SoC's decode because this block must not answer for it: a
-    // read of $FE12 with ROMEN set has to miss the ROM, or the I/O
+    // read of $FF12 with ROMEN set has to miss the ROM, or the I/O
     // register underneath would be shadowed by whatever the ROM image
     // happens to hold at that offset.
-    wire rom_win = (addr[15:12] == 4'hF) && (addr[15:8] != 8'hFE);
+    //
+    // The page is $FF00-$FFF7 (D67), so the hole is at the very top and
+    // the ROM's code space is contiguous from $F000 to $FEFF -- 256 bytes
+    // more than when the hole sat at $FE00 and split it. The eight bytes
+    // above the hole are the vectors, and they are still ROM on reads,
+    // which is what a cold boot fetches RESET from.
+    wire rom_win = (addr[15:12] == 4'hF) &&
+                   !((addr[15:8] == 8'hFF) && (addr[7:3] != 5'b11111));
     wire rom_sel = romen & rom_win;
 
     assign ctrl_rdata = {7'b0000000, romen};

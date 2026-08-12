@@ -30,11 +30,18 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
 import cool8asm                                # noqa: E402
+import ioregs                                  # noqa: E402
 
 ROM_BASE = 0xF000
 ROM_SIZE = 0x1000
-IO_BASE = 0xFE00
-IO_SIZE = 0x0100
+
+# The hole the I/O page punches in the ROM image, from the one place the
+# page is described. It used to be a literal $FE00 here, which would
+# have gone on masking the wrong 256 bytes after the page moved -- and
+# the check below would then have passed a ROM whose real hole was full
+# of code (D67).
+IO_BASE = ioregs.IO_BASE
+IO_SIZE = ioregs.IO_TOP - ioregs.IO_BASE + 1
 
 
 def build(source):

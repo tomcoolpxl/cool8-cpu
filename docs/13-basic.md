@@ -861,16 +861,24 @@ measurement.
 count rather than leaving it to arithmetic:
 
 ```
-  basic.bin   23,909 bytes  $A000-$FD64
-  BOOT.BIN    26,671 bytes  (2762 of relocating stub)
-  free           155 bytes  to $FDFF
+  basic.bin   23,528 bytes  $A000-$FBE7
+  BOOT.BIN    26,290 bytes  (2762 of relocating stub)
+  free           792 bytes  to $FEFF
 ```
 
 `--by-file` breaks that down per source file, attributing each gap
 between consecutive labels to whichever file opened it, so interleaving
 does not distort a total.
 
-**155 bytes of 24,064, and it was 21 before
+**792 bytes, and it was 523 before
+[D67](01-decisions.md#d67--one-system-storage-region-derived-from-the-claims-and-page-0-stops-being-special)
+moved the I/O page to `$FF00`** — the ceiling was `$FDFF` only because
+the page started at `$FE00`, so the image runs to `$FEFF` now. A
+further **324 bytes are still inside the image as `.res` zeros**
+(`a_lbuf`, `a_tbuf`, `a_spg`), reserving RAM the region should hold;
+they move out with [D66] stage 2.
+
+**It was 21 free before
 [D63](01-decisions.md#d63--the-inline-assembler-is-gone-sys-replaced-it-and-floats-are-resident).**
 That entry deleted the on-machine assembler — 2,880 bytes and 38 of page
 0 — and spent it on resident floating point, which is why §8 exists and
@@ -951,7 +959,9 @@ a floor — `LINE`'s handler is 32 bytes and reclaims 274.
 
 Treat any number here as stale unless `sim/build_basic.py` just printed
 it. This entry has read 24,024, then 24,043, then 24,057, then 23,930,
-then 23,975, then 23,999, then 24,052, then 23,993, then 24,017, then 24,050, then 23,816, and each was right when written.
+then 23,975, then 23,999, then 24,052, then 23,993, then 24,017, then
+24,050, then 23,816, then 23,541, then 23,528, and each was right when
+written.
 
 It reached 12 bytes free before the mul-level evaluator was unified
 (section 8), which gave 70 back. That is the largest single reclaim

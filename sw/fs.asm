@@ -40,14 +40,11 @@
 ;   14-15  length in bytes
 ; ---------------------------------------------------------------------
 
-FLS_ADDR_L = $FE88
-FLS_ADDR_M = $FE89
-FLS_ADDR_H = $FE8A
-FLS_DATA   = $FE8B
-FLS_CTRL   = $FE8C
-FLS_STAT   = $FE8D
-FLS_WDATA  = $FE8E
-FLS_WCTRL  = $FE8F
+; The flash registers, generated from the hardware that decodes them.
+; Include-once, because this file is reached two ways: through zp.asm
+; for the BASIC image, and directly by sim/test_fs.py, which assembles
+; it against a driver of its own.
+        .include "io.asm"
 
 ; ---- state
 ;
@@ -63,7 +60,7 @@ FLS_WCTRL  = $FE8F
 ; same reason. There is no cost to being here -- COOL8 has no zero-page
 ; addressing mode (D6), so $0074 is neither faster nor slower than
 ; $0100.
-FSVARS  = $0074                 ; 46 bytes, $0074-$00A1
+FSVARS  = $0074                 ;: 46 the filesystem's whole workspace
 fsdrv   = FSVARS+0              ; the mounted drive
 fsbase  = FSVARS+1              ; 3: volume base, 24-bit little endian
 fsfpg   = FSVARS+4              ; 2: first free page in the volume

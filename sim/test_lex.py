@@ -33,6 +33,7 @@ from harness import check                                # noqa: E402
 sys.path.insert(0, os.path.join(H.ROOT, "tools"))
 
 import cool8rsvm as vm                                   # noqa: E402
+import memmap                                            # noqa: E402
 import cool8bas as bas                                   # noqa: E402
 
 ROOT, BUILD = H.ROOT, H.BUILD
@@ -213,7 +214,7 @@ def main():
     m.bus.mem[ORG:ORG + len(code)] = code
     m.bus.mem[PROG:PROG + len(stored)] = stored
     m.cpu.pc = ORG
-    m.cpu.sp = 0xFFF7
+    m.cpu.sp = memmap.RAMTOP
     m.romen = False
     # m.run, not a stepping loop: the machine advances the raster and
     # the interrupt flags and a bare loop does not (AGENTS.md).

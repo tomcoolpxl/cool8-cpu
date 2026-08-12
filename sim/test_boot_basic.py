@@ -38,6 +38,7 @@ sys.path.insert(0, os.path.join(H.ROOT, "tools"))
 import cool8rsvm as vm                                     # noqa: E402
 import cool8disk as disk                                   # noqa: E402
 import mkboot                                              # noqa: E402
+import ioregs                                              # noqa: E402
 import test_basic as B                                     # noqa: E402
 
 BUILD = H.BUILD
@@ -97,7 +98,7 @@ def main():
 
     check(not m.romen,
           "and the stub dropped the overlay before jumping",
-          "SYSCTRL=$%02X" % m.bus.read(0xFE00))
+          "SYSCTRL=$%02X" % m.bus.read(ioregs.addr_of("SYS_CTRL")))
     check(bytes(m.bus.mem[0xA000:0xA000 + 64]) == code[:64],
           "the image was relocated to $A000, byte for byte")
     check(bytes(m.bus.mem[0xA000 + len(code) - 64:0xA000 + len(code)])
@@ -137,14 +138,14 @@ def main():
     # what a restart is for.
     print()
     key(m, syms, "MODE 4\r")
-    check(m.bus.read(0xFE10) & 0x0F == 4, "a program leaves mode 4 behind",
-          "VID_MODE=$%02X" % m.bus.read(0xFE10))
+    check(m.bus.read(ioregs.addr_of("VID_MODE")) & 0x0F == 4, "a program leaves mode 4 behind",
+          "VID_MODE=$%02X" % m.bus.read(ioregs.addr_of("VID_MODE")))
 
     m.scancode([0x14, 0x76, 0xF0, 0x76, 0xF0, 0x14])       # Ctrl+Esc
     settle(m, syms)
-    check(m.bus.read(0xFE10) & 0x0F == 0,
+    check(m.bus.read(ioregs.addr_of("VID_MODE")) & 0x0F == 0,
           "Ctrl+Esc puts the editor back in mode 0",
-          "VID_MODE=$%02X" % m.bus.read(0xFE10))
+          "VID_MODE=$%02X" % m.bus.read(ioregs.addr_of("VID_MODE")))
     check(not any(r.strip() for r in m.text()),
           "...and the screen it left behind is cleared",
           " | ".join(r.strip() for r in m.text() if r.strip())[:120])

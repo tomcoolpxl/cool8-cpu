@@ -31,6 +31,7 @@ from harness import check                                    # noqa: E402
 sys.path.insert(0, os.path.join(H.ROOT, "tools"))
 
 import cool8rsvm as emu                                      # noqa: E402
+import memmap                                            # noqa: E402
 
 CODE = 0x0200
 OPA = 0x1000            # the two packed operands and the packed result
@@ -117,7 +118,7 @@ def run(code, a=None, b=None, ai=None):
     if ai is not None:
         m.bus.mem[OPA:OPA + 2] = struct.pack("<h", ai)
     m.cpu.pc = CODE
-    m.cpu.sp = 0xFFF7
+    m.cpu.sp = memmap.RAMTOP
     m.romen = False
     if m.run(budget=20_000_000) != "halt":
         raise SystemExit("fp driver did not halt")
@@ -164,7 +165,7 @@ def div16():
         m.bus.mem[facc + 3] = d >> 8
         m.bus.mem[farg + 2] = sb & 0xFF
         m.bus.mem[farg + 3] = sb >> 8
-        m.cpu.pc, m.cpu.sp, m.romen = CODE, 0xFFF7, False
+        m.cpu.pc, m.cpu.sp, m.romen = CODE, memmap.RAMTOP, False
         if m.run(budget=20_000_000) != "halt":
             raise SystemExit("fdiv16 driver did not halt")
         got = m.bus.mem[facc + 2] | (m.bus.mem[facc + 3] << 8)
@@ -202,7 +203,7 @@ def strings():
         m = emu.machine()
         m.bus.mem[CODE:CODE + len(code)] = code
         m.bus.mem[OPA:OPA + 3] = enc(x)
-        m.cpu.pc, m.cpu.sp, m.romen = CODE, 0xFFF7, False
+        m.cpu.pc, m.cpu.sp, m.romen = CODE, memmap.RAMTOP, False
         if m.run(budget=40_000_000) != "halt":
             raise SystemExit("fstr driver did not halt")
         n = m.bus.mem[RES]
@@ -393,7 +394,7 @@ def timings():
     m = emu.machine()
     m.bus.mem[CODE:CODE + len(cs)] = cs
     m.bus.mem[OPA:OPA + 3] = enc(3.14159)
-    m.cpu.pc, m.cpu.sp, m.romen = CODE, 0xFFF7, False
+    m.cpu.pc, m.cpu.sp, m.romen = CODE, memmap.RAMTOP, False
     m.run(budget=40_000_000)
     print("  %-10s %10d %10.0f" % ("fstr", m.cpu.cycles,
                                    HZ / m.cpu.cycles))
@@ -414,7 +415,7 @@ def trace(op, x, y, at, n):
     m.bus.mem[CODE:CODE + len(code)] = code
     m.bus.mem[OPA:OPA + 3] = enc(x)
     m.bus.mem[OPB:OPB + 3] = enc(y)
-    m.cpu.pc, m.cpu.sp, m.romen = CODE, 0xFFF7, False
+    m.cpu.pc, m.cpu.sp, m.romen = CODE, memmap.RAMTOP, False
     m.breakpoints.add(syms[at])
     print(m.run(budget=20_000_000), "at $%04X" % m.cpu.pc)
     print(m.trace_report(m.trace(n, syms)))

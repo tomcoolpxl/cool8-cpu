@@ -2310,6 +2310,269 @@ implementation nobody is checking, which is how `test_lib` came to
 measure two programs against a third, private model of the I/O page
 and report 1.00x for a year.
 
+## D67 — One system storage region, derived from the claims, and page 0 stops being special
+
+**Done, and the I/O page moved with it.** All system storage is in one
+contiguous region below the screen. One file declares it, every claim
+states its size, the region's floor is *computed* from the claims rather
+than chosen, and the user area is what is left. Page 0 and the `$FF00`
+page hold nothing.
+
+| | before | after |
+|---|---|---|
+| image | 23,541 bytes, **523 free** | 23,528 bytes, **792 free** |
+| ROM contiguous code | `$F000-$FDFF`, 3,584 B | `$F000-$FEFF`, **3,840 B** |
+| I/O page | `$FE00-$FEFF` | `$FF00-$FFF7`, 104 B spare |
+| system storage | page 0 (full) + `$FF00` (full) | `$7DE9-$7EDF`, packed, 247 B |
+| addresses written down | 60 equates + 87 literals + 5 tools | **none** — generated |
+
+**+269 bytes**, of which 256 are the page move and 13 are the workspace
+clear that the region made unnecessary. Every suite green: `poe test`
+12, `poe check` 6, `poe test-rtl` 12, `sim/cosim.py all`, `sim/synth.py`.
+
+This answers both of [D66]'s "what is not yet known" items, and it had
+to, because the port allocates workspace with every routine it moves.
+
+### There are two allocators and one of them is invisible
+
+`DIM x AT $addr` in `sw/basic.bas` emits **no symbol and no size**:
+`tools/cool8bas.py` substitutes the literal `$00B0` as the label, so the
+editor's claims exist nowhere the symbol table, the assembler or any
+check can see them. `tools/memmap.py` recovered them by regex over the
+`.bas` source and recorded only the *base* address — never the extent.
+
+So every written statement of the map was wrong, in the same direction:
+
+| said | actually |
+|---|---|
+| `memmap.py`: `$00A4-$00D9` free, 54 bytes | the editor owns most of it |
+| `zp.asm` and [D66]: `$00B1-$00CF` free, **31 bytes** | `DIM cont(31) AS BYTE AT $00B0` owns `$00B0-$00CF`; the 31 bytes do not exist |
+| `memmap.py`'s `PAGE0` | **no entry at all** for `$0033-$003F` — `SACC`, `SLEN`, `STYPE`, `DVSR`, `DREM`, `DSGN`, `CSTK`, `CDEPTH`, `SDIG` |
+| `memmap.py`'s `REGIONS` | omits `SACC`/`pbuf` at `$7F00-$7FFF` and the whole `$FF00` workspace page |
+
+And the one that bites: **`SFRAC = $00B1` is `cont(1)`.** [D66] moved
+`SFRAC` off `$00A4` to escape a collision with the editor's `cols`, and
+landed it inside a 32-byte array whose extent nothing could see.
+`snumi` writes `SFRAC` for every line number the editor parses;
+`cont(1)` is "screen row 1 continues row 0".
+
+**This is the second time the same fault has been fixed by moving the
+byte.** That is the argument for the redesign rather than a third move:
+the fix that keeps working is the one where a claim cannot be silent.
+
+### Page 0 was never worth defending
+
+[D6] dropped the zero page *and* a direct-page register: every absolute
+access is three bytes and the same cycles wherever it points, and
+`sw/zp.asm`'s own header has said so all along — "$0040 costs exactly
+what $9040 costs". The scarcity was self-inflicted, and it was expensive
+twice: it is why [D66] recorded "53 bytes, and that is the whole
+budget", and it is why `FORSTK`, `garg`, `lwk`, `frames`, `rseed`, the
+keyboard ring and `DIRBUF` were exiled to `$FF00` — a *second* pool,
+allocated by hand, in a page the boot ROM's clear does not cover.
+
+The real constraint was never page 0. `sw/interp.asm` states it exactly
+while doing the exile: **"page 0 is spoken for, and a `.space` would
+ship its zeros in the image."** Only the second clause is architectural.
+
+**Measured, and it is the whole of what was at stake.** `.res` emits
+real zero bytes (`tools/cool8asm.py`), and the compiler allocates every
+BASIC global that way — `a_lbuf` at `$FAB6`, `a_tbuf` at `$FB37`,
+`a_spg` at `$FBD3`, **324 bytes of the image that exist only to reserve
+RAM**, carried in flash and copied at boot, against 523 bytes free.
+
+### The design
+
+Workspace needs exactly four properties: outside the user area,
+cleared at boot, outside the image, and reachable by a fixed name from
+both languages. **One region satisfies all four**, so there is one.
+
+| | |
+|---|---|
+| `$0000-$00FF` | free. Formerly "page 0" |
+| `$0100-$01FF` | the CPU stack, growing down from `$0200` |
+| `$0200-SYSBOT-1` | the user area: program up, heap down |
+| `SYSBOT-$7FFF` | **system storage** — every claim, contiguous |
+| `$8000-$9FFF` | the screen |
+| `$A000-$FDFF` | the image: code and tables, **no `.res`** |
+| `$FE00-$FEFF` | the I/O page, generated from the RTL by `tools/ioregs.py` |
+| `$FF00-$FFF7` | free |
+| `$FFF8-$FFFF` | the vectors |
+
+Four rules carry it:
+
+- **One file is the map**, in the language the assembler reads, so it
+  cannot drift from what is built. `tools/memmap.py` declares nothing
+  and derives everything; the prose maps in `zp.asm`, `basic.bas` and
+  [04-system.md](04-system.md) §2 stop restating it. `sw/basic.bas`'s
+  `CONST PROG/MEMTOP/USERTOP/SCREEN` become `EXTERN`s of the same
+  names, so the numbers exist once.
+- **Every claim states its size**, `;: <n> <what>`, and a claim without
+  one is not storage. That is the bargain `tools/ioregs.py` already
+  makes with `//:` for the I/O page, and it is what makes two owners on
+  one byte a build failure instead of a bug found twice.
+- **Nothing allocates but the allocator.** No `DIM ... AT`, no `.res`.
+  The editor's globals become names in the map file, which removes the
+  invisible allocator and returns 324 bytes to the image.
+- **`SYSBOT` is computed, not chosen.** It is the lowest claim, so
+  adding storage moves the boundary by exactly its size and `FREE`,
+  which already derives from `USERTOP`, reports the truth without being
+  told. **There is no size to pick and no headroom to guess** — an
+  earlier draft of this entry chose 512 bytes, which was a number
+  nobody could have defended.
+
+**The move itself is nearly free, and that is [D6] paying off.** The
+equates are *names*: `SFRAC = $00B1` becomes `SFRAC = $7Exx` in one
+line and no call site changes. What does not move for free is anything
+that wrote the address down instead of the name — `PEEK($FF26)` and the
+`POKE $FF88` run in `sw/basic.bas` — which is the invisible allocator
+one more time, and which the check names.
+
+### What was rejected
+
+**Keeping three pools and just fixing the collision.** Page 0 and the
+`$FF00` page are free RAM and cost nothing to use, so "it works" was
+available. It is what was done last time, at `$00A4`, and the fault
+came back at `$00B1` within one entry. Three pools is three places to
+look and one allocator too few.
+
+**Sizing the region.** Rejected on the user's correction that the
+32 KB user area was a number picked once and not an architectural
+constant: the user area is whatever is left once BASIC and the editor
+are resident and initialised. Once that is true there is no trade to
+weigh, and a computed floor is strictly better than any chosen one.
+
+**Moving the region to the bottom of RAM**, just above the stack.
+`PROG` would float, so a program's base address would change whenever
+system storage grew. The top is right, and it is the shape the machine
+already has — `$7EE0-$7FFF` has been a protected block above `USERTOP`
+all along, for the CALL stack and the string accumulator. This entry
+extends it downward and finishes it rather than inventing a region.
+
+**Moving the vectors with the page.** The first sketch put the I/O page
+at `$FF00-$FFFF` and moved `RESET`/`NMI`/`IRQ`/`BRK` down to `$FEF8`,
+which means changing `rtl/core/` — the portable, ASIC-clean half, and
+the one place the structural rule says not to touch casually. Stopping
+the page eight bytes short instead leaves the vectors as RAM exactly
+where the core reads them, and the whole hardware change becomes
+`io_sel` in `cool8_soc.v` and `rom_win` in `cool8_mem.v`. It is also
+*worth more*: 256 bytes rather than 248, because the image runs to
+`$FEFF` instead of `$FEF7`.
+
+### The move was cheap because the addresses were made derivable first
+
+**The order was the whole trick.** Moving the page looked like a large
+job because the base was written down in sixty-odd places; so it was
+made derivable *before* it was moved, and then the move was a constant.
+
+`tools/ioregs.py` already read every register's offset out of the
+Verilog localparams that decode it. It holds `IO_BASE` as well now and
+generates three files from that one source: `sw/io.asm` as
+`NAME = IOBASE + $xx`, `sw/io.bas` as `CONST NAME = $xxxx`, and
+`docs/04a-registers.md`. `poe check` fails on any of them being stale.
+The eighteen `G`-prefixed aliases in `interp.asm` — `GVMODE` for
+`VID_MODE` — are gone, so 04a-registers.md's section apologising for
+two spellings of one address is empty by construction.
+
+**`CONST` and not `EXTERN` for BASIC, and the difference is 89 bytes.**
+Switching `sw/basic.bas`'s eight register names to `EXTERN` grew the
+image from 23,541 to 23,630, because a `CONST` folds at compile time
+and a link-time symbol cannot. Measured, not predicted, and it is why
+BASIC gets a generated file of its own rather than reaching into the
+assembly one.
+
+**Then the literals, which are the ones that bite.** An equate naming a
+register is checked against the hardware; `POKE $FE1E, 1` is not, and
+would go on addressing the old page silently with no symbol to fail on.
+There were **87** — 44 in `basic.bas`, 22 in `lib.bas`, 17 in
+`demo.asm`, 4 in `interp.asm` — and `ioregs.py --name-literals`
+converted them all from the mapping it already had. The check counts
+them now and fails at anything but zero.
+
+### What the move broke, and every one was a written-down address
+
+The suites went from 12 green to 6 failing and back. Every cause was
+the same shape, and none of them was in the hardware:
+
+- **`nextline` marked the direct-mode record by testing `LREC+1 == $FF`.**
+  DIRBUF lived at `$FF88`, so its page *was* the mark. The record moved
+  to the storage region and the constant did not: `RUN` printed
+  nothing, `MODE 4` never reached the hardware, and the editor still
+  worked — which is what made it look like a graphics fault. Four
+  sites, all `#>DIRBUF` now.
+- **`dorun` set `HEAP` to come down from `$7EDF`** as two `MOV R0,#$DF`
+  / `MOV R0,#$7E` halves — the top of the user area before the region
+  existed. That aimed the heap at DIRBUF, FORSTK and the keyboard ring.
+  It is `#<USERTOP`/`#>USERTOP` now, and `USERTOP` is `SYSBOT - 1`.
+- **`CONST IRST = $FF86`** in `basic.bas` became a flash register that
+  reads non-zero, so the editor called `doreset()` on every pass of its
+  key loop and would not accept a line.
+- **Six harnesses set `m.cpu.sp = 0xFFF7`**, the top of RAM under the
+  old map and the last byte of the page under the new one. Every `PUSH`
+  wrote a return address into a flash register. The machine did not
+  crash; it spun, and `sim/test_fs.py` said only "the machine did not
+  halt".
+- **`_SessVideo` read `0xFE11`, `0xFE22`, `0xFE23`** in
+  `tools/cool8rsvm.py`, so `video.ctrl` returned garbage and
+  `test_basic.Machine.row()` took the wrong branch — the screen read
+  blank whatever was actually on it.
+- **`cool8_boot_tb` seeded the RAM byte under `FLS_DATA`** at
+  `mem[14'h3F45]`, so autoboot would find an empty directory and fall
+  through to the monitor. The seed stayed at `$FE8B`; autoboot read
+  uninitialised SPRAM as a directory, believed a garbage length, and
+  sat in its copy loop. The failure read "never reached the monitor",
+  which points at the boot ROM rather than at a constant in a harness.
+- **Eighty-two `16'hFExx` literals across five testbenches**, and three
+  decode-edge checks asserting the *old* boundaries.
+
+**Not one of these was a hardware bug**, and `sim/cosim.py all` passed
+first time. That is this entry's own argument made twice: an address
+written down is a fault waiting for something to move, and the cure is
+to generate it rather than to be careful with it.
+
+### Two tool bugs found on the way, both worth keeping
+
+- **The assembler conflated "already included" with "circular."** One
+  growing `seen` set meant the second, innocent include of a shared
+  header reported `circular include`. It is an ancestor-chain check
+  plus include-once now, which is what lets `sw/io.asm` be reached both
+  through `zp.asm` and through `fs.asm` — and `sim/test_fs.py`
+  assembles the latter on its own, so the header cannot be reached by
+  exactly one route.
+- **`Assembler.split()` rstrips the comment**, which is right for
+  assembling and destroys a file when the two halves are joined back
+  up: the first `--name-literals` run turned `interp.asm` into a single
+  line. The splitter the rewriter uses is by index now, so the halves
+  always reconstruct the line.
+
+### How it was staged, with the tree green at every step
+
+1. **Made observable.** The `;:` annotations, `memmap.py` deriving
+   rather than declaring, and the collision check. No behaviour change,
+   and the image stayed byte-identical at 23,541 across the annotation
+   of `zp.asm`, `fs.asm` and `interp.asm` — which is the check that the
+   step really was inert.
+2. **Fixed what the check found**: `SFRAC`/`cont`, on its first run.
+3. **Made the I/O addresses derivable** — generated `sw/io.asm` and
+   `sw/io.bas`, 87 literals converted, aliases dropped. Image unchanged
+   at 23,541, so this too was inert.
+4. **Moved the page**, and the region with it.
+
+### What is still owed
+
+**The 324 bytes of `.res`.** `a_lbuf` (128), `a_tbuf` (128) and
+`a_spg` (32) are still reservations *inside* the image — zeros carried
+in flash and copied at boot to reserve RAM. Moving them into the region
+is pure profit and needs only `DIM ... AT`, but it is deliberately left
+for [D66] stage 2, which is about to hand-write the routines that use
+them: doing it now would move buffers that are about to stop existing.
+That is 324 of the 792 free bytes, waiting.
+
+**`DIM ... AT` is still the invisible allocator.** `memmap.py` models
+it — with its extent, which is the part that was missing — but the
+compiler still emits no symbol and no size for it. It goes away with
+`basic.bas` rather than being fixed.
+
 ## D66 — The editor and the interpreter become one assembly program
 
 **Decided, not yet done.** `sw/basic.bas` is to be ported to assembly
