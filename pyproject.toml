@@ -337,6 +337,12 @@ run = "sim/build_basic.py"
 about = "basic.bin and BOOT.BIN, with the sizes"
 
 [[tool.cool8.jobs.build]]
+id = "memmap"
+run = "tools/memmap.py"
+args = ["--emit"]
+about = "sw/sysbot.asm, the floor of system storage derived from every claim in sw/"
+
+[[tool.cool8.jobs.build]]
 id = "ioregs"
 run = "tools/ioregs.py"
 args = ["--emit"]

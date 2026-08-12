@@ -836,6 +836,42 @@ CASES = [
              line(30, [K["END"]])),
      {0: 4, 1: 1}),
 
+    # **Exactly the bytes the tokeniser stores for `10 DIM A(3)`**, which
+    # is not what the case below writes: `spaced` puts a space between
+    # every token, so it stores `DIM A ( 3 )` and no typed line is ever
+    # shaped that way. sw/token.asm drops one space after the line number
+    # and copies the rest verbatim, so `A(` arrives with nothing between
+    # them -- and a whole program with a DIM in it printed nothing at all
+    # until this case existed.
+    # The two halves on their own first, so a failure below cannot be
+    # blamed on the way this file builds a record.
+    ("PRINT of a literal, in the packed form",
+     program(line(10, [K["PRINT"]], SP, num(9)), line(20, [K["END"]])),
+     {}, "9"),
+    # B is checked as well as the screen, so a failure says which of the
+    # two happened: statements after a DIM not running at all, or
+    # running and printing nothing.
+    ("...and with a spaced DIM in front of it",
+     program(spaced(10, [K["DIM"]], name("A"), "(", num(3), ")"),
+             line(20, name("B"), "=", num(7)),
+             line(30, [K["PRINT"]], SP, num(9)),
+             line(40, [K["END"]])),
+     {1: 7}, "9"),
+
+    # A string literal after the same DIM: if this prints and the number
+    # above does not, the console is fine and the numeric path is not.
+    ("...and a string literal after that same DIM",
+     program(spaced(10, [K["DIM"]], name("A"), "(", num(3), ")"),
+             line(20, [K["PRINT"]], SP, name('"X"')),
+             line(30, [K["END"]])),
+     {}, "X"),
+
+    ("DIM A(3) as a typed line stores it, with no space before the (",
+     program(line(10, [K["DIM"]], SP, name("A"), "(", num(3), ")"),
+             line(20, [K["PRINT"]], SP, num(9)),
+             line(30, [K["END"]])),
+     {}, "9"),
+
     # ---- DIM and arrays. DIM A(10) is eleven elements, 0 to 10, which
     # is BBC BASIC's rule and Microsoft's and what every published
     # program assumes.
@@ -927,6 +963,9 @@ def trace(pattern, n=400):
     print("  SACC:    $%04X  SLEN %d  STYPE %d  %r"
           % (sacc, slen, m.bus.mem[syms["stype"]],
              bytes(m.bus.mem[sacc:sacc + max(slen, 8)]).decode("latin-1")))
+    w = lambda n: (m.bus.mem[syms[n]] | (m.bus.mem[syms[n] + 1] << 8))
+    print("  HEAP:    $%04X  NTAB $%04X  PEND $%04X  CMIR $%04X"
+          % (w("heap"), w("ntab"), w("pend"), w("cmir")))
     print("  screen:")
     for r in range(6):
         print("    %2d %r" % (r, m.row(r).strip()))
@@ -937,7 +976,7 @@ def trace(pattern, n=400):
     # assembled image, so the pointer went nowhere. A budget that ran out
     # means a loop, and the only thing that says which loop is what the
     # machine actually executed.
-    print(m.trace_report(m.trace(40, syms)))
+    print(m.trace_report(m.trace(n, syms)))
 
 
 def main():

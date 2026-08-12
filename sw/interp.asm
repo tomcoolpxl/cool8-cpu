@@ -1831,7 +1831,18 @@ prim:
 .ld:    MOV  R0,#1
         ST   [STYPE],R0
         RET
-.num:   INCW Y
+        ; **An integer says so too.** `.lit` below sets STYPE 1 and
+        ; `.flt` sets 2; this arm set nothing and handed back R0:R1, so
+        ; an integer literal inherited the type of whatever was
+        ; evaluated last. Nothing observed has depended on it -- the
+        ; assignment and print paths reset STYPE on their own way in --
+        ; which is exactly why it should not stay: the rule is that
+        ; every arm of prim states the type it produced, and an arm
+        ; quietly exempt from it is a bug waiting for the first caller
+        ; that trusts the rule. Four bytes.
+.num:   CLR  R2                 ; R2 held the K_NUM token, now spent
+        ST   [STYPE],R2
+        INCW Y
         LD   R0,[Y]
         INCW Y
         LD   R1,[Y]

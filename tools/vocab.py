@@ -61,6 +61,12 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 TOKTAB = os.path.join(ROOT, "sw", "toktab.asm")
 INTERP = os.path.join(ROOT, "sw", "interp.asm")
+# `sttab` binds a token to a handler, and the handlers are spread over
+# every module -- PRINT is the interpreter's, LIST is prog.asm's, SAVE is
+# fscmd.asm's. So the table lives in sw/main.asm, the one file whose job
+# is to depend on all of them ([D68]); it was in interp.asm while
+# interp.asm named every handler itself.
+STTAB = os.path.join(ROOT, "sw", "main.asm")
 FPBAS = os.path.join(ROOT, "sw", "fpbas.asm")
 DOC = os.path.join(ROOT, "docs", "13a-vocabulary.md")
 TOKASM = os.path.join(ROOT, "sw", "tokens.asm")
@@ -300,7 +306,7 @@ def tokflag_asm():
 
 def vocabulary():
     kw = keywords()
-    st = _entries(_table(INTERP, "sttab"), "sttab")
+    st = _entries(_table(STTAB, "sttab"), "sttab")
     if len(st) != len(kw):
         raise SystemExit(
             "sttab has %d entries and TOKTAB %d -- they are one table "

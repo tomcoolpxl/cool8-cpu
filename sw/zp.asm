@@ -248,8 +248,23 @@ DIRBUF  = $7E70                 ;: 112 the staged direct line: a whole
                                 ;    record -- $FFFF, len, tokens, 0 --
                                 ;    built fresh by dodirect each time
 
-SYSBOT  = irring                ; the floor, and USERTOP is one below it
-USERTOP = SYSBOT - 1             ; the last byte a program may use
+; **The floor is the lowest claim anywhere, not the lowest claim here.**
+; This said `irring`, which was true while sw/zp.asm held every claim in
+; the region. sw/console.asm then claimed $7DAF-$7DE8 -- CONT, the
+; mirror, the cursor and the whole of the geometry -- below `irring` and
+; therefore inside what USERTOP was calling user space. `DIM A(3)` took
+; ten bytes off the heap, got $7DDE-$7DE7, and wrote the array over
+; CCY, CTOP, CCOLS, CROWS, CKIND and CLIM. The console then printed
+; nothing at all, which reads exactly like a program that never printed.
+;
+; `tools/memmap.py --check` now refuses a SYSBOT that is not the lowest
+; claim, so the next module to claim below this one fails the build
+; instead of eating the screen at run time ([D67]).
+; SYSBOT and USERTOP come from tools/memmap.py, which is the only place
+; that can see every claim at once. Twice now this was an equate over a
+; symbol -- irring, then CONT -- and twice the next module claimed
+; below it and the heap was handed system storage to allocate over.
+        .include "sysbot.asm"
 
 ; The two blocks the machine has always protected above USERTOP, named
 ; so that nothing has to write their addresses down. They carry no `;:`

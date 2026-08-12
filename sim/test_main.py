@@ -134,6 +134,36 @@ def main():
           "RUN executes the stored program",
           " | ".join(r.strip() for r in M.screen() if r.strip())[:100])
 
+    # Strings and arrays, which are the two things that need the heap.
+    # sim/test_run.py reports both as garbage on the screen; these say
+    # whether that is the system or that suite's reader, and they are
+    # worth keeping either way -- nothing else here allocates.
+    M = Machine(code, syms)
+    M.settle()
+    M.type('10 A$="HI"\r20 PRINT A$\r')
+    M.cmd("RUN")
+    check(M.shows("HI"), "a string variable survives a RUN",
+          " | ".join(r.strip() for r in M.screen() if r.strip())[:100])
+
+    # DIM on its own first: if a program with a DIM in it prints
+    # nothing at all, the subscript checks below are asking the wrong
+    # question.
+    M = Machine(code, syms)
+    M.settle()
+    M.type("10 DIM A(3)\r20 PRINT 9\r")
+    M.cmd("RUN")
+    check(M.shows("9"), "a program with a DIM in it still runs",
+          " | ".join(r.strip() for r in M.screen() if r.strip())[:90])
+
+    M = Machine(code, syms)
+    M.settle()
+    M.type("10 DIM A(3)\r20 A(1) = 5\r30 PRINT A(1)\r")
+    M.cmd("RUN")
+    check(M.shows("5"), "DIM, a subscripted store, and reading it back",
+          "stored %s\n    screen %s"
+          % (M.prog(),
+             " | ".join(r.strip() for r in M.screen() if r.strip())[:80]))
+
     M = Machine(code, syms)
     M.settle()
     M.cmd("PRINT 6 * 7")
