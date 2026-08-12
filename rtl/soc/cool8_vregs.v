@@ -210,6 +210,11 @@ module cool8_vregs (
         p_load = 1'b1;
         case (io_wdata[3:0])
             // engine, bpp, hdouble, vdouble
+            // **256, and it cannot be 160 yet -- see cool8_fetch.v.**
+            // The row wrap is a modulo now, so any stride is legal
+            // arithmetically; what is not yet legal is the *map origin*.
+            // The old mask did two jobs, and only one of them has been
+            // replaced.
             4'd0: begin p_ctrl = 6'b00_00_00; p_base = 16'h8000;
                         p_stride = 16'd256; p_vact = 10'd480; end
             4'd1: begin p_ctrl = 6'b01_00_00; p_base = 16'h8000;

@@ -107,6 +107,16 @@ addx16: ADDW X,R0
 ; The whole of screen addressing, and it is short because the map is
 ; 8 KB aligned with a 256-byte stride: the wrapped row number IS the
 ; high byte of the address.
+; base + row * 256: the wrapped row number IS the high byte.
+;
+; **The 160-byte row is written and is not switched on.** con_setrow
+; caches this, so it runs once a line and the arithmetic below --
+; `q = 5r`, high `q >> 3`, low `(q AND 7) << 5` -- costs nothing where
+; it used to cost per character. That was [D30]'s objection and it is
+; answered. What is not answered is the map origin: see cool8_fetch.v.
+;   MOV R1,R0 / ADD R0,R0 / ADD R0,R0 / ADD R0,R1   -- q = 5r
+;   MOV R1,R0 / AND R1,#7 / five ADD R1,R1          -- low byte
+;   three SHR R0 / ADD R0,#>CSCRN                   -- high byte
 con_row:
         LD   R1,[CTOP]
         ADD  R0,R1
