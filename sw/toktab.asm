@@ -124,4 +124,13 @@ TOKTAB:
 ; ---- text after it is stored verbatim. `'` needs no entry: it is
 ; ---- punctuation, stored as itself, and stmt sends it the same way.
         .byte 3, "R","E","M"
+; ---- $C7: the float literal's marker, and not a word anybody types.
+;
+; The same trick `?` plays at $A4 for the integer marker: a
+; one-character entry nobody can spell holds the byte open, so the
+; numbering stays the table's own order and no second table is needed.
+; `!` cannot be typed as a keyword because a lone `!` is punctuation and
+; tokenise stores it as itself -- it only ever reaches a program as
+; three packed bytes written by `tok_line` ([D68]).
+        .byte 1, "!"
         .byte 0

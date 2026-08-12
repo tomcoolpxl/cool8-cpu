@@ -85,6 +85,7 @@ These hold a token but `sttab` sends them to `bad`, so meeting one where a state
 | `$AC` | `(removed)` | was HLINE x, y, n, colour -- set PIX_X/PIX_Y, then POKE PIX_DATA n times; the port steps X itself |
 | `$B3` | `STEP` | |
 | `$B5` | `(removed)` | was TILE x, y, tile, attr -- the map entry through the VRAM port |
+| `$C6` | `! -- reserved` | the float literal marker, never a statement |
 
 ## Functions
 

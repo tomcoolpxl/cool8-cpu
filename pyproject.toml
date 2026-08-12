@@ -180,6 +180,11 @@ run = "sim/test_input.py"
 about = "sw/input.asm: PS/2 and ANSI decoded into one set of key codes"
 
 [[tool.cool8.jobs.sw]]
+id = "token"
+run = "sim/test_token.py"
+about = "sw/token.asm: keywords, identifiers, hex, and the float literal"
+
+[[tool.cool8.jobs.sw]]
 id = "names"
 run = "sim/check_names.py"
 about = "global name collisions across the system image"

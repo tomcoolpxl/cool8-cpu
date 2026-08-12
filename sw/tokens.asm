@@ -76,6 +76,7 @@ K_ERA      = $C2
 K_COMPACT  = $C3
 K_DRIVE    = $C4
 K_REM      = $C5
+K_FLT      = $C6
 
-NTOK    = 70                    ; keywords, $80-$C5
+NTOK    = 71                    ; keywords, $80-$C6
 T_LIT   = K_NUM                 ; the stored-number marker, as tokenise writes it

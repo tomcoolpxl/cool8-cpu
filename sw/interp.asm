@@ -801,8 +801,14 @@ sttab:
                                 ;: COMPACT
         .word h_drive           ; $C4 DRIVE
                                 ;: DRIVE n:int
-        .word h_rem             ; $C5 REM -- the last token
+        .word h_rem             ; $C5 REM
                                 ;: REM text  stored verbatim; nothing inside is tokenised
+        ; $C6 is the float literal's marker and never a statement. A
+        ; line cannot begin with one -- tokenise only writes it after a
+        ; digit or a point -- so reaching here means a corrupt line, and
+        ; ?SYNTAX is the right answer.
+        .word bad               ; $C6 !
+                                ;: ! -- reserved  the float literal marker, never a statement
 
 ; ---------------------------------------------------------------------
 ; REM, and the apostrophe stmt sends here: a comment.
