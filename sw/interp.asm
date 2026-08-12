@@ -49,48 +49,25 @@
 ; sim/test_interp.py gates both the slope and the refusal.
 ; ---------------------------------------------------------------------
 
-; ---- the editor's tokens (sw/basic.bas TOKTAB, order frozen)
-K_PRINT = $80
-K_SUB   = $81
-K_FUNC  = $82
-K_DIM   = $83
-K_CONST = $84
-K_FOR   = $85
-K_NEXT  = $86
-K_TO    = $87
-K_DO    = $88
-K_LOOP  = $89
-K_WHILE = $8A
-K_UNTIL = $8B
-K_EXIT  = $8C
-K_IF    = $8D
-K_THEN  = $8E
-K_ELSE  = $8F
-K_ELSIF = $90
-K_END   = $91
-K_RET   = $92
-K_CALL  = $93
+; ---- the tokens, generated from TOKTAB by tools/vocab.py.
+;
+; **These were twenty-five equates written out here**, which is the
+; numbering hand-copied into a second place -- and [D65] then called the
+; table order frozen on the strength of it. `poe check` fails if the
+; generated file is stale, so `sw/toktab.asm` can be reordered or given
+; a flags byte by rebuilding ([D68]).
+;
+; Generating them found four that had a definition and no user:
+; `K_FUNC`, `K_RET`, `K_GOTOT` -- and `K_CONST`, which said `$84` long
+; after `CONST` was removed and `RUN` took that byte, so anything that
+; had reached for it would have matched the wrong keyword.
+;
 ; $95 is INT. It is in toktab as the compiled dialect's type name, so
 ; the editor tokenises it before the interpreter can look it up, and a
 ; btab entry spelled "INT" could never be reached -- the token byte
 ; never spells itself. It is a builtin here instead, dispatched in
 ; `prim` the way PEEK is. $94 (AS) and $96 (BYTE) are still unused.
-K_INT   = $95
-K_PEEK  = $97
-K_POKE  = $98
-K_AND   = $99
-K_OR    = $9A
-K_XOR   = $9B
-K_GOTO  = $A2
-K_NUM   = $A4                   ; a binary literal: two bytes follow
-
-T_LIT   = $A4                   ; the stored-number marker, as
-                                ;   sw/basic.bas CONSTs it
-NTOK    = 70                    ; $80..$C5 -- graphics, sound, and the
-                                ; language round-out, all appended
-K_STEP  = $B3
-K_DATA  = $B0
-K_GOTOT = $A2                   ; GOTO's token, for ON to expect
+        .include "tokens.asm"
 
 ; ---- state
 ;
@@ -1322,7 +1299,7 @@ h_if:
         CALL skiptok
         CMP  R0,#K_ELSE
         BEQ  .out
-        CMP  R0,#K_ELSIF        ; a fresh condition, on the same line
+        CMP  R0,#K_ELSEIF        ; a fresh condition, on the same line
         BNE  .false
         JMP  h_if
 .out:   JMP  stmt

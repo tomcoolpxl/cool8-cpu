@@ -39,12 +39,18 @@ PROG = 0x3000
 from memmap import VARS                                    # noqa: E402
 FAILS = H.FAILS
 
-# the editor's tokens, TOKTAB order
-K = {n: 0x80 + i for i, n in enumerate(
-    "PRINT SUB FUNCTION DIM RUN FOR NEXT TO DO LOOP WHILE UNTIL EXIT "
-    "IF THEN ELSE ELSEIF END RETURN CALL AS INT BYTE PEEK POKE AND OR "
-    "XOR CARD AT ASM EXTERN INCLUDE INLINE GOTO WEND".split())}
-K["NUM"] = 0xA4
+# The tokens, read out of sw/toktab.asm rather than listed here.
+#
+# **This was a hand-written 37-word string, in a table of seventy** --
+# the numbering copied into a third place, and already wrong: it said
+# `ASM` at $9E, which has been `SYS` since [D63] removed the on-machine
+# assembler. Positionally the values still lined up, so nothing failed
+# and nobody noticed, which is what a private copy of a generated table
+# buys you ([D68]).
+import vocab                                             # noqa: E402
+
+K = {n: t for t, n in vocab.keywords()}
+K["NUM"] = K.pop("?")
 
 
 def num(v):
