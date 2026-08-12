@@ -861,6 +861,73 @@ measurement.
 
 ## 10. Sizes and the ceiling
 
+### Where the 17,217 bytes are — measured, 2026-08-13
+
+The image is **flat**. 470 top-level labels, and the twenty largest
+spans are 4,740 bytes — **28 %** of it. There is no hog to remove and no
+single decision to reverse; a diet means giving something up.
+
+The largest spans:
+
+```
+   375  fstr            363  TOKTAB          347  tok_line
+   315  erel            296  fatan           266  h_line
+   251  fsc_rewritedir  249  flog            241  prim
+   227  con_geom        221  fsc_compact     207  main_loop
+```
+
+**Feature-sized chunks**, for anyone weighing a cut:
+
+| | bytes |
+|---|---|
+| transcendentals — `SIN COS TAN ATN LOG EXP SQR` | **1,020** |
+| `COMPACT` and the directory rewrite behind it | **527** |
+| float formatting (`fstr`, `fprint`) | 408 |
+| `LINE` / `PLOT` / `CLG` | 353 |
+| `RENUM` and its reference fixer | 304 |
+| the long-name table (`nscan`/`nlook`/`nfind`) | 187 |
+| `GTEXT` | 160 |
+| `SOUND` / `PITCH` | 86 |
+
+**Recoverable without giving anything up — 168 bytes, total:**
+
+| | bytes |
+|---|---|
+| 26 relaxed branches (each a 3-byte `JMP` where 2 would reach) | 78 |
+| `FPBASE`, `pshab`, `con_at` — defined, never referenced | 97 |
+| `SCROLL PALETTE SPRITE VPOKE HLINE TILE` still in `TOKTAB` | 39 |
+
+(The 26 `sttab` slots pointing at `bad` are not free: they hold token
+numbers open, and renumbering is what `tools/vocab.py` generates.)
+
+### What that means for the layout
+
+The repack that would give one contiguous ~39,900-byte user area needs
+the text map at `$A000`, which puts the image in `$C000-$FEFF` — **16,128
+bytes**. It is 17,217. **The gap is 1,089 bytes and the tidy-up above
+recovers 168 of them.** So the contiguous layout is not reachable by
+removing waste; it needs a feature cut (the transcendentals alone would
+do it) or the map-origin register that would let the map be 5,120 bytes
+and unaligned.
+
+Neither is needed for the space itself. After [D67]'s repack the machine
+hands out **31,350 + 6,581 = 37,931 bytes**, and
+
+```
+65,536 - 512 (page 0, stack) - 1,418 (system) - 8,192 (screen)
+       - 17,217 (image) - 256 (I/O, vectors)  =  37,931
+```
+
+which is all of it. The question the layout answers is not *how much*
+but *in how many pools*: today a program is capped at 31,350 of text
+even with the 6,581-byte heap region idle, and arrays are capped at
+6,581 with 31,350 next door. Splitting the image into two segments --
+`fscmd.asm` is the cold, self-contained 2,081 bytes to move -- would
+make it one pool of about 37,500, at **zero runtime cost**, since every
+call is absolute. It trades ~430 bytes of total for the freedom to spend
+what is left in any proportion.
+
+
 `python sim/build_basic.py` is the measurement, and it prints the free
 count rather than leaving it to arithmetic:
 
