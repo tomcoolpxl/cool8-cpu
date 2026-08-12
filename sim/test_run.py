@@ -266,10 +266,14 @@ CASES = [
     ("DIM of a float array is accepted and is not one",
      ["10 DIM A#(4)", "20 PRINT 5", "30 END"], "5"),
 
-    # The one that fails loudly, and the only one that does: there is no
-    # decimal point in the tokeniser, so `1.5` is `1` and then rubbish.
-    ("a float literal is a syntax error",
-     ["10 PRINT 1.5", "20 END"], "?SYNTAX IN 10"),
+    # This asserted `?SYNTAX IN 10` for as long as the tokeniser was
+    # compiled BASIC's and had no decimal point in it. sw/token.asm has
+    # one: a point switches `snum` into counting mode and the literal is
+    # stored packed, so the constant is parsed once at type-in rather
+    # than on every pass of a loop. The suite that recorded the gap is
+    # the suite that now records it closed.
+    ("a float literal prints",
+     ["10 PRINT 1.5", "20 END"], "1.5"),
 
     # ---- ABS and SGN. ABS keeps the type, SGN always answers an
     # ---- integer, so the pair is checked on both argument types and
