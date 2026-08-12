@@ -170,9 +170,17 @@ prg_new:
         RET
 
 ; prg_free -- R0:R1 = bytes a program may still grow into.
+;
+; **SYSBOT, not USERTOP.** USERTOP is the last byte a program may use,
+; so the bytes from PROGEND to it are `USERTOP - PROGEND + 1` -- and
+; this said `USERTOP - PROGEND`, one short. It showed as `FREE`
+; answering one less than the boot banner, which computes the same
+; quantity in Python from the same claims. Subtracting the floor of
+; system storage gives the count directly: from PROGEND up to, and not
+; including, the first byte that is not the program's.
 prg_free:
-        MOV  R0,#<USERTOP
-        MOV  R1,#>USERTOP
+        MOV  R0,#<SYSBOT
+        MOV  R1,#>SYSBOT
         LD   R2,[PROGEND]
         LD   R3,[PROGEND+1]
         SUB  R0,R2

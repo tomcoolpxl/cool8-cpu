@@ -270,6 +270,24 @@ def main():
           "...and the cold restart took the program with it",
           " | ".join(r.strip() for r in m.text() if r.strip())[:120])
 
+    # **Two programs, two languages, one number.** The boot banner's
+    # byte count is computed by tools/mkboot.py from the claims in
+    # tools/memmap.py; `FREE` is computed by prg_free on the machine
+    # from the SYSBOT the assembler got. Nothing made them agree, and
+    # they did not: prg_free subtracted USERTOP, which is the last byte
+    # a program may use rather than the first byte it may not, so FREE
+    # answered one less than the screen it was printed under.
+    settle(m, syms)
+    key(m, syms, "FREE\r")
+    said = [r.strip() for r in m.text() if "BYTES FREE" in r]
+    nums = {int(r.split()[0]) for r in said if r.split()[0].isdigit()}
+    check(len(said) >= 2 and len(nums) == 1,
+          "FREE answers the same number the boot banner printed",
+          "rows %s" % said)
+    check(nums == {mkboot.FREE},
+          "...and that number is the one the claims say",
+          "machine %s, tools/mkboot.py %d" % (sorted(nums), mkboot.FREE))
+
     print()
     modes(syms)
 
