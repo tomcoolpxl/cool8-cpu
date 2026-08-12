@@ -90,11 +90,11 @@ reloc:  LDW  X,#src
         ; Pico-8 sixteen, quantised to RGB444 -- a designed game
         ; palette for sprites and tiles to point at.
         CLR  R0
-        ST   [$FE1E],R0
+        ST   [$FF1E],R0
         LDW  X,#paltab
         MOV  R2,#64
 .pl:    LD   R0,[X]
-        ST   [$FE1F],R0
+        ST   [$FF1F],R0
         INCW X
         SUB  R2,#1
         BNE  .pl
@@ -109,7 +109,7 @@ reloc:  LDW  X,#src
         ; monitor last put it. Off, before anything is painted: BASIC
         ; turns it back on at the end of init, already in place.
         CLR  R0
-        ST   [$FE24],R0
+        ST   [$FF24],R0
         LDW  Y,#$8000           ; clear: char 32, attr $07 -- 4096
         CLR  R2                 ; CELLS, two bytes each. $2000 here
         MOV  R3,#$10            ; once cleared 16 KB and half of the
@@ -154,11 +154,11 @@ reloc:  LDW  X,#src
         ; $FC00 through the port. VRAM is RAM: it survives every mode
         ; switch, so this happens once, here, in reclaimed memory.
         MOV  R0,#1
-        ST   [$FE28],R0
+        ST   [$FF28],R0
         CLR  R0
-        ST   [$FE26],R0
+        ST   [$FF26],R0
         MOV  R0,#$FC
-        ST   [$FE27],R0
+        ST   [$FF27],R0
         LDW  X,#font8
         CLR  R2                 ; 768 bytes, the autoboot count idiom
         MOV  R3,#3
@@ -166,7 +166,7 @@ reloc:  LDW  X,#src
         OR   R0,R3
         BEQ  .fdone
         LD   R0,[X]
-        ST   [$FE29],R0
+        ST   [$FF29],R0
         INCW X
         SUB  R2,#1
         BCS  .fc
@@ -179,9 +179,9 @@ reloc:  LDW  X,#src
         ; lines with no doubling, and this is what fills them at text
         ; mode's own quality. The step register still holds 1.
         CLR  R0
-        ST   [$FE26],R0
+        ST   [$FF26],R0
         MOV  R0,#$F6
-        ST   [$FE27],R0
+        ST   [$FF27],R0
         LDW  X,#font16
         CLR  R2                 ; 1536 bytes
         MOV  R3,#6
@@ -189,7 +189,7 @@ reloc:  LDW  X,#src
         OR   R0,R3
         BEQ  .gdone
         LD   R0,[X]
-        ST   [$FE29],R0
+        ST   [$FF29],R0
         INCW X
         SUB  R2,#1
         BCS  .gc

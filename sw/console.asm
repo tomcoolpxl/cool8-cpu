@@ -812,32 +812,15 @@ con_geom:
 .soft:  CLR  R0
         ST   [CUR_CTRL],R0
 
-        ; **A glyph needs a colour that exists.**
-        ;
-        ; `bglyph` draws a lit pixel as palette index 1 at 1 bpp, and as
-        ; index 15 at 4 and 8 bpp -- `nibtab` is $00/$0F/$F0/$FF and the
-        ; 8 bpp arm writes $0F. Entry 1 was seeded, in the mode 3 arm
-        ; only, so mode 3 was the one non-text mode where anything could
-        ; be seen. Modes 2, 4, 5 and 6 wrote their letters into an
-        ; unseeded entry, which is black, onto a black screen: the text
-        ; was drawn, correctly, and invisible. The cursor showed through
-        ; sometimes because its inverse pair lands on entry 0.
-        ;
-        ; Both entries, in every mode that draws its own glyphs, and the
-        ; byte pair is the one the mode 3 arm already proved visible.
-        MOV  R0,#1
-        ST   [PAL_IDX],R0
-        MOV  R0,#$0F
-        ST   [PAL_DATA],R0
-        MOV  R0,#$FF
-        ST   [PAL_DATA],R0
-        MOV  R0,#15
-        ST   [PAL_IDX],R0
-        MOV  R0,#$0F
-        ST   [PAL_DATA],R0
-        MOV  R0,#$FF
-        ST   [PAL_DATA],R0
-
+        ; **The palette is the boot stub's, not this routine's.** A
+        ; draft of the mode fix seeded entries 1 and 15 here, on the
+        ; theory that an unseeded entry was why the bitmap modes drew
+        ; black on black. They were black, and that was not why:
+        ; tools/mkboot.py seeds both banks at boot and its writes were
+        ; going to $FE1E/$FE1F, the I/O page's address before [D67]
+        ; moved it. Nothing was reaching the palette at all, and the
+        ; same stale-address bug was eating the font upload. Seeding
+        ; here would have papered over one symptom of it.
         LD   R0,[CKIND]
         CMP  R0,#1
         BEQ  con_tilefont       ; mode 2 needs its glyphs as tiles

@@ -184,23 +184,13 @@ def main():
         M.settle()
         M.cmd("MODE %d" % mode)
         M.cmd('PRINT "COOL8"')
-        # **A colour, not just a character.** The cell map holds the
-        # text in all seven modes, so reading it says the console wrote
-        # the glyph and says nothing about whether a person can see it.
-        # `bglyph` lights palette index 1 at 1 bpp and index 15 at 4 and
-        # 8 bpp; an unseeded entry is black, and black letters on a
-        # black screen is what "MODE 2-5 work now" meant last time this
-        # was reported fixed.
-        #
-        # Asked of the machine's committed palette, which is the state
-        # the video engine reads -- no address computed and no renderer
-        # needed.
-        pal = M.m.palette()
-        want = 15 if M.m.bus.mem[syms["cbpc"]] in (4, 8) else 1
-        check(M.m.bus.mem[syms["ckind"]] == 0 or pal[want] != pal[0],
-              "MODE %d draws in a colour that is not the background"
-              % mode,
-              "index %d is $%03X, background $%03X" % (want, pal[want], pal[0]))
+        # **Whether it is visible is asked in sim/test_boot_basic.py**,
+        # and it has to be: this suite pokes the image in and jumps to
+        # `main`, so the boot stub never runs -- and the stub is what
+        # seeds the palette and uploads the fonts into VRAM. A "can it
+        # be seen" check here would be measuring what the harness left
+        # out. What is this suite's to check is that the console
+        # followed the mode, which is below.
 
         # ...and the console has to have been *told*, which is a
         # different thing and was the bug: characters reached the cell

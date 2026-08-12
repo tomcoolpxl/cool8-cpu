@@ -76,6 +76,65 @@ def key(m, syms, text):
             raise SystemExit("the machine never went idle after %r" % ch)
 
 
+def modes(syms):
+    """Every video mode, typed at the keyboard, counted in **pixels**.
+
+    **This is the only check in the tree that asks what a person sees.**
+    `m.row()` and the cell map at $8000 both answer from main RAM, and
+    `rust/src/render.rs` reads main RAM only for the text engine -- the
+    tile and bitmap engines fetch from VRAM, which `bglyph` fills
+    through VRAM_DATA. So a mode can have the right characters in the
+    map, the right geometry in the console and the right colour in the
+    palette, and still show nothing at all. It did: modes 2 to 6 were
+    reported working three times off checks that never looked at a
+    pixel.
+
+    `vm.boot(render=True)` is `poe emu` without the window -- the real
+    ROM, the real font, the real scanline renderer, the flash image the
+    board would run.
+    """
+    m = vm.boot(flash_path=IMG, render=True)
+    for _ in range(90):
+        m.run_frame()
+    if not settle(m, syms):
+        raise SystemExit("BASIC never went idle")
+    base = lit(m)
+    for mode in range(7):
+        key(m, syms, "MODE %d\r" % mode)
+        blank = lit(m)
+        key(m, syms, 'PRINT "COOL8COOL8"\r')
+        after = lit(m)
+        # The text has to add pixels the empty screen did not have.
+        # Comparing against the same mode's own blank screen is what
+        # keeps a mode that paints a border from passing on the border.
+        # The console's own view of the screen, so a failure says which
+        # number is wrong rather than only that nothing appeared.
+        w = lambda n: m.bus.mem[syms[n]] | (m.bus.mem[syms[n] + 1] << 8)
+        b = lambda n: m.bus.mem[syms[n]]
+        check(after > blank + 200,
+              "MODE %d shows what is typed at it" % mode,
+              "%d lit before, %d after (idle %d) | CBASE $%04X CSTR $%04X "
+              "CGS8 $%04X CBPC %d CFROW %d CKIND %d | VID_BASE $%02X%02X "
+              "STRIDE $%02X%02X"
+              % (blank, after, base, w("cbase"), w("cstr"), w("cgs8"),
+                 b("cbpc"), b("cfrow"), b("ckind"),
+                 m.bus.read(0xFF13), m.bus.read(0xFF12),
+                 m.bus.read(0xFF15), m.bus.read(0xFF14)))
+        key(m, syms, "CLS\r")
+
+
+def lit(m, frames=2):
+    """Pixels that differ from the background, after scanning out.
+
+    Two frames because the first may be joined part-way -- the reason
+    sim/test_vm.py takes two.
+    """
+    m.run_frame(frames)
+    fb = m.fb()
+    bg = max(set(fb), key=fb.count)
+    return sum(1 for v in fb if v != bg)
+
+
 def main():
     print("  M16 -- reset to BASIC to a keypress, on a flash image")
     print()
@@ -178,6 +237,9 @@ def main():
     check(not any("PRINT 6 * 7" in r for r in m.text()),
           "...and the cold restart took the program with it",
           " | ".join(r.strip() for r in m.text() if r.strip())[:120])
+
+    print()
+    modes(syms)
 
     return H.report()
 
