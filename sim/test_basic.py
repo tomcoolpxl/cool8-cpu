@@ -50,7 +50,9 @@ FAILS = H.FAILS
 
 
 def build():
-    return H.build_bas("basic.bas", org=ORG)
+    # The system is sw/main.asm now, not compiled BASIC ([D68]).
+    return H.assemble(os.path.join(H.SW, "main.asm"), name="basic",
+                      lower=True, write=True)
 
 
 class Machine:
@@ -59,7 +61,7 @@ class Machine:
         # — for the checks that look at actual pixels.
         self.m = vm.Machine(flash_path=flash, render=render)
         self.m.bus.mem[ORG:ORG + len(code)] = code
-        self.m.cpu.pc = ORG
+        self.m.cpu.pc = syms["main"]
         # Where sw/boot.asm:339 leaves it, not somewhere roomier. The
         # stack grows down through page 1 and page 0 holds the
         # interpreter's state and the filesystem's, so a harness that
@@ -75,7 +77,7 @@ class Machine:
         self.m.bus.mem[0x8000:0xA000] = b"\x20\x07" * 0x1000
         # rawkey's `.rk0` is reached only when nothing is waiting, so it
         # is the one address that means "idle" rather than "busy".
-        self.idle = syms["s_rawkey.rk0"]
+        self.idle = syms["in_raw.rk0"]
         # ...and an empty UART FIFO no longer means an empty *input*.
         # The vblank interrupt drains the FIFO into a ring and rawkey
         # reads the ring, so a machine can sit at `.rk0` for an instant
@@ -213,7 +215,7 @@ def trace(label, text, n=40, into=True):
     if label != "-" and label not in syms:
         raise SystemExit("no symbol %r" % label)
     M = Machine(code, syms)
-    M.syms_progend = syms["v_progend"]
+    M.syms_progend = syms["progend"]
     M.settle()
     if label != "-":
         M.m.breakpoints.add(syms[label])
@@ -264,14 +266,14 @@ def main():
     print()
 
     M = Machine(code, syms)
-    M.syms_progend = syms["v_progend"]
+    M.syms_progend = syms["progend"]
     M.settle()
 
     # ---- 1. it boots. The banner is the flash stub's job now --
     # sim/test_boot_basic.py checks it on the path a board takes; this
     # harness pokes the image in with no stub, so booting means the
     # editor is up and idle with a cursor, on a screen it did not paint.
-    check(M.m.cpu.pc == syms["s_rawkey.rk0"],
+    check(M.m.cpu.pc == syms["in_raw.rk0"],
           "boots to the editor, idle at the key loop")
 
     # ---- 2. numbered lines are stored, tokenised, in order
@@ -428,7 +430,7 @@ def blank(code, syms, label="PROGRAMS"):
     disk.Volume(img, 0).format(label)
     img.save()
     M = Machine(code, syms, flash=IMG)
-    M.syms_progend = syms["v_progend"]
+    M.syms_progend = syms["progend"]
     M.settle()
     return M
 
@@ -532,7 +534,7 @@ def files(code, syms):
     left = (disk.DATA_END
             - disk.Volume(disk.Image(IMG), 0).free_offset()) // 256
     M = Machine(code, syms, flash=IMG)
-    M.syms_progend = syms["v_progend"]
+    M.syms_progend = syms["progend"]
     M.settle()
     M.type("10 PRINT 1\n")
     M.cmd('SAVE "TOOBIG"')

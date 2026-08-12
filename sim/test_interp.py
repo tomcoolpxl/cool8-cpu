@@ -137,59 +137,13 @@ HARNESS = """
         CALL irun
         HALT
 
+; ---- the modules interp.asm calls, stubbed for this suite
+""" + H.MODULE_STUBS + """
 ; ---- stubs standing in for sw/basic.bas
-s_putn: LD   R0,[SP+2]          ; remember the last number printed
-        ST   [printed],R0
-        LD   R0,[SP+3]
-        ST   [printed+1],R0
-        LD   R0,[nprint]
-        ADD  R0,#1
-        ST   [nprint],R0
-        RET
+s_putn:
+s_putsn:
 s_newline:
         RET
-; A heap string is length-counted, so this is puts' sibling: address
-; then length. It records what was printed so a case can assert on it
-; without a screen, the same way s_putn does.
-s_putsn:
-        LD   R0,[SP+2]
-        MOV  XL,R0
-        LD   R0,[SP+3]
-        MOV  XH,R0
-        LD   R1,[SP+4]
-        ST   [printlen],R1
-        LDW  Y,#printed
-        TST  R1
-        BEQ  .pd
-.pc:    LD   R0,[X]
-        INCW X
-        ST   [Y+],R0
-        SUB  R1,#1
-        BNE  .pc
-.pd:    RET
-s_findline:
-        LDW  X,#prog
-.fl:    LD   R0,[X]             ; this record's line number
-        INCW X
-        LD   R1,[X]
-        INCW X
-        LD   R2,[SP+2]
-        LD   R3,[SP+3]
-        SUB  R0,R2
-        SBC  R1,R3
-        OR   R0,R1
-        BEQ  .hit
-        LD   R0,[X]             ; skip its tokens and the zero
-        INCW X
-        ADDW X,R0
-        INCW X
-        BRA  .fl
-.hit:   DECW X
-        DECW X
-        MOV  R0,XL
-        MOV  R1,XH
-        RET
-
 printed:  .space 40
 printlen: .byte 0
 nprint:   .byte 0
@@ -1013,11 +967,14 @@ def trace(pattern, n=400):
     print("  run:     %s" % why)
     print("  ERR:     $%02X" % err)
     print("  printed: %r" % got.decode("latin-1"))
+    print("  pc:      $%04X" % m.cpu.pc)
     print()
-    print("  Nothing printed with ERR clear means PRINT was never")
-    print("  reached; a non-zero ERR names the fault -- see E_* in")
-    print("  sw/zp.asm. For instruction-level detail use sim/dbg.py,")
-    print("  which owns disassembly for the batch machine.")
+    # **This used to stop here**, printing three numbers and pointing at
+    # sim/dbg.py -- which builds from BASIC source and cannot read an
+    # assembled image, so the pointer went nowhere. A budget that ran out
+    # means a loop, and the only thing that says which loop is what the
+    # machine actually executed.
+    print(m.trace_report(m.trace(40, syms)))
 
 
 def main():

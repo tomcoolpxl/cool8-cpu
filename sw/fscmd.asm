@@ -313,6 +313,127 @@ fsc_load_prog:
 .bad:   CLC
         RET
 
+; =====================================================================
+; fsc_merge -- LOAD "N", n: the file's lines from R0:R1 up, merged into
+; what is already in memory.
+;
+; The file lands at the top of free memory and the lines are stored one
+; at a time, which keeps the program in order and costs nothing a typed
+; line does not. The text grows upward as they go in, so the two must
+; not meet -- and the worst case is the whole file, which is what the
+; bound below tests.
+; =====================================================================
+fsc_merge:
+        ST   [FSCI],R0          ; the lowest line to take
+        MOV  R0,R1
+        ST   [FSCI+1],R0
+        CALL fsc_find
+        LD   R0,[FSOK]
+        TST  R0
+        BEQ  .nf
+        ; top = MEMTOP - length + 1, and progend + length must stay
+        ; below it or the two would meet.
+        MOV  R0,#$FF
+        MOV  R1,#$7F            ; MEMTOP
+        LD   R2,[FSLENW]
+        LD   R3,[FSLENW+1]
+        SUB  R0,R2
+        SBC  R1,R3
+        ADD  R0,#1
+        MOV  R2,#0
+        ADC  R1,R2
+        ST   [FSADDR],R0
+        MOV  R0,R1
+        ST   [FSADDR+1],R0
+        LD   R0,[PROGEND]
+        LD   R1,[PROGEND+1]
+        LD   R2,[FSLENW]
+        LD   R3,[FSLENW+1]
+        ADD  R0,R2
+        ADC  R1,R3
+        LD   R2,[FSADDR]
+        LD   R3,[FSADDR+1]
+        SUB  R0,R2
+        SBC  R1,R3
+        BLO  .room
+        MOV  R0,#E_MEM
+        ST   [ERR],R0
+        RET
+.room:  CALL fsc_load
+        LD   R0,[FSOK]
+        TST  R0
+        BEQ  .nf
+        ; Walk what landed, storing each line at or above the bound.
+        PUSHW Y
+        LDW  Y,[FSADDR]
+.l:     MOV  R0,YL              ; past the end of what was loaded?
+        MOV  R1,YH
+        LD   R2,[FSADDR]
+        LD   R3,[FSADDR+1]
+        SUB  R0,R2
+        SBC  R1,R3
+        LD   R2,[FSLENW]
+        LD   R3,[FSLENW+1]
+        SUB  R0,R2
+        SBC  R1,R3
+        BHS  .done
+        LD   R0,[Y]             ; this record's number
+        PUSHW Y
+        INCW Y
+        LD   R1,[Y]
+        POPW Y
+        MOV  R2,R0
+        MOV  R3,R1
+        LD   R0,[FSCI]
+        LD   R1,[FSCI+1]
+        SUB  R2,R0              ; record - bound
+        SBC  R3,R1
+        BLO  .skip
+        CALL fsc_fetch          ; into TBUF, then store it
+        LD   R0,[Y]
+        PUSHW Y
+        INCW Y
+        LD   R1,[Y]
+        POPW Y
+        PUSHW Y
+        CALL prg_store
+        POPW Y
+.skip:  PUSHW Y                 ; on to the next record: 4 + its length
+        INCW Y
+        INCW Y
+        LD   R0,[Y]
+        POPW Y
+        ADD  R0,#4
+        ADDW Y,R0
+        BRA  .l
+.done:  POPW Y
+        RET
+.nf:    MOV  R0,#E_NOFILE
+        ST   [ERR],R0
+        RET
+
+; fsc_fetch -- the stored line at Y into TBUF, so prg_store can place it.
+fsc_fetch:
+        PUSHW X
+        PUSHW Y
+        INCW Y
+        INCW Y
+        LD   R3,[Y]
+        ST   [TLEN],R3
+        INCW Y
+        LDW  X,#TBUF
+        TST  R3
+        BEQ  .z
+.c:     LD   R0,[Y]
+        ST   [X],R0
+        INCW X
+        INCW Y
+        SUB  R3,#1
+        BNE  .c
+.z:     POPW Y
+        POPW X
+        RET
+
 ; fsc_dir -- DIR: every live entry, then what is left.
 fsc_dir:
         CLR  R0
@@ -364,7 +485,10 @@ fsc_dir:
         ROR  R0
         SHR  R1
         ROR  R0
-        JMP  num_put
+        CALL num_put
+        LDW  X,#MSGKFREE
+        CALL con_puts
+        JMP  con_nl
 
 ; =====================================================================
 ; COMPACT
@@ -616,6 +740,163 @@ fsc_rewritedir:
         BLS  .s
         RET
 
+; =====================================================================
+; fsc_compact -- COMPACT: slide the live files down, rewrite the
+; directory, remount.
+;
+; A sector at a time. `fsc_nextsrc` hands out the live pages in
+; increasing order, so the sixteen sources for a destination sector are
+; all at or above it -- which is what makes the read-before-erase safe:
+; by the time the destination is erased there is nothing left in it that
+; has not already been copied out.
+;
+; **Read before erasing, always**, and into the scratch sector rather
+; than into RAM: there is nowhere in RAM to put 4 KB that is not the
+; user's program or their sprites.
+; =====================================================================
+FSSECT  = $7C7B                 ;: 1 COMPACT: the sector being filled
+FSN     = $7C7A                 ;: 1 COMPACT: live pages found for it
+FSDONE  = $7C79                 ;: 1 COMPACT: past the last live page
+FSMOVED = $7C78                 ;: 1 COMPACT: this sector needs rewriting
+
+fsc_compact:
+        CLR  R0
+        ST   [FSCI],R0
+        ST   [FSCI+1],R0
+        ST   [FSCLEFT],R0
+        ST   [FSCLEFT+1],R0
+        ST   [FSDONE],R0
+        MOV  R0,#1
+        ST   [FSSECT],R0
+
+.sect:  LD   R0,[FSSECT]
+        CMP  R0,#LASTSEC+1
+        BHS  .dir
+        LD   R0,[FSDONE]
+        TST  R0
+        BEQ  .live
+        ; Past the live data: stale bytes, and nothing may be appended
+        ; over them, so they have to go back to $FF.
+        CALL fsc_sectpg
+        CALL fsc_erapg
+        BRA  .next
+
+.live:  CLR  R3                 ; how many live pages this sector gets
+        CLR  R0
+        ST   [FSMOVED],R0
+.g:     PUSH R3
+        CALL fsc_nextsrc
+        POP  R3
+        MOV  R2,R0
+        OR   R2,R1
+        BEQ  .short
+        PUSHW X                 ; remember it: spg[n] = s
+        LDW  X,#FSPG16
+        ADDW X,R3
+        ST   [X],R0
+        POPW X
+        PUSH R3                 ; did it come from where it is going?
+        PUSH R0
+        CALL fsc_sectpg
+        POP  R2
+        POP  R3
+        MOV  R1,R3
+        ADD  R0,R1
+        CMP  R0,R2
+        BEQ  .same
+        MOV  R0,#1
+        ST   [FSMOVED],R0
+.same:  ADD  R3,#1
+        CMP  R3,#16
+        BLO  .g
+        BRA  .have
+.short: MOV  R0,#1              ; a partial sector: its tail must be clean
+        ST   [FSMOVED],R0
+        ST   [FSDONE],R0
+.have:  ST   [FSN],R3
+        LD   R0,[FSMOVED]
+        TST  R0
+        BEQ  .next
+
+        MOV  R0,#<SCRATCH       ; out to the scratch...
+        MOV  R1,#>SCRATCH
+        CALL fsc_erapg
+        CLR  R3
+.out:   LD   R0,[FSN]
+        CMP  R3,R0
+        BHS  .back
+        PUSH R3
+        PUSHW X
+        LDW  X,#FSPG16
+        ADDW X,R3
+        LD   R0,[X]
+        POPW X
+        CLR  R1
+        CALL fsc_rdpg
+        POP  R3
+        PUSH R3
+        MOV  R0,R3
+        MOV  R1,#<SCRATCH
+        MOV  R2,#>SCRATCH
+        ADD  R0,R1
+        MOV  R1,R2
+        MOV  R2,#0
+        ADC  R1,R2
+        CALL fsc_wrpg
+        POP  R3
+        ADD  R3,#1
+        BRA  .out
+
+.back:  CALL fsc_sectpg         ; ...and back into the erased sector
+        CALL fsc_erapg
+        CLR  R3
+.in:    LD   R0,[FSN]
+        CMP  R3,R0
+        BHS  .next
+        PUSH R3
+        MOV  R0,R3
+        MOV  R1,#<SCRATCH
+        MOV  R2,#>SCRATCH
+        ADD  R0,R1
+        MOV  R1,R2
+        MOV  R2,#0
+        ADC  R1,R2
+        CALL fsc_rdpg
+        POP  R3
+        PUSH R3
+        CALL fsc_sectpg
+        MOV  R2,R3
+        ADD  R0,R2
+        MOV  R2,#0
+        ADC  R1,R2
+        CALL fsc_wrpg
+        POP  R3
+        ADD  R3,#1
+        BRA  .in
+
+.next:  LD   R0,[FSSECT]
+        ADD  R0,#1
+        ST   [FSSECT],R0
+        BRA  .sect
+
+.dir:   CALL fsc_rewritedir
+        JMP  fsc_mount
+
+; fsc_sectpg -- R0:R1 = the first page of sector FSSECT, which is the
+; sector number times sixteen.
+fsc_sectpg:
+        LD   R0,[FSSECT]
+        CLR  R1
+        SHL  R0
+        ROL  R1
+        SHL  R0
+        ROL  R1
+        SHL  R0
+        ROL  R1
+        SHL  R0
+        ROL  R1
+        RET
+
 ; fsc_scrpg -- R0:R1 = SCRATCH + (R0 >> 4) - 1, the scratch page a slot
 ; count belongs to. Split out because rewritedir wants it twice and the
 ; shift is four instructions.
@@ -632,3 +913,169 @@ fsc_scrpg:
         MOV  R2,#0
         ADC  R1,R2
         RET
+
+; =====================================================================
+; The command handlers.
+;
+; **They live here and not in sw/interp.asm, and that is the layering.**
+; The interpreter is the language; SAVE, LOAD, DIR, ERA, COMPACT and
+; DRIVE are this module's, and having their handlers next to their
+; implementation is what stops interp.asm naming scmd at all. The
+; dispatch table that binds a token to one of these is sttab in
+; sw/main.asm, which is the only place that knows every module exists
+; ([D68]).
+; =====================================================================
+h_dir:  CALL fsc_dir
+        JMP  cnext
+
+h_compact:
+        CALL fsc_compact
+        JMP  cnext
+
+h_drive:
+        CALL eval
+        CALL fsc_drive
+        JMP  cnext
+
+h_era:  CALL tname
+        BCS  .nm
+        JMP  esyn
+.nm:
+        CALL fsc_erase
+        LD   R0,[FSOK]
+        TST  R0
+        BNE  .ok
+        MOV  R0,#E_NOFILE
+        ST   [ERR],R0
+        RET
+.ok:    JMP  cnext
+
+; SAVE "N"            -- the program
+; SAVE "N" AT a, l    -- l raw bytes from address a (the BBC's *SAVE)
+h_save: CALL tname
+        BCS  .nm
+        JMP  esyn
+.nm:
+        SKIPSP
+        CMP  R2,#$9D            ; AT
+        BEQ  .at
+        CALL fsc_save_prog
+        BCC  .bad
+        JMP  cnext
+.at:    INCW Y
+        CALL eval               ; the address
+        ST   [FSADDR],R0
+        MOV  R0,R1
+        ST   [FSADDR+1],R0
+        CALL sopen              ; the comma
+        CALL eval               ; the length
+        ST   [FSLENW],R0
+        MOV  R0,R1
+        ST   [FSLENW+1],R0
+        CALL fsc_save
+        LD   R0,[FSOK]
+        TST  R0
+        BEQ  .bad
+        JMP  cnext
+.bad:   MOV  R0,#E_NOSPC
+        ST   [ERR],R0
+        RET
+
+; LOAD "N"            -- replace; from a program, CHAIN: continue at
+;                        the new first line with variables kept
+; LOAD "N", n         -- merge the file's lines from n up
+; LOAD "N" AT a       -- raw bytes to address a (the BBC's *LOAD)
+h_load: CALL tname
+        BCS  .nm
+        JMP  esyn
+.nm:
+        SKIPSP
+        CMP  R2,#$9D            ; AT
+        BEQ  .at
+        CMP  R2,#$2C            ; , merge
+        BEQ  .mg
+        CALL fsc_load_prog      ; replace what is there
+        BCS  .ok2
+        MOV  R0,#E_NOFILE
+        ST   [ERR],R0
+        RET
+.ok2:   LD   R0,[LREC+1]        ; typed direct: the staged line just
+        CMP  R0,#>DIRBUF        ;   ends, and the editor is back
+        BEQ  .done
+        LD   R0,[FSOK]         ; from a program, and it loaded:
+        TST  R0                 ;   chain into the new program
+        BEQ  .done
+        LD   R0,[PROGEND]     ; the walk's bound is the NEW end
+        ST   [PEND],R0
+        LD   R0,[PROGEND+1]
+        ST   [PEND+1],R0
+        CLR  R0
+        ST   [LREC],R0
+        MOV  R0,#$02
+        ST   [LREC+1],R0
+        LD   R0,[LREC]
+        LD   R1,[LREC+1]
+        CALL lbound
+        BCS  .go
+        JMP  h_end              ; chained into an empty file: done
+.go:    JMP  stmt               ; NOT cnext: lbound just OPENED the
+                                ;   chained program's first record,
+                                ;   and cnext would walk past it
+.done:  JMP  cnext
+.mg:    INCW Y                  ; LOAD "N", n -- merge from line n up
+        CALL eval
+        CALL fsc_merge
+        JMP  cnext
+.at:    INCW Y                  ; LOAD "N" AT a -- raw bytes to a
+        CALL eval
+        ST   [FSADDR],R0
+        MOV  R0,R1
+        ST   [FSADDR+1],R0
+        CALL fsc_find
+        LD   R0,[FSOK]
+        TST  R0
+        BEQ  .nf
+        CALL fsc_load
+        LD   R0,[FSOK]
+        TST  R0
+        BNE  .lok
+.nf:    MOV  R0,#E_NOFILE
+        ST   [ERR],R0
+        RET
+.lok:   JMP  cnext
+
+
+; tname -- a quoted 8.3 name at Y into the editor's line buffer and
+; through its own parsename, which owns the .EXT and padding rules.
+; Carry set on success.
+tname:  SKIPSP
+        CMP  R2,#34
+        BNE  .no
+        INCW Y
+        CLR  R3
+.cp:    LD   R0,[Y]
+        TST  R0
+        BEQ  .no                ; the line ended inside the quotes
+        CMP  R0,#34
+        BEQ  .end
+        LDW  X,#LBUF
+        ADDW X,R3
+        ST   [X],R0
+        INCW Y
+        ADD  R3,#1
+        BRA  .cp
+.end:   INCW Y
+        MOV  R0,R3
+        ST   [LLEN],R0
+        CLR  R0
+        ST   [EDIP],R0
+        PUSHW Y
+        CALL fsc_name           ; carry, not a return value
+        POPW Y
+        BCC  .no
+        SEC
+        RET
+.no:    CLC
+        RET
+
+

@@ -38,38 +38,16 @@ T_LIT = K["?"]
 PROGBOT = 0x0200
 
 
-def build(body):
-    stubs = TI.HARNESS.split("; ---- stubs standing in for sw/basic.bas")[1]
-    return H.assemble_text(
-        "        .org $4000\nmain:\n" + body +
-        '\n        .include "prog.asm"\n; ---- stubs\n' + stubs,
-        "progdrv", lower=True)
-
-
-def machine(code, syms):
-    m = H.session()
-    m.bus.mem[0x200:0x200 + len(code)] = code
-    m.cpu.pc = 0x200
-    m.cpu.sp = memmap.RAMTOP
-    m.romen = False
-    # The store lives at $0200, which is where the driver is loaded, so
-    # the driver is assembled to run from there and then moves the
-    # program base out of its own way. Simpler: put the driver high.
-    return m
-
-
 def run(body, lines=(), budget=20_000_000):
-    """Assemble a driver, seed the store with `lines`, run it.
+    """A snippet against the real image, over a store seeded with `lines`.
 
     Each line is (number, [token bytes]).
+
+    The driver sits at $4000 because the store starts at $0200 and the
+    two would otherwise land on each other -- the one thing this suite
+    has to know that a caller of `H.call` does not.
     """
-    code, syms = build(body)
-    m = H.session()
-    base = 0x4000                       # the driver, out of the store
-    m.bus.mem[base:base + len(code)] = code
-    m.cpu.pc = base
-    m.cpu.sp = memmap.RAMTOP
-    m.romen = False
+    m, syms = H.drive(body, at=0x4000, sp=memmap.RAMTOP)
     p = PROGBOT
     for n, toks in lines:
         m.bus.mem[p] = n & 0xFF

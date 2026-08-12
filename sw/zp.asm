@@ -279,6 +279,14 @@ E_DOS   = 16                    ; ?TOO MANY DOS / ?LOOP WITHOUT DO
 E_CALL  = 17                    ; ?NO SUCH SUB / ?RETURN WITHOUT CALL
 E_STOP  = 18                    ; ?BREAK -- the user stopped it
 E_DATA  = 19                    ; ?OUT OF DATA -- READ past the last DATA
+; The two disk failures. They were `errmsg(19)` and `errmsg(20)` in the
+; compiled editor -- indices into the tail of the same message table,
+; reached by a call rather than by setting ERR. As ERR codes they index
+; that tail through the same ERR-1 the interpreter's own errors use, so
+; a failed SAVE now stops the statement the way every other error does
+; instead of printing and carrying on ([D68]).
+E_NOSPC = 20                    ; ?DISK FULL
+E_NOFILE = 21                   ; ?NO SUCH FILE
 ; 13 was E_AFULL, "too many symbols". There is no symbol table to fill:
 ; a label is a BASIC variable, so running out of them is E_NAMES.
 E_DONE  = 255

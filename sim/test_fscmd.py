@@ -36,15 +36,6 @@ PROGBOT = 0x0200
 DRIVER = 0x4000
 
 
-def build(body):
-    stubs = TI.HARNESS.split("; ---- stubs standing in for sw/basic.bas")[1]
-    return H.assemble_text(
-        "        .org $4000\nmain:\n" + body +
-        "\ned_direct: RET\n"
-        '        .include "fscmd.asm"\n; ---- stubs\n' + stubs,
-        "fscmddrv", lower=True)
-
-
 def volume():
     """A formatted volume with one file already on it."""
     if os.path.exists(IMG):
@@ -57,13 +48,8 @@ def volume():
 
 
 def run(body, line=None, prog=(), budget=60_000_000):
-    """Assemble a driver, put `line` in LBUF, seed the store, run it."""
-    code, syms = build(body)
-    m = H.session()
-    m.bus.mem[DRIVER:DRIVER + len(code)] = code
-    m.cpu.pc = DRIVER
-    m.cpu.sp = memmap.RAMTOP
-    m.romen = False
+    """A snippet against the real image, with `line` in LBUF and a store."""
+    m, syms = H.drive(body, at=DRIVER, sp=memmap.RAMTOP)
     if line is not None:
         for i, ch in enumerate(line):
             m.bus.mem[syms["lbuf"] + i] = ord(ch)

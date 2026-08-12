@@ -33,19 +33,6 @@ K = {n: t for t, n in vocab.keywords()}
 PROGBOT = 0x0200
 
 
-def build(body):
-    stubs = TI.HARNESS.split("; ---- stubs standing in for sw/basic.bas")[1]
-    return H.assemble_text(
-        "        .org $4000\nmain:\n" + body +
-        # `ed_direct` is main.asm's, and main.asm is the last module of
-        # the port. Until it exists, running a line with no number is a
-        # no-op here -- which is exactly what this suite wants, since
-        # what it is testing is that the *decision* went that way.
-        "\ned_direct: RET\n"
-        '        .include "edit.asm"\n; ---- stubs\n' + stubs,
-        "editdrv", lower=True)
-
-
 def run(body, screen=(), cx=0, cy=0, mode=0x80, budget=20_000_000):
     """Paint `screen` into the cell map, put the cursor at (cy, cx), run.
 
@@ -53,12 +40,7 @@ def run(body, screen=(), cx=0, cy=0, mode=0x80, budget=20_000_000):
     first, so the geometry comes from the hardware the way it does on a
     real boot.
     """
-    code, syms = build(body)
-    m = H.session()
-    m.bus.mem[0x4000:0x4000 + len(code)] = code
-    m.cpu.pc = 0x4000
-    m.cpu.sp = memmap.RAMTOP
-    m.romen = False
+    m, syms = H.drive(body, at=0x4000, sp=memmap.RAMTOP)
     m.io_write(0x10, mode)                  # VID_MODE
     m.io_write(0x12, 0x00)
     m.io_write(0x13, 0x80)

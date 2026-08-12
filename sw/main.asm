@@ -12,14 +12,35 @@
 ; typed ten seconds ago, or a line of a LIST.
 ; ---------------------------------------------------------------------
 
-MAINK   = $7C7A                 ;: 2 the key just read
+        .org  $A000
 
-        .include "fscmd.asm"    ; which brings everything below it
-        .include "input.asm"
-        .include "interp.asm"
-        .include "fp.asm"
-        .include "fpbas.asm"
-        .include "kbd.asm"
+MAINK   = $7C76                 ;: 2 the key just read
+
+; ---------------------------------------------------------------------
+; The stack, stated once, bottom first.
+;
+; **This order is the design, not an accident of nesting.** Each module
+; includes what it needs and the includes are idempotent, so any of them
+; assembles alone -- but a reader should be able to see the layering in
+; one place, and this is that place. A module may call downward in this
+; list and never upward ([D68]).
+;
+; `fscmd` is above `interp` and not below it, which the move of the disk
+; handlers made obvious: they use `eval`, `cnext` and the `SKIPSP` macro,
+; so a `fscmd` assembled first does not even parse.
+; ---------------------------------------------------------------------
+        .include "zp.asm"       ; the storage map, and the I/O page
+        .include "console.asm"  ; the screen, the cursor, characters out
+        .include "num.asm"      ; numbers as text
+        .include "input.asm"    ; keys in, from either wire
+        .include "token.asm"    ; text to tokens and back
+        .include "prog.asm"     ; the stored program
+        .include "interp.asm"   ; the language
+        .include "fp.asm"       ; floating point
+        .include "fpbas.asm"    ;   ...and its binding
+        .include "edit.asm"     ; the screen as document
+        .include "fscmd.asm"    ; the disk commands
+        .include "kbd.asm"      ; PS/2 decoding
         .include "keymap.asm"
         .include "kdown.asm"
 
@@ -69,7 +90,8 @@ ed_direct:
         POPW Y
         POPW X
         CALL main_pre
-        JMP  idrct
+        CALL idrct
+        JMP  main_err           ; ?WHAT IN nn, if it set ERR
 
 ; main_pre -- the preflight both RUN and a direct line need: where the
 ; program, the heap, the accumulator and the CALL stack are.
@@ -220,6 +242,156 @@ main_reset:
         JMP  con_init
 
 ; =====================================================================
+; The interrupts. Both inputs end in one ring, and nothing above them
+; can tell which wire a key came in on.
+; =====================================================================
+
+; The break button. SW[0]'s NMI lands here now that BASIC owns the
+; machine: the ROM's bare-RETI handler went away with the overlay, and
+; an unhandled NMI executed whatever image bytes sat at the stale
+; vector -- a break that half worked and an interpreter that needed a
+; reboot. One flag, the same one Ctrl+Pause and the serial Ctrl-C set,
+; so every way of asking for a break is the same break.
+inmi:   PUSH R0
+        ; Ctrl+Esc arrives here too -- the keyboard raises NMI for it and
+        ; latches a flag saying which it was, so the break button and the
+        ; restart chord share one unmaskable path and are told apart by
+        ; asking. Acknowledged by writing the bit back, the shape
+        ; VID_IRQ and UART_STAT use.
+        LD   R0,[KBD_MOD]
+        BTST R0,#$08
+        BEQ  .brk
+        MOV  R0,#$08
+        ST   [KBD_MOD],R0
+        MOV  R0,#1
+        ST   [irst],R0          ; the prompt loop does the restart
+.brk:   MOV  R0,#1
+        ST   [ibreak],R0
+        POP  R0
+        RETI
+
+iisr:   PUSH R0
+        PUSH R1
+        PUSHW X
+        MOV  R0,#$22            ; acknowledge vblank, keep it enabled
+        ST   [VID_IRQ],R0
+        LD   R0,[frames]        ; the tick TIMER reads and VSYNC waits on
+        ADD  R0,#1
+        ST   [frames],R0
+        LD   R0,[frames+1]      ; LD leaves C alone, so the carry rides
+        ADC  R0,#0
+        ST   [frames+1],R0
+.more:  LD   R0,[UART_STAT]     ; anything waiting on the wire?
+        BTST R0,#$01
+        BEQ  .kbd
+        LD   R0,[UART_DATA]     ; taking it is the only way to see it
+        CMP  R0,#$03            ; Ctrl-C, the serial console's Break
+        BNE  .keep
+.stop:  MOV  R0,#1
+        ST   [ibreak],R0        ; the flag the interpreter polls
+        BRA  .more
+.keep:  CALL irpush
+        BRA  .more
+
+        ; The keyboard. Raw Set 2 arrives and kbd.asm turns it into a
+        ; key, or into nothing at all for a prefix, a release or a
+        ; shift. Ctrl+Pause decodes to $03, so the Break key and the
+        ; serial console's Ctrl-C are the same byte and stop a program
+        ; through the same test above.
+.kbd:   LD   R0,[KBD_STAT]
+        BTST R0,#$01
+        BEQ  .done
+        LD   R0,[KBD_DATA]      ; reading has a side effect
+        CALL scancode
+        TST  R0
+        BEQ  .kbd
+        CMP  R0,#$03
+        BEQ  .stop
+        CALL irpush
+        BRA  .kbd
+.done:  POPW X
+        POP  R1
+        POP  R0
+        RETI
+
+; irpush -- R0 into the ring. Both inputs come through here.
+irpush: LD   R1,[irhead]
+        LDW  X,#irring
+        ADDW X,R1
+        ST   [X],R0
+        ADD  R1,#1
+        AND  R1,#15
+        ST   [irhead],R1
+        RET
+
+; =====================================================================
+; main_err -- `?WHAT IN nn`, or `?WHAT` for a line that was typed.
+;
+; **One message table for the whole system**, which is what [D46] and
+; the editor's own `errmsg` were separately reaching into: entries 0-18
+; are indexed by `ERR - 1` and the tail is the disk's, reached by the
+; same arithmetic. The `?` is the whole ceremony -- there is no ERROR
+; suffix anywhere, which is the C64's economy and the reason the table
+; fits at all.
+;
+; LREC still holds the record that failed, so the line number is a read
+; rather than a search -- and a record outside the program is a typed
+; line, which prints no number.
+; =====================================================================
+main_err:
+        LD   R0,[ERR]
+        TST  R0
+        BEQ  .out
+        CMP  R0,#E_DONE         ; 255 is a clean stop, not a fault
+        BEQ  .clr
+        PUSHW X
+        PUSHW Y
+        LDW  X,#RUNTAB          ; walk to the message ERR - 1 selects
+        MOV  R3,R0
+        SUB  R3,#1
+        BEQ  .say
+.w:     LD   R0,[X]
+        INCW X
+        TST  R0
+        BNE  .w
+        SUB  R3,#1
+        BNE  .w
+.say:   MOV  R0,#$3F            ; '?'
+        PUSHW X
+        CALL con_emit
+        POPW X
+        CALL con_puts
+        ; A line number, if the record that failed is inside the program.
+        LD   R0,[LREC]
+        LD   R1,[LREC+1]
+        MOV  R2,#<PROGBOT
+        MOV  R3,#>PROGBOT
+        SUB  R0,R2
+        SBC  R1,R3
+        BLO  .nl
+        LD   R0,[LREC]
+        LD   R1,[LREC+1]
+        LD   R2,[PROGEND]
+        LD   R3,[PROGEND+1]
+        SUB  R0,R2
+        SBC  R1,R3
+        BHS  .nl
+        LDW  X,#MSGIN
+        CALL con_puts
+        LDW  X,[LREC]
+        CALL prg_no
+        CALL num_put
+.nl:    CALL con_nl
+        POPW Y
+        POPW X
+.clr:   CLR  R0
+        ST   [ERR],R0
+.out:   RET
+
+; RUNTAB and the messages are in sw/console.asm: every module that
+; prints includes the console, and three of them print these ([D68]).
+
+; =====================================================================
 ; main -- the entry point. The flash stub jumps here.
 ; =====================================================================
 main:
@@ -272,3 +444,160 @@ main:
         CLR  R0
         ST   [LED],R0
         JMP  main_loop
+
+; =====================================================================
+; sttab -- the statement table, and the only place that names them all
+;
+; **It lives here because it is the composition, not the language.**
+; A statement token indexes this table and stmt in sw/interp.asm jumps
+; through it; the entries point at handlers spread over every module --
+; PRINT is the interpreter's, LIST is prog.asm's, SAVE is fscmd.asm's,
+; CLS is console.asm's. Wherever this table sits, that file depends on
+; all of them, so it sits at the top where depending on everything is
+; the job ([D68]).
+;
+; That leaves interp.asm naming sttab upward, which is the one
+; deliberate exception to the call-downward rule and the usual shape for
+; a dispatcher: the interpreter says a table of this form must exist,
+; and the system says what is in it. Before this move the table sat in
+; the middle of interp.asm and dragged the whole image into anything
+; that wanted the expression evaluator.
+;
+; $80... Everything not implemented lands on ad, which is the
+; honest answer and costs one slot each.
+; =====================================================================
+sttab:
+        .word h_print           ; $80 PRINT
+                                ;: PRINT [item][; | ,]...  strings and numbers; a trailing separator holds the newline
+        .word h_sub             ; $81 SUB -- a definition, skipped
+                                ;: SUB name  a definition; stepped over when execution reaches it
+        .word h_sub             ; $82 FUNCTION
+                                ;: FUNCTION name  parsed as SUB; there are no return values
+        .word h_dim             ; $83 DIM
+                                ;: DIM name(size:int)  one dimension, integer elements !intonly
+        .word h_run             ; $84 RUN, up from the tail when
+                                ;: RUN
+                                ;   CONST left
+        .word h_for             ; $85 FOR
+                                ;: FOR var = from:int TO to:int [STEP step:int]  eight deep !intonly
+        .word h_next            ; $86 NEXT
+                                ;: NEXT [var]  naming an outer var closes the inner loops
+        .word bad               ; $87 TO
+        .word h_do              ; $88 DO
+                                ;: DO [WHILE cond | UNTIL cond]
+        .word h_loop            ; $89 LOOP
+                                ;: LOOP [WHILE cond | UNTIL cond]
+        .word bad               ; $8A WHILE
+        .word bad               ; $8B UNTIL
+        .word h_exit            ; $8C EXIT
+                                ;: EXIT DO
+        .word h_if              ; $8D IF
+                                ;: IF cond THEN stmt [ELSE stmt]  single line; the arm is one statement
+        .word bad               ; $8E THEN
+        .word h_else            ; $8F ELSE
+                                ;: ELSE stmt
+        .word h_else            ; $90 ELSEIF
+                                ;: ELSEIF cond THEN stmt
+        .word h_end             ; $91 END
+                                ;: END
+        .word h_ret             ; $92 RETURN
+                                ;: RETURN
+        .word h_call            ; $93 CALL
+                                ;: CALL name  no parameters and no locals
+        .word bad               ; $94 AS
+        .word bad               ; $95 INT
+                                ;: INT(a:float) -> int  floors; the float-to-integer crossing
+        .word bad               ; $96 BYTE
+        .word bad               ; $97 PEEK
+                                ;: PEEK(addr:int) -> int  a function, not a statement !intonly
+        .word h_poke            ; $98 POKE
+                                ;: POKE addr:int, value:int !intonly
+        .word bad               ; $99 AND
+        .word bad               ; $9A OR
+        .word bad               ; $9B XOR
+        .word bad               ; $9C CARD
+        .word bad               ; $9D AT
+        .word h_sys             ; $9E SYS
+                                ;: SYS addr:int  jumps; the routine's own RET comes back !intonly
+        .word bad               ; $9F EXTERN
+        .word bad               ; $A0 INCLUDE
+        .word bad               ; $A1 INLINE
+        .word h_goto            ; $A2 GOTO
+                                ;: GOTO line:int
+        .word bad               ; $A3 WEND
+        .word bad               ; $A4 NUM
+                                ;: (reserved)  K_NUM: a numeric literal with two binary bytes after it. The "?" entry in TOKTAB holds the slot open
+        .word h_mode            ; $A5 MODE
+                                ;: MODE n:int !intonly
+        .word h_vsync           ; $A6 VSYNC
+                                ;: VSYNC  waits for the next frame
+        .word bad          ; $A7 SCROLL
+                                ;: (removed)  was SCROLL dx, dy -- POKE VID_SCX/VID_SCY, see 04a-registers.md
+        .word bad         ; $A8 PALETTE
+                                ;: (removed)  was PALETTE slot, colour -- POKE PAL_IDX then PAL_DATA twice, high byte first
+        .word bad          ; $A9 SPRITE
+                                ;: (removed)  was SPRITE n, x, y, pattern, attr -- POKE SPR_IDX = n*8, eight bytes to SPR_DATA, then SPR_CTRL
+        .word bad           ; $AA VPOKE
+                                ;: (removed)  was VPOKE addr, value -- POKE VRAM_ADDR_L/H, VRAM_STEP, then VRAM_DATA, which auto-steps
+        .word h_sound           ; $AB SOUND
+                                ;: SOUND voice:int, pitch:int, volume:int, length:int !intonly
+        .word bad               ; $AC HLINE
+                                ;: (removed)  was HLINE x, y, n, colour -- set PIX_X/PIX_Y, then POKE PIX_DATA n times; the port steps X itself
+        .word h_plot            ; $AD PLOT
+                                ;: PLOT x:int, y:int, colour:int !intonly
+        .word h_line            ; $AE LINE
+                                ;: LINE x1:int, y1:int, x2:int, y2:int, colour:int !intonly
+        .word h_input           ; $AF INPUT
+                                ;: INPUT var  a line of text; the variable's suffix decides -- string, float or integer
+        .word h_else            ; $B0 DATA -- executed, it is a line to
+                                ;: DATA n[, n]...  numbers only; skipped when execution reaches it
+                                ;   step over, which is ELSE's whole job
+        .word h_read            ; $B1 READ
+                                ;: READ var[, var]...  scalar targets only
+        .word h_restore         ; $B2 RESTORE
+                                ;: RESTORE
+        .word bad               ; $B3 STEP -- a clause, like TO
+        .word h_on              ; $B4 ON
+                                ;: ON e:int GOTO line[, line]...  literal lines; out of range falls through
+        .word bad            ; $B5 TILE
+                                ;: (removed)  was TILE x, y, tile, attr -- the map entry through the VRAM port
+        .word h_clg             ; $B6 CLG
+                                ;: CLG colour:int !intonly
+        .word h_pitch           ; $B7 PITCH
+                                ;: PITCH voice:int, pitch:int !intonly
+        .word h_gtext           ; $B8 GTEXT
+                                ;: GTEXT x:int, y:int, text:string !intonly
+        .word h_list            ; $B9 LIST -- the former editor
+                                ;: LIST [from:int][, to:int]
+        .word h_new             ; $BA NEW     commands, one vocabulary
+                                ;: NEW
+        .word h_free            ; $BB FREE    now: every one runs in a
+                                ;: FREE  prints the bytes left
+        .word h_renum           ; $BC RENUM  program or typed direct
+                                ;: RENUM
+        .word h_del             ; $BD DELETE
+                                ;: DELETE from:int[, to:int]
+        .word h_cls             ; $BE CLS
+                                ;: CLS
+        .word h_save            ; $BF SAVE
+                                ;: SAVE name:string [AT addr:int]
+        .word h_load            ; $C0 LOAD
+                                ;: LOAD name:string [AT addr:int]
+        .word h_dir             ; $C1 DIR
+                                ;: DIR
+        .word h_era             ; $C2 ERA
+                                ;: ERA name:string
+        .word h_compact         ; $C3 COMPACT
+                                ;: COMPACT
+        .word h_drive           ; $C4 DRIVE
+                                ;: DRIVE n:int
+        .word h_rem             ; $C5 REM
+                                ;: REM text  stored verbatim; nothing inside is tokenised
+        ; $C6 is the float literal's marker and never a statement. A
+        ; line cannot begin with one -- tokenise only writes it after a
+        ; digit or a point -- so reaching here means a corrupt line, and
+        ; ?SYNTAX is the right answer.
+        .word bad               ; $C6 !
+                                ;: ! -- reserved  the float literal marker, never a statement
+
+

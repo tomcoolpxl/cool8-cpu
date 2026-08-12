@@ -233,6 +233,260 @@ def compile_bas(source, name, org=None, optimize=False, lower=False,
                          write=write)
 
 
+# ---------------------------------------------------------------------
+# The module stubs, in one place.
+#
+# `sw/interp.asm` calls the console, the store and the disk commands
+# ([D68]). A suite testing the *interpreter* wants those absent, so that
+# a case is a statement and an answer rather than a whole machine; a
+# suite testing a *module* wants the real thing and stubs nothing.
+#
+# **This text was inside `sim/test_interp.py` and three other suites
+# reached in and split it on a comment line to take the half they
+# wanted.** That is the private-copy trap AGENTS.md names, one step from
+# four different ideas of what a stubbed machine is. It lives here, and
+# a suite asks for it by name.
+MODULE_STUBS = """
+; num_put and con_putsn record rather than print, so a case can assert
+; on the answer without a screen. They are what `s_putn` and `s_putsn`
+; were before the port: same job, register arguments.
+num_put:
+        ST   [printed],R0
+        ST   [printed+1],R1
+        LD   R0,[nprint]
+        ADD  R0,#1
+        ST   [nprint],R0
+        RET
+con_putsn:
+        ST   [printlen],R0
+        PUSHW Y
+        LDW  Y,#printed
+        TST  R0
+        BEQ  .ps9
+.ps:    LD   R1,[X]
+        ST   [Y],R1
+        INCW X
+        INCW Y
+        SUB  R0,#1
+        BNE  .ps
+.ps9:   POPW Y
+        LD   R0,[nprint]
+        ADD  R0,#1
+        ST   [nprint],R0
+        RET
+con_emit:
+con_nl:
+con_cls:
+con_puts:
+prg_new:
+prg_free:
+prg_list:
+prg_del:
+prg_renum:
+fsc_name:
+fsc_find:
+fsc_dir:
+fsc_compact:
+fsc_drive:
+fsc_erase:
+fsc_save:
+fsc_save_prog:
+fsc_load:
+fsc_load_prog:
+fsc_merge:
+in_key:
+in_get:
+main_pre:
+main_err:
+ed_direct:
+        RET
+; prg_find has to work, not answer a constant: `CALL` and `GOTO` both
+; look a record up through it. The real one walks from $0200; a suite
+; that assembles its program after the code walks from `prog` instead,
+; which is the one thing this stub exists to change.
+prg_find:
+        PUSH R0
+        PUSH R1
+        LDW  X,#prog
+.pf:    MOV  R0,XL              ; past the end of the program?
+        MOV  R1,XH
+        LD   R2,[$0016]         ; PEND
+        LD   R3,[$0017]
+        SUB  R0,R2
+        SBC  R1,R3
+        BHS  .pfd
+        LD   R2,[X]             ; this record's number
+        PUSHW X
+        INCW X
+        LD   R3,[X]
+        POPW X
+        LD   R0,[SP+1]          ; the one wanted, off the two pushes
+        LD   R1,[SP+0]
+        SUB  R2,R0
+        SBC  R3,R1
+        BHS  .pfd               ; >= wanted: this is it
+        PUSHW X                 ; on to the next: 4 + its length
+        INCW X
+        INCW X
+        LD   R0,[X]
+        POPW X
+        ADD  R0,#4
+        CLR  R1
+        ADDW X,R0
+        BRA  .pf
+.pfd:   POP  R1
+        POP  R0
+        RET
+PROGEND: .word 0
+FSOK:   .byte 0
+FSADDR: .word 0
+FSLENW: .word 0
+LBUF:   .space 8
+LLEN:   .byte 0
+EDIP:   .byte 0
+MSGFREE: .asciz " BYTES FREE"
+"""
+
+
+def call(m, syms, routine, regs=(), at=0x0200, budget=20_000_000):
+    """Call one routine in the loaded system image and come back.
+
+        m = H.session()
+        H.load(m, code)
+        H.call(m, syms, "tok_line")
+
+    **A trampoline, not a driver.** Every module suite used to assemble
+    its own program in front of the module it was testing, with its own
+    include list and its own stubs for whatever that dragged in -- and
+    since `sw/interp.asm` names every command handler, "whatever that
+    dragged in" was the entire system. Four suites ended up splitting one
+    stub block apart on a comment line to take the half they wanted,
+    which is the private-copy trap AGENTS.md names, arrived at from a
+    direction nobody planned.
+
+    There is one image ([D68]), so a suite loads it and pokes four bytes
+    of `CALL routine / HALT` somewhere harmless. No driver, no stubs, no
+    second idea of what the machine is -- and the routine under test is
+    the one that ships, not a copy of it assembled differently.
+
+    `regs` is (R0, R1, R2, R3), each None to leave alone.
+    """
+    addr = syms[routine.lower()]
+    m.bus.mem[at] = 0x29                        # CALL abs16
+    m.bus.mem[at + 1] = addr & 0xFF
+    m.bus.mem[at + 2] = addr >> 8
+    m.bus.mem[at + 3] = 0x21                    # HALT
+    for i, v in enumerate(regs):
+        if v is not None:
+            setattr(m.cpu, "r%d" % i, v)
+    m.cpu.pc = at
+    why = m.run(budget=budget)
+    if why != "halt":
+        raise SystemExit("%s did not return: %s, pc $%04X"
+                         % (routine, why, m.cpu.pc))
+    return m
+
+
+def load(m, code, org=0xA000, sp=0x0200):
+    """The system image into a machine, ready to be called into."""
+    m.bus.mem[org:org + len(code)] = code
+    m.cpu.sp = sp
+    m.romen = False
+    return m
+
+
+def build_system(name="basic"):
+    """The system image: `sw/main.asm` and everything it includes.
+
+    **This is what `build_bas("basic.bas")` used to be.** The editor was
+    compiled BASIC and the interpreter was assembly, so a suite that
+    wanted one without the other assembled it against a private block of
+    stubs — and by the end four suites were splitting that block apart
+    with string surgery to take the half they wanted, which is the
+    private-copy trap this module exists to stop ([D68]).
+
+    There is one image now. A suite that wants to drive `irun` on a
+    hand-built program loads this and pokes the program in; nothing has
+    to model the half it is not testing, because there is no half.
+    """
+    return assemble(os.path.join(SW, "main.asm"), name=name,
+                    lower=True, write=True)
+
+
+_IMAGE = None
+
+
+def fresh(sp=0x0200):
+    """A machine with the system in it, ready to be called into.
+
+        m, syms = H.fresh()
+        H.call(m, syms, "tok_line")
+
+    **The one line every module suite starts with.** The image is
+    assembled once per process and copied into each new machine, so a
+    suite of twenty cases costs one build rather than twenty.
+
+    The stack sits at $0200 by default, which is also where `H.call`
+    puts its trampoline -- they grow apart, the trampoline upward from
+    $0200 and the stack downward from it, and four bytes of code have
+    never met a stack that deep.
+    """
+    global _IMAGE
+    if _IMAGE is None:
+        _IMAGE = build_system()
+    code, syms = _IMAGE
+    return load(session(), code, sp=sp), syms
+
+
+_EQU = None
+
+
+def drive(body, at=0x0200, sp=0x0200, run=False, budget=20_000_000):
+    """A snippet of assembly, assembled against the real image.
+
+        m, syms = H.drive('''
+                CALL ed_start
+                CALL ed_enter
+        ''', run=True)
+
+    **The linker this project does not have, in six lines.** `H.call`
+    covers a suite that wants one routine; a suite that wants a sequence
+    -- set this up, call that, check what moved -- needs to write code,
+    and writing code meant assembling the module again with stand-ins
+    for everything above it.
+
+    So the image's symbols go in front of the snippet as equates and the
+    snippet is assembled alone. It calls the shipped routines at the
+    addresses they actually occupy. Nothing is stubbed, because nothing
+    is rebuilt.
+
+    Local labels are dropped: `.l` inside a routine is not a name the
+    caller may use, and an equate for it would not assemble anyway.
+    """
+    global _EQU
+    m, syms = fresh(sp=sp)
+    if _EQU is None:
+        # Both cases. The image's table is folded down (`lower=True`) and
+        # the assembler is not case-insensitive, so `TLEN` and `tok_line`
+        # are two different names to it and a snippet may reasonably
+        # write either -- the source it is copied from writes storage in
+        # capitals and routines in lower.
+        _EQU = "".join("%s = $%04X\n%s = $%04X\n" % (n, a, n.upper(), a)
+                       for n, a in sorted(syms.items())
+                       if n.replace("_", "").isalnum() and not n[0].isdigit())
+    code, _ = assemble_text(
+        _EQU + "\n        .org $%04X\n" % at + body + "\n        HALT\n",
+        "drive", lower=True)
+    m.bus.mem[at:at + len(code)] = code
+    m.cpu.pc = at
+    if run:
+        why = m.run(budget=budget)
+        if why != "halt":
+            raise SystemExit("snippet did not halt: %s, pc $%04X"
+                             % (why, m.cpu.pc))
+    return m, syms
+
+
 def build_bas(src, org=0xA000, name=None, optimize=True, lower=True):
     """The system image, the way every suite that boots BASIC wants it:
     `sw/<src>` compiled at `org` with symbols folded down."""

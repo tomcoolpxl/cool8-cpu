@@ -233,40 +233,6 @@ rlit:   INCW Y
         INCW Y
         RET
 
-; tname -- a quoted 8.3 name at Y into the editor's line buffer and
-; through its own parsename, which owns the .EXT and padding rules.
-; Carry set on success.
-tname:  SKIPSP
-        CMP  R2,#34
-        BNE  .no
-        INCW Y
-        CLR  R3
-.cp:    LD   R0,[Y]
-        TST  R0
-        BEQ  .no                ; the line ended inside the quotes
-        CMP  R0,#34
-        BEQ  .end
-        LDW  X,#a_lbuf
-        ADDW X,R3
-        ST   [X],R0
-        INCW Y
-        ADD  R3,#1
-        BRA  .cp
-.end:   INCW Y
-        MOV  R0,R3
-        ST   [v_llen],R0
-        CLR  R0
-        ST   [v_ip],R0
-        PUSHW Y
-        CALL s_parsename
-        POPW Y
-        TST  R0
-        BEQ  .no
-        SEC
-        RET
-.no:    CLC
-        RET
-
 esyn:   MOV  R0,#E_SYN
         ST   [ERR],R0
         RET
@@ -315,9 +281,11 @@ h_list: CALL rangel
         ST   [garg+2],R0
         MOV  R0,#$7F
         ST   [garg+3],R0
-.go:    CALL pshab
-        CALL s_list
-        ADDW SP,#4
+.go:    LD   R0,[garg]          ; the bounds, in registers now
+        LD   R1,[garg+1]
+        LD   R2,[garg+2]
+        LD   R3,[garg+3]
+        CALL prg_list
         JMP  cnext
 
 ; DELETE a[-[b]]
@@ -338,9 +306,11 @@ h_del:  CALL rangel
         ST   [garg+2],R0
         MOV  R0,#$7F
         ST   [garg+3],R0
-.go:    CALL pshab
-        CALL s_deleterange
-        ADDW SP,#4
+.go:    LD   R0,[garg]
+        LD   R1,[garg+1]
+        LD   R2,[garg+2]
+        LD   R3,[garg+3]
+        CALL prg_del
         JMP  cnext
 
 ; RENUM [start [step]]
@@ -367,126 +337,25 @@ h_renum:
         CALL rlit
         ST   [garg+2],R0
         ST   [garg+3],R1
-.go:    CALL pshab
-        CALL s_renumber
-        ADDW SP,#4
+.go:    LD   R0,[garg]          ; start in R0:R1, step in R2
+        LD   R1,[garg+1]
+        LD   R2,[garg+2]
+        CALL prg_renum
         JMP  cnext
 
-h_new:  CALL s_new              ; the program deleted itself: stop, as
+h_new:  CALL prg_new              ; the program deleted itself: stop, as
         MOV  R0,#E_DONE         ; the C64 did
         ST   [ERR],R0
         RET
 
-h_free: CALL s_dofree
+h_free: CALL prg_free           ; the count, then the word for it
+        CALL num_put
+        LDW  X,#MSGFREE
+        CALL con_puts
+        CALL con_nl
         JMP  cnext
 
-h_cls:  CALL s_cls
-        JMP  cnext
-
-h_dir:  CALL s_dodir
-        JMP  cnext
-
-h_compact:
-        CALL s_docompact
-        JMP  cnext
-
-h_drive:
-        CALL eval
-        PUSH R1
-        PUSH R0
-        CALL s_drivecore
-        ADDW SP,#2
-        JMP  cnext
-
-h_era:  CALL tname
-        BCS  .nm
-        JMP  esyn
-.nm:
-        CALL s_eracore
-        JMP  cnext
-
-; SAVE "N"            -- the program
-; SAVE "N" AT a, l    -- l raw bytes from address a (the BBC's *SAVE)
-h_save: CALL tname
-        BCS  .nm
-        JMP  esyn
-.nm:
-        SKIPSP
-        CMP  R2,#$9D            ; AT
-        BEQ  .at
-        CALL s_savecore
-        JMP  cnext
-.at:    INCW Y
-        CALL eval               ; the address
-        PUSH R1
-        PUSH R0
-        CALL sopen              ; the comma
-        CALL eval               ; the length
-        POP  R2                 ; address back: lo then hi
-        POP  R3
-        PUSH R1                 ; args right to left: length first,
-        PUSH R0                 ;   address nearest SP
-        PUSH R3
-        PUSH R2
-        CALL s_savedata
-        ADDW SP,#4
-        JMP  cnext
-
-; LOAD "N"            -- replace; from a program, CHAIN: continue at
-;                        the new first line with variables kept
-; LOAD "N", n         -- merge the file's lines from n up
-; LOAD "N" AT a       -- raw bytes to address a (the BBC's *LOAD)
-h_load: CALL tname
-        BCS  .nm
-        JMP  esyn
-.nm:
-        SKIPSP
-        CMP  R2,#$9D            ; AT
-        BEQ  .at
-        CMP  R2,#$2C            ; , merge
-        BEQ  .mg
-        MOV  R0,#$FF            ; replace: from = -1
-        MOV  R1,#$FF
-        PUSH R1
-        PUSH R0
-        CALL s_loadcore
-        ADDW SP,#2
-        LD   R0,[LREC+1]        ; typed direct: the staged line just
-        CMP  R0,#>DIRBUF        ;   ends, and the editor is back
-        BEQ  .done
-        LD   R0,[v_fok]         ; from a program, and it loaded:
-        TST  R0                 ;   chain into the new program
-        BEQ  .done
-        LD   R0,[v_progend]     ; the walk's bound is the NEW end
-        ST   [PEND],R0
-        LD   R0,[v_progend+1]
-        ST   [PEND+1],R0
-        CLR  R0
-        ST   [LREC],R0
-        MOV  R0,#$02
-        ST   [LREC+1],R0
-        LD   R0,[LREC]
-        LD   R1,[LREC+1]
-        CALL lbound
-        BCS  .go
-        JMP  h_end              ; chained into an empty file: done
-.go:    JMP  stmt               ; NOT cnext: lbound just OPENED the
-                                ;   chained program's first record,
-                                ;   and cnext would walk past it
-.done:  JMP  cnext
-.mg:    INCW Y
-        CALL eval
-        PUSH R1
-        PUSH R0
-        CALL s_loadcore
-        ADDW SP,#2
-        JMP  cnext
-.at:    INCW Y
-        CALL eval
-        PUSH R1
-        PUSH R0
-        CALL s_loaddata
-        ADDW SP,#2
+h_cls:  CALL con_cls
         JMP  cnext
 
 h_run:  LD   R0,[LREC+1]        ; direct only: a program restarting
@@ -494,7 +363,9 @@ h_run:  LD   R0,[LREC+1]        ; direct only: a program restarting
         BEQ  .ok
         JMP  esyn
 .ok:
-        CALL s_dorun
+        CALL main_pre           ; where the program and the heap are
+        CALL irun
+        CALL main_err           ; ?WHAT IN nn, if it set ERR
         MOV  R0,#E_DONE
         ST   [ERR],R0
         RET
@@ -673,142 +544,6 @@ stmt:
 bad:    MOV  R0,#E_SYN
         ST   [ERR],R0
         RET
-
-; $80..$A4. Everything not implemented lands on `bad`, which is the
-; honest answer and costs one slot each.
-sttab:
-        .word h_print           ; $80 PRINT
-                                ;: PRINT [item][; | ,]...  strings and numbers; a trailing separator holds the newline
-        .word h_sub             ; $81 SUB -- a definition, skipped
-                                ;: SUB name  a definition; stepped over when execution reaches it
-        .word h_sub             ; $82 FUNCTION
-                                ;: FUNCTION name  parsed as SUB; there are no return values
-        .word h_dim             ; $83 DIM
-                                ;: DIM name(size:int)  one dimension, integer elements !intonly
-        .word h_run             ; $84 RUN, up from the tail when
-                                ;: RUN
-                                ;   CONST left
-        .word h_for             ; $85 FOR
-                                ;: FOR var = from:int TO to:int [STEP step:int]  eight deep !intonly
-        .word h_next            ; $86 NEXT
-                                ;: NEXT [var]  naming an outer var closes the inner loops
-        .word bad               ; $87 TO
-        .word h_do              ; $88 DO
-                                ;: DO [WHILE cond | UNTIL cond]
-        .word h_loop            ; $89 LOOP
-                                ;: LOOP [WHILE cond | UNTIL cond]
-        .word bad               ; $8A WHILE
-        .word bad               ; $8B UNTIL
-        .word h_exit            ; $8C EXIT
-                                ;: EXIT DO
-        .word h_if              ; $8D IF
-                                ;: IF cond THEN stmt [ELSE stmt]  single line; the arm is one statement
-        .word bad               ; $8E THEN
-        .word h_else            ; $8F ELSE
-                                ;: ELSE stmt
-        .word h_else            ; $90 ELSEIF
-                                ;: ELSEIF cond THEN stmt
-        .word h_end             ; $91 END
-                                ;: END
-        .word h_ret             ; $92 RETURN
-                                ;: RETURN
-        .word h_call            ; $93 CALL
-                                ;: CALL name  no parameters and no locals
-        .word bad               ; $94 AS
-        .word bad               ; $95 INT
-                                ;: INT(a:float) -> int  floors; the float-to-integer crossing
-        .word bad               ; $96 BYTE
-        .word bad               ; $97 PEEK
-                                ;: PEEK(addr:int) -> int  a function, not a statement !intonly
-        .word h_poke            ; $98 POKE
-                                ;: POKE addr:int, value:int !intonly
-        .word bad               ; $99 AND
-        .word bad               ; $9A OR
-        .word bad               ; $9B XOR
-        .word bad               ; $9C CARD
-        .word bad               ; $9D AT
-        .word h_sys             ; $9E SYS
-                                ;: SYS addr:int  jumps; the routine's own RET comes back !intonly
-        .word bad               ; $9F EXTERN
-        .word bad               ; $A0 INCLUDE
-        .word bad               ; $A1 INLINE
-        .word h_goto            ; $A2 GOTO
-                                ;: GOTO line:int
-        .word bad               ; $A3 WEND
-        .word bad               ; $A4 NUM
-                                ;: (reserved)  K_NUM: a numeric literal with two binary bytes after it. The "?" entry in TOKTAB holds the slot open
-        .word h_mode            ; $A5 MODE
-                                ;: MODE n:int !intonly
-        .word h_vsync           ; $A6 VSYNC
-                                ;: VSYNC  waits for the next frame
-        .word bad          ; $A7 SCROLL
-                                ;: (removed)  was SCROLL dx, dy -- POKE VID_SCX/VID_SCY, see 04a-registers.md
-        .word bad         ; $A8 PALETTE
-                                ;: (removed)  was PALETTE slot, colour -- POKE PAL_IDX then PAL_DATA twice, high byte first
-        .word bad          ; $A9 SPRITE
-                                ;: (removed)  was SPRITE n, x, y, pattern, attr -- POKE SPR_IDX = n*8, eight bytes to SPR_DATA, then SPR_CTRL
-        .word bad           ; $AA VPOKE
-                                ;: (removed)  was VPOKE addr, value -- POKE VRAM_ADDR_L/H, VRAM_STEP, then VRAM_DATA, which auto-steps
-        .word h_sound           ; $AB SOUND
-                                ;: SOUND voice:int, pitch:int, volume:int, length:int !intonly
-        .word bad               ; $AC HLINE
-                                ;: (removed)  was HLINE x, y, n, colour -- set PIX_X/PIX_Y, then POKE PIX_DATA n times; the port steps X itself
-        .word h_plot            ; $AD PLOT
-                                ;: PLOT x:int, y:int, colour:int !intonly
-        .word h_line            ; $AE LINE
-                                ;: LINE x1:int, y1:int, x2:int, y2:int, colour:int !intonly
-        .word h_input           ; $AF INPUT
-                                ;: INPUT var  a line of text; the variable's suffix decides -- string, float or integer
-        .word h_else            ; $B0 DATA -- executed, it is a line to
-                                ;: DATA n[, n]...  numbers only; skipped when execution reaches it
-                                ;   step over, which is ELSE's whole job
-        .word h_read            ; $B1 READ
-                                ;: READ var[, var]...  scalar targets only
-        .word h_restore         ; $B2 RESTORE
-                                ;: RESTORE
-        .word bad               ; $B3 STEP -- a clause, like TO
-        .word h_on              ; $B4 ON
-                                ;: ON e:int GOTO line[, line]...  literal lines; out of range falls through
-        .word bad            ; $B5 TILE
-                                ;: (removed)  was TILE x, y, tile, attr -- the map entry through the VRAM port
-        .word h_clg             ; $B6 CLG
-                                ;: CLG colour:int !intonly
-        .word h_pitch           ; $B7 PITCH
-                                ;: PITCH voice:int, pitch:int !intonly
-        .word h_gtext           ; $B8 GTEXT
-                                ;: GTEXT x:int, y:int, text:string !intonly
-        .word h_list            ; $B9 LIST -- the former editor
-                                ;: LIST [from:int][, to:int]
-        .word h_new             ; $BA NEW     commands, one vocabulary
-                                ;: NEW
-        .word h_free            ; $BB FREE    now: every one runs in a
-                                ;: FREE  prints the bytes left
-        .word h_renum           ; $BC RENUM  program or typed direct
-                                ;: RENUM
-        .word h_del             ; $BD DELETE
-                                ;: DELETE from:int[, to:int]
-        .word h_cls             ; $BE CLS
-                                ;: CLS
-        .word h_save            ; $BF SAVE
-                                ;: SAVE name:string [AT addr:int]
-        .word h_load            ; $C0 LOAD
-                                ;: LOAD name:string [AT addr:int]
-        .word h_dir             ; $C1 DIR
-                                ;: DIR
-        .word h_era             ; $C2 ERA
-                                ;: ERA name:string
-        .word h_compact         ; $C3 COMPACT
-                                ;: COMPACT
-        .word h_drive           ; $C4 DRIVE
-                                ;: DRIVE n:int
-        .word h_rem             ; $C5 REM
-                                ;: REM text  stored verbatim; nothing inside is tokenised
-        ; $C6 is the float literal's marker and never a statement. A
-        ; line cannot begin with one -- tokenise only writes it after a
-        ; digit or a point -- so reaching here means a corrupt line, and
-        ; ?SYNTAX is the right answer.
-        .word bad               ; $C6 !
-                                ;: ! -- reserved  the float literal marker, never a statement
 
 ; ---------------------------------------------------------------------
 ; REM, and the apostrophe stmt sends here: a comment.
@@ -1164,8 +899,11 @@ h_poke:
 ; because this file is what both include paths share: sim/test_interp.py
 ; builds interp.asm against stubs and never sees the editor.
 ; ---------------------------------------------------------------------
-emitc:  CALLB1 s_emit
-        RET
+; **`CALLB1` is gone with the language that needed it.** `con_emit`
+; takes the character in R0, which is where every caller already had it,
+; so the macro that pushed it and cleared the stack afterwards has
+; nothing left to do ([D68]).
+emitc:  JMP  con_emit
 
 ; ---------------------------------------------------------------------
 ; PRINT <expr> -- one number, then a newline. The editor's own screen
@@ -1197,12 +935,8 @@ h_print:
         CALL fprint
         POPW Y
         BRA  .str
-.num:   PUSHW Y                 ; saved *first*: the argument has to be
-        PUSH R1                 ;   on top when the call reads [SP+2]
-        PUSH R0
-        CALL s_putn
-        POP  R0
-        POP  R1
+.num:   PUSHW Y                 ; num_put takes R0:R1 and walks Y
+        CALL num_put
         POPW Y
         BRA  .sep
         ; A heap string is length-counted, so PRINT needs a sibling of
@@ -1214,16 +948,12 @@ h_print:
 .str:   PUSHW Y
         CLR  R2
         PUSH R2                 ; n, high byte
-        LD   R2,[SLEN]
-        PUSH R2                 ; n, low
+        LD   R0,[SACC]          ; X = the accumulator, R0 = how much
+        MOV  XL,R0
         LD   R0,[SACC+1]
-        PUSH R0                 ; p, high
-        LD   R0,[SACC]
-        PUSH R0                 ; p, low -- and so on top, at [SP+2]
-        CALL s_putsn
-        POP  R0
-        POP  R0
-        POP  R0
+        MOV  XH,R0
+        LD   R0,[SLEN]
+        CALL con_putsn
         POP  R0
         POPW Y
         ; spent: the next item may be a string too, and a number after
@@ -1239,13 +969,8 @@ h_print:
         CALL pnl
         JMP  stmt
 .comma: PUSHW Y
-        CLR  R0
-        PUSH R0
         MOV  R0,#$20
-        PUSH R0
-        CALL s_emit
-        POP  R0
-        POP  R0
+        CALL con_emit
         POPW Y
 .semi:  INCW Y
         SKIPSP
@@ -1254,7 +979,7 @@ h_print:
         JMP  stmt               ; a trailing separator: no newline
 
 pnl:    PUSHW Y
-        CALL s_newline
+        CALL con_nl
         POPW Y
         RET
 
@@ -1323,11 +1048,9 @@ h_else: LD   R0,[Y]
 ; ---------------------------------------------------------------------
 h_goto:
         CALL eval               ; the line number
-goton:  PUSH R1                 ; ON joins here with its pick in R0/R1
-        PUSH R0
-        CALL s_findline
-        POP  R2
-        POP  R2
+goton:  CALL prg_find           ; ON joins here with its pick in R0:R1
+        MOV  R0,XL
+        MOV  R1,XH
         ST   [LREC],R0
         ST   [LREC+1],R1
         CALL openline
@@ -2031,6 +1754,8 @@ prim:
         SKIPSP
         CMP  R2,#K_NUM
         BEQ  .num
+        CMP  R2,#K_FLT          ; a float literal: three packed bytes
+        BEQ  .flt
         CMP  R2,#$28            ; '('
         BEQ  .paren
         CMP  R2,#$2D            ; unary minus
@@ -2111,6 +1836,22 @@ prim:
         INCW Y
         LD   R1,[Y]
         INCW Y
+        RET
+        ; A float literal. `tok_line` laid the three packed bytes down
+        ; with `fstore`, which is the same shape a float variable holds,
+        ; so `fload` reads it back and the literal and the variable
+        ; cannot disagree. STYPE 2 is what tells everything above that
+        ; the value is in FACC and not in R0:R1 ([D68]).
+.flt:   INCW Y
+        PUSHW Y                 ; fp.asm owns Y; the caller's is the
+        MOVW X,Y                ;   token pointer, so it is saved
+        CALL fload
+        POPW Y
+        INCW Y
+        INCW Y
+        INCW Y
+        MOV  R0,#2
+        ST   [STYPE],R0
         RET
 .paren: INCW Y
         CALL edin
@@ -3197,7 +2938,7 @@ sasc:   CALL sopen
 ; is the one place that turns both a terminal's ESC [ A and the PS/2
 ; decoder's $80+n into K_UP, so a program gets the same code for a
 ; cursor key whichever keyboard the machine has in front of it.
-inkey:  CALL s_serialkey
+inkey:  CALL in_key
         PUSH R0
         CLR  R0
         ST   [STYPE],R0
@@ -4240,7 +3981,7 @@ h_input:
         PUSH R0
         PUSHW X
         PUSHW Y                 ; the editor's routines use Y freely
-.k:     CALL s_getkey
+.k:     CALL in_get
         TST  R1
         BNE  .k                 ; a named key is not text
         CMP  R0,#$0D

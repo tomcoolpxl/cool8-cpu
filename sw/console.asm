@@ -970,3 +970,35 @@ con_at: ST   [CCY],R0
 ; which the module rule in [D68] forbids and which is exactly the smell
 ; that says a routine is in the wrong file.
 ; ---------------------------------------------------------------------
+
+; One message table for the editor and the interpreter alike. Entries
+; 0-18 are indexed by ERR - 1; the tail is the disk's, by the same
+; arithmetic, so a failed SAVE stops the statement the way every other
+; error does rather than printing and carrying on.
+RUNTAB:
+        .asciz "SYNTAX"
+        .asciz "FORS"
+        .asciz "NO FOR"
+        .asciz "COMPLEX"
+        .asciz "OUT OF MEM"
+        .asciz "VARS"
+        .asciz "INDEX"
+        .asciz "STR LEN"
+        .asciz "TYPE"
+        .asciz "ASM"
+        .asciz "NO INSTR"
+        .asciz "SYMBOL"
+        .asciz "ERR"
+        .asciz "BRANCH"
+        .asciz "DIV BY 0"
+        .asciz "LOOP"
+        .asciz "CALL"
+        .asciz "BREAK"
+        .asciz "NO DATA"
+        .asciz "DISK FULL"
+        .asciz "NO FILE"
+        .byte 0
+
+MSGIN:    .asciz " IN "
+MSGFREE:  .asciz " BYTES FREE"
+MSGKFREE: .asciz "K FREE"

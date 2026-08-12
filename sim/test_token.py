@@ -1,22 +1,17 @@
 #!/usr/bin/env python3
-"""The tokeniser module, driven directly.
+"""The tokeniser, driven inside the real system.
 
     python sim/test_token.py
 
-`sw/token.asm` turns typed text into the stored form and back. It is the
-third module of the [D68] port and nothing calls it yet.
+`sw/token.asm` turns typed text into the stored form and back.
 
-**It needs the interpreter behind it**, which the other module suites do
-not: the number parser is `snum` and the float packer is `fstore`, both
-of which live below the tokeniser in the design and above it in the
-tree -- the call upward `sw/token.asm`'s header admits to and
-ASM_MOVE_PLAN.md carries as owed. So this reuses `sim/test_interp.py`'s
-harness verbatim rather than growing a second set of stubs for the same
-twenty-three editor routines.
-
-That reuse is the point of the arrangement: the stub block is one
-string in one file, and a suite that needed its own copy would be the
-private-copy trap AGENTS.md names.
+**No driver and no stubs.** This used to assemble the tokeniser in front
+of a hand-written entry sequence and a block of stand-ins for everything
+`sw/interp.asm` dragged in -- and then split that block on a comment
+line to take half of it, because the tokeniser calls `snum` and `fstore`
+which sit above it. There is one image now ([D68]): `H.fresh()` loads
+it and `H.call()` pokes four bytes of `CALL tok_line / HALT`, so the
+routine under test is the one that ships.
 """
 
 import os
@@ -26,11 +21,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import harness as H                                      # noqa: E402
 from harness import check                                # noqa: E402
-import test_interp as TI                                 # noqa: E402
 
 sys.path.insert(0, os.path.join(H.ROOT, "tools"))
 
-import memmap                                            # noqa: E402
 import vocab                                             # noqa: E402
 
 FAILS = H.FAILS
@@ -40,50 +33,20 @@ T_LIT = K["?"]
 K_FLT = K["!"]
 
 
-def build():
-    """A driver, the tokeniser, and the interpreter it leans on.
-
-    `TI.HARNESS` opens with `.org $0200` and its own entry code, so the
-    driver goes in front of it and the includes come along behind.
-    """
-    body = """
-        .org $0200
-main:   CALL tok_line
-        HALT
-        .include "token.asm"
-"""
-    # TI.HARNESS carries the stubs and the interpreter includes; drop
-    # its own .org and entry sequence, which this driver replaces.
-    stubs = TI.HARNESS.split("; ---- stubs standing in for sw/basic.bas")[1]
-    return H.assemble_text(
-        body + "\n; ---- stubs\n" + stubs, "tokenise", lower=True)
-
-
-def tokenise(code, syms, text):
+def t(text):
     """Put `text` in LBUF, run tok_line, hand back the token bytes."""
-    m = H.session()
-    m.bus.mem[0x200:0x200 + len(code)] = code
-    m.cpu.pc = 0x200
-    m.cpu.sp = memmap.RAMTOP
-    m.romen = False
+    m, syms = H.fresh()
     lbuf = syms["lbuf"]
     for i, ch in enumerate(text):
         m.bus.mem[lbuf + i] = ord(ch)
     m.bus.mem[syms["llen"]] = len(text)
-    if m.run(budget=20_000_000) != "halt":
-        raise SystemExit("tok_line did not halt at $%04X" % m.cpu.pc)
+    H.call(m, syms, "tok_line")
     n = m.bus.mem[syms["tlen"]]
     return list(m.bus.mem[syms["tbuf"]:syms["tbuf"] + n])
-
 
 def main():
     print("  the tokeniser, sw/token.asm")
     print()
-    code, syms = build()
-
-    def t(text):
-        return tokenise(code, syms, text)
-
     check(t("PRINT") == [K["PRINT"]],
           "a keyword becomes one byte", "%s" % t("PRINT"))
     check(t("print") == [K["PRINT"]],
