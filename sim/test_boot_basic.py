@@ -30,7 +30,8 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-import harness as H                                      # noqa: E402
+import harness as H
+import memmap                                      # noqa: E402
 from harness import check                                # noqa: E402
 
 sys.path.insert(0, os.path.join(H.ROOT, "tools"))
@@ -172,7 +173,7 @@ def main():
     print()
 
     code, syms = B.build()
-    boot = mkboot.build(code, dest=0xA000, build_dir=BUILD)
+    boot = mkboot.build(code, dest=memmap.ORG, build_dir=BUILD)
     print(f"  basic.bin {len(code):,} bytes, "
           f"BOOT.BIN {len(boot):,} with its stub")
     print()
@@ -190,12 +191,12 @@ def main():
     check(not m.romen,
           "and the stub dropped the overlay before jumping",
           "SYSCTRL=$%02X" % m.bus.read(ioregs.addr_of("SYS_CTRL")))
-    check(bytes(m.bus.mem[0xA000:0xA000 + 64]) == code[:64],
+    check(bytes(m.bus.mem[memmap.ORG:memmap.ORG + 64]) == code[:64],
           "the image was relocated to $A000, byte for byte")
-    check(bytes(m.bus.mem[0xA000 + len(code) - 64:0xA000 + len(code)])
+    check(bytes(m.bus.mem[memmap.ORG + len(code) - 64:memmap.ORG + len(code)])
           == code[-64:],
           "including its last bytes, which live under the ROM window",
-          "ends at $%04X" % (0xA000 + len(code) - 1))
+          "ends at $%04X" % (memmap.ORG + len(code) - 1))
 
     # Where the CPU actually is, because "the vector is still the ROM's"
     # has two causes -- BASIC did not install it, or BASIC has not got

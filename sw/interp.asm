@@ -2013,19 +2013,25 @@ halloc: LD   R2,[HEAP]
         LD   R3,[HEAP+1]
         SUB  R2,R0
         SBC  R3,R1
-        PUSH R3
-        PUSH R2
-        LD   R0,[NNAME]
-        CALL nentry             ; X = one past the last name-table entry
-        POP  R2
-        POP  R3
-        MOV  R0,R2              ; would the heap come down past it?
-        MOV  R1,XL
+        ; **Against the region's floor, not the name table.** The heap
+        ; used to come down from USERTOP towards the program text, so
+        ; the test was "has it reached the names?" -- which made every
+        ; allocation depend on how long the program was. It has its own
+        ; region between the screen and the image now, so the floor is a
+        ; constant and a program can no longer collide with its own
+        ; arrays.
+        MOV  R0,R2
+        MOV  R1,#<HEAPBOT
         SUB  R0,R1
         MOV  R0,R3
-        MOV  R1,XH
+        MOV  R1,#>HEAPBOT
         SBC  R0,R1
-        BLT  .full
+        ; **BLO, not BLT.** The old floor was the name table down at
+        ; $02xx, where a signed compare happened to be right; HEAPBOT is
+        ; $A000, which reads as negative, so BLT never fired and a DIM
+        ; of 40,000 bytes was allowed to allocate below the screen.
+        ; Carry clear is borrow is unsigned less-than ([D9]).
+        BLO  .full
         ST   [HEAP],R2
         ST   [HEAP+1],R3
         MOV  R0,R2

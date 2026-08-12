@@ -35,7 +35,8 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-import harness as H                                      # noqa: E402
+import harness as H
+import memmap                                      # noqa: E402
 from harness import check                                # noqa: E402
 
 sys.path.insert(0, os.path.join(H.ROOT, "tools"))
@@ -44,7 +45,7 @@ import cool8rsvm as vm                                   # noqa: E402
 import cool8disk as disk                                 # noqa: E402
 
 ROOT, BUILD = H.ROOT, H.BUILD
-ORG = 0xA000
+ORG = memmap.ORG
 IMG = os.path.join(BUILD, "basic.img")
 FAILS = H.FAILS
 

@@ -62,6 +62,7 @@ sys.path.insert(0, HERE)
 import cool8asm                                          # noqa: E402
 import cool8bas as bas                                   # noqa: E402
 import cool8rsvm as _vm                                  # noqa: E402
+import memmap                                            # noqa: E402
 
 os.makedirs(BUILD, exist_ok=True)
 
@@ -295,8 +296,9 @@ def call(m, syms, routine, regs=(), at=0x0200, budget=20_000_000):
     return m
 
 
-def load(m, code, org=0xA000, sp=0x0200):
+def load(m, code, org=None, sp=0x0200):
     """The system image into a machine, ready to be called into."""
+    org = memmap.ORG if org is None else org
     m.bus.mem[org:org + len(code)] = code
     m.cpu.sp = sp
     m.romen = False

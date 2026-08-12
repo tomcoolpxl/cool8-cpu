@@ -12,7 +12,7 @@
 ; typed ten seconds ago, or a line of a LIST.
 ; ---------------------------------------------------------------------
 
-        .org  $A000
+        .include "org.asm"   ; generated: top-aligned under the I/O page
 
 ; **The first three bytes of the image are its entry point.**
 ;
@@ -122,9 +122,15 @@ main_pre:
         ST   [CSTK],R0
         MOV  R0,#>CSTKBUF
         ST   [CSTK+1],R0
-        MOV  R0,#<USERTOP
+        ; **The heap has its own region now.** It came down from
+        ; USERTOP, so a DIM and the program text ate the same bytes and
+        ; `FREE` told you about only one of them. Top-aligning the image
+        ; leaves a gap between the screen and it -- HEAPTOP..HEAPBOT in
+        ; the generated sw/org.asm -- and that gap is exactly "what
+        ; BASIC is not using", so it grows whenever the image shrinks.
+        MOV  R0,#<HEAPTOP
         ST   [HEAP],R0
-        MOV  R0,#>USERTOP
+        MOV  R0,#>HEAPTOP
         ST   [HEAP+1],R0
         LD   R0,[PROGEND]       ; PEND and the name table both start at
         ST   [PEND],R0          ;   the end of the program text
