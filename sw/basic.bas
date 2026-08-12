@@ -37,6 +37,7 @@
 ' ---------------------------------------------------------------------
 
 EXTERN s_putn
+EXTERN s_number
 EXTERN TOKTAB
 EXTERN RUNTAB
 EXTERN iisr
@@ -1172,8 +1173,12 @@ SUB dorun()
         ST   [$0014],R0
         MOV  R0,#$02
         ST   [$0015],R0
-        MOV  R0,#$00            ; ACBASE: code goes after the program
-        ST   [$00DC],R0
+        ; ACBASE was the on-machine assembler's output base and [D63]
+        ; deleted the assembler. Nothing in the image reads $00DC any
+        ; more -- only sw/asm.asm did, and that is out of the build --
+        ; and the byte now belongs to the float operand stack, so the
+        ; write was a leftover aimed into live storage. Harmless only
+        ; because FSTK is empty when RUN starts.
         MOV  R0,#$7F            ; SACC = $7F00
         ST   [$0034],R0
         MOV  R0,#$00
@@ -1454,33 +1459,8 @@ SUB skipsp()
 END SUB
 
 ' A decimal number at ip, or -1 if there is not one.
-FUNCTION number() AS INT
-  DIM v AS INT
-  DIM any AS BYTE
-  v = 0
-  any = 0
-  CALL skipsp()
-  ' A comma between arguments is a separator, not a value. RENUMBER
-  ' 100,5 was reading the step as absent and defaulting it to 10.
-  IF ip < llen THEN
-    IF lbuf(ip) = 44 THEN
-      ip = ip + 1
-      CALL skipsp()
-    END IF
-  END IF
-  DO WHILE ip < llen
-    IF isdigit(lbuf(ip)) = 0 THEN
-      EXIT DO
-    END IF
-    v = v * 10 + (lbuf(ip) - 48)
-    any = 1
-    ip = ip + 1
-  LOOP
-  IF any = 0 THEN
-    RETURN 0 - 1
-  END IF
-  RETURN v
-END FUNCTION
+' number() is sw/ed.asm's s_number now: the shared parser
+' snumi, plus a position. See docs/01-decisions.md D66.
 
 ' A file name at ip -- NAME, "NAME", or either with .EXT -- into fname as
 ' the eleven-byte 8.3 field the directory holds. 1 if there was one.
@@ -2018,7 +1998,7 @@ SUB enter(r AS INT)
     RETURN
   END IF
   IF isdigit(lbuf(ip)) <> 0 THEN
-    n = number()
+    n = s_number()
     ' the rest of the row is the line; drop one separating space
     IF ip < llen THEN
       IF lbuf(ip) = 32 THEN

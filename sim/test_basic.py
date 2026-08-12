@@ -205,18 +205,45 @@ def trace(label, text, n=40, into=True):
     under the editor's screen routines.
     """
     code, syms = build()
-    if label not in syms:
+    # **`-` as the label means "I do not know where it is."** Type the
+    # lines, let it run, and trace from wherever the PC ended up. That
+    # is the question a hang actually asks, and a breakpoint cannot
+    # answer it, because not knowing where to put one is the problem.
+    # Several lines may be given, separated by `;`.
+    if label != "-" and label not in syms:
         raise SystemExit("no symbol %r" % label)
     M = Machine(code, syms)
     M.syms_progend = syms["v_progend"]
     M.settle()
-    M.m.breakpoints.add(syms[label])
-    M.m.type(text + "\r")
-    why = M.m.run(cycles=40_000_000)
-    print("  %s, breaking at %s ($%04X)" % (text, label, syms[label]))
-    print("  run -> %s" % why)
+    if label != "-":
+        M.m.breakpoints.add(syms[label])
+    why = None
+    for part in text.split(";"):
+        # `!` prefix drives it the way the suites do -- through `cmd`,
+        # which settles after every chunk -- so a settle that never
+        # succeeds fails here, on the input that caused it, instead of
+        # forty million cycles later with no idea which line it was.
+        if part.startswith("!"):
+            try:
+                M.cmd(part[1:])
+            except SystemExit as e:
+                print("  settle failed on %r: %s" % (part[1:], e))
+                print("  pc now $%04X, sp $%04X" % (M.m.cpu.pc, M.m.cpu.sp))
+                print()
+                print(M.m.trace_report(M.m.trace(n, syms, into=into)))
+                return 1
+            why = "settled"
+            continue
+        M.m.type(part + "\r")
+        why = M.m.run(cycles=40_000_000)
+        if why == "breakpoint":
+            break
+    print("  %s, %s" % (text, ("breaking at %s ($%04X)"
+                               % (label, syms[label])) if label != "-"
+                        else "run until it stopped"))
+    print("  run -> %s, pc now $%04X" % (why, M.m.cpu.pc))
     print()
-    if why != "breakpoint":
+    if label != "-" and why != "breakpoint":
         print("  never reached it")
         return 1
     print(M.m.trace_report(M.m.trace(n, syms, into=into)))
@@ -264,27 +291,28 @@ def main():
     # at it, so "10.5" is the case where a careless port would change
     # the language. Pinned at what the editor does today.
     M.cmd("NEW")
-    M.type("  40 PRINT 4
-")
+    M.type("  40 PRINT 4\n")
     check([n for n, _ in M.prog()] == [40],
           "leading spaces before a line number are skipped",
           "%s" % [n for n, _ in M.prog()])
 
     M.cmd("NEW")
-    M.type("30000 PRINT 5
-")
+    M.type("30000 PRINT 5\n")
     check([n for n, _ in M.prog()] == [30000],
           "a line number near the top of the range",
           "%s" % [n for n, _ in M.prog()])
 
     M.cmd("NEW")
-    M.type("10.5 PRINT 6
-")
+    M.type("10.5 PRINT 6\n")
     got = [n for n, _ in M.prog()]
     check(got == [10], "a number stops at a decimal point -- line 10",
           "%s" % got)
 
+    # Put back exactly what section 2 left, because everything below
+    # reads that program. A characterisation block dropped into the
+    # middle of a suite has to leave the state it found.
     M.cmd("NEW")
+    M.type("20 PRINT 2\n10 PRINT 1\n30 PRINT 3\n")
 
     # ---- 3. LIST brings them back
     M.cmd("LIST")

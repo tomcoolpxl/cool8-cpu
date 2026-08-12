@@ -68,7 +68,7 @@ PAGE0 = [
     (0x0040, 0x0073, "VARS", "A-Z, two bytes each"),
     (0x0074, 0x00A1, "FSVARS", "sw/fs.asm's workspace"),
     (0x00A2, 0x00A3, "FDEPTH", "FOR depth, then expression depth"),
-    (0x00A4, 0x00A4, "SFRAC",
+    (0x00B1, 0x00B1, "SFRAC",
      "VAL's fraction digits, $FF until a point is met"),
     (0x00A4, 0x00D9, None, "free -- 54 bytes, FORSTK's when it left"),
     (0x00DA, 0x00FE, "FSTK", "floating point's operand stack; was the "
@@ -125,6 +125,26 @@ def equates():
     return out
 
 
+def basvars():
+    """{name: (address, file)} for every `DIM x ... AT $00xx` in sw/*.bas.
+
+    The compiled editor pins some of its state to fixed page-0 bytes,
+    and nothing else here could see that: `equates()` reads assembly,
+    and these are BASIC declarations.
+    """
+    import glob
+    out = {}
+    for path in sorted(glob.glob(os.path.join(ROOT, "sw", "*.bas"))):
+        src = open(path, encoding="utf-8").read()
+        for n, v in re.findall(
+                r"^\s*DIM\s+([A-Za-z_]\w*).*?\sAT\s+\$([0-9A-Fa-f]{1,4})",
+                src, re.M | re.I):
+            a = int(v, 16)
+            if a < 0x0100:
+                out.setdefault(n, (a, os.path.basename(path)))
+    return out
+
+
 def check():
     """PAGE0 against what the sources actually say. Returns problems."""
     eq, bad = equates(), []
@@ -153,6 +173,19 @@ def check():
                         if r[2] == owners[a] and r[0] <= a <= r[1])
             if not (here[0] <= a <= here[1]):
                 bad.append(f"{n} (${a:04X}, {f}) lands in {owners[a]}")
+    # **What sw/basic.bas parks in page 0.** `DIM x AS BYTE AT $00xx`
+    # is storage by construction -- unlike a bare equate, which may be
+    # a token value (`K_NUM = $A4` is not a claim on page 0, and an
+    # earlier version of this test said it was). So these are checked
+    # against PAGE0 directly, and they are the ones that were invisible:
+    # `cols` at $00A4 and SFRAC shared a byte for a day, and every
+    # `snumi` told the editor its screen was 254 columns wide. The
+    # symptom was a wild jump into the boot code, which wipes user RAM.
+    for n, (a_, f) in sorted(basvars().items()):
+        if a_ in owners and owners[a_] != n:
+            bad.append(f"${a_:04X} is {owners[a_]} in memmap.py and "
+                       f"{n} in {f}")
+
     # The float stack has to end before the two bytes that manage it.
     deep = eq.get("FSDEEP")
     if deep is not None and eq.get("FSTK") is not None:

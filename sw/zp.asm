@@ -17,7 +17,11 @@
 ;   $0040-$0073   VARS, A-Z, two bytes each
 ;   $0074-$00A1   sw/fs.asm's FSVARS, 46 bytes
 ;   $00A2-$00A3   FDEPTH and EDEPTH
-;   $00A4-$00D9   free, 54 bytes -- FORSTK's until STEP made it too big
+;   $00A4-$00B0   **the editor's**, pinned by `DIM x AT $00xx` in
+;                 sw/basic.bas: cols, rows, gkind, curph, rpl, bpc,
+;                 gbase, gs8, glim, cont
+;   $00B1-$00CF   free, 31 bytes
+;   $00D0-$00D8   the editor's again: blb, bfa, bva, binv, grow, bstr
 ;   $00DA-$00FE   floating point's operand stack (was the assembler)
 ;   $0100-$01FF   the CPU stack, growing down from $0200
 ;
@@ -69,15 +73,23 @@ LSTEP   = $0021                 ; 2: the step, 1 unless STEP said otherwise.
                                 ;    block-copies the frame, so the frame
                                 ;    is an address range, not a struct.
 FDEPTH  = $00A2                 ; 1: FOR loops active, 0 = none. Moved
-SFRAC   = $00A4                 ; 1: VAL's fraction digits, $FF until a
+SFRAC   = $00B1                 ; 1: VAL's fraction digits, $FF until a
                                 ;    '.' is met. Doubles as the flag and
                                 ;    the count, which is why $FF rather
-                                ;    than a second byte for "seen one"
+                                ;    than a second byte for "seen one".
+                                ;    **Not $00A4**, which is the editor's
+                                ;    `cols`: sw/basic.bas pins state to
+                                ;    page 0 with `DIM x AT $00xx` and
+                                ;    tools/memmap.py could not see it, so
+                                ;    snumi told the editor its screen was
+                                ;    254 columns wide. $00B1-$00CF is the
+                                ;    free run; the map is the tool's now.
 EDEPTH  = $00A3                 ; 1: expression nesting -- STEP took their
                                 ;    old $21-$22, and $12-$13 is BENT's,
                                 ;    which the first draft of this move
                                 ;    sat on. They live in FORSTK's old
-                                ;    ground; $00A4-$00D9 stays free.
+                                ;    ground, which is *not* free above
+                                ;    $00A3: the editor is there.
 
 MTMP    = $0023                 ; 4: multiply scratch
 

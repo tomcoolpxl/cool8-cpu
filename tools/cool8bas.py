@@ -1443,6 +1443,15 @@ class Compiler:
             if s.kind == 'sub':
                 return ('call', name, self.call_args())
             if s.kind == 'extern':
+                # `EXTERN f` followed by `f(...)` is a *call*, the same
+                # as a SUB's; a bare `f` is still its address. Without
+                # this an extern could only ever be a statement, so no
+                # compiled FUNCTION could be replaced by assembly --
+                # and [D66] replaces mostly FUNCTIONs. The value comes
+                # back in R0:R1, which is where a compiled RETURN
+                # leaves it too.
+                if self.at('op', '('):
+                    return ('call', name, self.call_args())
                 return ('extern', s.label)
             return self.ref(s)
         raise Err(f"expected a value, found {t[1]!r}", t[2])

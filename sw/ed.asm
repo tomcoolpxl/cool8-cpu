@@ -78,3 +78,42 @@ s_putn: LD   R0,[SP+2]          ; the argument, low byte first
         CALL emitc
         BRA  .em
 .out:   RET
+
+; ---------------------------------------------------------------------
+; s_number -- the line number at `ip` in the editor's line buffer.
+;
+; Compiled, `number()` was 193 bytes: `skipsp`, an optional leading
+; comma, its own digit loop, and an `any` flag returning -1 when there
+; were no digits. **Only `enter` calls it**, and only after testing
+; `isdigit` itself -- so the comma arm and the -1 both served a caller
+; that no longer exists (the comment named RENUMBER, which does not use
+; it any more). The digits are all that is live.
+;
+; So this is the shared parser and a position: `snumi` is `snum` with a
+; point ending the number rather than starting a fraction, which is
+; what a line number wants and what the editor did anyway -- "10.5" is
+; line 10, pinned in sim/test_basic.py before this moved.
+;
+; `ip` advances by what `snumi` consumed, which `SDIG` reports: it
+; counts down as characters are taken, so llen minus what is left is
+; where the parser stopped. The value is returned in R0:R1, where a
+; compiled FUNCTION leaves one, so `n = s_number()` reads unchanged.
+;
+; R2:R3 carry the position arithmetic *after* the call precisely so the
+; value in R0:R1 survives without a push and a pop around it.
+; ---------------------------------------------------------------------
+s_number:
+        PUSHW Y                 ; the editor's routines use Y freely
+        LD   R0,[v_llen]
+        LD   R1,[v_ip]
+        SUB  R0,R1
+        ST   [SDIG],R0          ; characters the parser may look at
+        LDW  Y,#a_lbuf
+        ADDW Y,R1
+        CALL snumi
+        LD   R2,[v_llen]        ; not R0:R1: those hold the answer
+        LD   R3,[SDIG]
+        SUB  R2,R3
+        ST   [v_ip],R2
+        POPW Y
+        RET

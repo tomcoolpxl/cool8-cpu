@@ -3655,12 +3655,23 @@ sval:   CALL sopen
 ; STYPE 2 -- the decimal point is what decides, and the caller reads
 ; STYPE to know which. Clobbers Y; the caller saves it.
 ; ---------------------------------------------------------------------
-snum:   CLR  R0
+; snumi -- the same digits, but a '.' *ends* the number instead of
+; starting a fraction. A line number, a subscript and a RENUMBER step
+; all want that; VAL and INPUT want the other. One seed value is the
+; whole difference, so the two share every instruction below rather
+; than the editor keeping a second parser -- which is what [D66] is
+; about, and `number()` in sw/basic.bas was 193 bytes of it.
+; The join is a global because a local resolves against whichever
+; global precedes it, so `snumi` could not branch into `snum`'s scope.
+; `snumb` owns the locals below; nothing outside this file names them.
+snumi:  MOV  R2,#$FE            ; a point is not part of this number
+        BRA  snumb
+snum:   MOV  R2,#$FF            ; ...but may start a fraction in this one
+snumb:  ST   [SFRAC],R2
+        CLR  R0
         CLR  R1
         CLR  R3
         ST   [DSGN],R3          ; no division here, so DSGN is spare
-        MOV  R2,#$FF            ; no '.' seen yet; see sw/zp.asm
-        ST   [SFRAC],R2
         LD   R3,[SDIG]
         TST  R3
         BEQ  .fin
@@ -3696,8 +3707,14 @@ snum:   CLR  R0
         MOV  R2,#0
         ADC  R1,R2
         LD   R2,[SFRAC]
-        CMP  R2,#$FF
-        BEQ  .loop              ; still left of the point: nothing to count
+        CMP  R2,#5              ; **one predicate, used twice**: under
+        BCS  .loop              ;   five means counting fraction digits,
+                                ;   so $FF (no point yet) and $FE (a
+                                ;   point may not start one) both fall
+                                ;   out here. Testing $FF alone let the
+                                ;   integer-only seed be incremented
+                                ;   into the fraction seed by the first
+                                ;   digit, and "10.5" became a float.
         ADD  R2,#1
         ST   [SFRAC],R2
         BRA  .loop
@@ -3718,8 +3735,8 @@ snum:   CLR  R0
         BEQ  .nsg
         CALL negp16
 .nsg:   LD   R2,[SFRAC]
-        CMP  R2,#$FF
-        BNE  .flt
+        CMP  R2,#5              ; 0..4 counted fraction digits; $FE and
+        BCC  .flt               ;   $FF are both "no fraction here"
 .out:   CLR  R2
         ST   [STYPE],R2
         RET

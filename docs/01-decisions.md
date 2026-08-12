@@ -2539,6 +2539,50 @@ through `sim/harness.py`'s `assemble`/`assemble_text`/`try_assemble`,
 which are Python. That is a second implementation and a new build
 dependency to solve a problem nobody has.
 
+### Stage 0 has begun, and the first routine cost a page-0 bug
+
+`number()` is `sw/ed.asm`'s `s_number`: 193 bytes of compiled BASIC
+became about 30 of assembly, and the image went 23,703 -> 23,546.
+**157 bytes for one routine of six lines.**
+
+It shares the interpreter's parser rather than keeping a second one.
+`snumi` is `snum` with a single seed changed -- a `.` *ends* the number
+instead of starting a fraction, which is what a line number wants --
+so the two agree on what a digit is by construction. One predicate,
+`SFRAC < 5`, decides "am I counting fraction digits" in both places;
+testing `= $FF` instead let the integer-only seed be incremented into
+the fraction seed by the first digit, and `10.5` became a float. The
+characterisation test written before the port caught that, which is
+the entire argument for writing it first.
+
+**Then it broke the editor, and the cause is worth more than the
+routine.** `SFRAC` had been given `$00A4` when float `VAL` was built.
+`sw/basic.bas` pins state to page 0 with `DIM cols AS BYTE AT $00A4`,
+and `tools/memmap.py` could not see that: it read `sw/*.asm` equates
+only. So every `snumi` wrote 254 into the editor's column count, the
+screen geometry went wild, and control ended up in the boot code --
+which wipes user RAM. Nothing in the symptom pointed at page 0.
+
+It was latent for as long as the only callers were `VAL` and `INPUT`,
+which do not run while a line is being typed. Porting an *editor*
+routine onto the shared parser is what made it reachable.
+
+- `memmap.py` reads `DIM x ... AT $00xx` out of `sw/*.bas` now and
+  refuses a byte claimed by two things. It reports this one.
+- The pairwise test it first grew was wrong and was backed out: an
+  equate may be a token value, and `K_NUM = $A4` is not a claim on
+  page 0. Only the `AT` declarations are storage by construction.
+- `SFRAC` moved to `$00B1`. The real map is `$00A4-$00B0` editor,
+  **`$00B1-$00CF` free (31 bytes)**, `$00D0-$00D8` editor again -- not
+  the "54 bytes free" `zp.asm`'s own header claimed, which is now
+  corrected.
+
+**The lesson for the remaining 87 routines**: a ported routine runs in
+the editor's context, so every byte of interpreter workspace it touches
+has to be checked against the editor's, and until now no tool could do
+that. `sw/basic.bas` also stores to `$00DC` with a raw literal, inside
+the float stack's range, and a `DIM`-only scanner still cannot see it.
+
 ### What is not yet known
 
 - **How a string crosses the boundary.** Scalars and arrays are
