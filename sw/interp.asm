@@ -3673,12 +3673,28 @@ gargs:  LDW  X,#garg
 
 ; MODE n -- the preset, with the display kept enabled. dorun puts mode
 ; 0 back when the program is over, so an error in mode 4 is readable.
+; MODE n -- and **the console has to be told**.
+;
+; `con_geom` reads the hardware and sets the cell size, the row count,
+; the font and the mirror that every character write goes through. Its
+; header says it is called whenever the editor regains control, which is
+; true and was not enough: `MODE 4 : PRINT "X"` prints before the editor
+; regains anything, and so does every program that sets a mode and draws.
+;
+; Without it the console kept the *previous* mode's mirror -- the text
+; one -- so the characters went into the cell map, correctly, and no
+; glyph was ever drawn. The map had the text and the screen was blank,
+; in every mode but the text ones. Modes 2 to 5 looked broken and were
+; one call away from working.
 h_mode: MOV  R3,#1
         CALL gargs
         LD   R0,[garg]
         AND  R0,#$0F
         OR   R0,#$80
         ST   [VID_MODE],R0
+        PUSHW Y                 ; Y is the token pointer; con_tilefont
+        CALL con_geom           ;   borrows Y to walk the font
+        POPW Y
         JMP  stmt
 
 ; VSYNC -- hold until the frame counter moves. Bounded by one frame, so

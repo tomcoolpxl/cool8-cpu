@@ -47,8 +47,8 @@ class Machine:
     while the editor was compiled BASIC.
     """
 
-    def __init__(self, code, syms):
-        self.m = vm.Machine()
+    def __init__(self, code, syms, render=False):
+        self.m = vm.Machine(render=render) if render else vm.Machine()
         self.m.bus.mem[ORG:ORG + len(code)] = code
         self.m.cpu.pc = syms["main"]
         self.m.cpu.sp = 0x0200
@@ -88,6 +88,7 @@ class Machine:
 
     def shows(self, text):
         return any(r.strip() == text for r in self.screen())
+
 
     def prog(self):
         end = (self.m.bus.mem[self.syms["progend"]]
@@ -163,6 +164,52 @@ def main():
           "stored %s\n    screen %s"
           % (M.prog(),
              " | ".join(r.strip() for r in M.screen() if r.strip())[:80]))
+
+    # **Every mode, not the two that happen to be exercised.**
+    #
+    # `con_geom` is table-driven over GEOMTAB and the console keeps a
+    # mirror per kind -- text, tiles, bitmap -- so a mode that is never
+    # typed at is a branch that is never taken. Modes 0 and 1 were the
+    # only ones any suite reached.
+    for mode in range(7):
+        M = Machine(code, syms, render=True)
+        M.settle()
+        M.cmd("MODE %d" % mode)
+        M.cmd('PRINT "COOL8"')
+        # The cell map at $8000 is the text in *every* mode -- that is
+        # the invariant docs/13-basic.md section 4 states, and it is why
+        # a bitmap program's PRINT output is readable at all. Checked
+        # separately from m.row(), which follows the display: if the map
+        # has it and the row does not, the console worked and the
+        # rendering did not, and those are different bugs.
+        cells = "".join(chr(M.m.bus.mem[0x8000 + 2 * i])
+                        for i in range(0x1000))
+        check("COOL8" in cells, "MODE %d puts the text in the cell map" % mode,
+              "VID_MODE=$%02X" % M.m.bus.read(0xFF10))
+
+        # ...and the console has to have been *told*, which is a
+        # different thing and was the bug: characters reached the cell
+        # map through whatever mirror was already set, so the text was
+        # there and no glyph was ever drawn. Nothing rendered in modes
+        # 2-5 and the map looked fine.
+        #
+        # GEOMTAB is read out of the image rather than copied here, so
+        # this compares the console against its own table and cannot
+        # drift when a mode is added.
+        ent = syms["geomtab"] + 6 * (mode if mode < 7 else 0)
+        want = list(M.m.bus.mem[ent:ent + 6])
+        # The tile mode is the one entry the table does not finish:
+        # `con_tilefont` sets the cell height and the stride itself,
+        # because the blitter expands four bits per pixel into a pattern
+        # slot and the stride is the slot's, not the screen's. The table
+        # carries zeros there rather than a number that would read as if
+        # it meant something.
+        if want[2] == 1:
+            want[3], want[4] = 4, 8
+        got = [M.m.bus.mem[syms[n]] for n in
+               ("ccols", "crows", "ckind", "cbpc", "cfrow", "crpl")]
+        check(got == want, "...and the console followed: MODE %d geometry"
+              % mode, "console %s, GEOMTAB says %s" % (got, want))
 
     M = Machine(code, syms)
     M.settle()
