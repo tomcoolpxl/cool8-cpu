@@ -195,6 +195,11 @@ run = "sim/test_edit.py"
 about = "sw/edit.asm: the screen as document, wrapped logical lines, and Return"
 
 [[tool.cool8.jobs.sw]]
+id = "fscmd"
+run = "sim/test_fscmd.py"
+about = "sw/fscmd.asm: a typed name into the 8.3 field the directory holds"
+
+[[tool.cool8.jobs.sw]]
 id = "names"
 run = "sim/check_names.py"
 about = "global name collisions across the system image"

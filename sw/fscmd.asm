@@ -22,16 +22,20 @@
 ; this.
 ; ---------------------------------------------------------------------
 
-FSNAME  = $7C91                 ;: 11 the 8.3 field, space padded, folded
-FSADDR  = $7C8F                 ;: 2 where the bytes are, or go
-FSLENW  = $7C8D                 ;: 2 how many of them
-FSDRV   = $7C8C                 ;: 1 the mounted drive
-FSIDX   = $7C8B                 ;: 1 the directory entry being read
-FSOK    = $7C8A                 ;: 1 did the last call succeed
-FSCI    = $7C88                 ;: 2 COMPACT: the entry the scan is on
-FSCSRC  = $7C86                 ;: 2 COMPACT: the page it is feeding out
-FSCLEFT = $7C84                 ;: 2 COMPACT: pages left in this file
-FSPG16  = $7C74                 ;: 16 COMPACT: one sector's source pages
+; The 8.3 field is fs.asm's own sname -- "the name being sought" --
+; not a second buffer here. It was one until the suite read it back as
+; zeros: the two names fold together in a case-insensitive symbol
+; lookup, and fs_find copies into its own anyway, so a claim here was
+; eleven bytes of duplicate state pointed at by nothing.
+FSADDR  = $7C9A                 ;: 2 where the bytes are, or go
+FSLENW  = $7C98                 ;: 2 how many of them
+FSDRV   = $7C97                 ;: 1 the mounted drive
+FSIDX   = $7C96                 ;: 1 the directory entry being read
+FSOK    = $7C95                 ;: 1 did the last call succeed
+FSCI    = $7C93                 ;: 2 COMPACT: the entry the scan is on
+FSCSRC  = $7C91                 ;: 2 COMPACT: the page it is feeding out
+FSCLEFT = $7C8F                 ;: 2 COMPACT: pages left in this file
+FSPG16  = $7C7F                 ;: 16 COMPACT: one sector's source pages
 
 ; fs.asm's own state, by name now rather than by address. The compiled
 ; version reached `fsent` and `fsfpg` as the literals $007B and $0078
@@ -67,9 +71,9 @@ fsc_bad:
         ST   [FSOK],R0
         RET
 
-; fsc_find -- is FSNAME on the volume? Sets FSLENW from the entry.
+; fsc_find -- is fsname on the volume? Sets FSLENW from the entry.
 fsc_find:
-        LDW  X,#FSNAME
+        LDW  X,#fsname
         CALL fs_find
         BCC  fsc_bad
         LD   R0,[fsent+14]
@@ -78,21 +82,21 @@ fsc_find:
         ST   [FSLENW+1],R0
         BRA  fsc_ok
 
-; fsc_save -- FSLENW bytes from FSADDR, as FSNAME.
+; fsc_save -- FSLENW bytes from FSADDR, as fsname.
 fsc_save:
         LD   R0,[FSLENW]
         ST   [fslen],R0
         LD   R0,[FSLENW+1]
         ST   [fslen+1],R0
-        LDW  X,#FSNAME
+        LDW  X,#fsname
         LDW  Y,[FSADDR]
         CALL fs_save
         BCC  fsc_bad
         BRA  fsc_ok
 
-; fsc_load -- FSNAME to FSADDR; FSLENW comes back with the length.
+; fsc_load -- fsname to FSADDR; FSLENW comes back with the length.
 fsc_load:
-        LDW  X,#FSNAME
+        LDW  X,#fsname
         LDW  Y,[FSADDR]
         CALL fs_load
         BCC  fsc_bad
@@ -102,9 +106,9 @@ fsc_load:
         ST   [FSLENW+1],R0
         BRA  fsc_ok
 
-; fsc_erase -- FSNAME's entry cleared.
+; fsc_erase -- fsname's entry cleared.
 fsc_erase:
-        LDW  X,#FSNAME
+        LDW  X,#fsname
         CALL fs_delete
         BCC  fsc_bad
         BRA  fsc_ok
@@ -145,11 +149,11 @@ fsc_readent:
 ; =====================================================================
 
 ; fsc_name -- a file name at EDIP -- NAME, "NAME", or either with .EXT --
-; into FSNAME as the eleven-byte 8.3 field the directory holds. Carry
+; into fsname as the eleven-byte 8.3 field the directory holds. Carry
 ; set if there was one.
 fsc_name:
         PUSHW X
-        LDW  X,#FSNAME          ; blank the field first
+        LDW  X,#fsname          ; blank the field first
         MOV  R3,#11
         MOV  R2,#$20
 .b:     ST   [X],R2
@@ -205,7 +209,7 @@ fsc_name:
 .put:   CMP  R2,#11
         BHS  .nx
         PUSHW X
-        LDW  X,#FSNAME
+        LDW  X,#fsname
         ADDW X,R2
         ST   [X],R0
         POPW X
@@ -215,19 +219,19 @@ fsc_name:
         ST   [EDIP],R0
         BRA  .l
 
-.done:  LD   R0,[FSNAME]        ; nothing at all is not a name
+.done:  LD   R0,[fsname]        ; nothing at all is not a name
         CMP  R0,#$20
         BEQ  .none
         ; Nothing typed after the dot: a program is a .BAS.
-        LD   R0,[FSNAME+8]
+        LD   R0,[fsname+8]
         CMP  R0,#$20
         BNE  .yes
         MOV  R0,#$42            ; 'B'
-        ST   [FSNAME+8],R0
+        ST   [fsname+8],R0
         MOV  R0,#$41            ; 'A'
-        ST   [FSNAME+9],R0
+        ST   [fsname+9],R0
         MOV  R0,#$53            ; 'S'
-        ST   [FSNAME+10],R0
+        ST   [fsname+10],R0
 .yes:   SEC
         RET
 .none:  CLC
@@ -475,8 +479,8 @@ fsc_pbfill:
 ;
 ; Built in the scratch sector first, so the old directory is still there
 ; to read while the new one is being written.
-FSSLOT  = $7C73                 ;: 1 rewritedir: entries written so far
-FSDST   = $7C71                 ;: 2 rewritedir: the next data page
+FSSLOT  = $7C7E                 ;: 1 rewritedir: entries written so far
+FSDST   = $7C7C                 ;: 2 rewritedir: the next data page
 
 fsc_rewritedir:
         MOV  R0,#<SCRATCH

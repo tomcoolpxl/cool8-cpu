@@ -12,7 +12,7 @@
 ; typed ten seconds ago, or a line of a LIST.
 ; ---------------------------------------------------------------------
 
-MAINK   = $7C6F                 ;: 2 the key just read
+MAINK   = $7C7A                 ;: 2 the key just read
 
         .include "fscmd.asm"    ; which brings everything below it
         .include "input.asm"
