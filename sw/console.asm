@@ -463,6 +463,50 @@ con_cursor:
 ; con_blink -- draw the cursor cell inverted (R0 non-zero) or plain.
 ; Text modes never come here: style 3 IS the C64's reverse blink, in
 ; silicon.
+;
+; ---------------------------------------------------------------------
+; TO DO: text comes here too, and the hardware cursor goes away
+;
+; **The hardware cursor is the reason the cursor blinks in the wrong
+; place.** There are two implementations that each remember where it is
+; -- CUR_X/CUR_Y in cool8_vregs for the text modes, CCX/CCY and CPHASE
+; here for the other five -- and on a mode change they disagree. That is
+; the "cursor blinks in a spot until I move it" report, and no amount of
+; placing CUR_X/CUR_Y fixes it: measured at idle, the registers already
+; agree. The fix is to delete one of the two, and the hardware one is
+; the one to delete, because it also costs 40-60 logic cells out of the
+; 116 the part has left -- which is roughly what a stride-agnostic row
+; wrap in cool8_fetch.v needs to buy a 5,120-byte text map ([D30]).
+;
+; What blocks it is right here: in a text mode `CMIR` is `con_nomir`, a
+; bare RET, because the display engine reads the cell map itself. So
+; inverting a text cell is not a glyph redraw -- it is **swapping the
+; attribute byte's nibbles** at `con_cell` + 1, which is what an
+; attribute means in text mode and is its own inverse.
+;
+; **And it needs the cell it last inverted, not the cursor's cell.**
+; Toggling (CCX, CCY) leaves an inverted cell behind whenever the cursor
+; moves between a show and a hide, which is exactly what typing does.
+; Two more claims -- CBLX, CBLY -- and the contract becomes:
+;
+;   show: if a cell is recorded, restore it; invert (CCX, CCY); record
+;         it; CPHASE = 1
+;   hide: if a cell is recorded, restore it; forget it; CPHASE = 0
+;
+; That is correct however the cursor moves in between, which the
+; CPHASE-only arrangement is not. The rest is mechanical: con_cursor
+; loses its text arm, con_geom stops writing CUR_CTRL, sw/boot.asm loses
+; its cursor block, tools/mkboot.py loses its $FF24 write, sw/io.asm
+; regenerates without $FF22-$FF25, and the cursor check in
+; sim/test_boot_basic.py retires. The RTL cut itself is small and clean
+; -- cool8_vregs.v, cool8_pixel.v, cool8_video.v -- and was tried once
+; and reverted only because this routine could not yet draw a text
+; cursor.
+;
+; Order: this routine first, then the software, then the RTL, then
+; `python sim/synth.py` to measure what came back -- and only then
+; decide whether the wrap fits.
+; ---------------------------------------------------------------------
 con_blink:
         PUSH R0
         LD   R0,[CKIND]
