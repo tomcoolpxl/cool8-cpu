@@ -112,7 +112,7 @@ plan.
 Sizes are the compiled cost today, from the symbol table. They
 reconcile to 11,008.
 
-### 4.1 `console.asm` — the console — 2,179 bytes  ← **start here**
+### 4.1 `console.asm` — the console — 2,179 bytes  — **done**
 
 `setgeom` 416 · `scroll` 229 · `bput` 195 · `putat` 189 · `tilefont`
 180 · `emit` 139 · `newline` 105 · `tput` 104 · `curdrw` 103 ·
@@ -170,7 +170,7 @@ hardest here.
 The C64's arrangement: the screen *is* the document and a logical line
 is read back off it. `cont[]` marks continuation rows.
 
-### 4.6 `interp.asm` — the command handlers come home  ← **the one step left**
+### 4.6 `interp.asm` — the command handlers come home  — **done**, and it went further than planned: see the closing note
 
 Every module is written and tested. What remains is the switch-over:
 `sw/interp.asm` still calls twenty-three routines in `sw/basic.bas`,
@@ -336,18 +336,48 @@ python sim/build_basic.py --by-module
     total          87   11,008
 ```
 
-**Every module is written; `num.asm` was added below the console for
-numbers as text.** What is left is §4.6, the switch-over -- and until
-that lands the compiled column stays at 11,008, because `sw/basic.bas`
-still owns the machine and the new modules are a parallel
-implementation nothing calls.
+## DONE. `sw/basic.bas` is deleted and the machine runs on the modules.
 
-The compiled column stays at 11,008 until `main.asm` takes the entry
-point and `basic.bas` is deleted — the new modules are a *parallel*
-implementation and nothing calls them yet, which is deliberate: no
-shims, no `CALLB1`, no EXTERN dance, and the machine keeps working
-throughout. Each module gets a suite of its own at the time it is
-written, the way `sim/test_fs.py` drives `sw/fs.asm`.
+The switch-over landed. `sw/main.asm` owns the entry point, the board
+boots from flash to a keyboard, and 19 suites pass with no compiled
+BASIC anywhere in the tree.
+
+    old image    23,528 bytes   (11,008 of it compiled BASIC)
+    new image    17,314 bytes   $A000-$E3A1, 7,006 free to $FEFF
+    saved         6,214 bytes
+
+Nine modules, not eight: `num.asm` was added below the console for
+numbers as text, because `con_putn` would have called `udiv16` upward.
+
+What the switch-over cost that the plan did not predict, all of it in
+§4.6's neighbourhood and none of it in the routines themselves:
+
+* **`interp.asm` was a hub.** It held the disk handlers, `tname` and
+  `sttab`, and since `sttab` names every handler, anything wanting the
+  expression evaluator pulled the whole image in. The handlers went to
+  the modules that implement them and `sttab` to `main.asm`. That also
+  settled the layering the plan had backwards: `fscmd` is *above*
+  `interp`, since its handlers use `eval`, `cnext` and `SKIPSP`.
+* **`USERTOP` was 313 bytes too high.** `SYSBOT = irring` was true while
+  `zp.asm` held every claim; `console.asm` and `main.asm` claimed below
+  it, so the heap was handed system storage and `DIM A(3)` wrote an
+  array over the console's geometry. The floor is generated now
+  (`sw/sysbot.asm`, from `tools/memmap.py`) and `poe check` refuses a
+  `SYSBOT` that is not the lowest claim.
+* **The image had no entry point.** The relocating stub jumps to
+  `$A000`, which was the middle of `console.asm` once `main` moved to
+  the end. Three bytes of `JMP main`.
+* **No `DI` on entry**, so an interrupt during the RAM wipe dispatched
+  through the ROM's vector into an overlay that was gone.
+* **`con_init` clears**, which wiped the banner `main` was written to
+  preserve. Split into `con_warm` + `con_cls`.
+
+Each module got a suite of its own at the time it was written, the way
+`sim/test_fs.py` drives `sw/fs.asm`. Those suites then got rewritten
+onto the single image: `H.fresh()` loads what ships and `H.drive()`
+assembles a snippet against its symbol table, so no suite carries stubs.
+`H.MODULE_STUBS` is deleted. The stubs were not free — a recording
+`con_putsn` meant no test had ever looked at the screen.
 
 The grouping lives in `MODULES` in `sim/build_basic.py` because *which
 module a routine belongs to* is a decision and belongs to this plan. The

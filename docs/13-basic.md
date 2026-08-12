@@ -522,7 +522,7 @@ ceiling (§10), not the difficulty.
 
 | | |
 |---|---|
-| `PRINT 1.5` | `?SYNTAX IN 10` — the tokeniser has no decimal point. Write `FLT(3) / FLT(2)`. It prints the `1` first, then faults. |
+| `PRINT 1.5` | Works ([D68]). It was `?SYNTAX IN 10` while the tokeniser was compiled BASIC and had no decimal point. |
 
 **Text in, text out — and only one direction works.**
 
@@ -575,10 +575,14 @@ because they are one routine.
 splitting, and the only bound is `SMAX`, which is what one byte of
 length allows. Text typed at a number is 0, exactly as `VAL("ABC")` is.
 
-**The float literal still does not exist.** `1.5` in source is
-`?SYNTAX`. It is the last of the three, and the expensive one: it wants
-the *editor* changed — tokenise, `LIST`, and a renderer — where `VAL`
-and `INPUT` each needed one routine.
+**The float literal works.** It was the last of the three and the
+expensive one, because it wanted the *editor* changed — tokenise,
+`LIST`, and a renderer — where `VAL` and `INPUT` each needed one
+routine, and the editor was compiled BASIC. [D68] rewrote it in
+assembly, so `sw/token.asm` has the decimal point: a `.` switches
+`snum` into counting mode and `fstore` lays down the same three packed
+bytes a float variable holds, which is why a typed constant and a
+computed value cannot disagree. `PRINT 1.5` prints 1.5.
 
 **Absent.** `MOD` is integer by intent; a float remainder is a
 different operation.
@@ -861,10 +865,14 @@ measurement.
 count rather than leaving it to arithmetic:
 
 ```
-  basic.bin   23,528 bytes  $A000-$FBE7
-  BOOT.BIN    26,290 bytes  (2762 of relocating stub)
-  free           792 bytes  to $FEFF
+  basic.bin   17,314 bytes  $A000-$E3A1
+  BOOT.BIN    20,076 bytes  (2762 of relocating stub)
+  free         7,006 bytes  to $FEFF
 ```
+
+That is after [D68]. It read 23,528 bytes with a compiled editor in it
+and 792 bytes free; the editor is assembly now, which is **6,214 bytes
+saved** and nearly nine times the headroom.
 
 `--by-file` breaks that down per source file, attributing each gap
 between consecutive labels to whichever file opened it, so interleaving

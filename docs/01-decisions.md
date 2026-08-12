@@ -2312,12 +2312,37 @@ and report 1.00x for a year.
 
 ## D68 — The system is six subsystems, not two languages; [D66]'s port gets a shape
 
-**Decided, in progress.** [D66] is right that `sw/basic.bas` has to go
-and wrong about what it becomes. It plans a routine-by-routine port into
-one flat program; this entry says the target is **modules by subsystem,
-each entirely in one language, with the command handlers next to their
+**Done.** [D66] is right that `sw/basic.bas` has to go and wrong about
+what it becomes. It plans a routine-by-routine port into one flat
+program; this entry says the target is **modules by subsystem, each
+entirely in one language, with the command handlers next to their
 dispatch**. The porting work is the same work — it now has somewhere to
 land.
+
+`sw/basic.bas` is deleted. Nine modules, 17,314 bytes against the old
+23,528 — **6,214 saved**, close to the ~5,500 this entry predicted, the
+difference being that the compiled globals went too. The board boots
+from flash to a keyboard on the new code and 19 suites pass.
+
+Four things this entry got wrong, kept because they are the useful part:
+
+* **The layering was upside down at one joint.** `fscmd` is above
+  `interp`, not below: its handlers use `eval`, `cnext` and the `SKIPSP`
+  macro, and a `fscmd` assembled first does not parse. Found by moving
+  the handlers, not by reasoning about them.
+* **"Handlers next to their dispatch" is half a rule.** The handlers
+  belong next to what they *implement*; the dispatch belongs at the top.
+  While `sttab` sat in `interp.asm` naming every handler, anything that
+  wanted the expression evaluator pulled the whole image in — which is
+  what forced four suites into private stub blocks.
+* **A module boundary is not a test boundary.** Testing each module
+  against stand-ins for the ones above it produced suites that agreed
+  with each other and not with the machine: `con_putsn` was a recording
+  stub, so nothing had ever looked at the screen. One image, `H.fresh()`
+  and `H.drive()`, no stubs.
+* **The storage floor cannot be an equate.** [D67] computes it and this
+  port broke it twice — `SYSBOT = irring`, then `SYSBOT = CONT` — each
+  time by adding a module that claimed lower. It is generated now.
 
 ### What the measurement changed
 
