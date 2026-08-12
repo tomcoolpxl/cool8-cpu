@@ -46,6 +46,10 @@ def main():
         by_command(syms)
     if "--by-sub" in sys.argv:
         by_sub(syms)
+    if "--by-module" in sys.argv:
+        by_module(syms)
+    if "--waste" in sys.argv:
+        by_waste(syms)
     if free < 0:
         print("  the system does not fit below the I/O page")
         return 1
@@ -178,6 +182,172 @@ def by_sub(syms):
     print("    density ratio, where 5.16x is demo.bas's and demo.bas is")
     print("    array- and call-heavy, which docs/11-compiler.md section")
     print("    5a names as this compiler's worst case.")
+
+
+# Which module each compiled routine belongs to, per ASM_MOVE_PLAN.md.
+# Hand-written because it is a *decision* about where code should live,
+# not a fact derivable from the source -- that is exactly what the plan
+# is. Everything else about the burn-down is measured.
+MODULES = {
+    "con": ("setgeom scroll bput putat tilefont emit newline tput curdrw "
+            "brepaint cls clearrow putsn puts putn rowaddr dnrow getat "
+            "showcur"),
+    "kbd": "serialkey getkey waitraw rawkey",
+    "token": ("tokenise lookup puttok ishex puttnum isident isalpha hexof "
+              "upper isdigit number"),
+    "prog": ("storeline list deleterange renumber findline memmove lineno "
+             "nextline linelen freebytes new"),
+    "edit": ("writelog delchar insch readrow enter lend shiftlbuf backspace "
+             "lpos curleft lstart doreset gotoend"),
+    "fscmd": ("rewritedir docompact loadcore parsename dodir nextsrc "
+              "fetchline savecore loaddata skipsp entpage savedata entpages "
+              "wrpage rdpage fssave fsload drivecore fsfind dofree erasesect "
+              "eracore fsreadent fserase fsmount"),
+    "main": "dodirect runerr dorun errmsg",
+}
+
+
+def by_module(syms):
+    """The ASM_MOVE_PLAN.md burn-down, measured.
+
+        python sim/build_basic.py --by-module
+
+    **A hand-maintained burn-down is a table that drifts**, and this
+    project has been bitten by every one it has written down -- the drop
+    table in 13-basic.md was five guesses, `zp.asm`'s free-space figure
+    was wrong three times running. So the plan states the *grouping*,
+    which is a decision, and this measures the *bytes*, which are not.
+
+    A routine that has moved to assembly simply stops being an `s_`
+    symbol with a compiled body, so "remaining" falls on its own as the
+    port proceeds. Nothing has to be ticked off by hand.
+    """
+    marks = sorted((a, n) for n, a in syms.items() if ORG <= a < TOP)
+    tops = [(a, n) for a, n in marks if "." not in n]
+    size = {}
+    for i, (a, n) in enumerate(tops):
+        if n.startswith("s_") and i + 1 < len(tops):
+            size[n[2:]] = tops[i + 1][0] - a
+
+    owner = {r: m for m, rs in MODULES.items() for r in rs.split()}
+    unplaced = sorted(set(size) - set(owner))
+
+    print()
+    print("  ASM_MOVE_PLAN.md, measured:")
+    print()
+    print(f"    {'module':<8} {'routines':>8} {'bytes':>8}")
+    total = 0
+    for m in MODULES:
+        rs = [r for r in MODULES[m].split() if r in size]
+        b = sum(size[r] for r in rs)
+        total += b
+        print(f"    {m:<8} {len(rs):>8} {b:>8,}")
+    print(f"    {'total':<8} {len(size):>8} {total:>8,}")
+    if unplaced:
+        # A routine nobody assigned is the plan going stale against the
+        # source, which is the one thing this report cannot measure away.
+        print()
+        print("    not in any module -- add it to MODULES:")
+        print("      " + ", ".join(unplaced))
+    print()
+    print("    A routine that has moved to assembly stops being an `s_`")
+    print("    symbol with a compiled body, so this falls on its own.")
+
+
+def by_waste(_syms):
+    """Where the compiled editor's bytes actually go.
+
+        python sim/build_basic.py --waste
+
+    **[D66] planned a 12 KB hand-port against a density ratio of 2.5-3x
+    that was never measured on this code** -- it came from `sw/demo.bas`,
+    which docs/11-compiler.md names as the compiler's worst case. The two
+    routines actually ported came in at 5.4x (`putn`) and 6.4x
+    (`number`), which is a different decision: 11,008 bytes at 5x is
+    ~8,800 recoverable, not ~6,000.
+
+    So this asks the prior question -- *why* is it 5x -- by classifying
+    what the compiler emitted. The answer is not subtle and it is not
+    the algorithms: over half of every compiled routine is moving values
+    between stack slots and registers, because there is no register
+    allocator. That is a fact about the compiler, and some of it is
+    removable without hand-writing anything.
+
+    Two of the patterns are provably dead rather than merely suspicious:
+
+      * `ST [SP+k],Rn` immediately followed by `LD Rn,[SP+k]` -- the
+        same register and the same slot, so the load cannot change
+        anything.
+      * a conditional branch over a `JMP`. The compiler emits this
+        because a branch reaches only +/-127; the assembler grows
+        branches itself now ([D66]'s own first deliverable), so the
+        compiler can emit the branch and let the assembler decide.
+
+    Read the totals as an upper bound on a peephole pass, not as a
+    promise: removing an instruction moves every branch after it, and
+    the assembler's relaxation has to be re-run to know the real figure.
+    """
+    import re
+
+    path = os.path.join(BUILD, "basic.asm")
+    if not os.path.exists(path):
+        print("\n  no generated assembly at", path)
+        return
+
+    ins, cur = [], None
+    for line in open(path, encoding="utf-8"):
+        m = re.match(r"^([A-Za-z_]\w*):", line)
+        if m:
+            cur = m.group(1)
+        mi = re.match(r"^\s+([A-Z][A-Z0-9]*)\s+(.*?)(?:\s*;.*)?$", line.rstrip())
+        if mi and cur and cur.startswith("s_"):
+            ins.append((mi.group(1), mi.group(2).strip()))
+
+    kinds = {"LD": "move", "ST": "move", "MOV": "move", "PUSH": "move",
+             "POP": "move", "LDW": "move", "STW": "move", "MOVW": "move",
+             "CLR": "move",
+             "ADD": "arith", "SUB": "arith", "ADC": "arith", "SBC": "arith",
+             "MUL": "arith", "AND": "arith", "OR": "arith", "XOR": "arith",
+             "CMP": "arith", "TST": "arith", "ADDW": "arith",
+             "JMP": "flow", "CALL": "flow", "RET": "flow"}
+    tally = {}
+    for op, _ in ins:
+        k = kinds.get(op, "flow" if op.startswith("B") else "other")
+        tally[k] = tally.get(k, 0) + 1
+    n = len(ins)
+
+    print()
+    print("  What the compiled editor spends its instructions on:")
+    print()
+    for k in ("move", "arith", "flow", "other"):
+        v = tally.get(k, 0)
+        print(f"    {k:<8} {v:>6,}  {100.0 * v / n:5.1f}%")
+    print(f"    {'total':<8} {n:>6,}")
+
+    dead = redundant = 0
+    for (o1, a1), (o2, a2) in zip(ins, ins[1:]):
+        m1 = re.match(r"^\[SP\+(\d+)\],(R\d)$", a1)
+        m2 = re.match(r"^(R\d),\[SP\+(\d+)\]$", a2)
+        if (o1 == "ST" and o2 == "LD" and m1 and m2
+                and m1.group(1) == m2.group(2) and m1.group(2) == m2.group(1)):
+            dead += 1
+        if (o1.startswith("B") and o1 != "BRA" and o2 == "JMP"
+                and a1.startswith(".")):
+            redundant += 1
+
+    print()
+    print("  Provably removable, without touching a line of BASIC:")
+    print()
+    print(f"    store then reload the same register and slot   "
+          f"{dead:>5,}  ~{dead * 2:,} bytes")
+    print(f"    conditional branch over a JMP, which the        "
+          f"{redundant:>5,}  ~{redundant * 3:,} bytes")
+    print( "      assembler now relaxes by itself")
+    print()
+    print(f"    {'':<46} ~{dead * 2 + redundant * 3:,} bytes")
+    print()
+    print("    An upper bound: removing an instruction moves every")
+    print("    branch after it, so the real figure needs a rebuild.")
 
 
 def by_file(syms):

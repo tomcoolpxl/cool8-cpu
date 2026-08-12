@@ -458,6 +458,14 @@ Easy to get wrong:
   on the machine client, so an external test program needs to know
   nothing about where the screen lives. A harness that computes a
   screen address is a harness that cannot catch an unset `VID_BASE`.
+- **`con` is a reserved device name on Windows, extension or not.** The
+  console module was written as `sw/con.asm` and every tool could read
+  it — the assembler, the suites, Python — but `git add` failed with
+  `open("sw/con.asm"): No such file or directory` on a file `ls` showed
+  at 30 KB. `CON`, `PRN`, `AUX`, `NUL`, `COM1`–`COM9` and `LPT1`–`LPT9`
+  are devices, so `con.asm` cannot be committed and cannot even be
+  renamed onto. It is `sw/console.asm`; the `con_` symbol prefix is
+  fine, because only the *filename* is reserved.
 - **A conditional branch reaches ±127 bytes** and a dispatcher at the
   top of a large file does not. `sw/disasm.asm` defines `jlo`/`jhs`/`jeq`
   macros that invert the test and let a `JMP` carry the distance; the
