@@ -302,20 +302,28 @@ class Assembler:
     # ------------------------------------------------------ source prep
 
     def resolve(self, name, path):
-        """Where an .include lives: next to the file that asked for it,
-        or on the -I path.
+        """Where an .include lives: on the -I path, or next to the file
+        that asked for it.
 
-        The second is what lets generated assembly include sw/fs.asm.
-        The compiler writes its output into a build directory, so a
-        sibling lookup would look for fs.asm there and not find it."""
-        here = os.path.join(os.path.dirname(path), name)
-        if os.path.exists(here):
-            return here
+        The -I path is what lets generated assembly include `sw/fs.asm`
+        -- the compiler and the suites write their output into a build
+        directory, so a sibling lookup alone would not find it.
+
+        **The -I path is searched first, and that is a fix rather than a
+        preference.** Sibling-first meant any generated file could
+        shadow a real module of the same name: `sim/build/edit.asm`
+        exists because a suite assembles something called `edit`, and
+        with it there `.include "edit.asm"` from a driver in that same
+        directory picked up the artifact instead of `sw/edit.asm`. The
+        errors were `duplicate label 'main'` and a page of undefined
+        symbols, which point at everything except the real cause.
+        A source file including its neighbour is unaffected: `sw/` is on
+        the -I path, so it finds the same file either way."""
         for d in getattr(self, "incdirs", ()):
             cand = os.path.join(d, name)
             if os.path.exists(cand):
                 return cand
-        return here                     # let open() report it
+        return os.path.join(os.path.dirname(path), name)
 
     def read(self, path, stack=()):
         """Read a file, expanding `.include`. **Include-once.**

@@ -190,6 +190,11 @@ run = "sim/test_prog.py"
 about = "sw/prog.asm: the program store, and RENUM rewriting GOTO targets"
 
 [[tool.cool8.jobs.sw]]
+id = "edit"
+run = "sim/test_edit.py"
+about = "sw/edit.asm: the screen as document, wrapped logical lines, and Return"
+
+[[tool.cool8.jobs.sw]]
 id = "names"
 run = "sim/check_names.py"
 about = "global name collisions across the system image"
