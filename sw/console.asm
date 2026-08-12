@@ -465,7 +465,36 @@ con_cursor:
 ; silicon.
 ;
 ; ---------------------------------------------------------------------
-; TO DO: text comes here too, and the hardware cursor goes away
+; SUPERSEDED -- go the other way. Keep the hardware cursor, delete this.
+;
+; The note below argues for deleting the hardware cursor and drawing all
+; seven modes here. The cheaper move is the reverse, and it was missed
+; because I found the cursor's logic cells before I read its pipeline:
+;
+;   `d2_cell <= sx1[10:3]` and `d2_trow <= vsrc[8:4]` in cool8_pixel.v
+;   are computed UNCONDITIONALLY, not gated by `engine`. The hardware
+;   already knows which cell every pixel is in, in every mode. The
+;   cursor is text-only only because the result is applied inside the
+;   text path: `lit = (font_q | cur_pix) ^ cur_inv`.
+;
+; Move the invert to `pal_index` instead -- eight XOR gates, and
+; inverting a palette index is visible in text, tile and bitmap alike.
+; Select the row divisor by cell height (y/16 is wrong for the 8-line
+; cells of modes 4-6; a 5-bit mux). Drop the style mux and `in_lines`,
+; since the editor only ever uses style 3, which RETURNS about a dozen
+; LUTs.
+;
+; Then this routine, GINV, CPHASE and the mirrors' inverse handling are
+; all dead: the console writes CUR_X/CUR_Y and stops drawing a cursor at
+; all. One implementation, less RTL than today, less software than
+; today, and the stale-cursor bug cannot exist.
+;
+; The old note is kept below because its *diagnosis* is the durable
+; part -- two implementations that each remember where the cursor is
+; will disagree on a mode change. Only the direction of the fix changed.
+; ---------------------------------------------------------------------
+;
+; TO DO (superseded): text comes here too, and the hardware cursor goes away
 ;
 ; **The hardware cursor is the reason the cursor blinks in the wrong
 ; place.** There are two implementations that each remember where it is
