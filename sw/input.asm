@@ -147,7 +147,6 @@ in_key: CALL in_raw
         RET
 .none:  RET
 
-BSPARE  = $7DAD                 ;: 2 free: was BLB, the blink timer
 
 ; ---------------------------------------------------------------------
 ; in_get -- block until a key.

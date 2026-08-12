@@ -46,6 +46,7 @@
 ; emits no symbol and no size -- so `bglyph` reached them as raw
 ; literals like `[$00D2]` and nothing in the tree could say what lived
 ; there.
+CROWA   = $7DAD                 ;: 2 the address of row CCY, cached
 CONT    = $7DAF                 ;: 32 per map row: is it a continuation
 CMIR    = $7DCF                 ;: 2 the mirror for this mode, a vector
 CFONT   = $7DD1                 ;: 2 font base for the current cell height
@@ -121,11 +122,51 @@ con_row:
 ; Two bytes to a cell. A column cannot reach 128, so the doubling cannot
 ; carry out of a byte and `ADDW X,R1` finishes it.
 con_cell:
+        PUSH R2
+        LD   R2,[CCY]
+        CMP  R0,R2
+        BEQ  .cached
+        POP  R2
         PUSH R1
         CALL con_row
         POP  R1
         ADD  R1,R1
         ADDW X,R1
+        RET
+.cached:
+        POP  R2
+        LDW  X,[CROWA]
+        ADD  R1,R1
+        ADDW X,R1
+        RET
+
+; con_setrow -- CROWA = the address of row CCY.
+;
+; **The row address was recomputed for every character.** con_emit goes
+; through con_put and con_cell to con_row on each one, and con_row's
+; seven instructions answer a question whose inputs -- CCY and CTOP --
+; change once a line. Cached here instead, and every site that moves
+; either one calls this; con_cell takes the cached answer whenever the
+; row asked for is the cursor's, and computes for any other, which is
+; what con_get and con_fill need when they walk the screen.
+;
+; It also stops the row address depending on the stride being a power of
+; two: at 256 the row IS the high byte, and that is the whole of [D30]'s
+; argument for an 8192-byte map to show 80x30. With this, any stride
+; costs the same and the map can be 5120.
+;
+; Every register survives, because eleven call sites in three files do
+; not agree on what is live.
+con_setrow:
+        PUSH R0
+        PUSH R1
+        PUSHW X
+        LD   R0,[CCY]
+        CALL con_row
+        STW  [CROWA],X
+        POPW X
+        POP  R1
+        POP  R0
         RET
 
 ; =====================================================================
@@ -401,6 +442,7 @@ con_cls:
         CLR  R0
         ST   [CCX],R0
         ST   [CCY],R0
+        CALL con_setrow
         CALL con_paint
         JMP  con_cursor
 
@@ -540,7 +582,7 @@ con_down:
         CMP  R0,R1
         BHS  .scr
         ST   [CCY],R0
-        RET
+        JMP  con_setrow
 .scr:   JMP  con_scroll
 
 ; con_nl -- a new logical line at column 0.
@@ -632,6 +674,7 @@ con_scroll:
         ADD  R0,#1
         AND  R0,#31
         ST   [CTOP],R0
+        CALL con_setrow
 
         LD   R1,[CKIND]
         TST  R1
@@ -717,6 +760,7 @@ con_warm:
         ST   [CTOP],R0
         ST   [CCX],R0
         ST   [CCY],R0
+        CALL con_setrow
         JMP  con_geom
 
 con_init:
@@ -948,6 +992,7 @@ con_tilefont:
 
 ; con_at -- the cursor to row R0, column R1.
 con_at: ST   [CCY],R0
+        CALL con_setrow
         MOV  R0,R1
         ST   [CCX],R0
         JMP  con_cursor

@@ -286,6 +286,7 @@ ed_left:
         BEQ  .out
         SUB  R0,#1
         ST   [CCY],R0
+        CALL con_setrow
         LD   R0,[CCOLS]
         SUB  R0,#1
         ST   [CCX],R0
@@ -333,6 +334,7 @@ ed_enter:
         LD   R0,[EDR0]
         CALL ed_last
         ST   [CCY],R0
+        CALL con_setrow
         CALL con_nl
 
         CLR  R0

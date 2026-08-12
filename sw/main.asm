@@ -212,6 +212,7 @@ main_loop:
         BEQ  .udone
         SUB  R0,#1
         ST   [CCY],R0
+        CALL con_setrow
 .udone: CALL con_cursor
         BRA  main_loop
 .down:  CALL con_down
@@ -220,6 +221,7 @@ main_loop:
 .home:  CLR  R0
         ST   [CCX],R0
         ST   [CCY],R0
+        CALL con_setrow
         CALL con_cursor
         BRA  main_loop
 .end:   CALL ed_end
@@ -469,6 +471,7 @@ main:
         ; wiped the banner it was written to preserve.
         MOV  R0,#10
         ST   [CCY],R0
+        CALL con_setrow
         CLR  R0
         ST   [CCX],R0
         CALL con_cursor
