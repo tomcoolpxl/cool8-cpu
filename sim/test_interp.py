@@ -34,7 +34,8 @@ import cool8rsvm                                         # noqa: E402
 
 ROOT, BUILD = H.ROOT, H.BUILD
 
-CODE = 0x0200
+CODE = 0x4000            # the driver, clear of the store
+PROGBOT = 0x0200          # where sw/prog.asm keeps the program
 PROG = 0x3000
 from memmap import VARS                                    # noqa: E402
 FAILS = H.FAILS
@@ -95,118 +96,68 @@ def program(*lines):
     return out
 
 
-def build(name_, text):
-    return H.assemble_text(text, f"ti_{name_}")
-
-
-# The interpreter needs three of the editor's routines. In the real
-# system they are basic.bas's; here they are stubs that record what was
-# asked for, so PRINT can be checked without a screen.
-HARNESS = """
-        .org $0200
-        MOV  R0,#<prog
-        ST   [$0014],R0
-        MOV  R0,#>prog
-        ST   [$0015],R0
-        ; $0016 (PEND) is written by the harness before the run.
-        ; NTAB and HEAP are the caller's job, the same way: the name
-        ; table goes above the program and the heap comes down from
-        ; MEMTOP. Fixed addresses here, as sim/test_emit.py does.
-        MOV  R0,#$00
-        ST   [$0027],R0         ; NTAB = $6000
-        MOV  R0,#$60
-        ST   [$0028],R0
-        ; HEAP = $7F00, not MEMTOP. On the machine the stack is page 1
-        ; (sw/boot.asm sets SP to $0200) so the heap may come all the way
-        ; down from $7FFF; this harness runs the deep stack at $7FF0 that
-        ; docs/10-debugging.md prescribes, and an array allocated at the
-        ; top zeroed straight over it. That is the harness-against-machine
-        ; mismatch the stored-form contract already names.
-        MOV  R0,#$00
-        ST   [$002A],R0
-        MOV  R0,#$7F
-        ST   [$002B],R0
-        MOV  R0,#$00            ; SACC = $5F00, below the name table
-        ST   [$0033],R0
-        MOV  R0,#$5F
-        ST   [$0034],R0
-        MOV  R0,#$00            ; CSTK = $5E00, the CALL stack
-        ST   [$003C],R0
-        MOV  R0,#$5E
-        ST   [$003D],R0
+# ---------------------------------------------------------------------
+# The driver: three calls, and not one of them is this suite's
+#
+# **The system boots itself.** This was a hundred lines of harness --
+# pointer writes copied out of the editor, then forty stubs standing in
+# for every routine `sw/interp.asm` named, because naming them all was
+# what interp.asm did. The stubs are what made the suite lie: `s_list`
+# was a RET, so no case could tell LIST from nothing at all, and
+# `s_newline` was a RET, so a program printing across two lines produced
+# one string.
+#
+# `main_pre` in sw/main.asm is the real initialisation, and it derives
+# NTAB and PEND from PROGEND -- so a case seeds the store, writes
+# PROGEND, and lets the system arrange itself exactly as a cold boot
+# does. What runs here is what ships ([D68]).
+# ---------------------------------------------------------------------
+DRIVER = """
+        CALL con_init
+        CALL main_pre
         CALL irun
-        HALT
-
-; ---- the modules interp.asm calls, stubbed for this suite
-""" + H.MODULE_STUBS + """
-; ---- stubs standing in for sw/basic.bas
-s_putn:
-s_putsn:
-s_newline:
-        RET
-printed:  .space 40
-printlen: .byte 0
-nprint:   .byte 0
-
-; INKEY and KEY reach outside the interpreter: the ring belongs to the
-; editor and the key-down bitmap to sw/kbd.asm, and neither is here
-; when interp.asm is assembled on its own. Stubbed rather than pulled
-; in, because this file tests the interpreter and not the keyboard --
-; sim/test_run.py drives the real ones on the whole system.
-; INPUT and PRINT separators reach the editor's console; standalone,
-; a getkey answers Return at once so INPUT terminates, and emit
-; swallows the byte -- the caller pops its own arguments.
-s_emit: RET
-s_getkey:
-        MOV  R0,#$0D
-        CLR  R1
-        RET
-s_serialkey:
-        CLR  R0
-        CLR  R1
-        RET
-kdbit:  CLR  R0                 ; a zero mask: KEY() is always false
-        LDW  X,#kdstub
-        RET
-kdstub: .byte 0
-; The former editor commands are tokens now, and their handlers call
-; the editor's compiled cores. Standalone, each core is a RET and the
-; shared buffers are bytes: this file tests the interpreter, and
-; sim/test_basic.py drives the real ones on the whole system.
-s_parsename:
-        CLR  R0
-        CLR  R1
-        RET
-s_list:
-s_deleterange:
-s_renumber:
-s_new:
-s_dofree:
-s_cls:
-s_dodir:
-s_docompact:
-s_drivecore:
-s_eracore:
-s_savecore:
-s_savedata:
-s_loadcore:
-s_loaddata:
-s_dorun:
-        RET
-a_lbuf: .space 4
-v_llen: .byte 0
-v_ip:   .byte 0
-v_fok:  .byte 0
-v_progend: .word 0
-        .include "zp.asm"
-        .include "interp.asm"
-; Floating point is part of the interpreter now ([D63]): `erel` calls
-; fsav/fpair on every + - * /, and h_print calls fprint. interp.asm no
-; longer assembles without them.
-        .include "fp.asm"
-        .include "fpbas.asm"
-prog:
 """
+
+
+def boot(prog, budget=20_000_000, mode=0x80, mk=None):
+    """Seed the store with `prog`, boot the system, run it.
+
+    Returns (machine, symbols, why). The driver sits at $4000 because
+    the store starts at $0200 and the two would land on each other.
+    """
+    m, syms = H.drive(DRIVER, at=CODE, sp=0x7FF0, mk=mk)
+    m.bus.mem[PROGBOT:PROGBOT + len(prog)] = bytes(prog)
+    end = PROGBOT + len(prog)
+    m.bus.mem[syms["progend"]] = end & 0xFF
+    m.bus.mem[syms["progend"] + 1] = end >> 8
+    m.io_write(0x10, mode)                  # VID_MODE, before con_init reads it
+    m.io_write(0x12, 0x00)
+    m.io_write(0x13, 0x80)
+    m.io_write(0x14, 0x00)
+    m.io_write(0x15, 0x01)
+    # budget=None loads without running, for the one case that has to
+    # arm the machine's stack watermark before the first instruction.
+    return m, syms, (m.run(budget=budget) if budget else None)
+
+
+def printed(m):
+    """What PRINT put on the screen, as one string.
+
+    Rows are stripped and joined, which is what the old `printed` buffer
+    amounted to: its `s_newline` did nothing, so output that crossed a
+    line came back concatenated. Read through `m.row()` and never off a
+    computed address, because the geometry is the hardware's (AGENTS.md).
+    """
+    out = []
+    for r in range(25):
+        try:
+            t = m.row(r).rstrip()
+        except Exception:
+            break
+        if not t:
+            break
+        out.append(t)
+    return "".join(out)
 
 
 CASES = [
@@ -945,28 +896,29 @@ def trace(pattern, n=400):
     a breakpoint cannot tell those apart -- the trace decodes forward
     from the live PC, so the boundaries are the ones the CPU used.
     """
-    code, syms = build("interp", HARNESS)
     hit = [c for c in CASES if pattern.lower() in c[0].lower()]
     if not hit:
         raise SystemExit("no case matching %r" % pattern)
     name_, prog = hit[0][0], hit[0][1]
-    m = cool8rsvm.machine()
-    m.bus.mem[CODE:CODE + len(code)] = code
-    at = syms["prog"]
-    m.bus.mem[at:at + len(prog)] = bytes(prog)
-    end = at + len(prog)
-    m.cpu.pc, m.cpu.sp, m.romen = CODE, 0x7FF0, False
-    m.bus.mem[0x0016] = end & 0xFF
-    m.bus.mem[0x0017] = end >> 8
     print("  " + name_)
     print()
-    why = m.run(budget=20_000_000)
+    m, syms, why = boot(prog)
     err = m.bus.mem[0x0018]              # ERR, sw/zp.asm
-    ln = m.bus.mem[syms["printlen"]]
-    got = bytes(m.bus.mem[syms["printed"]:syms["printed"] + ln])
     print("  run:     %s" % why)
-    print("  ERR:     $%02X" % err)
-    print("  printed: %r" % got.decode("latin-1"))
+    print("  ERR:     $%02X%s" % (err, "  (E_DONE -- it finished)"
+                                  if err == 0xFF else ""))
+    print("  printed: %r" % printed(m))
+    # The accumulator, because a string case that prints nothing has
+    # either not built one or lost the count, and those look identical
+    # from the outside.
+    sacc = m.bus.mem[syms["sacc"]] | (m.bus.mem[syms["sacc"] + 1] << 8)
+    slen = m.bus.mem[syms["slen"]]
+    print("  SACC:    $%04X  SLEN %d  STYPE %d  %r"
+          % (sacc, slen, m.bus.mem[syms["stype"]],
+             bytes(m.bus.mem[sacc:sacc + max(slen, 8)]).decode("latin-1")))
+    print("  screen:")
+    for r in range(6):
+        print("    %2d %r" % (r, m.row(r).rstrip()))
     print("  pc:      $%04X" % m.cpu.pc)
     print()
     # **This used to stop here**, printing three numbers and pointing at
@@ -983,8 +935,6 @@ def main():
                      int(sys.argv[3]) if len(sys.argv) > 3 else 400)
     print("  I2 -- sw/interp.asm, on the editor's stored form")
     print()
-    code, syms = build("interp", HARNESS)
-    print(f"  interpreter: {syms['prog'] - syms['irun']:,} bytes")
     # **There is no second machine to fall back to.** This line used to
     # offer "python", from when a reference emulator existed; [D57]
     # retired it and H.machine() now refuses rather than pretending.
@@ -994,21 +944,11 @@ def main():
     for case in CASES:
         name_, prog, want = case[0], case[1], case[2]
         wantstr = case[3] if len(case) > 3 else None
-        m = cool8rsvm.machine()
-        m.bus.mem[CODE:CODE + len(code)] = code
-        at = syms["prog"]
-        m.bus.mem[at:at + len(prog)] = bytes(prog)
-        # progend is one past the last record
-        end = at + len(prog)
-        m.cpu.pc = CODE
-        m.cpu.sp = 0x7FF0
-        m.romen = False
-        # patch the progend the harness loaded
-        m.bus.mem[0x0016] = end & 0xFF
-        m.bus.mem[0x0017] = end >> 8
-        # m.run, not a stepping loop: the machine advances the raster
-        # and the interrupt flags and a bare loop does not (AGENTS.md).
-        if m.run(budget=20_000_000) != "halt":
+        # m.run inside boot(), not a stepping loop: the machine advances
+        # the raster and the interrupt flags and a bare loop does not
+        # (AGENTS.md).
+        m, syms, why = boot(prog)
+        if why != "halt":
             check(False, name_, "never halted")
             continue
         got = {i: m.bus.mem[VARS + 2 * i] | (m.bus.mem[VARS + 2 * i + 1] << 8)
@@ -1016,9 +956,7 @@ def main():
         ok = got == want
         detail = "" if ok else f"got {got}, wanted {want}"
         if wantstr is not None:
-            n = m.bus.mem[syms["printlen"]]
-            at2 = syms["printed"]
-            gots = bytes(m.bus.mem[at2:at2 + n]).decode("latin-1")
+            gots = printed(m)
             if gots != wantstr:
                 ok = False
                 detail = f"printed {gots!r}, wanted {wantstr!r}"
@@ -1030,14 +968,7 @@ def main():
     # wrapping and running the wrong program, which is what the
     # one-level version did.
     def run_err(prog):
-        m = cool8rsvm.machine()
-        m.bus.mem[CODE:CODE + len(code)] = code
-        at = syms["prog"]
-        m.bus.mem[at:at + len(prog)] = bytes(prog)
-        m.cpu.pc, m.cpu.sp, m.romen = CODE, 0x7FF0, False
-        m.bus.mem[0x0016] = (at + len(prog)) & 0xFF
-        m.bus.mem[0x0017] = (at + len(prog)) >> 8
-        m.run(budget=5_000_000)
+        m = boot(prog, budget=5_000_000)[0]
         return m.bus.mem[0x0018]        # ERR
 
     # MAXFOR is 8, so the ninth is one too many.
@@ -1144,13 +1075,7 @@ def main():
         # instruction — the machine's own low-water mark (sp_min,
         # server-side), because that look cannot cross the session
         # pipe one tick at a time.
-        m = vm.Machine()
-        m.bus.mem[CODE:CODE + len(code)] = code
-        at = syms["prog"]
-        m.bus.mem[at:at + len(prog)] = bytes(prog)
-        m.cpu.pc, m.cpu.sp, m.romen = CODE, 0x7FF0, False
-        m.bus.mem[0x0016] = (at + len(prog)) & 0xFF
-        m.bus.mem[0x0017] = (at + len(prog)) >> 8
+        m, _, _ = boot(prog, budget=None, mk=vm.Machine)
         m.sp_clear()
         m.run(budget=2_000_000)
         low = min(m.sp_min(), 0x7FF0)
@@ -1195,21 +1120,11 @@ def main():
         line(20, name("A"), "=", name("K"), "+", num(3), "-", name("K")),
         line(30, [K["NEXT"]]),
         line(40, [K["END"]]))
-    m = cool8rsvm.machine()
-    m.bus.mem[CODE:CODE + len(code)] = code
-    at = syms["prog"]
-    m.bus.mem[at:at + len(bench)] = bytes(bench)
-    end = at + len(bench)
-    m.cpu.pc = CODE
-    m.cpu.sp = 0x7FF0
-    m.romen = False
-    m.bus.mem[0x0016] = end & 0xFF
-    m.bus.mem[0x0017] = end >> 8
-    m.run(budget=80_000_000)
+    m = boot(bench, budget=80_000_000)[0]
     got = m.bus.mem[VARS + 20] | (m.bus.mem[VARS + 21] << 8)
     # the native equivalent, as the compiler emits it
     nat, _ = build("bnat", """
-        .org $0200
+        .org $4000
         MOV  R0,#1
         MOV  R1,#0
         ST   [$0054],R0

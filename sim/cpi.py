@@ -96,24 +96,14 @@ def run_counted(binpath, extra=None, limit=200_000_000):
 def interp_workload():
     """The real interpreter, running the loop prof_interp.py profiles."""
     import test_interp as T
-    code, syms = T.build("interp", T.HARNESS)
     K, num, name, line, program = T.K, T.num, T.name, T.line, T.program
     prog = program(
         line(10, [K["FOR"]], name("K"), "=", num(1), [K["TO"]], num(1000)),
         line(20, name("A"), "=", name("K"), "+", num(3), "-", name("K")),
         line(30, [K["NEXT"]]),
         line(40, [K["END"]]))
-    m = emu.Machine()
-    m.bus.mem[T.CODE:T.CODE + len(code)] = code
-    at = syms["prog"]
-    m.bus.mem[at:at + len(prog)] = bytes(prog)
-    end = at + len(prog)
-    m.cpu.pc = T.CODE
-    m.cpu.sp = 0x7FF0
-    m.romen = False
-    m.bus.mem[0x0016] = end & 0xFF
-    m.bus.mem[0x0017] = end >> 8
-    if m.run(budget=200_000_000) != "halt":
+    m, _, why = T.boot(prog, budget=200_000_000, mk=emu.Machine)
+    if why != "halt":
         raise SystemExit("interpreter did not halt")
     return m.cpu.cycles, m.cpu.instructions
 

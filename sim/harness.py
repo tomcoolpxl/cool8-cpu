@@ -231,123 +231,6 @@ def compile_bas(source, name, org=None, optimize=False, lower=False,
     asm = bas.compile_source(source, org, optimize=optimize)
     return assemble_text(asm, name, lower=lower, incdirs=incdirs,
                          write=write)
-
-
-# ---------------------------------------------------------------------
-# The module stubs, in one place.
-#
-# `sw/interp.asm` calls the console, the store and the disk commands
-# ([D68]). A suite testing the *interpreter* wants those absent, so that
-# a case is a statement and an answer rather than a whole machine; a
-# suite testing a *module* wants the real thing and stubs nothing.
-#
-# **This text was inside `sim/test_interp.py` and three other suites
-# reached in and split it on a comment line to take the half they
-# wanted.** That is the private-copy trap AGENTS.md names, one step from
-# four different ideas of what a stubbed machine is. It lives here, and
-# a suite asks for it by name.
-MODULE_STUBS = """
-; num_put and con_putsn record rather than print, so a case can assert
-; on the answer without a screen. They are what `s_putn` and `s_putsn`
-; were before the port: same job, register arguments.
-num_put:
-        ST   [printed],R0
-        ST   [printed+1],R1
-        LD   R0,[nprint]
-        ADD  R0,#1
-        ST   [nprint],R0
-        RET
-con_putsn:
-        ST   [printlen],R0
-        PUSHW Y
-        LDW  Y,#printed
-        TST  R0
-        BEQ  .ps9
-.ps:    LD   R1,[X]
-        ST   [Y],R1
-        INCW X
-        INCW Y
-        SUB  R0,#1
-        BNE  .ps
-.ps9:   POPW Y
-        LD   R0,[nprint]
-        ADD  R0,#1
-        ST   [nprint],R0
-        RET
-con_emit:
-con_nl:
-con_cls:
-con_puts:
-prg_new:
-prg_free:
-prg_list:
-prg_del:
-prg_renum:
-fsc_name:
-fsc_find:
-fsc_dir:
-fsc_compact:
-fsc_drive:
-fsc_erase:
-fsc_save:
-fsc_save_prog:
-fsc_load:
-fsc_load_prog:
-fsc_merge:
-in_key:
-in_get:
-main_pre:
-main_err:
-ed_direct:
-        RET
-; prg_find has to work, not answer a constant: `CALL` and `GOTO` both
-; look a record up through it. The real one walks from $0200; a suite
-; that assembles its program after the code walks from `prog` instead,
-; which is the one thing this stub exists to change.
-prg_find:
-        PUSH R0
-        PUSH R1
-        LDW  X,#prog
-.pf:    MOV  R0,XL              ; past the end of the program?
-        MOV  R1,XH
-        LD   R2,[$0016]         ; PEND
-        LD   R3,[$0017]
-        SUB  R0,R2
-        SBC  R1,R3
-        BHS  .pfd
-        LD   R2,[X]             ; this record's number
-        PUSHW X
-        INCW X
-        LD   R3,[X]
-        POPW X
-        LD   R0,[SP+1]          ; the one wanted, off the two pushes
-        LD   R1,[SP+0]
-        SUB  R2,R0
-        SBC  R3,R1
-        BHS  .pfd               ; >= wanted: this is it
-        PUSHW X                 ; on to the next: 4 + its length
-        INCW X
-        INCW X
-        LD   R0,[X]
-        POPW X
-        ADD  R0,#4
-        CLR  R1
-        ADDW X,R0
-        BRA  .pf
-.pfd:   POP  R1
-        POP  R0
-        RET
-PROGEND: .word 0
-FSOK:   .byte 0
-FSADDR: .word 0
-FSLENW: .word 0
-LBUF:   .space 8
-LLEN:   .byte 0
-EDIP:   .byte 0
-MSGFREE: .asciz " BYTES FREE"
-"""
-
-
 def call(m, syms, routine, regs=(), at=0x0200, budget=20_000_000):
     """Call one routine in the loaded system image and come back.
 
@@ -416,7 +299,7 @@ def build_system(name="basic"):
 _IMAGE = None
 
 
-def fresh(sp=0x0200):
+def fresh(sp=0x0200, mk=None):
     """A machine with the system in it, ready to be called into.
 
         m, syms = H.fresh()
@@ -430,18 +313,23 @@ def fresh(sp=0x0200):
     puts its trampoline -- they grow apart, the trampoline upward from
     $0200 and the stack downward from it, and four bytes of code have
     never met a stack that deep.
+
+    `mk` swaps the machine for one a case needs a different view of --
+    `vm.Machine()` rather than a session, for the stack high-water mark,
+    which has to be read server-side because it cannot cross the session
+    pipe a tick at a time.
     """
     global _IMAGE
     if _IMAGE is None:
         _IMAGE = build_system()
     code, syms = _IMAGE
-    return load(session(), code, sp=sp), syms
+    return load((mk or session)(), code, sp=sp), syms
 
 
 _EQU = None
 
 
-def drive(body, at=0x0200, sp=0x0200, run=False, budget=20_000_000):
+def drive(body, at=0x0200, sp=0x0200, run=False, budget=20_000_000, mk=None):
     """A snippet of assembly, assembled against the real image.
 
         m, syms = H.drive('''
@@ -464,7 +352,7 @@ def drive(body, at=0x0200, sp=0x0200, run=False, budget=20_000_000):
     caller may use, and an equate for it would not assemble anyway.
     """
     global _EQU
-    m, syms = fresh(sp=sp)
+    m, syms = fresh(sp=sp, mk=mk)
     if _EQU is None:
         # Both cases. The image's table is folded down (`lower=True`) and
         # the assembler is not case-insensitive, so `TLEN` and `tok_line`

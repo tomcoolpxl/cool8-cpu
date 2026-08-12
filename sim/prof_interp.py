@@ -23,20 +23,12 @@ import cool8rsvm as vm                                   # noqa: E402
 import dbg
 import test_interp as T
 
-code, syms = T.build("interp", T.HARNESS)
 K, num, name, line, program = T.K, T.num, T.name, T.line, T.program
 def profile(title, prog):
-    m = vm.Machine()
-    m.bus.mem[T.CODE:T.CODE + len(code)] = code
-    at = syms["prog"]
-    m.bus.mem[at:at + len(prog)] = bytes(prog)
-    end = at + len(prog)
-    m.cpu.pc = T.CODE
-    m.cpu.sp = 0x7FF0
-    m.romen = False
-    m.bus.mem[0x0016] = end & 0xFF
-    m.bus.mem[0x0017] = end >> 8
-    p = dbg.Profile(syms, T.CODE, at)
+    # budget=None: loaded and seeded, but not yet run -- the profiler
+    # drives the machine itself.
+    m, syms, _ = T.boot(prog, budget=None, mk=vm.Machine)
+    p = dbg.Profile(syms, T.CODE, T.PROGBOT)
     p.run(m)
     print("  " + title)
     print()
