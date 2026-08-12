@@ -160,6 +160,11 @@ run = "sim/test_lib.py"
 about = "M14 -- sw/demo.bas against sw/demo.asm: work per frame, within 2x"
 
 [[tool.cool8.jobs.sw]]
+id = "cool8asm"
+run = "sim/test_cool8asm.py"
+about = "the host assembler itself: branch displacements at their edges, macro-local labels, and the operands it refuses"
+
+[[tool.cool8.jobs.sw]]
 id = "bas"
 run = "sim/test_bas.py"
 about = "the code-size gate: within 15% of hand-written"

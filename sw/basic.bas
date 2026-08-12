@@ -36,6 +36,7 @@
 ' than storing the text.
 ' ---------------------------------------------------------------------
 
+EXTERN s_putn
 EXTERN TOKTAB
 EXTERN RUNTAB
 EXTERN iisr
@@ -479,54 +480,9 @@ SUB puts(s AS CARD)
   LOOP
 END SUB
 
-SUB putn(v AS CARD)
-  DIM d AS CARD
-  DIM q AS BYTE
-  DIM lead AS BYTE
-  ' An INT arrives as its bit pattern, so the top bit is its sign: say
-  ' minus, then print the magnitude -- which in CARD arithmetic is
-  ' exactly 0 - v, and -32768 comes out right for free. Nothing prints
-  ' a true CARD above 32767: FREE's ceiling is 31967.
-  IF v >= 32768 THEN
-    CALL emit(45)
-    v = 0 - v
-  END IF
-  d = 10000
-  lead = 0
-  DO
-    q = 0
-    DO WHILE v >= d
-      v = v - d
-      q = q + 1
-    LOOP
-    IF q <> 0 THEN
-      lead = 1
-    END IF
-    IF lead <> 0 THEN
-      CALL emit(48 + q)
-    END IF
-    IF d = 1 THEN
-      EXIT DO
-    END IF
-    d = tenth(d)
-  LOOP
-  IF lead = 0 THEN
-    CALL emit(48)
-  END IF
-END SUB
-
-FUNCTION tenth(d AS CARD) AS CARD
-  IF d = 10000 THEN
-    RETURN 1000
-  END IF
-  IF d = 1000 THEN
-    RETURN 100
-  END IF
-  IF d = 100 THEN
-    RETURN 10
-  END IF
-  RETURN 1
-END FUNCTION
+' putn and tenth were here. They are sw/ed.asm's s_putn now,
+' hand-written: the same digits, out of udiv16 rather than
+' five subtracted constants. See docs/13-basic.md section 10.
 
 ' ---------------------------------------------------------------------
 ' The keyboard.
@@ -1121,7 +1077,7 @@ SUB list(a AS INT, b AS INT)
       IF lineno(p) > b THEN
         RETURN
       END IF
-      CALL putn(lineno(p))
+      CALL s_putn(lineno(p))
       CALL emit(32)
       k = 0
       DO WHILE k < linelen(p)
@@ -1130,7 +1086,7 @@ SUB list(a AS INT, b AS INT)
           ' a binary literal: two bytes, printed back as digits
           v = PEEK(p + 4 + k)
           v = v + (PEEK(p + 5 + k) << 8)
-          CALL putn(v)
+          CALL s_putn(v)
           k = k + 3
         ELSE
           IF t > 127 THEN
@@ -1288,7 +1244,7 @@ SUB runerr(n AS INT)
       CALL emit(73)
       CALL emit(78)
       CALL emit(32)
-      CALL putn(lineno(r))
+      CALL s_putn(lineno(r))
     END IF
   END IF
   CALL newline()
@@ -1586,7 +1542,7 @@ END FUNCTION
 ' interpreter's tname bridge read the quoted name out of the token
 ' stream into lbuf and ran the same parsename the editor always used.
 SUB dofree()
-  CALL putn(freebytes())
+  CALL s_putn(freebytes())
   CALL puts(MSGFREE)
   CALL newline()
 END SUB
@@ -1945,7 +1901,7 @@ SUB dodir()
         sz = PEEK(FSENT + 15)
         sz = sz << 8
         sz = sz + PEEK(FSENT + 14)
-        CALL putn(sz)
+        CALL s_putn(sz)
         CALL newline()
       END IF
     END IF
@@ -1956,7 +1912,7 @@ SUB dodir()
   sz = PEEK(FSFPG + 1)
   sz = sz << 8
   sz = sz + PEEK(FSFPG)
-  CALL putn((VOLPGS - sz) >> 2)
+  CALL s_putn((VOLPGS - sz) >> 2)
   CALL puts(MSGKFREE)
   CALL newline()
 END SUB
@@ -2602,6 +2558,7 @@ irpush: LD   R1,[irhead]
 ; the bytes, and reach them with SYS.
         .include "zp.asm"
         .include "interp.asm"
+        .include "ed.asm"
 
 ; ---- floating point, resident. [D63] spent the assembler's 2,886 bytes
 ; ---- on this: the package that was a loadable library in D62 is part

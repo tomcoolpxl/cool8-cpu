@@ -707,14 +707,31 @@ class Compiler:
 
     def gen_call(self, name, args, want=False):
         s = self.glob.get(name.lower())
-        if s is None or s.kind != 'sub':
+        if s is None or s.kind not in ('sub', 'extern'):
             raise Err(f"{name} is not a SUB", 0)
+        # **An EXTERN may be called, and with arguments.** Without this
+        # a hand-written routine could only be reached by address, so
+        # no compiled SUB could ever be replaced by assembly -- which
+        # is the one move that gets at the editor's size, basic.bas
+        # being 52 % of the image at 5x the density of hand code. The
+        # convention is the compiler's own: arguments pushed
+        # right-to-left, caller clears them, so the assembly reads
+        # [SP+2] upward exactly as a compiled SUB reads a parameter.
+        #
+        # Arity is unchecked, because the compiler cannot know what the
+        # assembly expects. That is the cost of the door.
+        if s.kind == 'extern':
+            self.gen_args(s, args)
+            return
         if len(args) != s.nargs:
             raise Err(f"{name} takes {s.nargs} argument(s), "
                       f"{len(args)} given", 0)
         if s.inlinable and s.label not in self.inlining:
             self.inline_call(s, args)
             return
+        self.gen_args(s, args)
+
+    def gen_args(self, s, args):
         if self.optimize:
             # Arguments straight onto the stack, no temp round-trip.
             # The hazard the temp path guards -- SP moving under a
@@ -1108,7 +1125,7 @@ class Compiler:
             if isinstance(s, tuple):
                 raise Err(f"{name} is an argument here and cannot be "
                           f"assigned", t[2])
-            if s and s.kind == 'sub':
+            if s and s.kind in ('sub', 'extern'):
                 args = self.call_args()
                 self.gen_call(name, args)
                 return

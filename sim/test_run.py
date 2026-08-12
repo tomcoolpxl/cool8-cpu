@@ -995,7 +995,58 @@ def main():
           " | ".join(r.strip() for r in M.screen() if r.strip())[:100])
 
     print()
+    inputs(code, syms)
+
+    print()
     fstack(code, syms)
+
+
+def inputs(code, syms):
+    """INPUT reads a line and the variable's suffix decides what it was.
+
+    One path for all three types, the way Microsoft's INPUT is one path
+    with PTRGET reading the '$' -- so these cases are really asking
+    whether the dispatch after the line is read agrees with `h_let`'s.
+    Each needs the interactive machine, because INPUT blocks and the
+    answer has to be typed while it waits.
+    """
+    def typed(prog, answer):
+        M = B.Machine(code, syms)
+        M.settle()
+        for ln in prog:
+            M.cmd(ln)
+        M.m.type("RUN\r")
+        M.m.run(cycles=3_000_000)
+        M.m.type(answer + "\r")
+        M.m.run(cycles=8_000_000)
+        return M
+
+    M = typed(['10 INPUT A$', '20 PRINT A$ + "!"', "30 END"], "HI")
+    check(shows(M, "HI!"), "INPUT reads text into a string variable",
+          " | ".join(r.strip() for r in M.screen() if r.strip())[:110])
+
+    M = typed(["10 INPUT A#", "20 PRINT A# + FLT(1)", "30 END"], "2.5")
+    check(shows(M, "3.5"), "INPUT reads a fraction into a float variable",
+          " | ".join(r.strip() for r in M.screen() if r.strip())[:110])
+
+    M = typed(["10 INPUT A#", "20 PRINT A# + FLT(1)", "30 END"], "2")
+    check(shows(M, "3"), "and promotes a whole number typed into one",
+          " | ".join(r.strip() for r in M.screen() if r.strip())[:110])
+
+    # The point used to be dropped on the floor -- "3.5" read as 35.
+    M = typed(["10 INPUT A", "20 PRINT A", "30 END"], "3.5")
+    check(shows(M, "3"), "an integer variable floors a typed fraction",
+          " | ".join(r.strip() for r in M.screen() if r.strip())[:110])
+
+    M = typed(["10 INPUT A", "20 PRINT A", "30 END"], "-12")
+    check(shows(M, "-12"), "a sign still reaches an integer variable",
+          " | ".join(r.strip() for r in M.screen() if r.strip())[:110])
+
+    # Minimal, like the C64's: nothing re-prompts, and the same routine
+    # that makes VAL("ABC") zero makes this zero.
+    M = typed(["10 INPUT A", "20 PRINT A", "30 END"], "ABC")
+    check(shows(M, "0"), "text typed at a number is zero, not a re-prompt",
+          " | ".join(r.strip() for r in M.screen() if r.strip())[:110])
 
     return H.report()
 

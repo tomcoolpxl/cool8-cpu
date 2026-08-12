@@ -93,7 +93,26 @@ done.
 
 ## Toolchain
 
-Everything needs [OSS CAD Suite](https://github.com/YosysHQ/oss-cad-suite-build)
+**Most work needs none of it.** `poe test`, `poe check` and `poe build`
+run with nothing but Python and `cargo` — measured: the whole software
+suite passes in 45 s with `OSS_CAD_SUITE` unset. **This section used to
+open "Everything needs OSS CAD Suite", which is false and expensive**:
+an agent reading that prefixes the toolchain to every command it runs,
+and a session of software work drags the hardware flow behind it for
+no reason at all.
+
+What needs it is the hardware, and only the hardware:
+
+| | OSS CAD Suite |
+|---|---|
+| `poe test` (`sw`), `poe check`, `poe build` | **no** |
+| `poe test-rtl`, `poe test-board`, `sim/cosim.py`, `sim/synth.py`, `sim/timing.py`, `tools/mkbit.py` | yes |
+
+Every file importing `sim/toolchain.py` is in the `rtl` group and
+nowhere else, which is the rule in one line: **if the question is about
+software, the toolchain is not involved.**
+
+When it *is*: [OSS CAD Suite](https://github.com/YosysHQ/oss-cad-suite-build)
 on `PATH`, or `OSS_CAD_SUITE` pointing at its root.
 
 **On this machine it is installed at `C:\Users\thraa\eda\oss-cad-suite`
@@ -231,7 +250,26 @@ suites say so rather than limping.
 
 Two shapes: `machine()` is the batch machine (CPU and RAM per call,
 one shared server), `Machine()`/`boot()` the session machine (a
-persistent machine with peripherals, `render=True` for a frame).
+persistent machine with peripherals, `render=True` for a frame). Reach
+them through **`H.machine()`** and **`H.session()`**, which refuse
+clearly when `rust/` has not been built rather than falling back to
+something — there is nothing to fall back to.
+
+### The VM is the default. The RTL is the exception.
+
+**Any question about software runs on the VM.** It steps at ~66 M
+instructions a second; Icarus simulating `rtl/` manages a few
+thousand. That is not a choice between two similar things — it is
+seconds against a wait nobody sits through, and it is why the software
+suite is 45 s.
+
+**Go to the RTL only when the hardware itself is the question**:
+`sim/cosim.py` checking the two models agree instruction by
+instruction, `sim/test_vm.py` pixel by pixel, a peripheral testbench.
+Those are the `rtl` job group and they are the only things that need
+the toolchain at all. The two models are gated against each other
+*precisely so* a software test can trust the fast one — using the slow
+one for a software question throws that away and buys nothing.
 
 **Anything that must watch the machine *while it runs* is a
 server-side command, never a Python loop** — `settle`, the cycle
@@ -258,7 +296,7 @@ RUN
 | type at the **keyboard**, not the cable | `m.key("HI")`, `m.key(["K_UP"])` |
 | hold a key, or send a malformed code | `m.scancode([0x1C])` — a make with no break |
 | the text screen | `m.text()`, `m.row(r)`, `m.shows("42")` |
-| what it just executed | `m.trace(n, syms)` then `print(m.trace_report(rows))` |
+| what it just executed | `m.trace(n, syms)` then `print(m.trace_report(rows))` — both machines; `into=False` steps over `CALL`s |
 | who wrote to an address | `m.watch(lo, hi)` then read `m.hits` — `(pc, addr, value)` |
 | where the clocks went | `m.profile(syms, org, end)` then `m.profile_report()` |
 
@@ -275,7 +313,21 @@ A breakpoint tells you where it stopped. The trace decodes forward from
 the live PC, one instruction at a time, so boundaries are the ones the
 CPU used — never decoded backwards from a symptom, the mistake written
 up at the top of `sim/dbg.py`. `into=False` steps over `CALL`s so one
-routine's shape is not buried under its callees.
+routine's shape is not buried under its callees. A round trip per
+instruction, so it takes an `n`; watching a whole run is a server-side
+command instead.
+
+`python sim/test_basic.py --trace <label> "<line>" [n] [--over]` is the
+way into the *editor*, which had none;
+`python sim/test_interp.py --trace "<case>"` is the same for a stored
+program. **Both were written after a round was lost to bisecting by
+re-running the suite** — the tooling reached for at the tenth sign of
+the fault rather than the first, which is what the rule above is
+about. `m.trace`/`m.trace_report` were described here and in
+[10-debugging.md](docs/10-debugging.md) while existing on neither
+machine, so the one suite that called them had a dead `--trace` mode.
+A documented tool that is not there is worse than none: it is the one
+you reach for.
 
 **Never loop on `cpu.step()`.** Only the machine advances the raster,
 the sound and the interrupt flags, so a bare stepping loop runs a

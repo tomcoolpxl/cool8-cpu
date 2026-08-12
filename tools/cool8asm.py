@@ -281,6 +281,9 @@ class Item:
         self.op = None
         self.op2 = None
         self.routine = None
+        self.size = 0
+        self.relax = None               # 'br' or 'jmp' once grown
+        self.relax_inv = None
 
 
 class Assembler:
@@ -292,6 +295,8 @@ class Assembler:
         self.errors = []
         self.macro_serial = 0
         self.cur_global = ""
+        self.symat = {}
+        self.relaxed = 0
 
     # ------------------------------------------------------ source prep
 
@@ -429,6 +434,10 @@ class Assembler:
             if name in self.syms:
                 raise AsmError(f"duplicate label {name!r}", where)
             self.syms[name] = self.pc
+            # Which item this label stands in front of. Relaxation moves
+            # everything after a grown branch, and a symbol recorded only
+            # as a number could not follow.
+            self.symat[name] = len(self.items)
             code = m.group(2)
         if not code.strip():
             if comment or raw.strip():
@@ -529,6 +538,91 @@ class Assembler:
         return re.sub(r"(?<![\w.])\.(\w+)",
                       lambda m: f"{self.cur_global}.{m.group(1)}", expr)
 
+    # ------------------------------------------------------- relaxation
+
+    # The condition list is ordered in inverse pairs -- BRA/BNV,
+    # BEQ/BNE, BCS/BCC -- so the opposite of a branch is its index with
+    # the bottom bit flipped. Derived from opcodes.COND rather than
+    # written out again, because a second table of anything here is the
+    # mistake AGENTS.md names.
+    def _inverse(self, op, op2):
+        for i, name in enumerate(opcodes.COND):
+            sig = TABLE.get((name, ("N",)))
+            if sig and sig[0] == op and sig[1] == op2:
+                other = opcodes.COND[i ^ 1]
+                return TABLE.get((other, ("N",)))
+        return None
+
+    def relax(self):
+        """Grow every branch that cannot reach, until none is left.
+
+        **A conditional branch reaches +/-127 and a hand port moves code
+        constantly**, so refusing was costing a reshaped routine every
+        time -- sw/disasm.asm carries jlo/jhs/jeq macros that exist for
+        no other reason. An out-of-range `BEQ far` becomes `BNE` over a
+        `JMP far`; an out-of-range `BRA` is simply a `JMP`.
+
+        Iterated, because growing one branch moves everything after it
+        and can put a second out of reach. It terminates: a branch only
+        ever grows, and only once.
+
+        **Counted, and the count is reported.** This project measures
+        itself to the byte, and two silently becoming five would corrupt
+        every size figure it produces.
+        """
+        jmp = TABLE.get(("JMP", ("N",)))
+        if jmp is None:
+            return
+        while True:
+            grew = 0
+            for it in self.items:
+                if (it.kind != "insn" or it.relax
+                        or getattr(it, "kind_operand", None) != opcodes.REL8):
+                    continue
+                try:
+                    v = it.exprs[0].eval(self.syms, it.addr)
+                except AsmError:
+                    continue
+                if -128 <= v - (it.addr + it.size) <= 127:
+                    continue
+                inv = self._inverse(it.op, it.op2)
+                if inv is None:
+                    continue
+                # BRA has BNV as its pair, and a branch that never
+                # branches is not worth emitting: it is just a JMP.
+                it.relax = "jmp" if opcodes.COND[0] == self._name(it) else "br"
+                it.relax_inv = inv
+                it.size = 3 if it.relax == "jmp" else 5
+                grew += 1
+            if not grew:
+                return
+            self.relaxed += grew
+            self._replace()
+
+    def _name(self, it):
+        for name in opcodes.COND:
+            sig = TABLE.get((name, ("N",)))
+            if sig and sig[0] == it.op and sig[1] == it.op2:
+                return name
+        return None
+
+    def _replace(self):
+        """Re-lay the image after a branch grew, symbols with it."""
+        at = {}
+        for name, idx in self.symat.items():
+            at.setdefault(idx, []).append(name)
+        pc = self.items[0].addr if self.items else 0
+        for i, it in enumerate(self.items):
+            for name in at.get(i, ()):
+                self.syms[name] = pc
+            if it.kind == "org":
+                pc = it.addr
+                continue
+            it.addr = pc
+            pc += it.size
+        for name in at.get(len(self.items), ()):
+            self.syms[name] = pc
+
     # ------------------------------------------------------------ pass 2
 
     def pass2(self):
@@ -562,6 +656,19 @@ class Assembler:
             return bytes(out)
         v = it.exprs[0].eval(self.syms, it.addr)
         if kind == opcodes.REL8:
+            # Grown by `relax`, because the target was out of reach.
+            if it.relax == "jmp":
+                jop, jop2, _ = TABLE[("JMP", ("N",))]
+                out = bytearray([jop] if jop2 is None else [jop, jop2])
+                return bytes(out) + bytes([v & 0xFF, (v >> 8) & 0xFF])
+            if it.relax == "br":
+                iop, iop2, _ = it.relax_inv
+                jop, jop2, _ = TABLE[("JMP", ("N",))]
+                over = bytearray([iop] if iop2 is None else [iop, iop2])
+                over.append(3)          # over the JMP that follows
+                over += bytes([jop] if jop2 is None else [jop, jop2])
+                over += bytes([v & 0xFF, (v >> 8) & 0xFF])
+                return bytes(over)
             d = v - (it.addr + it.size)
             if not -128 <= d <= 127:
                 raise AsmError(
@@ -730,6 +837,7 @@ def assemble(path, incdirs=()):
     lines = a.read(path)
     lines = a.expand_macros(lines)
     a.pass1(lines)
+    a.relax()
     a.pass2()
     return a
 
@@ -757,6 +865,14 @@ def main():
         print(f"error: {e}", file=sys.stderr)
     if a.errors:
         sys.exit(1)
+
+    # Grown branches are bytes nobody wrote. Reported rather than
+    # silent, because the size of this image is a number the project
+    # quotes and defends.
+    if a.relaxed:
+        print("%d branch%s relaxed (each costs 3 bytes over a reachable "
+              "one)" % (a.relaxed, "" if a.relaxed == 1 else "es"),
+              file=sys.stderr)
 
     base, img = a.image()
     if args.output:

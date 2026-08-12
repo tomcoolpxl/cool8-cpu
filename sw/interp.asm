@@ -115,6 +115,13 @@ K_GOTOT = $A2                   ; GOTO's token, for ON to expect
 ; already beyond what BBC or C64 BASIC will take.
 MAXEXPR = 24
 
+
+; CALLB1 and friends: the convention for calling compiled BASIC.
+; Included here rather than by basic.bas because this file is what
+; uses them, and sim/test_interp.py assembles this file against a
+; stub that never sees the editor.
+        .include "call.asm"
+
 ; ---------------------------------------------------------------------
 ; SKIPSP -- Y forward over spaces; R2 = the character it stopped on.
 ;
@@ -765,7 +772,7 @@ sttab:
         .word h_line            ; $AE LINE
                                 ;: LINE x1:int, y1:int, x2:int, y2:int, colour:int !intonly
         .word h_input           ; $AF INPUT
-                                ;: INPUT var  digits and a leading minus; no float can be typed !intonly
+                                ;: INPUT var  a line of text; the variable's suffix decides -- string, float or integer
         .word h_else            ; $B0 DATA -- executed, it is a line to
                                 ;: DATA n[, n]...  numbers only; skipped when execution reaches it
                                 ;   step over, which is ELSE's whole job
@@ -1149,6 +1156,24 @@ h_poke:
         POPW X
         ST   [X],R0
         JMP  stmt
+
+; ---------------------------------------------------------------------
+; emitc -- one character in R0:R1 to the screen.
+;
+; **`s_emit` is a compiled SUB, so its argument travels on the stack**,
+; not in a register: `SUB emit(ch AS INT)` reads [SP+2] upward. Calling
+; it with the character in R0 emits whatever happened to be pushed
+; last, which is the bug this routine exists to stop anyone writing
+; twice -- it cost a round here and broke INPUT's echo at the same
+; time, and only a negative number showed it, because the wrong byte
+; happened to be the value's own low byte.
+;
+; It lives here rather than beside its other caller in sw/ed.asm
+; because this file is what both include paths share: sim/test_interp.py
+; builds interp.asm against stubs and never sees the editor.
+; ---------------------------------------------------------------------
+emitc:  CALLB1 s_emit
+        RET
 
 ; ---------------------------------------------------------------------
 ; PRINT <expr> -- one number, then a newline. The editor's own screen
@@ -3613,7 +3638,24 @@ sval:   CALL sopen
         SUB  R3,R2
         ST   [SDIG],R3          ; characters to read
         ST   [SLEN],R2          ; and the accumulator drops them
-        CLR  R0
+        CALL snum
+        POPW Y
+        RET
+
+; ---------------------------------------------------------------------
+; snum -- SDIG characters of text at Y, as a number.
+;
+; **This is Microsoft's FIN**, and it is factored out for the same
+; reason theirs is: INPUT and VAL must agree about what a typed number
+; means, and the only way to guarantee that is one routine. Their INPUT
+; reads a line into BUF and calls FIN; ours reads a line into the
+; string accumulator and calls this.
+;
+; Leaves an integer in R0:R1 with STYPE 0, or a float in FACC with
+; STYPE 2 -- the decimal point is what decides, and the caller reads
+; STYPE to know which. Clobbers Y; the caller saves it.
+; ---------------------------------------------------------------------
+snum:   CLR  R0
         CLR  R1
         CLR  R3
         ST   [DSGN],R3          ; no division here, so DSGN is spare
@@ -3678,8 +3720,7 @@ sval:   CALL sopen
 .nsg:   LD   R2,[SFRAC]
         CMP  R2,#$FF
         BNE  .flt
-.out:   POPW Y
-        CLR  R2
+.out:   CLR  R2
         ST   [STYPE],R2
         RET
         ; **One divide, and no constant.** The digits are already an
@@ -3706,7 +3747,6 @@ sval:   CALL sopen
         POP  R1
         CALL ffromi             ; FACC = the digits, sign and all
         CALL fdiv
-        POPW Y
         JMP  fretf
 
 ; ---------------------------------------------------------------------
@@ -4176,74 +4216,105 @@ ivpeek: CALL earg               ; ( expression )
 dptr:   .word 0                 ; where the next DATA item is
 dneed:  .byte 1                 ; ...or 1: dptr is a record to scan from
 
-; INPUT var -- digits echoed until Return, minus sign honoured,
-; everything else ignored. Numeric scalars only.
+; INPUT var -- a line of text, and then the variable's own suffix
+; decides what it meant.
+;
+; **Microsoft's arrangement, and every part of it already existed
+; here.** Their INLIN reads a whole line into BUF, PTRGET reads the '$'
+; off the name, and one shared routine assigns -- FIN for a number,
+; STRLIT for a string. Ours:
+;
+;   BUF     the string accumulator, because `stmt` leaves it empty and
+;           nothing below statement level may reset it
+;   PTRGET  varidx, then isflt/isstr on the name it just buffered --
+;           the same three-way h_let does
+;   FIN     `snum`, factored out of VAL so a typed number and VAL agree
+;   STRLIT  `sstore`, the store h_lets already ends at
+;
+; So `INPUT A`, `INPUT A$` and `INPUT A#` are one path, and what went
+; away is the private digit loop that used to be here -- forty lines
+; that could not read a '.' and wrote a number into a string variable.
+;
+; **Safeguards are the C64's or fewer.** No ?REDO FROM START, no comma
+; splitting, and the only bound is SMAX, which is what one byte of
+; length allows. Text that is not a number reads as zero, exactly as
+; VAL("ABC") does, because it is the same routine saying so.
 h_input:
         SKIPSP
-        CALL varidx
+        CALL varidx             ; R0 the handle, X the slot, Y past it
+        PUSH R0
         PUSHW X
         PUSHW Y                 ; the editor's routines use Y freely
-        CLR  R2
-        ST   [garg],R2
-        ST   [garg+1],R2
-        ST   [garg+2],R2
 .k:     CALL s_getkey
         TST  R1
-        BNE  .k                 ; a named key is not a digit
+        BNE  .k                 ; a named key is not text
         CMP  R0,#$0D
         BEQ  .cr
-        CMP  R0,#$2D
-        BNE  .dg
-        MOV  R2,#1
-        ST   [garg+2],R2
-        BRA  .echo
-.dg:    CMP  R0,#$30
-        BCC  .k
-        CMP  R0,#$3A
-        BCS  .k
         PUSH R0
-        LD   R2,[garg]          ; value = value * 10 + digit
-        LD   R3,[garg+1]
-        ADD  R2,R2
-        ADC  R3,R3
-        MOV  R0,R2
-        MOV  R1,R3
-        ADD  R2,R2
-        ADC  R3,R3
-        ADD  R2,R2
-        ADC  R3,R3
-        ADD  R2,R0
-        ADC  R3,R1
+        CALL sputc              ; append; SMAX is the only limit
         POP  R0
-        PUSH R0
-        SUB  R0,#$30
-        ADD  R2,R0
-        ADC  R3,#0              ; NOT `CLR R0 / ADC R3,R0`: CLR is
-                                ; SUB Rd,Rd, and C is *no borrow*, so
-                                ; CLR always leaves C set -- a phantom
-                                ; +256 on every digit
-        ST   [garg],R2
-        ST   [garg+1],R3
-        POP  R0
-.echo:  PUSH R1
-        PUSH R0
-        CALL s_emit
-        POP  R0
-        POP  R1
+        CLR  R1
+        CALL emitc              ; s_emit takes its argument on the stack
         BRA  .k
 .cr:    CALL pnl
         POPW Y
         POPW X
-        LD   R0,[garg]
-        LD   R1,[garg+1]
-        LD   R2,[garg+2]
-        TST  R2
-        BEQ  .st
-        CALL negp16
-.st:    ST   [X],R0
+        POP  R0
+        CMP  R0,#52
+        BCC  .num               ; resident A-Z is never a string or float
+        PUSHW X
+        PUSH R0
+        CALL isflt
+        POP  R0
+        POPW X
+        BCC  .fvar
+        PUSHW X
+        CALL isstr
+        POPW X
+        BCS  .num
+        MOV  R2,#1              ; the text is already where sstore wants
+        ST   [STYPE],R2
+        CALL sstore
+        JMP  stmt
+        ; A# takes whatever was typed, promoting a whole number the way
+        ; `A# = 1` does.
+.fvar:  CALL .parse
+        LD   R2,[STYPE]
+        CMP  R2,#2
+        BEQ  .fst
+        CALL ffromi
+.fst:   CALL fstore             ; three bytes; X only, no Y
+        JMP  stmt
+        ; An integer variable floors a typed fraction rather than
+        ; storing the stale registers a float would leave -- three
+        ; bytes to keep one silent wrong answer out of the language.
+.num:   CALL .parse
+        LD   R2,[STYPE]
+        CMP  R2,#2
+        BNE  .ist
+        PUSHW Y
+        CALL ftoi
+        POPW Y
+.ist:   ST   [X],R0
         INCW X
         ST   [X],R1
         JMP  stmt
+        ; The whole accumulator is the number, and it is spent either
+        ; way: snum takes the text at Y for SDIG characters.
+.parse: PUSHW X
+        PUSHW Y
+        LD   R2,[SACC]
+        MOV  YL,R2
+        LD   R2,[SACC+1]
+        MOV  YH,R2
+        LD   R2,[SLEN]
+        ST   [SDIG],R2
+        CLR  R2
+        ST   [SLEN],R2
+        CALL snum
+        POPW Y
+        POPW X
+        RET
 
 h_restore:
         CALL drst

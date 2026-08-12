@@ -27,7 +27,7 @@ the language does at its edges, measured on the machine.
 | `GOTO n` / `ON e GOTO n1, n2, …` | `ON` takes literal line numbers, not expressions; a value out of range falls through |
 | `CALL name(…)` / `SUB name` … `RETURN` | SUBs found once at RUN; no parameters, no locals |
 | `PRINT a; b$; c` | `;` butts items together, `,` inserts one space, a trailing separator holds the newline. Negative numbers print signed |
-| `INPUT v` | digits and a leading `-`, echoed as typed, ended by Return; numeric scalars only |
+| `INPUT v` | a line of text, echoed as typed, ended by Return. **The variable's suffix decides what it was**: `A$` takes the text, `A#` a fraction, `A` an integer — §8 |
 | `DATA n, n, …` / `READ v, v` / `RESTORE` | numbers only (with `-`), scalar targets only; reading past the end is `?OUT OF DATA` |
 | `POKE a, b` / `PEEK(a)` | main RAM and the I/O page |
 | `DIM v(n)` | one-dimensional arrays on the heap |
@@ -552,9 +552,33 @@ interpreter without booting: `.5`, `3.`, `3.5.7`, and
 what four significant digits would give, so the fifth is really there;
 the missing one is the 15-bit fraction and `INT` flooring.
 
+**`INPUT` reads all three, through the same parser.** `INPUT A$`
+takes the line as text, `INPUT A#` takes a fraction, `INPUT A` takes an
+integer — and an integer variable *floors* a typed fraction rather than
+storing the stale registers a float would leave.
+
+That is Microsoft's arrangement, and every part of it already existed:
+their `INLIN` reads a line into `BUF`, `PTRGET` reads the `$` off the
+name, and one routine assigns — `FIN` for a number, `STRLIT` for a
+string. Here the accumulator is `BUF` (the statement boundary leaves it
+empty, and nothing below statement level may reset it), `varidx` plus
+`isflt`/`isstr` is `PTRGET` — the same three-way `LET` does — `snum` is
+`FIN`, and `sstore` is `STRLIT`.
+
+**It cost 24 bytes**, because the private digit loop that used to be in
+`INPUT` — forty lines that could not read a `.` and wrote a number into
+a string variable — went away, and the parser is now shared with `VAL`
+rather than duplicated. A typed number and `VAL` cannot disagree,
+because they are one routine.
+
+**Safeguards are the C64's or fewer**: no `?REDO FROM START`, no comma
+splitting, and the only bound is `SMAX`, which is what one byte of
+length allows. Text typed at a number is 0, exactly as `VAL("ABC")` is.
+
 **The float literal still does not exist.** `1.5` in source is
-`?SYNTAX`, and so is `INPUT A#`. Both want the *editor* changed —
-tokenise, `LIST`, and a renderer — where `VAL` needed one routine.
+`?SYNTAX`. It is the last of the three, and the expensive one: it wants
+the *editor* changed — tokenise, `LIST`, and a renderer — where `VAL`
+and `INPUT` each needed one routine.
 
 **Absent.** `MOD` is integer by intent; a float remainder is a
 different operation.
@@ -837,16 +861,16 @@ measurement.
 count rather than leaving it to arithmetic:
 
 ```
-  basic.bin   23,885 bytes  $A000-$FD4C
-  BOOT.BIN    26,647 bytes  (2762 of relocating stub)
-  free           179 bytes  to $FDFF
+  basic.bin   23,909 bytes  $A000-$FD64
+  BOOT.BIN    26,671 bytes  (2762 of relocating stub)
+  free           155 bytes  to $FDFF
 ```
 
 `--by-file` breaks that down per source file, attributing each gap
 between consecutive labels to whichever file opened it, so interleaving
 does not distort a total.
 
-**179 bytes of 24,064, and it was 21 before
+**155 bytes of 24,064, and it was 21 before
 [D63](01-decisions.md#d63--the-inline-assembler-is-gone-sys-replaced-it-and-floats-are-resident).**
 That entry deleted the on-machine assembler — 2,880 bytes and 38 of page
 0 — and spent it on resident floating point, which is why §8 exists and

@@ -2310,6 +2310,246 @@ implementation nobody is checking, which is how `test_lib` came to
 measure two programs against a third, private model of the I/O page
 and report 1.00x for a year.
 
+## D66 — The editor and the interpreter become one assembly program
+
+**Decided, not yet done.** `sw/basic.bas` is to be ported to assembly
+routine by routine until it is empty, and the prompt loop moves into
+`sw/interp.asm`. The staging is below; nothing here is a rewrite in one
+go, and the suite stays green throughout.
+
+### The number that forced it
+
+`python sim/build_basic.py --by-file`:
+
+| | bytes |
+|---|---|
+| **`basic.bas`** (the editor) | **12,378 — 52 %** |
+| `interp.asm` | 6,615 |
+| `fp.asm` | 2,528 |
+| `fpbas.asm` | 802 |
+| `fs.asm` | 800 |
+
+**The editor is twice the interpreter while doing less**, and the
+difference is the language. `sim/test_lib.py` measures the same program
+at 704 bytes hand-written and 3,634 compiled — **5.16x** — though that
+is `sw/demo.bas`, array- and call-heavy, which
+[11-compiler.md §5a](11-compiler.md) names as this compiler's worst
+case. The first real editor routine ported came in near it: `putn` plus
+its `tenth` helper were ~266 bytes compiled and 49 by hand, and the
+image fell 23,909 → 23,703. Call the editor's honest ratio **2.5–3x**,
+which against 12,378 bytes is **6–8 KB**.
+
+**This entry answers the question D63 left open** — "what the editor
+actually costs" — which had gone unmeasured because `--by-file` globbed
+only `sw/*.asm` and silently attributed 13 KB of 24 KB to nothing at
+all. It reads `.bas` now, and maps a `SUB` to the `s_` label the
+compiler gives it.
+
+### The argument against, which is real
+
+**D52 chose to write the system in its own language**, and that is what
+is being given up. The self-hosting demonstration — an OS written in
+the BASIC it provides — is the most interesting thing about the shape,
+and no byte count buys it back. Against that: it is a demonstration
+nobody can see, the machine ships one binary either way, and 6 KB is
+the difference between "no room for a decimal point" and room for
+several features.
+
+**BASIC source is far easier to change than assembly**, and 12 KB of
+working, tested editor is a large surface to hand-translate. That is an
+argument about *staging*, not about the destination, and it is why the
+plan below never has a broken tree.
+
+### The precedent, and it is unanimous
+
+Neither machine this project borrows from has an editor separate from
+its interpreter. **BBC BASIC**: `BUFF` reads a line into `BUFFER`,
+`MATCHA` tokenises it *at entry*, `SPTSTN` looks for a line number and
+sends it either to `INSRT` to be stored or to `DC` to run now — one
+program, one `TOKENS` table. **Microsoft's 6502 BASIC**: `INLIN` reads
+into `BUF`, `PTRGET` reads the type sigil off the name, and `INPUT` and
+`READ` share one assignment routine, `FIN` for numbers and `STRLIT` for
+strings.
+
+COOL8 already has that shape logically and cannot express it, because
+the two halves are in different languages. The symptom is duplication
+nobody chose:
+
+| job | implementations today |
+|---|---|
+| text → number | `snum`, `tokenise`'s inline loop, `number()` |
+| number → text | `sstr` (to the accumulator), `s_putn` (to the screen) |
+| "is this a digit" | `isdigit` in BASIC, `ctab` in the interpreter |
+
+**Five digit loops for two jobs**, in a system whose two halves are
+always loaded together and still cannot agree on what a digit is. That
+is the architectural case, independent of the byte count.
+
+### What makes it incremental rather than a rewrite
+
+Two mechanisms, one of which had to be built:
+
+- **`EXTERN` is callable now, with arguments.** `tools/cool8bas.py`
+  used to resolve an extern to an address only, so a hand-written
+  routine could not be reached from BASIC and no compiled `SUB` could
+  ever be replaced. `gen_call` takes the extern path today and emits
+  the compiler's own convention — arguments pushed right to left,
+  caller clears — so the assembly reads `[SP+2]` upward exactly as a
+  compiled parameter does. Arity goes unchecked, because the compiler
+  cannot know what the assembly wants; that is the cost of the door.
+- **The editor's state is already addressable.** A scalar compiles to
+  `v_<name>` and an array to `a_<name>`, and both are real symbols:
+  `a_lbuf` and `v_cx` can be read and written by a ported routine while
+  the rest of the file is still BASIC.
+
+So each routine moves on its own, with the suite green before and
+after, and the direction is inward: `basic.bas` stays the top-level
+program and shrinks until it holds only includes, at which point the
+entry point moves and the file goes.
+
+### The stages, each independently useful
+
+**0 — one of each.** `snum` becomes the only text→number and `sstr`
+the only number→text; `number()`, `tokenise`'s loop and `s_putn` call
+them. `isdigit` gives way to `ctab`. No user-visible change, ~400–600
+bytes, and every later stage is easier because the shared pieces exist.
+
+**1 — `tokenise` (872), and the float literal.** The largest routine in
+the editor *and* the sole blocker for `1.5` in source, which needs a
+token, a three-byte packed literal, a `prim` arm and a `LIST` renderer
+through `fstr`. Doing them together is the point: a hand-written
+tokeniser can call `snum`, which already parses fractions.
+
+**2 — line entry and listing.** `storeline` (444), `list` (338),
+`deleterange` (180), `insch`, `delchar`.
+
+**3 — screen and keyboard.** `setgeom` (416), `serialkey` (393),
+`scroll` (229), `putat` (189), `emit`, `tilefont`.
+
+**4 — the filesystem.** `rewritedir` (636), `docompact` (456),
+`loadcore` (314), `dodir` (304), `writelog` (200), `bput` (195),
+`parsename` (307). Cold code, so the density win is pure size with no
+speed argument either way — and the least-exercised code in the image,
+which is the risk.
+
+**5 — the prompt loop, and `basic.bas` is deleted.** `dodirect`,
+`runerr`, `main` become the BBC shape: read, tokenise, line number or
+not, store or run.
+
+### How it is verified, and this is not optional
+
+**A routine is characterised before it is ported.** Its behaviour goes
+into the suite first, so the port is a refactor with a net under it
+rather than a rewrite hoping to match. `s_putn` is the cautionary
+example: it went in without characterisation, broke `PRINT` for
+negatives, and the fault was found by re-running the whole suite and
+reading source — the bisect-by-rerun AGENTS.md names — when
+`sim/test_basic.py --trace s_putn "PRINT 0 - 7"` shows it directly.
+That entry point exists now, and so does `m.trace`, which was
+documented on both machines while implemented on neither.
+
+**The size is reported at every stage**, and `--by-sub` is the
+burn-down: 88 routines, 11,389 bytes attributed, biggest first.
+
+### The assembler got two things first, and they are done
+
+**Branch relaxation ships.** An out-of-range `BEQ` becomes `BNE` over a
+`JMP`, an out-of-range `BRA` becomes a `JMP`, and the inverse condition
+comes from `opcodes.COND`'s ordering — the list is in inverse pairs, so
+it is the index with the bottom bit flipped, and no second table was
+written. Iterated to a fixpoint, because growing one branch moves
+everything after it; it terminates because a branch grows once and only
+grows.
+
+**The image is byte-identical at 23,703**, which is the check that
+matters: nothing already in reach was touched. Every relaxation is
+counted and reported, by the CLI and by `sim/harness.py`, because two
+silently becoming five would corrupt every size figure this project
+quotes.
+
+`sw/disasm.asm`'s `jlo`/`jhs`/`jeq` macros are now unnecessary — they
+existed only to invert a test and let a `JMP` carry the distance, which
+is what the assembler does by itself.
+
+**`CALLB1` ships**, in `sw/call.asm`, included by `interp.asm` because
+that is what uses it and because `sim/test_interp.py` assembles that
+file against a stub that never sees the editor. `emitc` is written in
+terms of it.
+
+**`tools/cool8asm.py` had no suite of its own** and now does:
+`sim/test_cool8asm.py`, in the runner, fifteen checks — the
+displacement edges at 125/126 and 127/128, the relaxed encodings byte
+for byte, and two VM runs proving a grown branch takes the same path a
+near one would, on both arms. A tool eight suites depend on and none
+tested was the same shape as the rest of this entry.
+
+### The assembler work, as it was argued
+
+Hand-writing twelve kilobytes is a different job from hand-writing
+fifty bytes, and `tools/cool8asm.py` is sized for the second.
+
+**Branch relaxation, and it is the important one.** A conditional
+branch reaches ±127 and the assembler makes that a hard error. AGENTS.md
+lists it among the traps already hit; `sw/disasm.asm` carries
+`jlo`/`jhs`/`jeq` macros that exist for no other reason than to invert
+a test and let a `JMP` carry the distance; and one sitting of this
+project's work hit it five separate times. Every one of those is a
+routine that had to be reshaped around the assembler rather than
+written the obvious way, and a port of this size would hit it
+constantly, because moving code is the whole activity.
+
+So the assembler should grow the branch itself: an out-of-range `BEQ`
+becomes `BNE` over a `JMP`. That needs an iterative sizing pass —
+today it is strictly two-pass, and there is a guard that raises if an
+item's size changes between them — but the loop converges because
+sizes only ever grow.
+
+**It must report every relaxation, and that is not a nicety.** This
+project measures itself to the byte, and a silent two-into-five
+expansion would quietly corrupt every size measurement it makes. The
+count belongs in the assembler's output and each site in the listing.
+
+**A `CALLB` macro, which needs no assembler change at all.** Calling a
+compiled routine means pushing arguments right to left, calling, and
+clearing the stack; `s_putn`'s first version passed the character in a
+register instead and printed the wrong byte — a fault only a negative
+number revealed. Macros already exist, so three lines in a shared
+include make that convention impossible to get wrong, and every ported
+routine that talks to the remaining BASIC will use it.
+
+Structured control-flow macros — `IF`/`ELSE`/`ENDIF`, `WHILE` — are
+the obvious third thing and are deliberately *not* in this list. They
+depend on relaxation to be usable, and a macro that hides a branch is
+worth having only once the branch cannot fail.
+
+**Rewriting the assembler in Rust was considered and rejected**, on the
+condition it was offered under: that relaxation would need big changes.
+It does not. `tools/cool8asm.py` is 708 lines and relaxation is a
+fixpoint loop around the existing pass 1 — size, place, grow whatever
+is out of reach, repeat until stable, which terminates because sizes
+only grow. Perhaps fifty lines.
+
+And the assembler is not the thing to make faster: **the whole build is
+0.35 s and assembling the 24 KB image alone is 0.28 s**. Against that,
+a Rust port would have to be fed the mnemonic table from
+`tools/opcodes.py`, which is normative and which AGENTS.md forbids
+duplicating — so it would need generating and a drift gate, the
+`mkrsopc.py` arrangement again — and every suite reaches the assembler
+through `sim/harness.py`'s `assemble`/`assemble_text`/`try_assemble`,
+which are Python. That is a second implementation and a new build
+dependency to solve a problem nobody has.
+
+### What is not yet known
+
+- **How a string crosses the boundary.** Scalars and arrays are
+  addressable; a BASIC *string variable* is a descriptor, and no
+  routine taking or returning one has been ported. Stage 2 hits this
+  first and should prove it on the smallest such routine before
+  anything larger commits to a convention.
+- **Page 0.** Hand assembly tends to want more workspace and there is
+  no zero-page addressing mode to make it cheap ([D6]). `$00A5-$00D9`
+  is free — 53 bytes — and that is the whole budget.
+
 ## D65 — Five graphics commands are gone, and the register map is why it was safe
 
 **Done.** `PALETTE`, `SCROLL`, `VPOKE`, `TILE` and `SPRITE` are

@@ -116,6 +116,53 @@ The profile says a third of that run was `serialkey` — the editor
 waiting for a key, not the interpreter, and exactly the kind of thing
 an estimate gets wrong.
 
+### `trace` — what it did, which a breakpoint cannot say
+
+A breakpoint tells you where the machine stopped. `trace` tells you
+what it executed, decoded **forward** from the live PC through
+`opcodes.disassemble`, so the instruction boundaries are the ones the
+CPU used rather than ones guessed backwards from a symptom.
+
+```python
+m.breakpoints.add(syms["s_putn"])
+m.type("PRINT 0 - 7")
+m.run(cycles=40_000_000)
+print(m.trace_report(m.trace(16, syms, into=False)))
+```
+
+```
+  s_putn         $C246  LD R0,[SP+2]
+                 $C24A  OR R1,R1
+                 $C24B  BPL $C25A
+                 $C250  MOV R0,#$2D
+                 $C252  CALL $AE24
+```
+
+`into=False` steps over a `CALL`, so one routine's shape is not buried
+under its callees. Both machines have it: the session machine steps
+with `tick`, and the batch machine — which has no peripherals and so no
+interrupts — steps by running exactly one instruction's worth of
+cycles, `opcodes.cycles()` being normative and gated against the RTL.
+
+**It is a round trip per instruction**, so it takes an `n` and is for
+tens or hundreds of instructions. Anything that watches a whole run is
+a server-side command instead — that is what `settle`, the profiler and
+the SP watermark are.
+
+`python sim/test_basic.py --trace <label> "<line>" [n] [--over]` boots
+the editor, breaks at a label and prints this, which is the way in that
+the editor did not have. `sim/test_interp.py --trace "<case>"` is the
+same idea for a stored program.
+
+> **This existed only in the documentation for a while.** AGENTS.md and
+> this file both described `m.trace()`/`m.trace_report()`, one suite's
+> `--trace` mode called them, and neither machine had either method —
+> so the mode had been dead for as long as nobody ran it. It was found
+> by reaching for the documented tool during a real fault and getting
+> an `AttributeError`, having already lost a round to bisecting by
+> re-running the suite instead. A documented tool that does not exist
+> is worse than none: it is the one you reach for.
+
 ## 1. What dbg.py adds
 
 ### Exact disassembly

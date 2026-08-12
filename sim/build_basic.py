@@ -44,6 +44,8 @@ def main():
         by_file(syms)
     if "--by-command" in sys.argv:
         by_command(syms)
+    if "--by-sub" in sys.argv:
+        by_sub(syms)
     if free < 0:
         print("  the system does not fit below the I/O page")
         return 1
@@ -137,6 +139,47 @@ def by_command(syms):
     print("    docs/13-basic.md section 10.")
 
 
+def by_sub(syms):
+    """What each compiled editor routine costs.
+
+        python sim/build_basic.py --by-sub
+
+    **basic.bas is 52 % of the image**, and it is compiled BASIC where
+    interp.asm is hand assembly -- `sim/test_lib.py` measures the same
+    program at 704 bytes written by hand and 3,634 compiled, 5.16x. So
+    the question "should the editor be assembly" is worth thousands of
+    bytes, and it is answered one routine at a time rather than by
+    rewriting 12 KB on a ratio measured from a graphics demo.
+
+    This is where to aim. A compiled SUB becomes `s_<name>` with its
+    labels as `s_<name>.<something>`, so a routine's span runs to the
+    next dot-free symbol and takes its own locals with it.
+    """
+    marks = sorted((a, n) for n, a in syms.items() if ORG <= a < TOP)
+    tops = [(a, n) for a, n in marks if "." not in n]
+    rows = []
+    for i, (a, n) in enumerate(tops):
+        if not n.startswith("s_"):
+            continue
+        end = tops[i + 1][0] if i + 1 < len(tops) else None
+        if end:
+            rows.append((end - a, n))
+    rows.sort(reverse=True)
+    print()
+    print("  What each compiled editor routine costs:")
+    print()
+    for size, n in rows[:24]:
+        print(f"    {n[2:]:<20} {size:>6,}")
+    print()
+    print(f"    {'these':<20} {sum(r[0] for r in rows[:24]):>6,}")
+    print(f"    {'all ' + str(len(rows)):<20} {sum(r[0] for r in rows):>6,}")
+    print()
+    print("    Hand-write one and compare: that is the editor's own")
+    print("    density ratio, where 5.16x is demo.bas's and demo.bas is")
+    print("    array- and call-heavy, which docs/11-compiler.md section")
+    print("    5a names as this compiler's worst case.")
+
+
 def by_file(syms):
     """What each source file contributes, from the symbol table.
 
@@ -170,10 +213,24 @@ def by_file(syms):
     # same trap, so a file needs several labels in range to be believed.
     top = max(v for v in syms.values() if v < TOP)
     owner, count = {}, {}
-    for path in sorted(glob.glob(os.path.join(ROOT, "sw", "*.asm"))):
+    # **The .bas sources count too, and leaving them out hid the
+    # largest file in the image.** basic.bas is the editor, compiled
+    # into the same address space, and it was simply absent from this
+    # report -- 13 KB of 24 KB unattributed, which read as "gaps". A
+    # compiled SUB or FUNCTION becomes a label of the same name, which
+    # is how interp.asm reaches s_putn, so the same span arithmetic
+    # works on both once the names are found.
+    for path in sorted(glob.glob(os.path.join(ROOT, "sw", "*.asm")) +
+                       glob.glob(os.path.join(ROOT, "sw", "*.bas"))):
         base = os.path.basename(path)
-        for n in re.findall(r"^([A-Za-z_][A-Za-z0-9_]*):",
-                            open(path, encoding="utf-8").read(), re.M):
+        src = open(path, encoding="utf-8").read()
+        names = re.findall(r"^([A-Za-z_][A-Za-z0-9_]*):", src, re.M)
+        # The compiler prefixes a compiled SUB with `s_`, which is how
+        # interp.asm reaches `s_putn` for a name written `SUB putn`.
+        names += ["s_" + n for n in
+                  re.findall(r"^\s*(?:SUB|FUNCTION)\s+([A-Za-z_]\w*)",
+                             src, re.M | re.I)]
+        for n in names:
             a = syms.get(n.lower())
             if a is not None and ORG <= a <= top:
                 owner.setdefault(a, base)

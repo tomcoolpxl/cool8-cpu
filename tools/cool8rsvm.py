@@ -125,7 +125,67 @@ class _Bus:
         self.mem[(a + 1) & 0xFFFF] = (v >> 8) & 0xFF
 
 
-class RustMachine:
+class _Trace:
+    """`trace` and `trace_report`, shared by both machines.
+
+    The API docs/10-debugging.md and AGENTS.md describe. It lived in
+    neither class for long enough that sim/test_fp.py's --trace mode
+    was calling a method that did not exist and nobody noticed, which
+    is what a documented tool with no implementation costs.
+    """
+
+    def trace(self, n=32, syms=None, into=True):
+        """What the machine executes next, one instruction at a time.
+
+        **A breakpoint says where it stopped; this says what it did.**
+        Decoded *forward* from the live PC through `opcodes.disassemble`
+        -- the normative decoder -- so the boundaries are the ones the
+        CPU used. Decoding backwards from a symptom is the mistake
+        written up at the top of sim/dbg.py.
+
+        `into=False` steps over a CALL, running to the address after it,
+        so one routine's shape is not buried under its callees.
+
+        Returns (pc, label or None, text) rows for `trace_report`.
+
+        **A round trip per instruction**, which is why this takes an `n`
+        and is not how anything watches a whole run -- `settle` and the
+        profiler are server-side commands for exactly that reason. Tens
+        or hundreds of instructions is what it is for.
+        """
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import opcodes                                      # noqa: E402
+
+        at = {}
+        for name, a in (syms or {}).items():
+            at.setdefault(a, name)
+        rows = []
+        for _ in range(n):
+            pc = self.cpu.pc
+            try:
+                text, ln = opcodes.disassemble(
+                    lambda i: self.bus.mem[i & 0xFFFF], pc)
+            except Exception:
+                text, ln = None, 0
+            rows.append((pc, at.get(pc), text or "?"))
+            if self.cpu.halted:
+                break
+            if not into and text and text.split()[0] == "CALL" and ln > 0:
+                self.run(until=pc + ln)
+            else:
+                self.tick()
+        return rows
+
+    @staticmethod
+    def trace_report(rows):
+        """`trace`'s rows as text, labels in the margin."""
+        out = []
+        for pc, label, text in rows:
+            out.append("  %-14s $%04X  %s" % (label or "", pc, text))
+        return "\n".join(out)
+
+
+class RustMachine(_Trace):
     """See the module header. The registers round-trip, so poke → run →
     inspect → run again works exactly as it does on vm.Machine; what
     does NOT survive between runs is peripheral state (video, UART,
@@ -152,6 +212,33 @@ class RustMachine:
                 "the batch machine takes PCs, not predicates; a test "
                 "that needs one drives the machine differently")
         return ",".join(str(p) for p in spec) or "-"
+
+    def tick(self):
+        """One instruction.
+
+        **The batch machine has no peripherals and so no interrupts**,
+        which is what lets an instruction be exactly its own cycle
+        count: nothing can arrive part-way and change the boundary.
+        `opcodes.cycles()` is normative and `poe check` gates it
+        against the RTL, so this is the same instruction the CPU sees.
+
+        A whole `run` round trip each time -- a memory file written and
+        read -- so this is for a trace of tens of instructions, never
+        for watching a workload.
+        """
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import opcodes                                      # noqa: E402
+        pc = self.cpu.pc
+        # **The breakpoints have to go for the duration.** `run` stops
+        # *at* a breakpoint, and a trace begins standing on one, so
+        # leaving them set makes every step halt before it executes and
+        # the PC never moves -- which reads as a hung machine.
+        bps, self.breakpoints = self.breakpoints, set()
+        try:
+            self.run(cycles=opcodes.cycles(self.bus.mem[pc],
+                                           self.bus.mem[(pc + 1) & 0xFFFF]))
+        finally:
+            self.breakpoints = bps
 
     def run(self, until=None, cycles=None, budget=200_000_000):
         os.makedirs(BUILD, exist_ok=True)
@@ -346,7 +433,7 @@ class _SessFlash:
         self._s._cmd("flush")
 
 
-class SessionMachine:
+class SessionMachine(_Trace):
     """The persistent machine with peripherals attached.
 
     What does NOT cross: predicates (`run(until=callable)` raises) and

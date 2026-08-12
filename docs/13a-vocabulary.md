@@ -32,7 +32,7 @@ Names come from `TOKTAB` and `btab`, the bytes the matcher compares against. Ret
 | `$AB` | `SOUND voice:int, pitch:int, volume:int, length:int` | `!intonly` |
 | `$AD` | `PLOT x:int, y:int, colour:int` | `!intonly` |
 | `$AE` | `LINE x1:int, y1:int, x2:int, y2:int, colour:int` | `!intonly` |
-| `$AF` | `INPUT var` | digits and a leading minus; no float can be typed `!intonly` |
+| `$AF` | `INPUT var` | a line of text; the variable's suffix decides -- string, float or integer |
 | `$B0` | `DATA n[, n]...` | numbers only; skipped when execution reaches it |
 | `$B1` | `READ var[, var]...` | scalar targets only |
 | `$B2` | `RESTORE` |  |
@@ -118,6 +118,6 @@ Matched by name, not tokenised — they have no token byte.
 
 ## The `!intonly` list
 
-17 of them. Each reads `R0:R1` and never tests `STYPE`, so handing one a float does not raise an error — it acts on whatever the integer registers last held. This list is generated so it cannot quietly grow.
+16 of them. Each reads `R0:R1` and never tests `STYPE`, so handing one a float does not raise an error — it acts on whatever the integer registers last held. This list is generated so it cannot quietly grow.
 
-`DIM`, `FOR`, `PEEK`, `POKE`, `SYS`, `MODE`, `SOUND`, `PLOT`, `LINE`, `INPUT`, `CLG`, `PITCH`, `GTEXT`, `CHR$`, `KEY`, `RND`, `VPEEK`.
+`DIM`, `FOR`, `PEEK`, `POKE`, `SYS`, `MODE`, `SOUND`, `PLOT`, `LINE`, `CLG`, `PITCH`, `GTEXT`, `CHR$`, `KEY`, `RND`, `VPEEK`.

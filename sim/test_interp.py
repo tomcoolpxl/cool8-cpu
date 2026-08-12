@@ -1022,10 +1022,11 @@ def main():
     print()
     code, syms = build("interp", HARNESS)
     print(f"  interpreter: {syms['prog'] - syms['irun']:,} bytes")
-    # The batch runs use the Rust machine when it is available
-    # (tools/cool8rsvm.py, the batch machine).
-    # forces the reference machine when a failure needs a second opinion.
-    print(f"  machine: {'rust' if cool8rsvm.available() else 'python'}")
+    # **There is no second machine to fall back to.** This line used to
+    # offer "python", from when a reference emulator existed; [D57]
+    # retired it and H.machine() now refuses rather than pretending.
+    print("  machine: the VM (rust/), which is the default for any "
+          "software test")
     print()
     for case in CASES:
         name_, prog, want = case[0], case[1], case[2]

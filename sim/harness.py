@@ -22,6 +22,29 @@ start and a file round trip to arrive at the same answer.
 `ROOT` and `BUILD` come from here too. `BUILD` honours `COOL8_BUILD`,
 which the job runner sets per job so parallel suites cannot write each
 other's `basic.bin` (docs/12-tasks.md).
+
+## The VM is the default. The RTL is the exception.
+
+`H.machine()` and `H.session()` hand back the Rust machine, and that is
+what a software test runs on unless it has a stated reason not to. It
+steps at roughly **66 million instructions a second**; the Icarus
+simulation of `rtl/` manages a few thousand. That is not a preference
+between two similar things, it is the difference between a suite that
+runs in seconds and one nobody waits for.
+
+**Reach for the RTL only when the hardware itself is the question** —
+`sim/cosim.py` checking the two models agree instruction by
+instruction, `sim/test_vm.py` checking them pixel by pixel, a
+testbench for a peripheral. Those go through `sim/toolchain.py` and
+live in the `rtl` job group, not the `sw` one. Anything asking what
+*software* does has no business there: the two models are gated
+against each other precisely so that a software test can trust the
+fast one.
+
+There is no third machine. The Python emulator this grew from is
+retired ([D57](../docs/01-decisions.md)), and without `cargo` there is
+no machine at all — the suites say so rather than quietly running
+something else.
 """
 
 import os
@@ -38,6 +61,7 @@ sys.path.insert(0, HERE)
 
 import cool8asm                                          # noqa: E402
 import cool8bas as bas                                   # noqa: E402
+import cool8rsvm as _vm                                  # noqa: E402
 
 os.makedirs(BUILD, exist_ok=True)
 
@@ -53,6 +77,40 @@ FAILS = []
 # report() whenever a run is slow enough for the question to matter.
 _TIMES = []
 _last = [time.time()]
+
+
+def machine():
+    """The batch VM: a CPU and RAM, no peripherals. **The default.**
+
+    What a test wants when it has code and a question about what the
+    code does. `run(until=…, cycles=…)`, `bus.mem`, the registers, and
+    `trace` for what it executed.
+
+    Peripheral state does not survive between runs, because each is a
+    fresh machine around the carried CPU and memory. A test that needs
+    the screen, the keyboard or flash wants `session()`.
+    """
+    _require()
+    return _vm.machine()
+
+
+def session(render=False):
+    """The session VM: one persistent machine with peripherals.
+
+    For anything involving the screen, the keyboard, the UART or flash
+    — `type`, `key`, `row`, `shows`, `settle`, `run_frame`, and `fb()`
+    with `render=True`.
+    """
+    _require()
+    return _vm.Machine(render=render) if render else _vm.Machine()
+
+
+def _require():
+    if not _vm.available():
+        raise SystemExit(
+            "no machine: rust/ is not built and cargo was not found. "
+            "The suites do not fall back -- there is nothing to fall "
+            "back to (docs/01-decisions.md D57).")
 
 
 def check(ok, what, detail=""):
@@ -109,6 +167,14 @@ def assemble(path, name=None, lower=False, incdirs=(SW,), write=False):
         for e in a.errors:
             print(f"error: {e}", file=sys.stderr)
         raise SystemExit("assembly failed: " + os.path.basename(path))
+    # **A grown branch is three bytes nobody wrote**, and this project
+    # measures itself to the byte. Silence here would let relaxation
+    # quietly inflate every size figure the docs quote. Nothing relaxes
+    # today, so this stays quiet until something does.
+    if a.relaxed:
+        print("  %d branch%s relaxed in %s" %
+              (a.relaxed, "" if a.relaxed == 1 else "es",
+               os.path.basename(path)), file=sys.stderr)
     _, img = a.image()
     code = bytes(img)
     if write:

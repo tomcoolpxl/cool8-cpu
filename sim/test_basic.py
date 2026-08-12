@@ -191,7 +191,44 @@ class Machine:
         return out
 
 
+def trace(label, text, n=40, into=True):
+    """`python sim/test_basic.py --trace s_putn "PRINT 0 - 7" [n]`
+
+    Boot the editor, break at `label`, type `text`, and print what the
+    machine executed from there. **The editor had no way in.** When
+    `s_putn` moved to hand assembly in sw/ed.asm and printing broke,
+    the only tools to hand were re-running the suite and reading the
+    source -- which is the bisect-by-rerun AGENTS.md names, and it took
+    a round. A breakpoint says where it stopped; this says what it did.
+
+    `--over` steps over CALLs, so one routine's shape is not buried
+    under the editor's screen routines.
+    """
+    code, syms = build()
+    if label not in syms:
+        raise SystemExit("no symbol %r" % label)
+    M = Machine(code, syms)
+    M.syms_progend = syms["v_progend"]
+    M.settle()
+    M.m.breakpoints.add(syms[label])
+    M.m.type(text + "\r")
+    why = M.m.run(cycles=40_000_000)
+    print("  %s, breaking at %s ($%04X)" % (text, label, syms[label]))
+    print("  run -> %s" % why)
+    print()
+    if why != "breakpoint":
+        print("  never reached it")
+        return 1
+    print(M.m.trace_report(M.m.trace(n, syms, into=into)))
+    return 0
+
+
 def main():
+    if len(sys.argv) > 1 and sys.argv[1] == "--trace":
+        into = "--over" not in sys.argv
+        rest = [a for a in sys.argv[2:] if a != "--over"]
+        return trace(rest[0], rest[1],
+                     int(rest[2]) if len(rest) > 2 else 40, into)
     print("  S1 -- sw/basic.bas, typed at")
     print()
     code, syms = build()
@@ -219,6 +256,35 @@ def main():
     check(all(b[0] >= 0x80 for _, b in p),
           "and tokenised -- PRINT is one byte",
           f"{[b[:4] for _, b in p]}")
+
+    # ---- 2b. the line number itself, which `number()` parses.
+    #
+    # Characterised before that routine moves to assembly ([D66]): the
+    # shared parser `snum` handles a decimal point and this one stops
+    # at it, so "10.5" is the case where a careless port would change
+    # the language. Pinned at what the editor does today.
+    M.cmd("NEW")
+    M.type("  40 PRINT 4
+")
+    check([n for n, _ in M.prog()] == [40],
+          "leading spaces before a line number are skipped",
+          "%s" % [n for n, _ in M.prog()])
+
+    M.cmd("NEW")
+    M.type("30000 PRINT 5
+")
+    check([n for n, _ in M.prog()] == [30000],
+          "a line number near the top of the range",
+          "%s" % [n for n, _ in M.prog()])
+
+    M.cmd("NEW")
+    M.type("10.5 PRINT 6
+")
+    got = [n for n, _ in M.prog()]
+    check(got == [10], "a number stops at a decimal point -- line 10",
+          "%s" % got)
+
+    M.cmd("NEW")
 
     # ---- 3. LIST brings them back
     M.cmd("LIST")
@@ -271,6 +337,27 @@ def main():
     M.cmd("PRINT Q * 2")
     check(any(r.strip() == "42" for r in M.screen()),
           "and variables persist between direct lines")
+
+    # ---- the number printer itself, which is `s_putn` in sw/ed.asm:
+    # hand assembly where the rest of the editor is compiled BASIC.
+    #
+    # **The sign path is what these are really for.** `s_emit` is a
+    # compiled SUB, so its argument travels on the stack -- calling it
+    # with the character in a register emits whatever happened to be
+    # pushed last. The first version of s_putn did exactly that and the
+    # minus sign came out as the low byte of the value, which is a fault
+    # only a negative number reveals. Zero is here because the digit
+    # loop divides before it tests, and -32768 because the magnitude of
+    # the most negative number is itself.
+    for text, want in (("PRINT 7", "7"),
+                       ("PRINT 0", "0"),
+                       ("PRINT 0 - 7", "-7"),
+                       ("PRINT 30000", "30000"),
+                       ("PRINT 0 - 32768", "-32768")):
+        M.cmd(text)
+        check(any(r.strip() == want for r in M.screen()),
+              f"{text} prints {want}",
+              " | ".join(r.strip() for r in M.screen() if r.strip())[-60:])
     M.cmd("FOO 9")
     check(any(r.strip() == "?SYNTAX" for r in M.screen()),
           "junk is still ?SYNTAX, with no line number")
