@@ -170,11 +170,53 @@ hardest here.
 The C64's arrangement: the screen *is* the document and a logical line
 is read back off it. `cont[]` marks continuation rows.
 
-### 4.6 `interp.asm` — the command handlers come home
+### 4.6 `interp.asm` — the command handlers come home  ← **the one step left**
 
-No new bytes; this is where `h_list`, `h_new`, `h_save`, `h_run` and the
-rest stop being `CALLB1` into compiled BASIC and become handlers next to
-their `sttab` entry. Do it as each module lands, not as a separate step.
+Every module is written and tested. What remains is the switch-over:
+`sw/interp.asm` still calls twenty-three routines in `sw/basic.bas`,
+and each call has to become a call to the module that replaced them.
+
+`python tools/cool8asm.py sw/main.asm -I sw` names them — **35
+undefined symbols**, which is the whole of the remaining work and is
+mechanical rather than exploratory:
+
+| interp.asm calls | becomes | note |
+|---|---|---|
+| `s_emit` | `con_emit` | R0, not the stack |
+| `s_newline` | `con_nl` | |
+| `s_putsn` | `con_putsn` | X = address, R0 = count |
+| `s_putn` | `num_put` | R0:R1 |
+| `s_cls` | `con_cls` | |
+| `s_getkey` | `in_get` | |
+| `s_serialkey` | `in_key` | |
+| `s_list` | `prg_list` | R0:R1 low bound, R2:R3 high |
+| `s_new` | `prg_new` | |
+| `s_deleterange` | `prg_del` | |
+| `s_renumber` | `prg_renum` | R0:R1 start, R2 step |
+| `s_findline` | `prg_find` | R0:R1 → X |
+| `s_parsename` | `fsc_name` | carry, not a return value |
+| `s_dofree` | `prg_free` + `num_put` | |
+| `s_dodir` | `fsc_dir` | |
+| `s_docompact` | `fsc_compact` | |
+| `s_drivecore` | `fsc_drive` | R0 |
+| `s_eracore` | `fsc_erase` | |
+| `s_savecore` | `fsc_save_prog` | |
+| `s_savedata` | `fsc_save` | FSADDR/FSLENW set first |
+| `s_loadcore` | `fsc_load_prog` | |
+| `s_loaddata` | `fsc_load` | |
+| `s_dorun` | `main_pre` + `irun` | |
+| `a_lbuf`, `v_llen`, `v_ip` | `LBUF`, `LLEN`, `EDIP` | |
+| `v_progend` | `PROGEND` | |
+| `v_fok` | `FSOK` | |
+
+**The convention changes at every site**, which is the work: a compiled
+`SUB` took its arguments on the stack and these take them in registers.
+`sw/call.asm`'s `CALLB1` macros go with the last of them.
+
+**This step cannot be verified module by module.** It is the first time
+the whole system runs on the new code, and `sim/test_basic.py`,
+`sim/test_run.py` and `sim/test_boot_basic.py` are the gates. Budget
+for that rather than for the edit.
 
 ### 4.7 `fscmd.asm` — the disk commands — 2,942 bytes
 
@@ -284,15 +326,21 @@ python sim/build_basic.py --by-module
 
 ```
     module   routines    bytes
-    con            19    2,179     written: sw/console.asm, 1,258 b, sim/test_con.py
-    kbd             4      622     <- next
-    token          11    1,719
-    prog           11    1,392
-    edit           13    1,335
-    fscmd          25    2,942
-    main            4      819
+    con            19    2,179   written: sw/console.asm   + sim/test_con.py
+    kbd             4      622   written: sw/input.asm     + sim/test_input.py
+    token          11    1,719   written: sw/token.asm     + sim/test_token.py
+    prog           11    1,392   written: sw/prog.asm      + sim/test_prog.py
+    edit           13    1,335   written: sw/edit.asm      + sim/test_edit.py
+    fscmd          25    2,942   written: sw/fscmd.asm
+    main            4      819   written: sw/main.asm
     total          87   11,008
 ```
+
+**Every module is written; `num.asm` was added below the console for
+numbers as text.** What is left is §4.6, the switch-over -- and until
+that lands the compiled column stays at 11,008, because `sw/basic.bas`
+still owns the machine and the new modules are a parallel
+implementation nothing calls.
 
 The compiled column stays at 11,008 until `main.asm` takes the entry
 point and `basic.bas` is deleted — the new modules are a *parallel*
