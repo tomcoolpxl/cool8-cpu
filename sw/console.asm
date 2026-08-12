@@ -726,13 +726,25 @@ GEOMN   = 7
 ; but a test driver -- or a warm restart that skipped the clear -- is
 ; not owed the same, and CTOP being garbage puts the origin somewhere
 ; the screen is not.
-con_init:
+; con_warm -- set the console up over whatever is already on the screen.
+;
+; **The half of con_init that does not clear.** At boot the relocating
+; stub has painted its banner and BASIC is supposed to leave it there
+; and put the cursor underneath -- which stopped happening the moment
+; `main` actually reached `con_init`, because that ends in `con_cls`
+; and the banner went with it. Separated rather than special-cased, so
+; the warm restart can use it too: a console that wakes up in whatever
+; mode a program left is exactly what con_geom is for.
+con_warm:
         CLR  R0
         ST   [CTOP],R0
         ST   [CCX],R0
         ST   [CCY],R0
         ST   [GINV],R0
-        CALL con_geom
+        JMP  con_geom
+
+con_init:
+        CALL con_warm
         JMP  con_cls
 
 ; con_geom -- read the hardware and set the console up for whatever mode

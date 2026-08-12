@@ -14,6 +14,20 @@
 
         .org  $A000
 
+; **The first three bytes of the image are its entry point.**
+;
+; The relocating stub jumps to $A000 because that is the address it was
+; told to load at; it has no symbol table and cannot find `main`. While
+; the system was compiled BASIC that worked by accident -- the compiler
+; put the program's entry first. Here `main` is at the far end, past
+; every module, so $A000 was the first instruction of sw/console.asm
+; and booting from flash executed the console's internals from the
+; middle. It relocated correctly, painted the banner the stub had left,
+; and then ran off into user RAM with no vectors installed.
+;
+; Three bytes, and the image has one door again.
+        JMP  main
+
 MAINK   = $7C76                 ;: 2 the key just read
 
 ; ---------------------------------------------------------------------
@@ -395,6 +409,23 @@ main_err:
 ; main -- the entry point. The flash stub jumps here.
 ; =====================================================================
 main:
+        ; **Interrupts off before anything else.**
+        ;
+        ; The boot ROM enables the vertical blank and the keyboard to
+        ; drive its own loading screen, and it is still enabled when it
+        ; jumps here. Between that jump and the `EI` below there are two
+        ; windows of tens of thousands of instructions -- the RAM wipe
+        ; and the relocation before it -- during which $FFFC still holds
+        ; the ROM's handler, and the overlay it lived in is gone. An
+        ; interrupt in that window dispatches to $F140, which is now
+        ; image bytes, and the CPU executes the middle of a routine.
+        ;
+        ; That is what happened: booting from flash landed at $020E with
+        ; the vectors never installed, while every test that pokes the
+        ; image in and jumps to `main` was fine, because none of them
+        ; had a live interrupt to arrive.
+        DI
+
         ; User RAM and the system storage region above it, wiped in one
         ; pass: the relocating stub -- and the boot screen it painted
         ; from -- lived at $0200, and nothing of it may survive to be
@@ -430,9 +461,12 @@ main:
 
         CALL prg_new
         CALL fsc_mount
-        CALL con_init
+        CALL con_warm           ; **not con_init**, which ends in con_cls
         ; The screen already shows the boot banner -- the stub painted
         ; it, and it was just wiped from RAM. The cursor goes under it.
+        ; That only stayed true while nothing here reached the console:
+        ; `con_init` clears, so the first boot that actually got this far
+        ; wiped the banner it was written to preserve.
         MOV  R0,#10
         ST   [CCY],R0
         CLR  R0

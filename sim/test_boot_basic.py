@@ -65,7 +65,7 @@ def settle(m, syms, budget=40_000_000):
     """Wait for the editor to go idle — m.settle, the machine's own
     idle test (same conditions sim/test_basic.py names: both FIFOs
     empty, the ring drained, the CPU at rawkey's idle branch)."""
-    return m.settle(syms["s_rawkey.rk0"], syms["irhead"], syms["irtail"],
+    return m.settle(syms["in_raw.rk0"], syms["irhead"], syms["irtail"],
                     budget)
 
 
@@ -106,6 +106,16 @@ def main():
           "including its last bytes, which live under the ROM window",
           "ends at $%04X" % (0xA000 + len(code) - 1))
 
+    # Where the CPU actually is, because "the vector is still the ROM's"
+    # has two causes -- BASIC did not install it, or BASIC has not got
+    # there yet -- and they need different fixes.
+    near = min(((abs(m.cpu.pc - a), n) for n, a in syms.items()
+                if a <= m.cpu.pc), default=(0, "?"))
+    print("  after 90 frames: pc $%04X, nearest symbol %s"
+          % (m.cpu.pc, near[1]))
+    for i, r in enumerate(m.text()[:10]):
+        if r.strip():
+            print("    row %-2d %r" % (i, r.strip()))
     vec = m.bus.mem[0xFFFC] | (m.bus.mem[0xFFFD] << 8)
     check(vec == syms["iisr"],
           "BASIC installed its own interrupt vector",
