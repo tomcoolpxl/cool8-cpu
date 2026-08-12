@@ -146,11 +146,11 @@ module cool8_video #(
     // ------------------------------------------------------- the modes
 
     wire        disp_en, hdouble, vdouble, cur_on;
-    wire [1:0]  engine, bpp_log, cur_style;
+    wire [1:0]  engine, bpp_log;
     wire [15:0] base, stride, pat_base;
     wire [9:0]  scrl_x, scrl_y, vactive, vstart;
     wire [10:0] hactive, hstart;
-    wire [7:0]  border, cur_lines, pal_entry;
+    wire [7:0]  border, pal_entry;
     wire [6:0]  cur_x;
     wire [4:0]  cur_y;
     wire        pal_we, pal_half;
@@ -167,8 +167,7 @@ module cool8_video #(
         .scrl_x(scrl_x), .scrl_y(scrl_y), .border(border),
         .hactive(hactive), .hstart(hstart),
         .vactive(vactive), .vstart(vstart),
-        .cur_x(cur_x), .cur_y(cur_y), .cur_style(cur_style),
-        .cur_on(cur_on), .cur_lines(cur_lines),
+        .cur_x(cur_x), .cur_y(cur_y), .cur_on(cur_on),
         .pal_we(pal_we), .pal_entry(pal_entry), .pal_half(pal_half),
         .line_start(line_start), .line_y(line_y),
         .frame_start(frame_start), .o_irq(o_irq)
@@ -307,8 +306,7 @@ module cool8_video #(
         .hactive(hactive), .hstart(hstart),
         .vactive(vactive), .vstart(vstart),
         .scrl_x(scrl_x), .scrl_y(scrl_y),
-        .cur_x(cur_x), .cur_y(cur_y), .cur_style(cur_style),
-        .cur_on(cur_on), .cur_lines(cur_lines)
+        .cur_x(cur_x), .cur_y(cur_y), .cur_on(cur_on)
     );
 
     // --------------------------------------------------------- the decode

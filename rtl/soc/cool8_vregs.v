@@ -79,9 +79,7 @@ module cool8_vregs (
     // ---- the cursor
     output wire [6:0]  cur_x,
     output wire [4:0]  cur_y,
-    output wire [1:0]  cur_style,
     output wire        cur_on,         // enabled, and lit this frame
-    output wire [7:0]  cur_lines,
 
     // ---- the palette write port
     output wire        pal_we,
@@ -115,8 +113,7 @@ module cool8_vregs (
                      A_PATH = 8'h21,           //: VID_PAT_H    pattern/tile base, high
                      A_CURX = 8'h22,           //: CUR_X        text cursor column
                      A_CURY = 8'h23,           //: CUR_Y        text cursor row
-                     A_CURCTL = 8'h24,         //: CUR_CTRL     cursor enable and blink
-                     A_CURLIN = 8'h25;         //: CUR_LINES    first and last scanline of the cursor cell
+                     A_CURCTL = 8'h24;         //: CUR_CTRL     cursor enable and blink
 
     reg [7:0]  mode_r;
     reg [5:0]  ctrl_r;
@@ -130,7 +127,6 @@ module cool8_vregs (
     reg [6:0]  curx_r;
     reg [4:0]  cury_r;
     reg [4:0]  curctl_r;
-    reg [7:0]  curlin_r;
     reg [9:0]  vact_r;
     reg [9:0]  raster_r;
     reg [6:0]  blink_r;
@@ -156,8 +152,6 @@ module cool8_vregs (
     // registers — see the latch at frame_start below.
     assign cur_x     = curx_d;
     assign cur_y     = cury_d;
-    assign cur_style = curctl_r[2:1];
-    assign cur_lines = curlin_r;
     assign vactive   = vact_r;
 
     // The blink lives here rather than in the pixel domain because this
@@ -282,7 +276,6 @@ module cool8_vregs (
             curx_r   <= 7'd0;
             cury_r   <= 5'd0;
             curctl_r <= 5'b00000;
-            curlin_r <= 8'hF0;         // rows 0..15: the whole cell
             vact_r   <= 10'd480;
             raster_r <= 10'd0;
             blink_r  <= 7'd0;
@@ -351,7 +344,6 @@ module cool8_vregs (
                     A_CURX:   curx_r         <= io_wdata[6:0];
                     A_CURY:   cury_r         <= io_wdata[4:0];
                     A_CURCTL: curctl_r       <= io_wdata[4:0];
-                    A_CURLIN: curlin_r       <= io_wdata;
                     default: ;
                 endcase
             end
@@ -382,7 +374,6 @@ module cool8_vregs (
             A_CURX:   o_rdata = {1'b0, curx_r};
             A_CURY:   o_rdata = {3'b000, cury_r};
             A_CURCTL: o_rdata = {3'b000, curctl_r};
-            A_CURLIN: o_rdata = curlin_r;
             // PAL_DATA among them: the palette is write-only, and this
             // is the same $FF an address nobody claims reads.
             default:  o_rdata = 8'hFF;

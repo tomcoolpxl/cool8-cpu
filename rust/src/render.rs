@@ -334,10 +334,19 @@ impl Renderer {
             let blank = !vv.disp_en || vborder || xl < vv.hstart
                 || xl - vv.hstart >= vv.hactive;
 
+            let mut cell_of: u32 = 0;
+            let mut trow_of: u32 = 0;
             let mut idx: u8 = if blank {
                 v.border
             } else {
                 let rel = xl - vv.hstart;
+                // The cell this pixel is in, in every engine — the same
+                // unconditional computation cool8_pixel.v makes. A cell
+                // is 16 source lines, or 8 where the doubler is
+                // stretching them, which is exactly the modes the
+                // console gives CFROW 8.
+                cell_of = rel >> 3;
+                trow_of = if vv.vdouble { vrel >> 3 } else { vrel >> 4 };
                 match vv.engine {
                     0 => {
                         // ---- text
@@ -348,28 +357,7 @@ impl Renderer {
                         let attr = (w >> 8) as u8;
                         let fb = self.font
                             [(((w & 0xFF) << 4) | grow as u16) as usize];
-                        let mut lit = fb & (1 << (7 - (rel & 7))) != 0;
-                        if self.cur_lit
-                            && cell == self.cur_x as u32
-                            && (vsrc >> 4) == self.cur_y as u32
-                        {
-                            match (v.cur_ctrl >> 1) & 3 {
-                                0 => lit = true,
-                                1 => {
-                                    if (v.cur_lines as u32 & 15) <= grow
-                                        && grow <= (v.cur_lines as u32 >> 4)
-                                    {
-                                        lit = true;
-                                    }
-                                }
-                                2 => {
-                                    if rel & 7 < 2 {
-                                        lit = true;
-                                    }
-                                }
-                                _ => lit = !lit,
-                            }
-                        }
+                        let lit = fb & (1 << (7 - (rel & 7))) != 0;
                         if lit { attr & 0x0F } else { attr >> 4 }
                     }
                     1 => {
@@ -401,6 +389,16 @@ impl Renderer {
                 if s & 0x0F != 0 && (s & 0x10 == 0 || idx == 0) {
                     idx = v.spr_bank << 4 | (s & 0x0F);
                 }
+            }
+            // The cursor inverts the finished index, in every engine and
+            // after the sprite has had its say — cool8_pixel.v does the
+            // same XOR in the same place. It used to be a text-only
+            // fiddle with `lit`, which is why the console carried a
+            // second cursor for the other five modes.
+            if !blank && self.cur_lit && cell_of == self.cur_x as u32
+                && trow_of == self.cur_y as u32
+            {
+                idx ^= 0x0F;
             }
             row[gx] = v.pal[idx as usize] & 0x0FFF;
         }

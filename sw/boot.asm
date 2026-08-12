@@ -139,9 +139,10 @@ reset:  LDW  X,#stack
         ST   [CUR_X],R0
         MOV  R0,#3
         ST   [CUR_Y],R0
-        MOV  R0,#$0F            ; rows 0..15 of the cell
-        ST   [CUR_LINES],R0
-        MOV  R0,#$01            ; enabled, block, slowest blink
+        ; CUR_LINES and the style bits are gone: the cursor inverts its
+        ; whole cell now, in every mode, which is the only style the
+        ; editor ever asked for and the one a C64 draws.
+        MOV  R0,#$01            ; enabled
         ST   [CUR_CTRL],R0
 
 ; Blue on the board LED: the ROM ran, RAM is clear, vectors are in, and

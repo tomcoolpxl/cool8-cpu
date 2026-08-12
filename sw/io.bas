@@ -32,7 +32,6 @@ CONST VID_PAT_H    = $FF21       ' pattern/tile base, high
 CONST CUR_X        = $FF22       ' text cursor column
 CONST CUR_Y        = $FF23       ' text cursor row
 CONST CUR_CTRL     = $FF24       ' cursor enable and blink
-CONST CUR_LINES    = $FF25       ' first and last scanline of the cursor cell
 CONST VRAM_ADDR_L  = $FF26       ' indirect VRAM address, low
 CONST VRAM_ADDR_H  = $FF27       ' indirect VRAM address, high
 CONST VRAM_STEP    = $FF28       ' added to the address after each access

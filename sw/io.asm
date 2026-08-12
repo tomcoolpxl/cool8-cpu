@@ -84,5 +84,4 @@ VID_PAT_H   = IOBASE + $21       ; pattern/tile base, high
 CUR_X       = IOBASE + $22       ; text cursor column
 CUR_Y       = IOBASE + $23       ; text cursor row
 CUR_CTRL    = IOBASE + $24       ; cursor enable and blink
-CUR_LINES   = IOBASE + $25       ; first and last scanline of the cursor cell
 

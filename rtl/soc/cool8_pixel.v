@@ -115,9 +115,7 @@ module cool8_pixel #(
     input  wire [9:0]  scrl_y,
     input  wire [6:0]  cur_x,
     input  wire [4:0]  cur_y,
-    input  wire [1:0]  cur_style,
-    input  wire        cur_on,
-    input  wire [7:0]  cur_lines
+    input  wire        cur_on
 );
 
     localparam [1:0] E_TEXT = 2'd0, E_TILE = 2'd1;
@@ -134,9 +132,7 @@ module cool8_pixel #(
     reg [9:0]  c_scrx, c_scry;
     reg [6:0]  c_curx;
     reg [4:0]  c_cury;
-    reg [1:0]  c_cstyle;
     reg        c_curon;
-    reg [7:0]  c_clines;
     reg [3:0]  c_sbank;
 
     always @(posedge pclk) begin
@@ -156,9 +152,7 @@ module cool8_pixel #(
         c_scry   <= scrl_y;
         c_curx   <= cur_x;
         c_cury   <= cur_y;
-        c_cstyle <= cur_style;
         c_curon  <= cur_on;
-        c_clines <= cur_lines;
         c_sbank  <= spr_bank;
     end
 
@@ -339,7 +333,13 @@ module cool8_pixel #(
             d2_last  <= d1_last;
             d1_steal <= (c_eng == E_TILE) & last_of_tile;
             d1_cell  <= sx1[10:3];  d2_cell <= d1_cell;
-            d1_trow  <= vsrc[8:4];  d2_trow <= d1_trow;
+            // A cell is 16 source lines, or 8 where the line doubler is
+            // stretching them to fill the screen -- which is exactly the
+            // modes the console gives CFROW 8. The cursor is the only
+            // consumer, and with one divisor it landed on the wrong row
+            // in every doubled mode.
+            d1_trow  <= c_vdbl ? {1'b0, vsrc[7:3]} : vsrc[8:4];
+            d2_trow <= d1_trow;
 
             // A stolen cycle carries a map entry, not a pattern: leaving
             // `src_word` alone is what makes the theft free, because the
@@ -375,18 +375,25 @@ module cool8_pixel #(
                      (c_bpp == 2'd1) ? {6'd0, pxr[7:6]}  :
                      (c_bpp == 2'd2) ? {4'd0, pxr[7:4]}  : pxr;
 
-    // ---- the cursor, in text only
+    // ---- the cursor, in every mode
+    //
+    // **The compare was never text-specific.** `d2_cell` and `d2_trow`
+    // are computed unconditionally, not gated by `engine`, so the cell
+    // a pixel belongs to is known in all seven modes. What made the
+    // cursor text-only was applying the result *here*, inside the text
+    // path's `lit`. So the console grew a second, software cursor for
+    // the other five modes -- and two things that each remember where
+    // the cursor is disagree the moment a mode changes. That was the
+    // cursor blinking in a stale spot until a key moved it.
+    //
+    // The invert moves to `pal_index` below: one XOR on the finished
+    // index, which is visible in text, tile and bitmap alike. The style
+    // mux and `in_lines` go with it -- the editor has only ever set
+    // style 3, and a block that inverts its cell is what a C64 draws.
     wire cur_cell = c_curon && (d2_cell == {1'b0, c_curx}) &&
                     (d2_trow == c_cury);
-    wire in_lines = (d2_grow >= c_clines[3:0]) &&
-                    (d2_grow <= c_clines[7:4]);
-    wire cur_pix  = cur_cell & ((c_cstyle == 2'd0) ? 1'b1        :
-                                (c_cstyle == 2'd1) ? in_lines    :
-                                (c_cstyle == 2'd2) ? (d2_col < 3'd2)
-                                                   : 1'b0);
-    wire cur_inv  = cur_cell & (c_cstyle == 2'd3);
 
-    wire lit = (font_q[3'd7 - d2_col] | cur_pix) ^ cur_inv;
+    wire lit = font_q[3'd7 - d2_col];
 
     wire [7:0] bg_index = (c_eng == E_TEXT) ?
                               {4'h0, lit ? attr_q[3:0] : attr_q[7:4]} :
@@ -401,8 +408,13 @@ module cool8_pixel #(
     wire spr_here   = (sb_d[9:5] == d2_tag) && (sb_d[3:0] != 4'd0);
     wire spr_wins   = spr_here && (!sb_d[4] || (bg_index == 8'h00));
 
+    // The cursor inverts the finished index, after the sprite has had
+    // its say: an editor cursor over a sprite is still a cursor, and
+    // one XOR here covers three engines where three separate inverts
+    // inside them would not have fitted.
     assign pal_index = d2_blank ? c_bord :
-                       spr_wins ? {c_sbank, sb_d[3:0]} : bg_index;
+                       (spr_wins ? {c_sbank, sb_d[3:0]} : bg_index)
+                       ^ (cur_cell ? 8'h0F : 8'h00);
 
     // Blanking is black on the pins, not the border colour: outside the
     // display window a monitor is not looking, and a sync separator that
