@@ -811,6 +811,33 @@ con_geom:
         RET
 .soft:  CLR  R0
         ST   [CUR_CTRL],R0
+
+        ; **A glyph needs a colour that exists.**
+        ;
+        ; `bglyph` draws a lit pixel as palette index 1 at 1 bpp, and as
+        ; index 15 at 4 and 8 bpp -- `nibtab` is $00/$0F/$F0/$FF and the
+        ; 8 bpp arm writes $0F. Entry 1 was seeded, in the mode 3 arm
+        ; only, so mode 3 was the one non-text mode where anything could
+        ; be seen. Modes 2, 4, 5 and 6 wrote their letters into an
+        ; unseeded entry, which is black, onto a black screen: the text
+        ; was drawn, correctly, and invisible. The cursor showed through
+        ; sometimes because its inverse pair lands on entry 0.
+        ;
+        ; Both entries, in every mode that draws its own glyphs, and the
+        ; byte pair is the one the mode 3 arm already proved visible.
+        MOV  R0,#1
+        ST   [PAL_IDX],R0
+        MOV  R0,#$0F
+        ST   [PAL_DATA],R0
+        MOV  R0,#$FF
+        ST   [PAL_DATA],R0
+        MOV  R0,#15
+        ST   [PAL_IDX],R0
+        MOV  R0,#$0F
+        ST   [PAL_DATA],R0
+        MOV  R0,#$FF
+        ST   [PAL_DATA],R0
+
         LD   R0,[CKIND]
         CMP  R0,#1
         BEQ  con_tilefont       ; mode 2 needs its glyphs as tiles
@@ -826,14 +853,10 @@ con_geom:
         ; cells are 16 raster lines and the console uses the 8x16 face
         ; at $F600 -- the same Spleen the text modes read from ROM, at
         ; full height. 30 rows x 16 is the whole screen, where 8-line
-        ; cells covered half of it. Its two colours are seeded here,
-        ; the one palette touch this routine allows itself.
-        MOV  R0,#1
-        ST   [PAL_IDX],R0
-        MOV  R0,#$0F
-        ST   [PAL_DATA],R0
-        MOV  R0,#$FF
-        ST   [PAL_DATA],R0
+        ; cells covered half of it. Its colours used to be seeded here
+        ; and nowhere else, which is why mode 3 was the only non-text
+        ; mode that showed anything; the seeding is above now, for every
+        ; mode that draws its own glyphs.
 .fset:  STW  [CFONT],X
 
         LD   R0,[VID_BASE_L]    ; where the display is reading now

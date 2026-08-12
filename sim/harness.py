@@ -105,6 +105,31 @@ def session(render=False):
     return _vm.Machine(render=render) if render else _vm.Machine()
 
 
+_FONT = None
+
+
+def font():
+    """The machine's font, as the renderer needs it.
+
+    **`render=True` without this draws nothing at all** -- a frame of
+    one colour, in every mode, including the ones that plainly work on a
+    real screen. That is not a subtle failure: it makes a pixel check
+    look like it cannot tell modes apart, which is exactly how a "the
+    text is in the cell map" proxy ends up standing in for "the text is
+    visible", and a black-on-black screen passes.
+
+    sim/test_vm.py had the one copy of this. It is here now because any
+    suite asking what is on the screen needs it.
+    """
+    global _FONT
+    if _FONT is None:
+        sys.path.insert(0, os.path.join(ROOT, "tools"))
+        import mkfont
+        _FONT = mkfont.build(os.path.join(ROOT, "assets", "font",
+                                          "spleen-8x16.bdf"))[0]
+    return _FONT
+
+
 def _require():
     if not _vm.available():
         raise SystemExit(

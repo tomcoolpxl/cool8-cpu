@@ -48,7 +48,11 @@ class Machine:
     """
 
     def __init__(self, code, syms, render=False):
-        self.m = vm.Machine(render=render) if render else vm.Machine()
+        # The font is render-only, and render=True *without* it draws a
+        # blank frame in every mode -- which is how a pixel check comes
+        # back unable to tell a working mode from a black screen.
+        self.m = (vm.Machine(font=H.font(), render=True) if render
+                  else vm.Machine())
         self.m.bus.mem[ORG:ORG + len(code)] = code
         self.m.cpu.pc = syms["main"]
         self.m.cpu.sp = 0x0200
@@ -88,6 +92,10 @@ class Machine:
 
     def shows(self, text):
         return any(r.strip() == text for r in self.screen())
+
+    def lit(self):
+        """Pixels that are not the background. Needs render=True."""
+        return H.screen(self.m)
 
 
     def prog(self):
@@ -176,16 +184,23 @@ def main():
         M.settle()
         M.cmd("MODE %d" % mode)
         M.cmd('PRINT "COOL8"')
-        # The cell map at $8000 is the text in *every* mode -- that is
-        # the invariant docs/13-basic.md section 4 states, and it is why
-        # a bitmap program's PRINT output is readable at all. Checked
-        # separately from m.row(), which follows the display: if the map
-        # has it and the row does not, the console worked and the
-        # rendering did not, and those are different bugs.
-        cells = "".join(chr(M.m.bus.mem[0x8000 + 2 * i])
-                        for i in range(0x1000))
-        check("COOL8" in cells, "MODE %d puts the text in the cell map" % mode,
-              "VID_MODE=$%02X" % M.m.bus.read(0xFF10))
+        # **A colour, not just a character.** The cell map holds the
+        # text in all seven modes, so reading it says the console wrote
+        # the glyph and says nothing about whether a person can see it.
+        # `bglyph` lights palette index 1 at 1 bpp and index 15 at 4 and
+        # 8 bpp; an unseeded entry is black, and black letters on a
+        # black screen is what "MODE 2-5 work now" meant last time this
+        # was reported fixed.
+        #
+        # Asked of the machine's committed palette, which is the state
+        # the video engine reads -- no address computed and no renderer
+        # needed.
+        pal = M.m.palette()
+        want = 15 if M.m.bus.mem[syms["cbpc"]] in (4, 8) else 1
+        check(M.m.bus.mem[syms["ckind"]] == 0 or pal[want] != pal[0],
+              "MODE %d draws in a colour that is not the background"
+              % mode,
+              "index %d is $%03X, background $%03X" % (want, pal[want], pal[0]))
 
         # ...and the console has to have been *told*, which is a
         # different thing and was the bug: characters reached the cell

@@ -277,6 +277,35 @@ test.** `sim/test_edit.py` set `VID_BASE` itself and so passed a program
 that never set it at all. Read the machine's own registers; if the
 program forgets, the test must fail.
 
+**A proxy for "can it be seen" is not "can it be seen".** The cell map
+at `$8000` holds the text in all seven modes, so reading it back is an
+easy and tempting check — and it says only that the console wrote the
+glyph. In the tile and bitmap modes the display never reads that map:
+`bglyph` expands the font into VRAM, lighting palette index 1 at 1 bpp
+and index 15 at 4 and 8 bpp. `con_geom` seeded entry 1, in the mode 3
+arm alone, so modes 2, 4, 5 and 6 drew their letters in an unseeded
+entry — black, on black. The map check passed on all seven and the
+screen was blank on four of them, and it was reported fixed on the
+strength of it.
+
+What the check should ask is the state the video engine reads:
+`m.palette()` for the colour, `m.row()` for the text, and neither is a
+computed address. Two things make this trap easy to fall into:
+
+- **`render=True` without a font draws nothing**, in every mode. So a
+  pixel count comes back zero for modes that plainly work, which reads
+  as "the renderer cannot tell modes apart" rather than "the harness
+  forgot the font". `H.font()` exists for this.
+- **`m.fb()` and `m.row()` read different memories.** The renderer takes
+  its cells from `bus.video.vram`; `text_bytes` in `rust/src/main.rs`,
+  which is what `row()`/`text()`/`shows()` answer from, reads
+  `bus.mem`. A test that writes one and checks the other proves
+  nothing.
+
+And the rule underneath both: **verify that a new check fails without
+the fix.** One command, and it is the difference between a check and a
+decoration.
+
 ---
 
 ## 4. The rest of the battery
