@@ -808,7 +808,14 @@ con_geom:
         BNE  .soft
         MOV  R0,#$17
         ST   [CUR_CTRL],R0
-        RET
+        ; **And put it where the console thinks it is.** Setting the
+        ; style leaves CUR_X and CUR_Y holding whatever the last text
+        ; mode left there, so coming back from a graphics mode blinked
+        ; a cursor at a stale spot -- it jumped to the right one on the
+        ; first key that moved it, because that is what calls
+        ; con_cursor. The soft-cursor modes below need no equivalent:
+        ; con_blink draws from CCX/CCY every time.
+        JMP  con_cursor
 .soft:  CLR  R0
         ST   [CUR_CTRL],R0
 
@@ -836,10 +843,23 @@ con_geom:
         ; cells are 16 raster lines and the console uses the 8x16 face
         ; at $F600 -- the same Spleen the text modes read from ROM, at
         ; full height. 30 rows x 16 is the whole screen, where 8-line
-        ; cells covered half of it. Its colours used to be seeded here
-        ; and nowhere else, which is why mode 3 was the only non-text
-        ; mode that showed anything; the seeding is above now, for every
-        ; mode that draws its own glyphs.
+        ; cells covered half of it.
+        ;
+        ; **Entry 1 is white here and nowhere else.** One bit per pixel
+        ; can only name entries 0 and 1, and entry 1 of the boot
+        ; palette is CGA blue -- correct for a bank whose slot meanings
+        ; are kept, and wrong for the only colour this mode can write
+        ; text in. So mode 3, alone, overrides it. The 4 and 8 bpp modes
+        ; reach entry 15 and want no override; a draft that seeded both
+        ; for every mode was chasing a different bug entirely, which
+        ; turned out to be tools/mkboot.py writing the palette to the
+        ; I/O page's old address.
+        MOV  R0,#1
+        ST   [PAL_IDX],R0
+        MOV  R0,#$0F
+        ST   [PAL_DATA],R0
+        MOV  R0,#$FF
+        ST   [PAL_DATA],R0
 .fset:  STW  [CFONT],X
 
         LD   R0,[VID_BASE_L]    ; where the display is reading now

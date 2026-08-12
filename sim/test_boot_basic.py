@@ -120,7 +120,39 @@ def modes(syms):
                  b("cbpc"), b("cfrow"), b("ckind"),
                  m.bus.read(0xFF13), m.bus.read(0xFF12),
                  m.bus.read(0xFF15), m.bus.read(0xFF14)))
+        # One bit per pixel can only name palette entries 0 and 1, and
+        # entry 1 of the boot palette is CGA blue. Mode 3 overrides it
+        # to white, because blue is the only colour it could otherwise
+        # write text in.
+        if mode == 3:
+            pal = m.palette()
+            check(pal[1] == pal[15],
+                  "...and MODE 3 writes its text in white, not CGA blue",
+                  "entry 1 is $%03X, entry 15 is $%03X" % (pal[1], pal[15]))
         key(m, syms, "CLS\r")
+
+    # Back to a text mode, where the cursor is the hardware's again.
+    #
+    # **This is a standing check, not a reproduction.** Coming back from
+    # a graphics mode blinks a cursor in the wrong spot until a key
+    # moves it, and this is not that bug: measured at idle straight
+    # after the switch, CUR_X/CUR_Y already agree with CCX/CCY, with or
+    # without con_geom placing them. So the stale-register explanation
+    # is ruled out and the real one is still open -- most likely the
+    # inverted cell the soft cursor last drew, which nothing erases on
+    # the way out of a graphics mode. Kept because the agreement is
+    # worth holding on to while that is chased.
+    key(m, syms, "MODE 4\r")
+    for _ in range(4):
+        key(m, syms, 'PRINT "X"\r')
+    key(m, syms, "MODE 0\r")
+    cx, cy = m.bus.mem[syms["ccx"]], m.bus.mem[syms["ccy"]]
+    check((m.bus.read(ioregs.addr_of("CUR_X")),
+           m.bus.read(ioregs.addr_of("CUR_Y"))) == (cx, cy),
+          "coming back to a text mode places the cursor, not just its style",
+          "hardware ($%02X,$%02X), console ($%02X,$%02X)"
+          % (m.bus.read(ioregs.addr_of("CUR_X")),
+             m.bus.read(ioregs.addr_of("CUR_Y")), cx, cy))
 
 
 def lit(m, frames=2):
