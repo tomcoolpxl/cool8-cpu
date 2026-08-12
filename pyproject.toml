@@ -172,7 +172,12 @@ about = "the code-size gate: within 15% of hand-written"
 [[tool.cool8.jobs.sw]]
 id = "con"
 run = "sim/test_con.py"
-about = "sw/con.asm, the console module: geometry from the hardware, the scroll origin, and the line-wrap link"
+about = "sw/console.asm, the console module: geometry from the hardware, the scroll origin, and the line-wrap link"
+
+[[tool.cool8.jobs.sw]]
+id = "input"
+run = "sim/test_input.py"
+about = "sw/input.asm: PS/2 and ANSI decoded into one set of key codes"
 
 [[tool.cool8.jobs.sw]]
 id = "names"
