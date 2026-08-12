@@ -131,7 +131,27 @@ module cool8_fetch (
 
     reg  [15:0] row_ptr;               // the row being fetched
     reg  [2:0]  trow;                  // the row inside a tile
-    reg  [15:0] wrap_mask;             // (stride * 32) - 1
+    reg  [15:0] wrap_span;             // stride * 32: the map's height
+
+    // The row pointer's wrap, once, for the two engines that need it.
+    //
+    // **This was a mask**, `(base & ~mask) | ((row_ptr + stride) & mask)`
+    // with `mask = stride*32 - 1`, which is only correct when the stride
+    // is a power of two -- the argument D30 made for a stride of 256 and
+    // a 128x32 map, 8192 bytes to display 80x30. A compare and a
+    // subtract costs about what the mask's three 16-bit bitwise ops did
+    // and holds for any stride, so a 160-byte row is a legal map again
+    // and the padding is 3072 bytes of main RAM the user can have back.
+    // **Two subtractors, and that is the cheap version -- measured.**
+    // The obvious saving is to register `base + span` and compare
+    // against it, which removes the `- base` here. It costs 36 logic
+    // cells more (5193 against 5157): sixteen flip-flops for the limit
+    // and an adder maintaining it every cycle, against a subtractor
+    // yosys can share with the compare beside it. Do not re-derive it.
+    wire [15:0] rp_next = row_ptr + stride;
+    wire [15:0] rp_off  = rp_next - base;
+    wire [15:0] rp_wrap = (rp_off >= wrap_span) ? (rp_next - wrap_span)
+                                                : rp_next;
 
     reg  [7:0]  lo_byte;               // a text cell's first half
     reg  [15:0] ent;                   // a tile's map entry
@@ -275,7 +295,7 @@ module cool8_fetch (
             inflight    <= 1'b0;
             row_ptr     <= 16'h0000;
             trow        <= 3'd0;
-            wrap_mask   <= 16'h1FFF;
+            wrap_span   <= 16'h2000;
             lo_byte     <= 8'h00;
             ent         <= 16'h0000;
             pat_a       <= 16'h0000;
@@ -283,10 +303,9 @@ module cool8_fetch (
             primed      <= 1'b0;
             o_read_bank <= 1'b0;
         end else begin
-            // 32 rows of `stride`, less one. Registered rather than
-            // recomputed, to keep a shift and a decrement off the
-            // address path.
-            wrap_mask <= (stride << 5) - 16'd1;
+            // 32 rows of `stride`. Registered rather than recomputed,
+            // to keep the shift off the address path.
+            wrap_span <= (stride << 5);
 
             // Qualified by `disp_en` for the same reason `start_row` is:
             // with the display off nothing is being filled, so nothing
@@ -357,8 +376,7 @@ module cool8_fetch (
                             i        <= i + 1'b1;
                             if (i + 8'd1 == n) begin
                                 st      <= S_DONE;
-                                row_ptr <= (base & ~wrap_mask) |
-                                           ((row_ptr + stride) & wrap_mask);
+                                row_ptr <= rp_wrap;
                             end else st <= S_TXT_LO;
                         end
                     end
@@ -391,9 +409,7 @@ module cool8_fetch (
                                 // line of tile; the pattern row moves
                                 // every one.
                                 if (trow == 3'd7)
-                                    row_ptr <= (base & ~wrap_mask) |
-                                               ((row_ptr + stride) &
-                                                wrap_mask);
+                                    row_ptr <= rp_wrap;
                             end else st <= S_MAP;
                         end
                     end

@@ -205,7 +205,16 @@ impl Renderer {
     /// within a line of when the hardware reads them.
     fn fill_row(&mut self, bank: usize, vv: &View, bus: &MachineBus) {
         let v = &bus.video;
-        let wrap = ((v.stride << 5) as u16).wrapping_sub(1);
+        // The map's height in bytes. **This was a mask**, stride*32-1,
+        // which only wraps correctly for a power-of-two stride -- the
+        // argument D30 made for a 128x32 map. cool8_fetch.v compares and
+        // subtracts now, for any stride, and so does this.
+        let span = (v.stride << 5) as u16;
+        let wrapped = |ptr: u16| -> u16 {
+            let next = ptr.wrapping_add(v.stride);
+            if next.wrapping_sub(v.base) >= span { next.wrapping_sub(span) }
+            else { next }
+        };
         match vv.engine {
             0 => {
                 // text: cells out of main RAM — never through the ROM
@@ -216,8 +225,7 @@ impl Renderer {
                     self.lb[bank][i] = bus.mem[a as usize] as u16
                         | (bus.mem[a.wrapping_add(1) as usize] as u16) << 8;
                 }
-                self.row_ptr = (v.base & !wrap)
-                    | (self.row_ptr.wrapping_add(v.stride) & wrap);
+                self.row_ptr = wrapped(self.row_ptr);
             }
             1 => {
                 // tile: one more than the screen shows, for the scroll
@@ -248,8 +256,7 @@ impl Renderer {
                 let advance = self.trow == 7;
                 self.trow = (self.trow + 1) & 7;
                 if advance {
-                    self.row_ptr = (v.base & !wrap)
-                        | (self.row_ptr.wrapping_add(v.stride) & wrap);
+                    self.row_ptr = wrapped(self.row_ptr);
                 }
             }
             _ => {
