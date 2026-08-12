@@ -104,9 +104,26 @@ def kbd_tables(_cache={}):
 
     # The K_* constants, so `K_UP` here is the K_UP the editor compares
     # against rather than a number that happens to match today.
-    with open(os.path.join(sw, "basic.bas"), encoding="utf-8") as fh:
-        consts = dict(re.findall(r"^CONST\s+(K_\w+)\s*=\s*(\d+)",
-                                 fh.read(), re.M))
+    #
+    # **They are equates in sw/*.asm now**, not `CONST`s in sw/basic.bas,
+    # which [D68] deleted along with the compiled editor. Only the named
+    # keys are wanted -- they live above the byte range at 256 and up, so
+    # the value is the filter and no list of names has to be kept here.
+    # `K_UPK` and friends carry a trailing K in sw/main.asm to stay clear
+    # of the token equates; both spellings are registered, since a
+    # caller naturally writes `K_UP`.
+    consts = {}
+    for base_name in ("input.asm", "main.asm"):
+        path = os.path.join(sw, base_name)
+        if not os.path.exists(path):
+            continue
+        with open(path, encoding="utf-8") as fh:
+            for n, v in re.findall(r"^(K_\w+)\s*=\s*(\d+)", fh.read(), re.M):
+                if int(v) < 256 or n == "K_NAMED":
+                    continue
+                consts.setdefault(n, v)
+                if n.endswith("K"):
+                    consts.setdefault(n[:-1], v)
     base = min(int(v) for v in consts.values()) if consts else 256
     named = {}
     for name, v in consts.items():

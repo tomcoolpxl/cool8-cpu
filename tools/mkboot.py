@@ -223,9 +223,16 @@ btext:
 src:
 """
 
-# The boot screen's text. The free count is a build-time constant: the
-# user area is $0200-$7EDF and a freshly booted machine holds nothing.
-FREE = 0x7EDF - 0x0200
+# The boot screen's text. The free count is a build-time constant --
+# a freshly booted machine holds nothing -- but **not a written-down
+# one**: it said `$7EDF - $0200`, which was the user area before the
+# console and main.asm claimed storage under it, and it would have gone
+# on advertising 313 bytes that a program cannot have. It comes from
+# the same computed floor the assembler gets ([D67]).
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import memmap                                            # noqa: E402
+
+FREE = memmap.usertop() - 0x0200 + 1
 
 # BASIC's version, and the only place it is written down. The banner is
 # the machine's own statement of what it is running, so tests that want

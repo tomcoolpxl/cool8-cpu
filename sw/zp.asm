@@ -17,12 +17,16 @@
 ;   $0040-$0073   VARS, A-Z, two bytes each
 ;   $0074-$00A1   sw/fs.asm's FSVARS, 46 bytes
 ;   $00A2-$00A3   FDEPTH and EDEPTH
-;   $00A4-$00B0   **the editor's**, pinned by `DIM x AT $00xx` in
-;                 sw/basic.bas: cols, rows, gkind, curph, rpl, bpc,
-;                 gbase, gs8, glim, cont
-;   $00B1-$00CF   free, 31 bytes
-;   $00D0-$00D8   the editor's again: blb, bfa, bva, binv, grow, bstr
+;   $00A4-$00D9   free, 54 bytes -- **the editor's, until it stopped
+;                 being compiled BASIC**. `cols`, `rows`, `gkind`,
+;                 `curph`, `rpl`, `bpc`, `gbase`, `gs8`, `glim`, `cont`,
+;                 `blb`, `bfa`, `bva`, `binv`, `grow` and `bstr` were
+;                 pinned here by `DIM x AT $00xx` in sw/basic.bas, which
+;                 [D68] deleted. sw/console.asm holds their equivalents
+;                 at $7DAF and up, where they are claims the map can see
+;                 rather than allocations nothing could.
 ;   $00DA-$00FE   floating point's operand stack (was the assembler)
+;   $00FF         SFRAC
 ;   $0100-$01FF   the CPU stack, growing down from $0200
 ;
 ; **This comment is not the source of truth and has been wrong.** It

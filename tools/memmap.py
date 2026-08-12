@@ -156,7 +156,7 @@ def regions():
         (floor, SYSEND, "SYSVARS", "system storage, packed, floor computed"),
         (CSTK, CSTK + 0x1F, "CSTK", "the CALL stack, 8 frames of 4"),
         (SACC, SACC + 0xFF, "SACC",
-         "the string accumulator; pbuf overlays it"),
+         "the string accumulator; fscmd's page buffer overlays it"),
         (SCREEN, SCREEN_END, "SCREEN",
          "the text map, stride 256 in every mode"),
         (ORG, TOP - 1, "IMAGE", "BASIC: editor, interpreter, floats"),

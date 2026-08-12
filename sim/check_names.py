@@ -19,7 +19,9 @@ import re
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-FILES = ["chars.bas", "lex.bas", "emit.bas", "comp.bas", "basic.bas"]
+# basic.bas is gone: the editor is sw/*.asm now ([D68]). What is left is
+# the compiler, which is still written in BASIC and still needs this.
+FILES = ["chars.bas", "lex.bas", "emit.bas", "comp.bas"]
 DECL = re.compile(r"^\s*(CONST|DIM)\s+([A-Za-z_][A-Za-z0-9_]*)", re.I)
 OPEN = re.compile(r"^\s*(INLINE\s+)?(SUB|FUNCTION)\s", re.I)
 SHUT = re.compile(r"^\s*END\s+(SUB|FUNCTION)\s*$", re.I)
