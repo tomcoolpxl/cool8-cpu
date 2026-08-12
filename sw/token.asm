@@ -49,6 +49,7 @@ TOKQ    = $7DAC                 ;: 1 inside a quoted string
         .include "toktab.asm"
         .include "tokens.asm"
         .include "tokflag.asm"
+        .include "num.asm"       ; which brings console.asm with it
 
 ; =====================================================================
 ; Character classes
@@ -233,6 +234,42 @@ tok_word:
         CALL tok_byte
         POP  R0
         JMP  tok_byte
+
+; ---------------------------------------------------------------------
+; tok_show -- print the word for token R0, for LIST.
+;
+; The other direction over the same table, which is why detokenising
+; lives here and not in the lister: `TOKTAB` is walked by exactly two
+; routines and they are both in this file, so a keyword cannot come back
+; spelled differently from the way it went in.
+; ---------------------------------------------------------------------
+tok_show:
+        PUSHW X
+        PUSH R3
+        LDW  X,#TOKTAB
+        MOV  R3,#K_PRINT
+.e:     LD   R1,[X]
+        TST  R1
+        BEQ  .out               ; past the end: print nothing
+        CMP  R3,R0
+        BEQ  .hit
+        ADDW X,R1               ; step over length + that many characters
+        INCW X
+        ADD  R3,#1
+        BRA  .e
+.hit:   MOV  R3,R1              ; the length
+.c:     INCW X
+        PUSH R3
+        PUSHW X
+        LD   R0,[X]
+        CALL con_emit
+        POPW X
+        POP  R3
+        SUB  R3,#1
+        BNE  .c
+.out:   POP  R3
+        POPW X
+        RET
 
 ; =====================================================================
 ; Reading the text

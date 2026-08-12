@@ -16,7 +16,7 @@ What is checked:
   the trick   cursor up onto a listed line, type over it, press Return,
               and that line is replaced -- the screen *is* the buffer
   cursor      the hardware cursor is where the typing is
-  commands    NEW empties it, DELETE removes a range, RENUMBER renumbers
+  commands    NEW empties it, DELETE removes a range, RENUM renumbers
 
 ## Two rules this file follows
 
@@ -395,8 +395,8 @@ def main():
     M.cmd("DELETE 20")
     check(sorted(dict(M.prog())) == [10, 30], "DELETE removes a line",
           f"{sorted(dict(M.prog()))}")
-    M.cmd("RENUMBER 100,5")
-    check(sorted(dict(M.prog())) == [100, 105], "RENUMBER renumbers",
+    M.cmd("RENUM 100,5")
+    check(sorted(dict(M.prog())) == [100, 105], "RENUM renumbers",
           f"{sorted(dict(M.prog()))}")
     M.cmd("NEW")
     check(M.prog() == [], "NEW empties it")

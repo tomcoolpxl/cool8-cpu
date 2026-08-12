@@ -43,7 +43,7 @@ Names come from `TOKTAB` and `btab`, the bytes the matcher compares against. Ret
 | `$B9` | `LIST [from:int][, to:int]` |  |
 | `$BA` | `NEW` |  |
 | `$BB` | `FREE` | prints the bytes left |
-| `$BC` | `RENUMBER` |  |
+| `$BC` | `RENUM` |  |
 | `$BD` | `DELETE from:int[, to:int]` |  |
 | `$BE` | `CLS` |  |
 | `$BF` | `SAVE name:string [AT addr:int]` |  |

@@ -109,7 +109,7 @@ TOKTAB:
         .byte 4, "L","I","S","T"
         .byte 3, "N","E","W"
         .byte 4, "F","R","E","E"
-        .byte 8, "R","E","N","U","M","B","E","R"
+        .byte 5, "R","E","N","U","M"
         .byte 6, "D","E","L","E","T","E"
         .byte 3, "C","L","S"
         .byte 4, "S","A","V","E"

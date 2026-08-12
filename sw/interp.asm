@@ -272,7 +272,7 @@ esyn:   MOV  R0,#E_SYN
         RET
 
 ; pshab -- garg+2:garg+3 then garg:garg+1 pushed as two stacked call
-; arguments, the shape LIST, DELETE and RENUMBER all share.
+; arguments, the shape LIST, DELETE and RENUM all share.
 ; cnext -- where every command handler ends. A compiled core clobbers
 ; X and Y both, so the walk resumes from LREC, which survives: the
 ; command was its line's last statement by construction (there is no
@@ -343,7 +343,7 @@ h_del:  CALL rangel
         ADDW SP,#4
         JMP  cnext
 
-; RENUMBER [start [step]]
+; RENUM [start [step]]
 h_renum:
         MOV  R0,#10
         ST   [garg],R0
@@ -358,7 +358,7 @@ h_renum:
         ST   [garg],R0
         ST   [garg+1],R1
         SKIPSP
-        CMP  R2,#$2C            ; RENUMBER 100,5 and RENUMBER 100 5
+        CMP  R2,#$2C            ; RENUM 100,5 and RENUM 100 5
         BNE  .st
         INCW Y
         SKIPSP
@@ -783,8 +783,8 @@ sttab:
                                 ;: NEW
         .word h_free            ; $BB FREE    now: every one runs in a
                                 ;: FREE  prints the bytes left
-        .word h_renum           ; $BC RENUMBER  program or typed direct
-                                ;: RENUMBER
+        .word h_renum           ; $BC RENUM  program or typed direct
+                                ;: RENUM
         .word h_del             ; $BD DELETE
                                 ;: DELETE from:int[, to:int]
         .word h_cls             ; $BE CLS

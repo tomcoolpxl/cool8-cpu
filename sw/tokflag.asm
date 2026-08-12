@@ -71,7 +71,7 @@ TOKFLG:
         .byte F_LINE           ; $B9 LIST
         .byte 0                ; $BA NEW
         .byte 0                ; $BB FREE
-        .byte 0                ; $BC RENUMBER
+        .byte 0                ; $BC RENUM
         .byte F_LINE           ; $BD DELETE
         .byte 0                ; $BE CLS
         .byte 0                ; $BF SAVE
