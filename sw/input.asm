@@ -25,7 +25,6 @@
 ; `~` are marked with a bit rather than given cases of their own.
 ; ---------------------------------------------------------------------
 
-BLB     = $7DAD                 ;: 2 frame count at the last blink flip
 
 K_UP    = 256                   ; named keys live above the byte range,
 K_NAMED = 8                     ;   K_UP..K_INS, and are contiguous
@@ -148,55 +147,26 @@ in_key: CALL in_raw
         RET
 .none:  RET
 
+BSPARE  = $7DAD                 ;: 2 free: was BLB, the blink timer
+
 ; ---------------------------------------------------------------------
-; in_get -- block until a key, blinking the soft cursor while waiting.
+; in_get -- block until a key.
 ;
-; The blink is C64-timed: 20 frames a phase, and only while waiting,
-; which is also the only time the C64 blinked. The hardware cursor does
-; it in silicon in the text modes, so `con_blink` is a no-op there and
-; this loop costs a compare.
+; **This used to blink a cursor.** Twenty frames a phase, C64-timed, and
+; only while waiting -- which is also the only time a C64 blinked. It
+; drove `con_blink` for the five modes the hardware cursor did not
+; cover, kept its phase in CPHASE, and lifted the cursor off again on
+; the way out so a key would not land under a drawn block.
 ;
-; **The frame counter is read, not counted.** `frames` is what the
-; vertical-blank interrupt keeps, so the phase does not drift with how
-; long the caller spends between keys.
+; The cursor is in silicon in all seven modes now (cool8_pixel.v: the
+; invert moved to `pal_index`, which is one XOR and engine-independent),
+; and it blinks there. So this is a loop around `in_key` again, and the
+; BLB timer, CPHASE and the lift-off went with the rest of the software
+; cursor.
 ; ---------------------------------------------------------------------
 in_get: CALL in_key
         TST  R0
         BNE  .got
         TST  R1
-        BNE  .got
-        LD   R0,[CKIND]         ; text modes blink in silicon
-        TST  R0
         BEQ  in_get
-        LD   R0,[frames]        ; frames - BLB >= 32 ?
-        LD   R1,[frames+1]
-        LD   R2,[BLB]
-        LD   R3,[BLB+1]
-        SUB  R0,R2
-        SBC  R1,R3
-        TST  R1
-        BNE  .flip
-        CMP  R0,#32
-        BLO  in_get
-.flip:  LD   R0,[CPHASE]
-        XOR  R0,#1
-        ST   [CPHASE],R0
-        CALL con_blink
-        LD   R0,[frames]
-        ST   [BLB],R0
-        LD   R0,[frames+1]
-        ST   [BLB+1],R0
-        BRA  in_get
-.got:   ; Any key lifts the soft cursor off before whatever happens
-        ; next, or it is left drawn over the character the key produces.
-        PUSH R0
-        PUSH R1
-        LD   R0,[CPHASE]
-        TST  R0
-        BEQ  .out
-        CLR  R0
-        ST   [CPHASE],R0
-        CALL con_blink
-.out:   POP  R1
-        POP  R0
-        RET
+.got:   RET

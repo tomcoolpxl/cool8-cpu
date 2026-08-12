@@ -61,11 +61,16 @@ CCOLS   = $7DE0                 ;: 1 visible columns: 80, 40 or 32
 CROWS   = $7DE1                 ;: 1 visible rows: 30 or 24
 CRPL    = $7DE2                 ;: 1 rows a full logical line spans
 CKIND   = $7DE3                 ;: 1 0 text, 1 tiles, 2 bitmap
-CPHASE  = $7DE4                 ;: 1 soft-cursor blink phase, 0 = off
+; Four bytes the hardware cursor gave back -- CPHASE and GINV here, BLB
+; in sw/input.asm -- kept as named claims rather than as holes, because
+; `tools/memmap.py --check` refuses a gap and closing one properly means
+; shifting every claim below it. Take them for the next thing that needs
+; storage in this region; repack when something does.
+CSPARE  = $7DE4                 ;: 1 free: was CPHASE
+GSPARE  = $7DE8                 ;: 1 free: was GINV
 CFROW   = $7DE5                 ;: 1 font rows per glyph, 8 or 16
 CBPC    = $7DE6                 ;: 1 bytes per cell row, which is the bpp
 CLIM    = $7DE7                 ;: 1 base high byte that forces a repaint
-GINV    = $7DE8                 ;: 1 bglyph: $FF to draw inverted
 
 CSCRN   = $8000                 ; the cell map, 8 KB aligned
 A_TEXT  = $07                   ; light grey on black
@@ -176,7 +181,7 @@ con_get:
 
 ; =====================================================================
 ; The mirrors. One of these is in CMIR; each takes row R0, column R1,
-; character R2, and draws inverted when GINV is $FF.
+; character R2.
 ; =====================================================================
 
 ; con_nomir -- the text modes'. The vector always exists, so the hot
@@ -212,9 +217,8 @@ con_tmir:
         POP  R2
         SUB  R2,#32
         ST   [VRAM_DATA],R2     ; the glyph, as a tile index
-        LD   R0,[GINV]
-        AND  R0,#2              ; bank 0 normal, bank 2 the inverse pair
-        ST   [VRAM_DATA],R0
+        CLR  R0                 ; palette bank 0; the cursor's inverse
+        ST   [VRAM_DATA],R0     ;   pair went with the software cursor
         RET
 
 ; con_bmir -- the bitmap modes: one glyph expanded from the 1 bpp font
@@ -295,8 +299,6 @@ bglyph: LD   R3,[CFROW]
         MOV  R0,XH
         ST   [VRAM_ADDR_H],R0
         LD   R1,[VRAM_DATA]
-        LD   R0,[GINV]
-        XOR  R1,R0              ; the cursor's complement, or nothing
         LDW  X,[GVA]            ; seek the cell row
         MOV  R0,XL
         ST   [VRAM_ADDR_L],R0
@@ -448,120 +450,22 @@ con_paint:
 ; con_cursor -- the hardware cursor follows in the text modes; elsewhere
 ; the soft cursor restarts its phase and the caller blinks it.
 con_cursor:
-        LD   R0,[CKIND]
-        TST  R0
-        BNE  .soft
         LD   R0,[CCX]
         ST   [CUR_X],R0
         LD   R0,[CCY]
         ST   [CUR_Y],R0
         RET
-.soft:  CLR  R0
-        ST   [CPHASE],R0
-        RET
 
-; con_blink -- draw the cursor cell inverted (R0 non-zero) or plain.
-; Text modes never come here: style 3 IS the C64's reverse blink, in
-; silicon.
+; **There is no software cursor.** con_blink lived here, with GINV and
+; CPHASE, drawing an inverted cell in the five modes the hardware
+; cursor did not cover. The hardware covers all seven now -- the invert
+; moved to `pal_index` in cool8_pixel.v, which is one XOR and works in
+; every engine -- so the console writes CUR_X/CUR_Y and draws nothing.
 ;
-; ---------------------------------------------------------------------
-; SUPERSEDED -- go the other way. Keep the hardware cursor, delete this.
-;
-; The note below argues for deleting the hardware cursor and drawing all
-; seven modes here. The cheaper move is the reverse, and it was missed
-; because I found the cursor's logic cells before I read its pipeline:
-;
-;   `d2_cell <= sx1[10:3]` and `d2_trow <= vsrc[8:4]` in cool8_pixel.v
-;   are computed UNCONDITIONALLY, not gated by `engine`. The hardware
-;   already knows which cell every pixel is in, in every mode. The
-;   cursor is text-only only because the result is applied inside the
-;   text path: `lit = (font_q | cur_pix) ^ cur_inv`.
-;
-; Move the invert to `pal_index` instead -- eight XOR gates, and
-; inverting a palette index is visible in text, tile and bitmap alike.
-; Select the row divisor by cell height (y/16 is wrong for the 8-line
-; cells of modes 4-6; a 5-bit mux). Drop the style mux and `in_lines`,
-; since the editor only ever uses style 3, which RETURNS about a dozen
-; LUTs.
-;
-; Then this routine, GINV, CPHASE and the mirrors' inverse handling are
-; all dead: the console writes CUR_X/CUR_Y and stops drawing a cursor at
-; all. One implementation, less RTL than today, less software than
-; today, and the stale-cursor bug cannot exist.
-;
-; The old note is kept below because its *diagnosis* is the durable
-; part -- two implementations that each remember where the cursor is
-; will disagree on a mode change. Only the direction of the fix changed.
-; ---------------------------------------------------------------------
-;
-; TO DO (superseded): text comes here too, and the hardware cursor goes away
-;
-; **The hardware cursor is the reason the cursor blinks in the wrong
-; place.** There are two implementations that each remember where it is
-; -- CUR_X/CUR_Y in cool8_vregs for the text modes, CCX/CCY and CPHASE
-; here for the other five -- and on a mode change they disagree. That is
-; the "cursor blinks in a spot until I move it" report, and no amount of
-; placing CUR_X/CUR_Y fixes it: measured at idle, the registers already
-; agree. The fix is to delete one of the two, and the hardware one is
-; the one to delete, because it also costs 40-60 logic cells out of the
-; 116 the part has left -- which is roughly what a stride-agnostic row
-; wrap in cool8_fetch.v needs to buy a 5,120-byte text map ([D30]).
-;
-; What blocks it is right here: in a text mode `CMIR` is `con_nomir`, a
-; bare RET, because the display engine reads the cell map itself. So
-; inverting a text cell is not a glyph redraw -- it is **swapping the
-; attribute byte's nibbles** at `con_cell` + 1, which is what an
-; attribute means in text mode and is its own inverse.
-;
-; **And it needs the cell it last inverted, not the cursor's cell.**
-; Toggling (CCX, CCY) leaves an inverted cell behind whenever the cursor
-; moves between a show and a hide, which is exactly what typing does.
-; Two more claims -- CBLX, CBLY -- and the contract becomes:
-;
-;   show: if a cell is recorded, restore it; invert (CCX, CCY); record
-;         it; CPHASE = 1
-;   hide: if a cell is recorded, restore it; forget it; CPHASE = 0
-;
-; That is correct however the cursor moves in between, which the
-; CPHASE-only arrangement is not. The rest is mechanical: con_cursor
-; loses its text arm, con_geom stops writing CUR_CTRL, sw/boot.asm loses
-; its cursor block, tools/mkboot.py loses its $FF24 write, sw/io.asm
-; regenerates without $FF22-$FF25, and the cursor check in
-; sim/test_boot_basic.py retires. The RTL cut itself is small and clean
-; -- cool8_vregs.v, cool8_pixel.v, cool8_video.v -- and was tried once
-; and reverted only because this routine could not yet draw a text
-; cursor.
-;
-; Order: this routine first, then the software, then the RTL, then
-; `python sim/synth.py` to measure what came back -- and only then
-; decide whether the wrap fits.
-; ---------------------------------------------------------------------
-con_blink:
-        PUSH R0
-        LD   R0,[CKIND]
-        TST  R0
-        BEQ  .out
-        POP  R0
-        TST  R0
-        BEQ  .plain
-        MOV  R0,#$FF
-.plain: ST   [GINV],R0
-        LD   R0,[CCY]
-        LD   R1,[CCX]
-        PUSH R0
-        PUSH R1
-        CALL con_get
-        POP  R1
-        POP  R3
-        MOV  R2,R0
-        MOV  R0,R3
-        LDW  X,[CMIR]
-        CALL [X]
-        CLR  R0                 ; leave it clear: every other write
-        ST   [GINV],R0          ;   through the mirror draws upright
-        RET
-.out:   POP  R0
-        RET
+; That deletes the second place that remembered where the cursor is,
+; which is what made it blink in a stale spot after a mode change: two
+; implementations, each right about its own state, disagreeing on the
+; boundary.
 
 ; =====================================================================
 ; Characters out
@@ -813,7 +717,6 @@ con_warm:
         ST   [CTOP],R0
         ST   [CCX],R0
         ST   [CCY],R0
-        ST   [GINV],R0
         JMP  con_geom
 
 con_init:
@@ -857,9 +760,6 @@ con_geom:
         LD   R0,[X]
         ST   [CRPL],R0
 
-        CLR  R0
-        ST   [CPHASE],R0
-
         ; The mirror, once, so no character written afterwards has to
         ; ask what kind of screen this is.
         LD   R0,[CKIND]
@@ -873,24 +773,13 @@ con_geom:
 .bm:    LDW  X,#con_bmir
 .mset:  STW  [CMIR],X
 
-        ; The hardware cursor in the text modes -- style 3 is the C64's
-        ; reverse blink, in silicon, at 32 frames a phase. Elsewhere the
-        ; soft cursor is drawn by con_blink and the hardware one is off.
-        LD   R0,[CKIND]
-        TST  R0
-        BNE  .soft
-        MOV  R0,#$17
+        ; The cursor, on, in every mode -- there is one now, in
+        ; silicon, and it inverts its cell wherever CUR_X/CUR_Y point.
+        ; This used to enable it for text and disable it for everything
+        ; else, because everything else was drawn by con_blink.
+        MOV  R0,#$01
         ST   [CUR_CTRL],R0
-        ; **And put it where the console thinks it is.** Setting the
-        ; style leaves CUR_X and CUR_Y holding whatever the last text
-        ; mode left there, so coming back from a graphics mode blinked
-        ; a cursor at a stale spot -- it jumped to the right one on the
-        ; first key that moved it, because that is what calls
-        ; con_cursor. The soft-cursor modes below need no equivalent:
-        ; con_blink draws from CCX/CCY every time.
-        JMP  con_cursor
-.soft:  CLR  R0
-        ST   [CUR_CTRL],R0
+        CALL con_cursor         ; and where the console thinks it is
 
         ; **The palette is the boot stub's, not this routine's.** A
         ; draft of the mode fix seeded entries 1 and 15 here, on the
@@ -1004,8 +893,6 @@ con_tilefont:
         ST   [CFROW],R0         ;   bits per pixel straight into the
         MOV  R0,#4              ;   pattern slot, rows contiguous, so
         ST   [CBPC],R0          ;   the stride is 4 and not the screen's
-        CLR  R0
-        ST   [GINV],R0
         MOV  R0,#4
         MOV  XL,R0
         CLR  R0
