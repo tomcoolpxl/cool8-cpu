@@ -147,17 +147,28 @@ def printed(m):
     amounted to: its `s_newline` did nothing, so output that crossed a
     line came back concatenated. Read through `m.row()` and never off a
     computed address, because the geometry is the hardware's (AGENTS.md).
+
+    **Every row, not rows up to the first blank one.** Stopping at the
+    first blank read the whole screen as empty whenever output did not
+    begin on row 0 -- which is exactly what a program that assigns
+    before it prints does, since each statement that ends in a newline
+    moves the cursor down. Four string cases "printed nothing" for a
+    week of this branch and the text was sitting on row 3.
     """
-    out = []
-    for r in range(25):
+    return "".join(t for t in (m.row(r).strip() for r in range(rows(m))) if t)
+
+
+def rows(m):
+    """How many rows the screen has, asked rather than assumed."""
+    n = 0
+    while True:
         try:
-            t = m.row(r).rstrip()
+            m.row(n)
         except Exception:
-            break
-        if not t:
-            break
-        out.append(t)
-    return "".join(out)
+            return n
+        n += 1
+        if n > 64:
+            return n
 
 
 CASES = [
@@ -918,7 +929,7 @@ def trace(pattern, n=400):
              bytes(m.bus.mem[sacc:sacc + max(slen, 8)]).decode("latin-1")))
     print("  screen:")
     for r in range(6):
-        print("    %2d %r" % (r, m.row(r).rstrip()))
+        print("    %2d %r" % (r, m.row(r).strip()))
     print("  pc:      $%04X" % m.cpu.pc)
     print()
     # **This used to stop here**, printing three numbers and pointing at
@@ -1123,7 +1134,7 @@ def main():
     m = boot(bench, budget=80_000_000)[0]
     got = m.bus.mem[VARS + 20] | (m.bus.mem[VARS + 21] << 8)
     # the native equivalent, as the compiler emits it
-    nat, _ = build("bnat", """
+    nat, _ = H.assemble_text("""
         .org $4000
         MOV  R0,#1
         MOV  R1,#0
@@ -1159,7 +1170,7 @@ top:    MOV  R0,#$E8
         ST   [$0055],R1
         JMP  top
 done:   HALT
-""")
+""", "bnat")
     mn = cool8rsvm.machine()
     mn.bus.mem[CODE:CODE + len(nat)] = nat
     mn.cpu.pc = CODE
