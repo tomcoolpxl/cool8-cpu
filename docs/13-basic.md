@@ -889,16 +889,44 @@ The largest spans:
 | `GTEXT` | 160 |
 | `SOUND` / `PITCH` | 86 |
 
-**Recoverable without giving anything up — 168 bytes, total:**
+**Recoverable without giving anything up — 31 bytes, and that is all.**
+This table read 168 and was wrong on every line; each was checked
+against the machine rather than re-copied.
 
-| | bytes |
-|---|---|
-| 26 relaxed branches (each a 3-byte `JMP` where 2 would reach) | 78 |
-| `FPBASE`, `pshab`, `con_at` — defined, never referenced | 97 |
-| `SCROLL PALETTE SPRITE VPOKE HLINE TILE` still in `TOKTAB` | 39 |
+| | claimed | actually |
+|---|---|---|
+| `pshab`, `con_at` — defined, never referenced | — | **31, taken** |
+| `FPBASE` — "never referenced" | 97 with the above | **0. It is the ABI** |
+| `SCROLL PALETTE SPRITE VPOKE HLINE TILE` in `TOKTAB` | 39 | ~33, and not free |
+| 26 relaxed branches | 78 | 37 now, and not waste |
 
-(The 26 `sttab` slots pointing at `bad` are not free: they hold token
-numbers open, and renumbering is what `tools/vocab.py` generates.)
+**`FPBASE` is not dead code, it is the published interface.** The float
+package is meant to be loaded rather than linked ([D62]), so callers
+cannot know where anything landed and every entry is reached at a fixed
+offset from the base. Nothing referencing it *internally* is exactly
+what a jump table looks like from the inside. Deleting it would remove
+`SIN` and `SQR` from anything reached through `SYS`.
+
+**`pshab` and `con_at` were real and are gone.** `pshab` pushed `garg`
+as two stacked call arguments, which is how a *compiled* SUB took them;
+`sw/basic.bas` went with [D68] and nothing has called it since.
+`con_at` set the cursor to a row and column, and the editor cannot use
+it — moving the cursor has to keep `CROWA` and the continuation flags
+in step. 31 bytes, measured by removing them.
+
+**The `TOKTAB` strings are not free either**, for `FPBASE`'s reason one
+level up: the table is indexed by token minus $80, so removing an entry
+renumbers every keyword after it and a saved program stops meaning what
+it said. A one-byte placeholder would keep the numbering and save about
+27 bytes, which is not worth the tokeniser matching an empty keyword.
+The note below always said as much about the `sttab` slots; it is true
+of the strings for the same reason.
+
+**And the relaxed branches are not waste.** The assembler relaxes a
+branch *because* the displacement exceeded ±127 — the three bytes are
+what makes it reach. Recovering them means moving code so the targets
+come closer, which is a rearrangement of `sw/interp.asm`, not a
+deletion. There are 37 now, not 26.
 
 ### What that means for the layout
 

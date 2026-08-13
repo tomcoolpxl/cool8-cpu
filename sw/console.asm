@@ -1048,12 +1048,12 @@ con_tilefont:
         ST   [PAL_DATA],R0
         RET
 
-; con_at -- the cursor to row R0, column R1.
-con_at: ST   [CCY],R0
-        CALL con_setrow
-        MOV  R0,R1
-        ST   [CCX],R0
-        JMP  con_cursor
+; **There is no con_at.** It set the cursor to a row and column and
+; nothing called it -- the editor moves the cursor through ed_*, which
+; has to keep CROWA and the continuation flags in step, and a bare
+; coordinate set cannot. Unlike FPBASE this was not an interface: the
+; image's origin is derived, so nothing outside it can call in by
+; address anyway.
 
 ; ---------------------------------------------------------------------
 ; There is deliberately no `con_putn` here.

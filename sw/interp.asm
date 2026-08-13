@@ -238,8 +238,9 @@ esyn:   MOV  R0,#E_SYN
         ST   [ERR],R0
         RET
 
-; pshab -- garg+2:garg+3 then garg:garg+1 pushed as two stacked call
-; arguments, the shape LIST, DELETE and RENUM all share.
+; **pshab is gone.** It pushed garg as two stacked call arguments, which
+; is how a *compiled* SUB took them -- and sw/basic.bas went with [D68],
+; so LIST, DELETE and RENUM read garg directly and nothing called it.
 ; cnext -- where every command handler ends. A compiled core clobbers
 ; X and Y both, so the walk resumes from LREC, which survives: the
 ; command was its line's last statement by construction (there is no
@@ -250,16 +251,6 @@ cnext:  CALL nextline
         RET
 .cn:    JMP  stmt
 
-pshab:  POPW X                  ; the return address makes way
-        LD   R0,[garg+2]
-        LD   R1,[garg+3]
-        PUSH R1
-        PUSH R0
-        LD   R0,[garg]
-        LD   R1,[garg+1]
-        PUSH R1
-        PUSH R0
-        JMP  [X]
 
 ; LIST [a[-[b]]]
 h_list: CALL rangel
