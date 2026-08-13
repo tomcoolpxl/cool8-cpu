@@ -167,7 +167,10 @@ prg_new:
         ST   [PROGEND],R0
         MOV  R0,#>PROGBOT
         ST   [PROGEND+1],R0
-        RET
+        ; An empty program has no variables either. NEW comes here, and
+        ; so does the cold start, so this is the one place that has to
+        ; say it -- `vclear` falls through to a RET of its own.
+        JMP  vclear
 
 ; prg_free -- R0:R1 = bytes a program may still grow into.
 ;
@@ -224,10 +227,41 @@ PRGP    = PRGW+2                ;   where it goes
 PRGOLD  = PRGW+4                ;   how many bytes were there
 PRGNEW  = PRGW+5                ;   and how many are wanted
 
+; vclear -- the dynamic variable environment, emptied.
+;
+; The heap back to the top of the user's region and the name table back
+; to empty. **A-Z are not here**: `irun` wipes those separately, because
+; a direct line has to keep them and this routine is called from three
+; places that must not.
+;
+; It exists because the clear was in two halves and only one of them was
+; where it belonged. `main_pre` runs before RUN *and* before every
+; direct line, and it reset HEAP; `idrct` reset NNAME. Between them a
+; direct line destroyed every array, every string, every float and every
+; long name, keeping only A-Z -- so `DIM Q(4)` and then `Q(2)=77` on the
+; next line answered ?INDEX, and `A$="HI"` then `PRINT A$` printed
+; nothing. idrct's own header says it is "irun without the variable
+; clear: A-Z, arrays and the heap survive from the last run"; the code
+; had been saying otherwise for as long as anyone had typed two lines.
+vclear: MOV  R0,#<USERTOP
+        ST   [HEAP],R0
+        MOV  R0,#>USERTOP
+        ST   [HEAP+1],R0
+        CLR  R0
+        ST   [NNAME],R0
+        RET
+
 prg_store:
         ST   [PRGN],R0
         MOV  R0,R1
         ST   [PRGN+1],R0
+        ; **Storing a line clears the variables**, which is the C64's
+        ; rule and not a convenience: the name table is based at PROGEND
+        ; and editing the program moves it, so entries indexed off the
+        ; old base would be read out of the new one. LOAD comes through
+        ; here too and wants the same thing. R0:R1 are spent -- the
+        ; number is in PRGN and the next instruction reads it back.
+        CALL vclear
         LD   R0,[PRGN]
         LD   R1,[PRGN+1]
         CALL prg_find

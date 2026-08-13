@@ -681,6 +681,54 @@ def compact(code, syms):
     check(any(r.strip() == "66" for r in M.screen()),
           "with variables carried across the chain")
 
+    # ---- variables live across direct lines, and die when they should.
+    #
+    # A-Z are resident; everything else -- arrays, strings, floats, long
+    # names -- lives in the name table, based at PROGEND, with the heap
+    # coming down from the top. Both were being reset before *every*
+    # direct line: `main_pre` reset HEAP and `idrct` reset NNAME, which
+    # between them is exactly the variable clear `idrct` documents
+    # itself as leaving out. `DIM Q(4)` then `Q(2)=77` on the next line
+    # answered ?INDEX; `A$="HI"` then `PRINT A$` printed nothing. Only
+    # A-Z survived, so the fault was invisible to anyone using integers.
+    M.cmd("NEW")
+    M.cmd("CLS")
+    M.cmd("DIM Q(4)")
+    M.cmd("Q(2)=77")
+    M.cmd("PRINT Q(2)")
+    check(any(r.strip() == "77" for r in M.screen()),
+          "an array survives from one direct line to the next",
+          " | ".join(r.strip() for r in M.screen() if r.strip())[:90])
+    M.cmd('A$="HI"')
+    M.cmd("A#=1.5")
+    M.cmd("TOT=9")
+    M.cmd("PRINT A$")
+    M.cmd("PRINT A#")
+    M.cmd("PRINT TOT")
+    scr = [r.strip() for r in M.screen()]
+    check("HI" in scr and "1.5" in scr and "9" in scr,
+          "...and so do strings, floats and long names",
+          " | ".join(r for r in scr if r)[:90])
+
+    # The other half: the clear still has to happen where it always did.
+    # The name table is based at PROGEND, so editing the program moves
+    # it and every entry indexed off the old base would be read out of
+    # the new one -- which is why the C64 clears variables when you type
+    # a program line, and why this does too.
+    for after in ("NEW", "RUN", "10 PRINT 1"):
+        M.cmd("NEW")
+        M.cmd('A$="KEEP"')
+        M.cmd(after)
+        # CLS *after* the clearing command, so what is on the screen is
+        # only what PRINT put there -- scanning the whole screen also
+        # finds the echo of the line that set it.
+        M.cmd("CLS")
+        M.cmd("PRINT A$")
+        scr = [r.strip() for r in M.screen() if r.strip()]
+        check("KEEP" not in scr,
+              "%-11s clears the variables" % after,
+              " | ".join(scr)[:80])
+
     # ---- a direct statement ends after itself.
     #
     # **The answer alone, and nothing after it.** The statement loop's

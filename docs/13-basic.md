@@ -1052,6 +1052,66 @@ than a feature.
 
 ---
 
+## 10b. Where a variable lives, and why only A-Z are resident
+
+`A`-`Z` are **resident**: 26 fixed two-byte slots at `VARS`, reached by
+one table lookup. Everything else — `A$`, `A#`, `TOTAL`, and every array
+— lives in a linearly searched table of 32 fixed 12-byte entries (type,
+length, six name bytes, value, aux), based at `PROGEND` and allocated as
+the program grows.
+
+**Residency is worth 3.7x, measured on the machine.** The same loop,
+3000 iterations, differing only in how the variable is found:
+
+| | frames |
+|---|---|
+| `A = A + 1`, resident | **24** |
+| `ACC = ACC + 1`, name table | **89** |
+
+**It stays integer-only, deliberately.** Extending it to `A$`-`Z$` and
+`A#`-`Z#` would cost about 180 bytes of user RAM and a branch in
+`varidx`, and it was considered and turned down: a loop counter is an
+integer, and the fixed lookup cost is a large fraction of an integer
+increment and a small one of a float multiply or a string copy. Strings
+and floats create and assign like any other variable and pay the search.
+
+**The 32-entry ceiling is shared** by every array, every string
+variable, every float variable and every long name — `A$`, `A#`, `TOT`
+and `Q(` are four of the thirty-two. Past it is `?TOO MANY VARIABLES`.
+A program with a dozen arrays is closer to that than it looks, and
+`DIM A#(...)` and `DIM A$(...)` do not change the arithmetic.
+
+## 10c. Variables live across direct lines — and two ways they did not
+
+**Everything except `A`-`Z` was destroyed between direct lines.**
+`DIM Q(4)` and then `Q(2)=77` answered `?INDEX`; `A$="HI"` then
+`PRINT A$` printed nothing; `A#=1.5` then `PRINT A#` printed 0. The
+clear was in two halves and neither was where it belonged: `main_pre`
+reset `HEAP` and runs before every direct line as well as before RUN,
+and `idrct` reset `NNAME` — which together is exactly the variable clear
+`idrct` documents itself as leaving out ("A-Z, arrays and the heap
+survive from the last run"). Only integers survived, so the fault was
+invisible to anyone who never typed a `$` or a `#`.
+
+Both now live in `vclear`, called from `irun`, `prg_new` and
+`prg_store` — never from a direct line. **Storing a program line clears
+the variables**, which is the C64's rule and is not a convenience here:
+the name table is based at `PROGEND`, so editing the program moves it
+and entries indexed off the old base would be read out of the new one.
+`LOAD` comes through `prg_store` and gets the same treatment.
+
+**And a re-created entry inherited half of its predecessor.** `nfind`
+initialised type, length, name and value but not `aux`, and a slot is
+reused as soon as `NNAME` returns to zero. For an integer that is
+harmless — aux is unused. For a string, aux is the length half of the
+descriptor, so a fresh variable landing on an old one's slot got a
+zeroed address and somebody else's length. It survived RUN as a value
+that should not have existed, and it only appeared after enough
+variables had been created to force slot reuse, which is why the suite
+saw it and a three-line reproduction did not.
+
+Cost of all of it: **12 bytes.**
+
 ## 11. Known wrong, reproduced, not yet fixed
 
 Faults found by typing at the machine while checking `FREE`. The first

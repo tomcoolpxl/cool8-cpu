@@ -122,15 +122,15 @@ main_pre:
         ST   [CSTK],R0
         MOV  R0,#>CSTKBUF
         ST   [CSTK+1],R0
-        ; The heap comes down from the top of the user's region, which
-        ; is one region again: the screen, system storage and the image
-        ; are all above it now, so `$0200` runs contiguously to USERTOP
-        ; and a program may spend it as text or as arrays in any
-        ; proportion ([D69]).
-        MOV  R0,#<USERTOP
-        ST   [HEAP],R0
-        MOV  R0,#>USERTOP
-        ST   [HEAP+1],R0
+        ; **The heap is not reset here.** It used to be, and main_pre
+        ; runs before every direct line as well as before RUN, so every
+        ; direct line threw away every array and every string the last
+        ; one made. `prg_store` and `irun` call `vclear`; a direct line
+        ; must not. The heap comes down from the top of the user's
+        ; region, which is one region again -- the screen, system
+        ; storage and the image are all above it, so `$0200` runs
+        ; contiguously to USERTOP and a program may spend it as text or
+        ; as arrays in any proportion ([D69]).
         LD   R0,[PROGEND]       ; PEND and the name table both start at
         ST   [PEND],R0          ;   the end of the program text
         ST   [NTAB],R0
@@ -472,7 +472,7 @@ main:
         ST   [KBD_CTRL],R0
         EI
 
-        CALL prg_new
+        CALL prg_new            ; which empties the variables too
         CALL fsc_mount
         CALL con_warm           ; **not con_init**, which ends in con_cls
         ; The screen already shows the boot banner -- the stub painted

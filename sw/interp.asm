@@ -148,12 +148,13 @@ irun:
         INCW X
         SUB  R1,#1
         BNE  .iz
+        CALL vclear             ; and the heap and the name table with
+                                ;   them -- a RUN starts from nothing
         CLR  R0
         ST   [FDEPTH],R0        ; and no FOR loop is running
         ST   [DDEPTH],R0        ; nor a DO, which a second RUN must not
                                 ;   inherit from the first
         ST   [EDEPTH],R0        ; at statement level, not inside a paren
-        ST   [NNAME],R0         ; and no long name is defined yet
         ST   [CDEPTH],R0        ; nor a call in progress
         ST   [FSP],R0           ; nor a float operand pending -- see
                                 ;   idrct for why this one matters most
@@ -382,7 +383,6 @@ idrct:  CLR  R0
         ST   [FDEPTH],R0        ; statement level, fresh
         ST   [DDEPTH],R0
         ST   [EDEPTH],R0
-        ST   [NNAME],R0
         ST   [CDEPTH],R0
         ST   [FSP],R0           ; **not optional.** fsav refuses past
                                 ;   FSDEEP without pushing, and its
@@ -850,6 +850,17 @@ nfind:  CALL nlook
         POPW Y
         INCW X                  ; the value, two bytes of zero
         CLR  R0
+        ST   [X],R0
+        INCW X
+        ST   [X],R0
+        ; **And the aux field, which this did not touch.** An entry is
+        ; type, length, six name bytes, value and aux, and a slot is
+        ; reused the moment NNAME goes back to zero -- so a new string
+        ; variable landing on an old one's slot inherited its length
+        ; while getting a zeroed address. Harmless for an integer, which
+        ; does not use aux; for a string it is a descriptor half of
+        ; which is somebody else's.
+        INCW X
         ST   [X],R0
         INCW X
         ST   [X],R0
