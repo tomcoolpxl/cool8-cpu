@@ -99,7 +99,7 @@ Matched by name, not tokenised — they have no token byte.
 |---|---|
 | `LEFT$(s:string, n:int) -> string` | clamps past the end |
 | `RIGHT$(s:string, n:int) -> string` | clamps past the end |
-| `MID$(s:string, start:int, n:int) -> string` | empty past the end |
+| `MID$(s:string, start:int[, n:int]) -> string` | two arguments run to the end; empty past the end |
 | `CHR$(n:int) -> string` | `!intonly` |
 | `ASC(s:string) -> int` |  |
 | `STR$(n:int\|float) -> string` | a float renders as PRINT would |

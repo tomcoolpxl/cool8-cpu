@@ -2328,6 +2328,67 @@ implementation nobody is checking, which is how `test_lib` came to
 measure two programs against a third, private model of the I/O page
 and report 1.00x for a year.
 
+## D76 — Strings order, and it cost nothing because six copies became one
+
+**Done.** `<`, `<=`, `>`, `>=` compare strings character by character;
+the shorter of two otherwise-equal strings is the smaller, so
+`"AB" < "ABC"`. `MID$` takes two arguments and runs to the end.
+
+**Before this they silently answered false.** `IF A$ < "B"` on `"ABC"`
+printed nothing: the ordering arms called `rhs`, which is the *numeric*
+right-hand side, and compared whatever `R0:R1` last held. Not an error,
+not a refusal — an answer, and the wrong one. The reference said `=` and
+`<>` only, so it was documented; a documented silent wrong answer is
+still a silent wrong answer.
+
+### The first implementation was 98 bytes and the right one is zero
+
+`scmp` became a three-way compare — `$FF`, `0`, `1`, which is `fcmp`'s
+convention — and then each of `<`, `<=`, `>`, `>=` got an arm that
+called it and tested the result. That worked, and it was **six copies of
+one idea**: the four new arms plus the two `=` and `<>` already had.
+
+The smaller shape is to notice that **a numeric relation ends in
+`SUB R0,R2 / SBC R1,R3` and a branch on the sign**, and that a
+three-way compare is exactly a number to feed that. `srhsn` stands in
+for `rhs`: if the operands are strings it compares them, sign-extends
+the answer into `R0:R1` and zeroes `R2:R3`; otherwise it *is* `rhs`. So
+`A$ < B$` becomes `scmp(A$,B$) < 0` and every operator keeps the code it
+already had — including `<=` and `>`, which swap their operands, because
+swapping `cmp` against zero negates it and that is still correct.
+
+| | image | 4,000 comparisons |
+|---|---|---|
+| before any ordering | 18,571 | 197 frames |
+| four bespoke arms | 18,669 | 197 |
+| **one `srhsn`** | **18,571** | **196** |
+
+**Zero net bytes for all six operators**, because unifying them deleted
+the duplication that was already there, and no measurable speed
+difference. One call site per operator instead of six places for the
+next one to be forgotten in.
+
+### What the profile said, and why nothing was micro-optimised
+
+The byte loop is **about 4 % of a string comparison** — 197 frames for
+sixteen equal characters against 188 when they differ at the first — so
+the expression evaluator is the rest. The first `scmp` pushed and popped
+a register *per character* to keep the right-hand length alive; that was
+removed, not for the 2 % but because it forced the mismatch path to
+unwind the stack by hand on two exits, which is a balance to get wrong
+rather than a speed problem. The length is recomputed once, at the end,
+from the split already on the stack.
+
+### `MID$` with two arguments
+
+`MID$(A$, 7)` is the rest of the string, which is what both the C64 and
+the BBC give and what every published program assumes. The count is not
+optional in the parser: it is asked for only when a `,` follows, and
+`strim` already clamps, so 255 is the whole rest of anything this
+machine can hold. **17 bytes.**
+
+---
+
 ## D75 — TAB and SPC are items, not functions
 
 **Done**, and the smallest of the three language additions this

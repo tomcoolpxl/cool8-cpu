@@ -93,7 +93,7 @@ the runner, the same standing as the shelved compiler's suites.
 loosest of all**. TRUE is **-1**, so `AND`/`OR`/`XOR` serve
 logic and bits with one implementation ([D47](01-decisions.md)).
 `IF A > 0 AND B > 0` works exactly as it reads. Strings compare with
-`=` and `<>` only.
+all six relational operators, comparing character by character with the shorter of two otherwise-equal strings the smaller, so `"AB" < "ABC"`. [D76](01-decisions.md).
 
 ### What the arithmetic does at the edges
 

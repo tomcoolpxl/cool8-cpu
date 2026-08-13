@@ -729,6 +729,45 @@ def compact(code, syms):
               "%-11s clears the variables" % after,
               " | ".join(scr)[:80])
 
+    # ---- strings order, and MID$ takes two arguments ([D76]).
+    M.cmd("NEW")
+    M.cmd("CLS")
+    M.cmd('A$="HELLO WORLD"')
+    for line, want, why in [
+        ('PRINT MID$(A$,7)', "WORLD", "MID$ with two arguments runs to the end"),
+        ('PRINT MID$(A$,7,3)', "WOR", "...and three still means a count"),
+        ('PRINT MID$(A$,1)', "HELLO WORLD", "MID$ from one is the whole string"),
+        ('PRINT LEN(MID$(A$,99))', "0", "MID$ past the end is empty"),
+    ]:
+        M.cmd("CLS")
+        M.cmd(line)
+        check(any(r.strip() == want for r in M.screen()), why,
+              " | ".join(r.strip() for r in M.screen() if r.strip())[:60])
+
+    # Every relation goes through one routine now: scmp answers $FF, 0
+    # or 1 and srhsn sign-extends it against zero, so the numeric
+    # compare-and-branch each operator already had does the work.
+    for line, fires, why in [
+        ('IF "ABC"<"B" THEN PRINT "Y"', True, "< orders strings"),
+        ('IF "B"<"ABC" THEN PRINT "Y"', False, "...and the other way is false"),
+        ('IF "AB"<"ABC" THEN PRINT "Y"', True, "a prefix is the smaller"),
+        ('IF "ABC">"AB" THEN PRINT "Y"', True, "> orders strings"),
+        ('IF "ABC"<="ABC" THEN PRINT "Y"', True, "<= is true on equal"),
+        ('IF "ABC">="ABC" THEN PRINT "Y"', True, ">= is true on equal"),
+        ('IF "A"<="B" THEN PRINT "Y"', True, "<= orders"),
+        ('IF "B">="A" THEN PRINT "Y"', True, ">= orders"),
+        ('IF ""<"A" THEN PRINT "Y"', True, "the empty string is the smallest"),
+        ('IF "ABC"="ABC" THEN PRINT "Y"', True, "= still works"),
+        ('IF "ABC"<>"ABD" THEN PRINT "Y"', True, "<> still works"),
+        ('IF 5<3 THEN PRINT "Y"', False, "and numbers are unaffected"),
+        ('IF 2.5<3.5 THEN PRINT "Y"', True, "floats too"),
+    ]:
+        M.cmd("CLS")
+        M.cmd(line)
+        got = any(r.strip() == "Y" for r in M.screen())
+        check(got == fires, why,
+              " | ".join(r.strip() for r in M.screen() if r.strip())[:60])
+
     # ---- TAB and SPC, which are items rather than values ([D75]).
     for line, want, why in [
         ('PRINT "A";TAB(10);"B"', "A         B", "TAB pads out to a column"),

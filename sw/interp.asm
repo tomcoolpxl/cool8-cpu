@@ -1590,15 +1590,7 @@ erel:
         RET
 
 .req:   INCW Y
-        LD   R2,[STYPE]
-        CMP  R2,#1              ; 1 is a string; 0 and 2 both go to rhs,
-        BNE  .nreq              ;   which sorts an integer from a float
-        CALL srhs
-        CALL scmp
-        TST  R0
-        BEQ  .y1
-        JMP  false
-.nreq:  CALL rhs
+        CALL srhsn
         SUB  R0,R2
         SBC  R1,R3
         OR   R0,R1
@@ -1612,23 +1604,14 @@ erel:
         BEQ  .rle
         CMP  R2,#$3E
         BEQ  .rne
-        CALL rhs
+        CALL srhsn
         SUB  R0,R2
         SBC  R1,R3
         BLT  .y2
         JMP  false
 .y2:    JMP  true
 .rne:   INCW Y
-        LD   R2,[STYPE]
-        CMP  R2,#1              ; as .req
-        BNE  .nrne
-        CALL srhs
-        CALL scmp
-        TST  R0
-        BNE  .y3n
-        JMP  false
-.y3n:   JMP  true
-.nrne:  CALL rhs
+        CALL srhsn
         SUB  R0,R2
         SBC  R1,R3
         OR   R0,R1
@@ -1642,7 +1625,7 @@ erel:
         ; worked only because nothing between them faulted. And it
         ; branched past the subtraction it was setting up.
 .rle:   INCW Y
-        CALL rhs
+        CALL srhsn
         PUSH R1
         PUSH R0
         MOV  R0,R2
@@ -1656,7 +1639,7 @@ erel:
         LD   R2,[Y]
         CMP  R2,#$3D
         BEQ  .rge
-        CALL rhs                ; a > b is b < a, and swaps the same way
+        CALL srhsn              ; a > b is b < a, and swaps the same way
         PUSH R1
         PUSH R0
         MOV  R0,R2
@@ -1669,7 +1652,7 @@ erel:
         JMP  false
 .y4:    JMP  true
 .rge:   INCW Y
-        CALL rhs
+        CALL srhsn
         SUB  R0,R2
         SBC  R1,R3
 .cmpge: BGE  .y5
@@ -1678,6 +1661,32 @@ erel:
 
 ; srhs -- the right-hand side of a string relation. It appends, and the
 ; split it returns in R2 is where the left one ended.
+; srhsn -- the right-hand side of any relation, as a number.
+;
+; **This is why the six operators need no string arms at all.** A
+; numeric relation ends in `SUB R0,R2 / SBC R1,R3` and a branch on the
+; sign; `scmp` already answers $FF, 0 or 1 for less, equal, greater. So
+; a string comparison is turned into exactly the subtraction the numeric
+; path was going to do -- the three-way in R0:R1, zero in R2:R3 -- and
+; every arm keeps the code it already had, swaps included.
+;
+; The first shape of this gave `<`, `<=`, `>` and `>=` a bespoke arm
+; each and left `=` and `<>` theirs: six copies of the same idea, about
+; 90 bytes, and six places for the next operator to be forgotten in.
+; This is one routine and one call site per operator.
+srhsn:  LD   R2,[STYPE]
+        CMP  R2,#1              ; 1 is a string; 0 and 2 both go to rhs,
+        BNE  rhs                ;   which sorts an integer from a float
+        CALL srhs
+        CALL scmp
+        CLR  R1                 ; sign-extend $FF/0/1 into R0:R1
+        CMP  R0,#$FF
+        BNE  .z
+        MOV  R1,#$FF
+.z:     CLR  R2                 ; against zero, which is what makes the
+        CLR  R3                 ;   numeric branch mean the right thing
+        RET
+
 srhs:   LD   R2,[SLEN]
         PUSH R2
         CALL prim
@@ -2996,13 +3005,11 @@ h_lets: PUSHW X
 ; Neither side was ever copied to the heap, so `IF A$ = "Y"` allocates
 ; nothing at all.
 scmp:   PUSH R2
-        LD   R0,[SLEN]
-        SUB  R0,R2
-        MOV  R3,R2
-        CMP  R0,R3              ; different lengths cannot be equal
-        BNE  .ne
         PUSHW X
         PUSHW Y
+        LD   R0,[SLEN]
+        SUB  R0,R2              ; R0 = the right's length
+        MOV  R3,R2              ; R3 = the left's
         LD   R1,[SACC]
         MOV  XL,R1
         LD   R1,[SACC+1]
@@ -3012,30 +3019,67 @@ scmp:   PUSH R2
         MOV  R1,XH
         MOV  YH,R1
         ADDW Y,R3               ; Y on the right half
-        TST  R3
-        BEQ  .same
+
+        ; Compare over the shorter of the two, byte by byte. **The
+        ; first difference decides**, which is what makes this an
+        ; ordering rather than an equality test: it used to give up the
+        ; moment the lengths differed, so `<` on strings fell through to
+        ; the numeric path and silently answered false.
+        MOV  R2,R3              ; R2 = min(left, right)
+        CMP  R0,R2
+        BHS  .have
+        MOV  R2,R0
+.have:  TST  R2
+        BEQ  .bylen             ; a common prefix of nothing
+
+        ; **Nothing is stacked inside the loop.** Keeping the right's
+        ; length in R0 across it cost a PUSH and a POP per character,
+        ; and worse, it made `.diff` unwind the stack by hand on two
+        ; exit paths -- a balance to get wrong rather than a speed
+        ; problem. The length is recomputed at `.bylen`, which runs
+        ; once, from the split still on the stack.
 .c:     LD   R0,[X]
         INCW X
         LD   R1,[Y+]
         SUB  R0,R1
         BNE  .diff
-        SUB  R3,#1
+        SUB  R2,#1
         BNE  .c
-.same:  POPW Y
+
+        ; Equal as far as both go, so the shorter is the smaller --
+        ; "AB" < "ABC". R3 is the left's length; the right's is what is
+        ; left of the accumulator past the split, and the split is under
+        ; the two saved pointers.
+.bylen: LD   R0,[SP+4]
+        LD   R1,[SLEN]
+        SUB  R1,R0              ; the right's length
+        MOV  R0,R3
+        CMP  R0,R1
+        BEQ  .eq
+        BLO  .lt
+        BRA  .gt
+
+        ; The byte that differed: R0 is left-minus-right and the borrow
+        ; says which way ([D9] -- carry means no borrow).
+.diff:  BCS  .gt
+        BRA  .lt
+
+.eq:    CLR  R0
+        BRA  .out
+.lt:    MOV  R0,#$FF
+        BRA  .out
+.gt:    MOV  R0,#1
+        ; The accumulator is cut back to the split either way, so a
+        ; comparison inside a longer expression leaves nothing behind.
+.out:   POPW Y
         POPW X
-        POP  R2                 ; the split, back to a number and a
-        ST   [SLEN],R2          ;   length that forgets what was compared
-        CLR  R0
-        ST   [STYPE],R0
-        CLR  R0
-        RET
-.diff:  POPW Y
-        POPW X
-.ne:    POP  R2
+        POP  R2
+        PUSH R0
         ST   [SLEN],R2
         CLR  R0
         ST   [STYPE],R0
-        MOV  R0,#1
+        POP  R0
+        RET
         RET
 
 ; slen -- LEN(<string>). The text measured is not kept: SLEN goes back
@@ -3505,8 +3549,19 @@ smid:   CALL sopen
         CALL sopen              ; ','
         CALL eval               ; where to start, counting from one
         PUSH R0
-        CALL earg               ; ( expression )
-        POP  R3
+        ; **Two arguments means "to the end"**, which is what both the
+        ; C64 and the BBC give. The count is not optional in the parser
+        ; -- it is asked for only if a ',' follows, and `strim` already
+        ; clamps, so 255 is the whole rest of any string this machine
+        ; can hold.
+        SKIPSP
+        CMP  R2,#$29            ; ')'
+        BNE  .three
+        INCW Y
+        MOV  R0,#$FF
+        BRA  .have
+.three: CALL earg               ; , expression )
+.have:  POP  R3
         TST  R3
         BEQ  .z
         SUB  R3,#1              ; one-based, as every BASIC has it
@@ -3682,7 +3737,7 @@ btab:   .byte 3,"L","E","N"
                                 ;: RIGHT$(s:string, n:int) -> string  clamps past the end
         .byte 4,"M","I","D","$"
         .word smid
-                                ;: MID$(s:string, start:int, n:int) -> string  empty past the end
+                                ;: MID$(s:string, start:int[, n:int]) -> string  two arguments run to the end; empty past the end
         .byte 4,"C","H","R","$"
         .word schr
                                 ;: CHR$(n:int) -> string !intonly
