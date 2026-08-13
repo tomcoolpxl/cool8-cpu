@@ -700,6 +700,8 @@ fn text_bytes(m: &machine::Machine) -> Vec<u8> {
 ///     profon                           start (or restart) the cycle profile
 ///     profdump                         -> ok pc:cycles ... (nonzero only)
 ///     spmin / spclr                    the SP low-water mark; reset it
+///     watch <lo> <hi>                  shadow that range; clears hits
+///     hits                             -> ok pc:addr:value ...
 ///     flush                            flash image written back to its path
 ///
 /// `settle` is test_basic's idle test, server-side because it polls
@@ -714,6 +716,21 @@ struct Sess {
     flash_path: Option<String>,
     prof: Option<Box<[u64; 0x10000]>>,
     spmin: u16,
+    /// The write watch: which bytes to shadow, what they last held, and
+    /// what changed them. AGENTS.md documented `m.watch` for a year and
+    /// nothing implemented it, which is the trap that file itself names
+    /// -- a documented tool that is not there is the one you reach for.
+    /// Reached for during [D74]'s relocation, absent, and the fault took
+    /// five suite runs to corner instead of one.
+    ///
+    /// A shadow diffed per instruction rather than a hook in the bus:
+    /// the range is small, this costs nothing measurable beside the
+    /// profile that already rides the same wrapper, and it needs no
+    /// change to the memory path every other command depends on.
+    wlo: u16,
+    whi: u16,
+    shadow: Vec<u8>,
+    hits: Vec<(u16, u16, u8)>,
 }
 
 impl Sess {
@@ -726,6 +743,18 @@ impl Sess {
         }
         if self.m.cpu.sp < self.spmin {
             self.spmin = self.m.cpu.sp;
+        }
+        if !self.shadow.is_empty() && self.hits.len() < 4096 {
+            for i in 0..self.shadow.len() {
+                let a = self.wlo.wrapping_add(i as u16);
+                let v = self.m.bus.mem[a as usize];
+                if v != self.shadow[i] {
+                    self.shadow[i] = v;
+                    // `pc` is the instruction that did it, captured
+                    // before the tick -- the PC now is the next one.
+                    self.hits.push((pc as u16, a, v));
+                }
+            }
         }
     }
 
@@ -807,6 +836,10 @@ fn run_serve() {
                             else { Some(f[2].to_string()) },
                 prof: None,
                 spmin: 0xFFFF,
+                wlo: 0,
+                whi: 0,
+                shadow: Vec::new(),
+                hits: Vec::new(),
             });
             writeln!(out, "ok").unwrap();
             out.flush().unwrap();
@@ -998,6 +1031,22 @@ fn run_serve() {
             // The stack's low-water mark since `spclr` (or the
             // session's start) — the SP-after-every-instruction look a
             // pipe cannot afford.
+            "watch" if f.len() == 3 => {
+                let lo: u16 = f[1].parse().unwrap_or(0);
+                let hi: u16 = f[2].parse().unwrap_or(0);
+                s.wlo = lo;
+                s.whi = hi;
+                s.shadow = (lo..=hi).map(|a| s.m.bus.mem[a as usize]).collect();
+                s.hits.clear();
+                "ok".to_string()
+            }
+            "hits" => {
+                let mut o = String::from("ok");
+                for (pc, a, v) in s.hits.iter() {
+                    o.push_str(&format!(" {}:{}:{}", pc, a, v));
+                }
+                o
+            }
             "spmin" => format!("ok {}", s.spmin),
             "spclr" => {
                 s.spmin = 0xFFFF;

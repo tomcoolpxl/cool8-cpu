@@ -96,9 +96,9 @@ it is the map that matters when reading `sw/`, so:
 |---|---|---|
 | `$0000–$00FF` | 256 | free. Formerly "page 0", special to nothing now |
 | `$0100–$01FF` | 256 | the CPU stack, growing down from `$0200` |
-| `$0200–$9FFF` | **40,448** | **the user's**: BASIC program up, heap down |
-| `$A000–$B3FF` | 5,120 | the text map — 80×32 cells, stride 160 |
-| `$B400–$B789` | 906 | system storage, the CALL stack, the string accumulator |
+| `$0200–$9BFF` | **39,424** | **the user's**: program up, heap down, and the name table, call stack and save stack above the program ([D73]) |
+| `$9C00–$AFFF` | 5,120 | the text map — 80×32 cells, stride 160 |
+| `$B000–$B389` | 906 | system storage and the string accumulator |
 | `$B78A–$BB98` | 1,039 | slack: the image's room to grow |
 | `$BB99–$FEFF` | 17,255 | the system image — BASIC, editor, floats |
 
@@ -807,7 +807,7 @@ cell.
 | Tile | 8×8, 4 bpp | `[7:6]` V/H flip, `[5:4]` pattern bank, `[3:0]` palette bank |
 
 **The canonical text map is 80×32 cells with 80×30 displayed**, stride
-160, 5,120 bytes, at `$A000`. The two spare rows off the bottom are what
+160, 5,120 bytes, at `$9C00`. The two spare rows off the bottom are what
 the circular scroll rotates through, so a scroll is one register write
 and moves no memory.
 

@@ -4035,6 +4035,12 @@ argpass:
         POPW Y
 
 .each:  INCW Y                  ; the SUB side, over '(' or ','
+        SKIPSP                  ; **`SUB F(A, B)` has a space in it** and
+                                ;   varidx reads [Y] straight off without
+                                ;   skipping any. Measured: without this
+                                ;   the definition is ?SYNTAX the moment
+                                ;   anyone writes the comma the way they
+                                ;   would write it anywhere else.
         CALL varidx             ; R0 = the formal's handle, Y past it
         LD   R2,[ERR]
         BNE  .bad
@@ -4185,7 +4191,9 @@ argst:  ; **R0:R1 is the integer argument and almost everything here
         BNE  .type
         POP  R0
         POP  R1
-        CALL ffromi             ; R0:R1 into FACC
+        PUSH R2                 ; ffromi does not preserve it, and R2 is
+        CALL ffromi             ;   the handle everything below needs
+        POP  R2
         BRA  .stf
 .same:  POP  R0
         POP  R1

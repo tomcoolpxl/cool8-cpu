@@ -67,6 +67,7 @@ RUN
 | `m.settle(idle, irhead, irtail)` | run until nothing is waiting and the PC is at the idle label |
 | `m.profile_start()` → `m.profile_cycles()` | cycles by PC; `dbg.Profile` rolls them up by routine |
 | `m.sp_clear()` → `m.sp_min()` | the stack's low-water mark |
+| `m.watch(lo, hi)` → `m.hits` | every write into that range, as `(pc, addr, value)`. **The one to reach for when something is corrupting memory** — it answers "who wrote this" in one run, where bisecting by re-running variants takes five |
 | `m.fb()` | the rendered frame, with `Machine(render=True)` |
 | `m.palette()`, `m.sprites()`, `m.sound()`, `m.samples()` | the programmed peripheral state |
 
@@ -286,7 +287,7 @@ that never set it at all. Read the machine's own registers; if the
 program forgets, the test must fail.
 
 **A proxy for "can it be seen" is not "can it be seen".** The cell map
-at `$A000` holds the text in all seven modes, so reading it back is an
+at `$9C00` holds the text in all seven modes, so reading it back is an
 easy and tempting check — and it says only that the console wrote the
 glyph. In the tile and bitmap modes the display never reads that map:
 `bglyph` expands the font into VRAM, lighting palette index 1 at 1 bpp

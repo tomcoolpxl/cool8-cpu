@@ -25,7 +25,9 @@ the language does at its edges, measured on the machine.
 | `FOR v = a TO b [STEP s]` … `NEXT [v]` | `STEP` may be negative; eight levels deep; `NEXT i` closes inner loops the BBC way |
 | `DO [WHILE e \| UNTIL e]` … `LOOP [WHILE e \| UNTIL e]` | either end, both tested every iteration; `EXIT DO` from anywhere |
 | `GOTO n` / `ON e GOTO n1, n2, …` | `ON` takes literal line numbers, not expressions; a value out of range falls through |
-| `CALL name(…)` / `SUB name` … `RETURN` | SUBs found once at RUN; no parameters, no locals |
+| `SUB name(p[,p])` … `END SUB` / `CALL name(a[,a])` | **parameters**, by value, of any type — the parameter's own suffix decides. Found once at `RUN`. `RETURN` leaves early; reaching `END SUB` returns too. 32 deep, and recursive |
+| `LOCAL name[,name]` | inside a SUB: the caller's values come back on `RETURN`. Zeroed on entry |
+| `CLEAR` | every variable away, the program kept — BBC's name, beside `CLS` and `CLG` |
 | `PRINT a; b$; c` | `;` butts items together, `,` inserts one space, a trailing separator holds the newline. Negative numbers print signed |
 | `INPUT v` | a line of text, echoed as typed, ended by Return. **The variable's suffix decides what it was**: `A$` takes the text, `A#` a fraction, `A` an integer — §8 |
 | `DATA n, n, …` / `READ v, v` / `RESTORE` | numbers only (with `-`), scalar targets only; reading past the end is `?OUT OF DATA` |
@@ -145,8 +147,8 @@ palette, not VRAM contents, not the sprites.
 
 | n | Kind | Pixels | Colours | Coordinates | Surface | Where |
 |---|---|---|---|---|---|---|
-| 0 | text | 80×30 cells, 8×16 glyphs | 16 fg + 16 bg per cell | col 0-79, row 0-29 | 5 KB | main RAM `$A000` |
-| 1 | text | 40×30 cells, wide glyphs | same | col 0-39 | 5 KB | main RAM `$A000` |
+| 0 | text | 80×30 cells, 8×16 glyphs | 16 fg + 16 bg per cell | col 0-79, row 0-29 | 5 KB | main RAM `$9C00` |
+| 1 | text | 40×30 cells, wide glyphs | same | col 0-39 | 5 KB | main RAM `$9C00` |
 | 2 | tiles | 40×30 tiles of 8×8 (320×240) | 16 per tile, from a bank | tile 0-39, 0-29 | 4 KB map + patterns | VRAM `$0000` |
 | 3 | bitmap | 640×480 | 2 (palette 0 and 1) | x 0-639, y 0-479 | 38,400 B, stride 80 | VRAM `$0000` |
 | 4 | bitmap | 320×240, doubled to full screen | 16 (palette 0-15) | x 0-319, y 0-239 | 38,400 B, stride 160 | VRAM `$0000` |
@@ -683,7 +685,7 @@ IF X < 0 THEN T = 0 - INT(0 - X) ELSE T = INT(X)
 ## 9b. The editor: every mode, the C64's law
 
 The editor works in **all seven modes** — 80 columns in modes 0 and
-3, 40 in 1, 2 and 4, 32 in 5 and 6. The cell map at `$A000` is the
+3, 40 in 1, 2 and 4, 32 in 5 and 6. The cell map at `$9C00` is the
 truth in every one; what changes is the mirror (nothing in text
 modes, one map write per cell in tiles, a glyph blit in bitmaps), so
 `PRINT` output is visible wherever the machine happens to be.
@@ -859,6 +861,80 @@ constant is cheaper than a variable rather than dearer — the
 inversion in that column is the tokeniser's decision, showing up as a
 measurement.
 
+## 9d. Subroutines
+
+```basic
+10 CALL SHOW(10, 20, "hi")
+20 END
+30 SUB SHOW(X, Y, C$)
+40   LOCAL T
+50   PRINT X; Y; C$
+60 END SUB
+```
+
+A sub's name is an ordinary identifier, so it may not be a keyword --
+`SUB PLOT` is `?SYNTAX`, because `PLOT` is a statement.
+
+`SUB name` ... `END SUB` defines one; `CALL name` runs it; `RETURN`
+leaves early and reaching `END SUB` returns as well. Definitions are
+found once at `RUN`, so a call is a lookup and not a search. There is
+no `GOSUB` and no line-numbered return: `CALL` replaced it outright.
+
+**Parameters are by value, and of any type.** The parameter's own
+suffix decides, exactly as it does everywhere else -- `SUB F(N, X#, S$)`
+takes an integer, a float and a string. An argument of the wrong type is
+`?TYPE`; an integer given to a float parameter promotes, as `A# = 1`
+does, and nothing else converts. The argument list must match the
+parameter list in length or the call is `?CALL`.
+
+**`LOCAL` is the same mechanism without an argument.** Both save the
+variable's current value on entry and put it back on `RETURN`, which is
+BBC BASIC's arrangement and the reason all of this is cheap: a parameter
+is an ordinary variable at its ordinary address, so **reading one inside
+the sub costs exactly what reading any variable costs**. A local is
+zeroed on entry, so it never reads as whatever the caller left.
+
+**Recursion works**, and that is what the saving buys:
+
+```basic
+10 CALL FACT(5)
+20 PRINT R
+30 END
+40 SUB FACT(N)
+50   IF N < 2 THEN R = 1
+60   IF N < 2 THEN RETURN
+70   CALL FACT(N - 1)
+80   R = R * N
+90 END SUB
+```
+
+prints 120. **32 calls deep**, with the frames and the saved values in
+the user's memory above the name table -- so deep recursion costs the
+program's own space, which is where it should cost.
+
+### Three edges worth knowing
+
+**Arguments are evaluated left to right and assigned as they go**, after
+the parameters have been saved. So an argument that names one of the
+sub's *own* parameters sees the value already placed: `SUB F(A,B)`
+called as `CALL F(1, A)` gives `B` the 1, not the caller's `A`.
+Evaluating every argument before assigning any would avoid it and needs
+somewhere to hold them, which the single string accumulator cannot be --
+see [D73](01-decisions.md).
+
+**A string argument allocates.** The parameter's descriptor is cleared
+before the value is stored, because otherwise the store sees the
+*caller's* `maxlen`, decides the new value fits, and writes into the
+caller's characters -- which `RETURN` then restores a descriptor
+pointing at. So a sub with a string parameter called in a loop consumes
+heap, and nothing reclaims it until `RUN`, `NEW`, `CLEAR` or an edit.
+
+**`CALL` still calls machine code.** If the name is not a `SUB`, it is
+looked up as an assembler label and called ([D45]) -- that path takes no
+parameters. `SYS addr` is the other way in: it evaluates an address,
+jumps, and the routine's own `RET` comes back, with the callee owning
+every register.
+
 ## 10. Sizes and the ceiling
 
 ### Where the 17,217 bytes are — measured, 2026-08-13
@@ -950,6 +1026,11 @@ did the repack:
          CALL stack, string accumulator) - 1,039 (slack) - 17,255
          (image) - 256 (I/O, vectors)  =  40,448 in one region
 ```
+
+**That was before [D74] moved the map down a kilobyte** to make room for
+the image. It is 39,424 now, in the same one region, and the difference
+went to BASIC rather than anywhere else — [D72] on why that is a slider
+and not a loss.
 
 So the size of BASIC is no longer a question about the user's memory.
 The image grows downward into the 1,039 bytes of slack, and until that

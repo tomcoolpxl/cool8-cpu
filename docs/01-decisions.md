@@ -2328,6 +2328,153 @@ implementation nobody is checking, which is how `test_lib` came to
 measure two programs against a third, private model of the I/O page
 and report 1.00x for a year.
 
+## D74 — The map moved down a kilobyte, and its address lived in five places
+
+**Done, and it is [D72] arriving.** The image reached **-188 bytes** of
+room. D72 said the ceiling was a slider and priced the move at "forty
+hand-written claims"; it was **64**, done by one script over the `;:`
+annotations, and `--check` proved it. `room -188 -> 836`, the user's
+memory 40,448 -> 39,424.
+
+**The relocation itself was the easy half.** What took the session was
+that the map's address turned out to live in five places, and each was
+found by a different failing suite rather than by asking:
+
+| | what it was |
+|---|---|
+| `tools/memmap.py` | declared - the one that is supposed to be in charge |
+| `rtl/soc/cool8_vregs.v` | mode 0 and 1 presets, and the reset values of `base_r` and `maporg_r` |
+| `sim/tb/cool8_video_tb.v` | its own preset copy |
+| `rust/src/machine.rs` | **the VM's presets** |
+| `tools/mkboot.py` | the stub's screen clear and its banner row, twice |
+
+plus `SACCBUF` and `FSPBUF`, which carry no `;:` - deliberately, since
+the filesystem's page buffer overlays the accumulator and a claim would
+read as two owners - and so were invisible to the script that moved
+everything else. `COMPACT` noticed, being the only thing that writes a
+page through that buffer.
+
+**The `rust/` one is the instructive failure.** The console wrote to
+`$9C00` while the emulator's display read `$A000`, and *every suite that
+compares the two models passed* - `cosim`, `test_vm`, `test_video` -
+because both models were still consistent with each other. Two
+implementations gated against one another catch a disagreement and
+cannot catch a shared assumption. The screen filled with fragments of
+the right characters in the wrong places, which is what sent five suite
+runs looking for a software bug.
+
+`poe check` reads the Verilog **and** the Rust now and refuses
+disagreement, and `mkboot` derives the address rather than carrying it.
+Both checks were made to fail before being believed. The Rust check is
+scoped to the preset table and the reset values: a bare search for
+`0xA000`/`0x8000` also finds the sound engine's bit masks, and a check
+that cries wolf is a check that gets switched off.
+
+### `m.watch` existed only in AGENTS.md, and now exists
+
+Reaching for "who wrote this address" mid-fault produced an
+`AttributeError`. AGENTS.md had documented `m.watch(lo, hi)` / `m.hits`
+for as long as anyone could tell, and neither machine had it - **the
+identical trap `m.trace` fell into**, written up in
+[10-debugging.md](10-debugging.md) and evidently not enough on its own.
+
+It is implemented: a shadow of the watched range diffed on the tick
+wrapper the profile and the SP watermark already ride, so it needs no
+change to the memory path every other command depends on, and it records
+the PC *before* the instruction - the one that did the write, not the
+one after. Answering "who wrote the garbage" in one run is what this
+entry cost by not having.
+
+---
+
+## D73 — SUB and CALL take parameters, and LOCAL is the same mechanism
+
+**Done.** `SUB name(p[,p])` ... `END SUB`, called `CALL name(a[,a])`,
+with `LOCAL name[,name]` inside. Parameters are by value and of any
+type; the parameter's own suffix decides, exactly as it does for a
+scalar or an array element ([D71]).
+
+**A parameter and a local are one mechanism** - save the variable's
+current value on entry, put it back on the way out. That is BBC BASIC's
+shape (its FN frame carries a *number of parameters*, read off the
+disassembly) and it is nearly free here because every variable already
+lives at a fixed address: A-Z resident, or a name-table slot. No new
+binding, no scope chain, and **no cost at all to reading a parameter
+inside the sub** - it is an ordinary variable at its ordinary address,
+so the body runs at exactly the speed it ran at before. Recursion works
+because each level saves its own: measured `4 3 2 1` going down and
+`2 3 4` coming back, and `5! = 120`.
+
+### The choices, and what each rejected
+
+* **Formals saved, then arguments evaluated and assigned left to
+  right.** So an argument naming one of the sub's own parameters sees
+  the value already placed: `SUB F(A,B)` called `CALL F(1,A)` gives B
+  the 1. Evaluating every argument first - what BBC does - avoids that
+  and needs somewhere to hold them, which the single string accumulator
+  cannot be: two string arguments would each have to reach the heap
+  first, so passing two strings would allocate twice on every call.
+* **`?TYPE` per argument**, one compare against `STYPE`, with an integer
+  promoting into a float parameter exactly as `A# = 1` does. Nothing
+  else converts.
+* **32 frames and 256 bytes of saves, in the user's memory** above the
+  name table. 416 bytes does not fit the image's slack and is nothing
+  against 39,424 - and deep recursion then costs the user's memory,
+  which is the honest place for it to cost. BBC puts its stack there
+  too, descending from HIMEM.
+* **A string parameter clears its descriptor before storing.**
+  Otherwise `sstore` reads the *caller's* `maxlen`, decides the value
+  fits, and writes into the caller's characters - which `RETURN` then
+  restores a descriptor pointing at. Silent corruption of the caller's
+  string. Clearing it costs one allocation per string argument per call,
+  and nothing reclaims it until `RUN`; that is the price and it is
+  written down rather than hidden.
+
+### Four faults it exposed, all older than it
+
+* **`SUB FOO` and the float `FOO#` were one name-table entry.**
+  `subname` appended `#`, which is the float suffix, so whichever was
+  written last won and `CALL FOO` jumped into the float's bit pattern
+  and did nothing at all. `!` now, which carries no bit 7 in `ctab` so
+  no identifier can end with it - the property that already makes `(`
+  work for arrays. Three sigils, three namespaces.
+* **Falling into `END SUB` ended the program.** A SUB returned only
+  through `RETURN`; `END SUB` was a marker `h_sub` scanned for when
+  stepping over a definition, so reaching one ran `END` and set
+  `E_DONE`, with the sub's output already printed.
+* **`FUNCTION` was a longer word for `SUB`** - it dispatched to the same
+  handler and could not return a value. Retired the way `$A4` and `$C6`
+  already are, `toktab.asm`'s own note: "a one-character entry nobody
+  can spell holds the byte open", so nothing renumbers and a saved
+  program still means what it said. The word is an ordinary variable
+  name again.
+* **`CLEAR` was missing.** BBC's name, not the C64's `CLR`, because
+  `CLS` and `CLG` are BBC's and the three belong together - and because
+  `CLR` sits one letter from `CLS` in a way that caused exactly that
+  confusion while this was being specified. It is `RUN`'s variable clear
+  without the run, split out of `irun` as `vwipe` rather than written
+  twice.
+
+### Three register clobbers, and what they have in common
+
+Each cost a debugging round and each is the same shape - a routine
+reading a byte into `R0` while `R0:R1` held the value in flight:
+
+* `argpass` read `ERR` into R0 after popping the argument, so **every
+  integer parameter arrived as 0** while floats and strings, which
+  travel in `FACC` and `SACC`, came through perfectly.
+* `argst` read `STYPE` into R0 at entry, one level down, with the same
+  symptom after the first was fixed.
+* `lstk` uses R0 and R1, and both `lpush` and `lunwind` had put the slot
+  offset there - so **every save landed in slot zero** and the last
+  value written came back at every level: `4 3 2 1` down, `2 2 2` up.
+
+`FUNCTION` gone, `CLEAR` at `$C7`, `LOCAL` at `$C8`.
+
+  17,859 -> 18,482 bytes, 623 for the whole of it.
+
+---
+
 ## D72 — BASIC's size is not a budget to optimise against; the ceiling is a slider
 
 **Decided.** The image had 462 bytes of room to grow and the previous

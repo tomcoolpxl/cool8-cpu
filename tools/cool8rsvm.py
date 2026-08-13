@@ -673,6 +673,24 @@ class SessionMachine(_Trace):
             out[int(pc)] = int(c)
         return out
 
+    def watch(self, lo, hi):
+        """Record every write into [lo, hi], with the PC that did it.
+
+        `self.hits` is then a list of `(pc, addr, value)`. AGENTS.md has
+        documented this since before it existed; it exists now, because
+        the question "who wrote the garbage" came up during [D74] and
+        the answer was an AttributeError.
+        """
+        self._cmd("watch	%d	%d" % (lo, hi))
+
+    @property
+    def hits(self):
+        out = []
+        for t in self._cmd("hits"):
+            pc, a, v = t.split(":")
+            out.append((int(pc), int(a), int(v)))
+        return out
+
     def sp_min(self):
         """The stack's low-water mark since sp_clear (or forever)."""
         return int(self._cmd("spmin")[0])

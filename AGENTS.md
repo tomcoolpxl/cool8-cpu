@@ -280,8 +280,9 @@ extends the protocol in `rust/src/main.rs`.
 ```python
 import cool8rsvm as vm
 m = vm.Machine()
-m.bus.mem[0xA000:0xA000 + len(code)] = code
-m.cpu.pc, m.cpu.sp, m.romen = 0xA000, 0x0200, False
+org = memmap.ORG                 # derived; never write it down
+m.bus.mem[org:org + len(code)] = code
+m.cpu.pc, m.cpu.sp, m.romen = org, 0x0200, False
 ```
 
 | want | call |

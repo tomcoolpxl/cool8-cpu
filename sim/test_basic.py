@@ -729,6 +729,67 @@ def compact(code, syms):
               "%-11s clears the variables" % after,
               " | ".join(scr)[:80])
 
+    # ---- SUB and CALL take parameters, and LOCAL ([D73]).
+    #
+    # A parameter and a local are one mechanism: save the variable on
+    # entry, put it back on RETURN. So a parameter is an ordinary
+    # variable at its ordinary address and reading one inside the sub
+    # costs nothing extra -- which is what makes the whole thing cheap.
+    for lines, want, why in [
+        (["10 CALL F(7)", "20 END", "30 SUB F(A)", "40 PRINT A", "50 END SUB"],
+         "7", "one integer parameter"),
+        (["10 CALL F(3,4)", "20 END", "30 SUB F(A,B)", "40 PRINT A+B",
+          "50 END SUB"], "7", "two"),
+        (["10 CALL F(1, 2)", "20 END", "30 SUB F(A, B)", "40 PRINT B",
+          "50 END SUB"], "2",
+         "spaces in the lists -- varidx does not skip them itself"),
+        (["10 CALL F(1.5)", "20 END", "30 SUB F(X#)", "40 PRINT X#",
+          "50 END SUB"], "1.5", "a float parameter"),
+        (['10 CALL F("HI")', "20 END", "30 SUB F(S$)", "40 PRINT S$",
+          "50 END SUB"], "HI", "a string parameter"),
+        (["10 CALL F(2)", "20 END", "30 SUB F(X#)", "40 PRINT X#",
+          "50 END SUB"], "2", "an integer promotes into a float parameter"),
+        (["10 A=99", "20 CALL F(7)", "30 PRINT A", "40 END", "50 SUB F(A)",
+          "60 END SUB"], "99", "the caller's value comes back"),
+        (["10 T=42", "20 CALL F", "30 PRINT T", "40 END", "50 SUB F",
+          "60 LOCAL T", "70 T=9", "80 END SUB"], "42", "and so does a LOCAL"),
+        (["10 CALL FACT(5)", "20 PRINT R", "30 END", "40 SUB FACT(N)",
+          "50 IF N<2 THEN R=1", "60 IF N<2 THEN RETURN",
+          "70 CALL FACT(N-1)", "80 R=R*N", "90 END SUB"], "120",
+         "recursion, which is what the saving buys"),
+        (["10 A=5", "20 CALL F(1,A)", "30 END", "40 SUB F(A,B)", "50 PRINT B",
+          "60 END SUB"], "1",
+         "an argument naming a parameter sees the new value"),
+        (['10 CALL F("x")', "20 END", "30 SUB F(A)", "40 PRINT A",
+          "50 END SUB"], "?TYPE IN 30", "the wrong type is refused"),
+        (["10 CALL F", "20 END", "30 SUB F(A)", "40 END SUB"],
+         "?CALL IN 30", "parameters wanted, none given"),
+        (["10 CALL F(1)", "20 END", "30 SUB F", "40 END SUB"],
+         "?CALL IN 30", "arguments given, none wanted"),
+        (["10 CALL F(1,2)", "20 END", "30 SUB F(A)", "40 END SUB"],
+         "?CALL IN 30", "too many arguments"),
+        (["10 LOCAL T", "20 END"], "?CALL IN 10",
+         "LOCAL outside a SUB, where nothing would put it back"),
+    ]:
+        M.cmd("NEW")
+        M.cmd("CLS")
+        for l in lines:
+            M.cmd(l)
+        M.cmd("RUN")
+        check(any(r.strip() == want for r in M.screen()), why,
+              " | ".join(r.strip() for r in M.screen() if r.strip())[-64:])
+
+    # 32 deep, with the frames and the saves in the user's memory.
+    M.cmd("NEW")
+    M.cmd("CLS")
+    for l in ("10 N=0", "20 CALL R", "30 PRINT N", "40 END", "50 SUB R",
+              "60 N=N+1", "70 IF N<25 THEN CALL R", "80 END SUB"):
+        M.cmd(l)
+    M.cmd("RUN")
+    check(any(r.strip() == "25" for r in M.screen()),
+          "25 calls deep -- the old ceiling was 8",
+          " | ".join(r.strip() for r in M.screen() if r.strip())[-40:])
+
     # ---- CLEAR, and the two namespaces SUB used to collide with.
     M.cmd("NEW")
     M.cmd("CLS")
