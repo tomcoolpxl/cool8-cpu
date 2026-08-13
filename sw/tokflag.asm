@@ -83,3 +83,4 @@ TOKFLG:
         .byte F_VERB           ; $C5 REM
         .byte 0                ; $C6 !
         .byte 0                ; $C7 CLEAR
+        .byte 0                ; $C8 LOCAL

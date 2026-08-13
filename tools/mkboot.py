@@ -110,7 +110,7 @@ reloc:  LDW  X,#src
         ; turns it back on at the end of init, already in place.
         CLR  R0
         ST   [$FF24],R0
-        LDW  Y,#$A000           ; clear: char 32, attr $07 -- 2560
+        LDW  Y,#@SCREEN@        ; clear: char 32, attr $07 -- 2560
         CLR  R2                 ; **CELLS, two bytes each.** 160 bytes a
         MOV  R3,#$0A            ;   row for 32 rows is 5120 bytes, which
                                 ;   is $0A00 cells -- not $1400. Counting
@@ -154,7 +154,7 @@ reloc:  LDW  X,#src
         SHR  R0
         SHR  R0
         SHR  R0                 ; q >> 3
-        ADD  R0,#$A0            ; + >CSCRN
+        ADD  R0,#@SCRPAGE@      ; + >CSCRN
         MOV  YH,R0
         MOV  YL,R1
         INCW X
@@ -360,6 +360,14 @@ def build(payload, dest=None, org=0x0200, build_dir=None):
     text = (STUB.replace("@FONT@", _font8())
                 .replace("@FONT16@", _font16())
                 .replace("@BANNER@", _banner())
+                # **The map's address, not a written-down $A000.** The
+                # stub clears the screen and paints the banner, and it
+                # carried the address twice -- so moving the map left a
+                # machine that booted from flash to an uncleared screen
+                # with no banner, and the first line typed landed on
+                # whatever was there. The fifth place this number lived.
+                .replace("@SCREEN@", "$%04X" % memmap.SCREEN)
+                .replace("@SCRPAGE@", "$%02X" % (memmap.SCREEN >> 8))
                 .replace("@ORG@", "%04X" % org)
                 .replace("@DEST@", "%04X" % dest)
                 .replace("@LO@", "%02X" % (len(payload) & 0xFF))

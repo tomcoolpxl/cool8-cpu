@@ -53,6 +53,7 @@ Names come from `TOKTAB` and `btab`, the bytes the matcher compares against. Ret
 | `$C4` | `DRIVE n:int` |  |
 | `$C5` | `REM text` | stored verbatim; nothing inside is tokenised |
 | `$C7` | `CLEAR` | every variable away, the program kept |
+| `$C8` | `LOCAL name[,name]` | inside a SUB: the caller's values come back on RETURN |
 
 ## Tokenised, but not statements
 

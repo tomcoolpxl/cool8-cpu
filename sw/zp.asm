@@ -160,10 +160,30 @@ DSGN    = $003B                 ;: 1 bit 0 negates the quotient, bit 1
 ; ---- CALL/RETURN. A stack of its own again, and out in the user area
 ; because page 0 has no room left for eight frames -- which costs
 ; nothing, since there is no zero-page addressing mode to lose (D6).
-CALLFR  = 4                     ; where to resume, and in which record
-MAXCALL = 8
+; ---- calls, their parameters, and the values those parameters hid.
+;
+; **Both stacks live in the user's memory**, laid out above the name
+; table by `main_pre`, and that is deliberate: 32 frames and 256 bytes
+; of saves is 416 bytes, which does not fit the image's growth slack and
+; is nothing at all against 40,448 ([D72]). Deep recursion costs the
+; user's memory, which is the honest place for it to cost -- it is where
+; BBC BASIC puts its stack too, descending from HIMEM.
+CALLFR  = 5                     ; Y, LREC, and how many saves to undo
+MAXCALL = 32                    ; nesting, which parameters make useful
+LSTKSZ  = 256                   ; the save stack, 51 saved variables
+LSAVE   = 5                     ; a handle and the four bytes it hid
 CSTK    = $003C                 ;: 2 where that stack lives
 CDEPTH  = $003E                 ;: 1 calls active, 0 = none
+; LDEPTH is in sw/console.asm, on one of the two bytes the hardware
+; cursor gave back -- page 0 is full to the byte and that block was
+; kept named rather than as a hole for exactly this.
+;
+; The save stack's base is **derived**, not stored: it sits directly
+; above the call stack, so `lstk` computes CSTK + MAXCALL*CALLFR when
+; it is wanted. Page 0 had exactly one byte left and this needed three;
+; a stored pointer would have meant moving the map, which [D72] costs
+; at forty claims. The call site during argument passing goes on the
+; CPU stack for the same reason.
 SDIG    = $003F                 ;: 1 digits STR$ has stacked, or
                                 ;    characters VAL has left
 
@@ -232,20 +252,20 @@ FLTY    = $00FE                 ;: 1 the left's type, across fpair
 ; ---- the keyboard, and the break key. sw/basic.bas's ASM block
 ; ---- declared these; the ROM's monitor has its own copies at MVARS
 ; ---- because the two are never resident together.
-irring  = $B573                 ;: 16 the decoded-key ring the ISR fills
-irhead  = $B583                 ;: 1 where the editor reads it
-irtail  = $B584                 ;: 1 where the ISR writes it
-kshift  = $B585                 ;: 1 either shift is down
-kbrk    = $B586                 ;: 1 the next code is a release
-kext    = $B587                 ;: 1 the next code had an $E0 before it
-kdown   = $B588                 ;: 16 the key-down bitmap KEY() reads
-ibreak  = $B598                 ;: 1 the break flag; ipoll reads it
+irring  = $B173                 ;: 16 the decoded-key ring the ISR fills
+irhead  = $B183                 ;: 1 where the editor reads it
+irtail  = $B184                 ;: 1 where the ISR writes it
+kshift  = $B185                 ;: 1 either shift is down
+kbrk    = $B186                 ;: 1 the next code is a release
+kext    = $B187                 ;: 1 the next code had an $E0 before it
+kdown   = $B188                 ;: 16 the key-down bitmap KEY() reads
+ibreak  = $B198                 ;: 1 the break flag; ipoll reads it
 
 ; ---- the interpreter's own workspace.
-frames  = $B599                 ;: 2 the frame counter TIMER reads
-rseed   = $B59B                 ;: 2 the xorshift seed, 1 after init
-garg    = $B59D                 ;: 10 up to five parsed arguments
-lwk     = $B5A7                 ;: 10 dx, dy, err, sx, sy -- all words
+frames  = $B199                 ;: 2 the frame counter TIMER reads
+rseed   = $B19B                 ;: 2 the xorshift seed, 1 after init
+garg    = $B19D                 ;: 10 up to five parsed arguments
+lwk     = $B1A7                 ;: 10 dx, dy, err, sx, sy -- all words
 
 ; DIM's working set, overlaid on `lwk`.
 ;
@@ -264,9 +284,9 @@ DTYPE   = lwk                   ; 0 integer, 1 float, 2 string
 DRANK   = lwk+1                 ; dimensions seen so far
 DTOT    = lwk+2                 ; the running product, in elements
 DCNT    = lwk+4                 ; up to three counts, two bytes each
-FORSTK  = $B5B1                 ;: 72 MAXFOR frames of FORFR
-irst    = $B5F9                 ;: 1 the NMI handler's restart flag
-DIRBUF  = $B5FA                 ;: 112 the staged direct line: a whole
+FORSTK  = $B1B1                 ;: 72 MAXFOR frames of FORFR
+irst    = $B1F9                 ;: 1 the NMI handler's restart flag
+DIRBUF  = $B1FA                 ;: 112 the staged direct line: a whole
                                 ;    record -- $FFFF, len, tokens, 0 --
                                 ;    built fresh by dodirect each time
 
@@ -293,8 +313,21 @@ DIRBUF  = $B5FA                 ;: 112 the staged direct line: a whole
 ; because they are not claims in the region: `pbuf` is deliberately laid
 ; over SACCBUF, and a claim would read as two owners rather than as the
 ; overlay it is.
-CSTKBUF = $B66A                 ; the CALL stack, MAXCALL frames of 4
-SACCBUF = $B68A                 ; the string accumulator, SMAX + 1
+; **Not `;:` claims, so `tools/memmap.py` cannot move them and the
+; relocation script did not.** They are declared to memmap as regions
+; instead, because fscmd's page buffer deliberately overlays SACCBUF and
+; a claim would read as two owners. That exemption is exactly why they
+; were the two addresses left behind when the map moved down a kilobyte
+; -- SACC's pointer went on addressing where the accumulator used to be,
+; and COMPACT, which writes a page through that buffer, was the suite
+; that noticed.
+;
+; CSTKBUF is dead: the call stack lives in the user's memory now, above
+; the name table, because 32 frames and 256 bytes of saves do not fit
+; here ([D72]). Kept as a name so the region it holds open stays
+; accounted for until something wants it.
+CSTKBUF = $B26A                 ; free: the CALL stack moved to user space
+SACCBUF = $B28A                 ; the string accumulator, SMAX + 1
 
 ; ---- error codes. The interpreter's caller reads ERR; 255 is a clean
 ; ---- stop and everything else is a fault.

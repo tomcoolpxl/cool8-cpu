@@ -28,7 +28,7 @@
 ; Three bytes, and the image has one door again.
         JMP  main
 
-MAINK   = $B400                 ;: 2 the key just read
+MAINK   = $B000                 ;: 2 the key just read
 
 ; ---------------------------------------------------------------------
 ; The stack, stated once, bottom first.
@@ -118,10 +118,19 @@ main_pre:
         ST   [SACC+1],R0
         MOV  R0,#<SACCBUF
         ST   [SACC],R0
-        MOV  R0,#<CSTKBUF
+        ; **The call stack and the save stack are the user's memory.**
+        ; They sit directly above the name table, which is itself at
+        ; PROGEND -- 32 frames and 256 bytes of saves is 416 bytes, and
+        ; that does not fit the image's growth slack while being nothing
+        ; against 40,448 ([D72]). BBC BASIC puts its stack in the user's
+        ; memory too, descending from HIMEM.
+        LD   R0,[PROGEND]
+        LD   R1,[PROGEND+1]
+        ADD  R0,#<(MAXNAME*NENT)
         ST   [CSTK],R0
-        MOV  R0,#>CSTKBUF
-        ST   [CSTK+1],R0
+        MOV  R0,#>(MAXNAME*NENT)
+        ADC  R1,R0
+        ST   [CSTK+1],R1
         ; **The heap is not reset here.** It used to be, and main_pre
         ; runs before every direct line as well as before RUN, so every
         ; direct line threw away every array and every string the last
@@ -649,5 +658,7 @@ sttab:
                                 ;: ! -- reserved  the float literal marker, never a statement
         .word h_clear           ; $C7 CLEAR
                                 ;: CLEAR  every variable away, the program kept
+        .word h_local           ; $C8 LOCAL
+                                ;: LOCAL name[,name]  inside a SUB: the caller's values come back on RETURN
 
 

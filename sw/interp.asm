@@ -352,6 +352,54 @@ vwipe:  LDW  X,#VARS
         BNE  .z
         JMP  vclear
 
+; ---------------------------------------------------------------------
+; LOCAL name[,name] -- the caller's values come back on RETURN.
+;
+; **The same save stack a parameter uses, minus the assignment.** That
+; is the whole of it, and the reason it earns its place at forty-odd
+; bytes: once values can be saved and put back, a local is a parameter
+; nobody passed.
+;
+; Zeroed after saving, which is BBC's behaviour and the only predictable
+; choice -- leaving the caller's value visible would make a local read
+; as whatever the caller last had.
+; ---------------------------------------------------------------------
+h_local:
+        LD   R0,[CDEPTH]
+        BNE  .live
+        JMP  e_call             ; outside a SUB nothing would put it back
+.live:  SKIPSP
+        CALL varidx
+        LD   R2,[ERR]
+        BNE  .out
+        MOV  R2,R0
+        PUSH R2
+        CALL lpush
+        POP  R2
+        LD   R0,[ERR]
+        BNE  .out
+        MOV  R0,R2
+        PUSH R2
+        CALL varaddr
+        POP  R2
+        CLR  R0
+        ST   [X],R0
+        INCW X
+        ST   [X],R0
+        CMP  R2,#52             ; a resident owns only those two
+        BLO  .next
+        INCW X
+        ST   [X],R0
+        INCW X
+        ST   [X],R0
+.next:  SKIPSP
+        CMP  R2,#$2C            ; ',' -- another one
+        BNE  .done
+        INCW Y
+        BRA  .live
+.done:  JMP  stmt
+.out:   RET
+
 h_clear:
         CALL vwipe
         JMP  stmt
@@ -2116,10 +2164,15 @@ halloc: LD   R2,[HEAP]
         ; towards the program text and its names, so the question is
         ; whether it has reached them -- one region, shared, which is
         ; what [D69]'s repack chose over two fixed ones.
+        ; **Against the top of the two stacks, not the name table.**
+        ; It compared `nentry(NNAME)` -- one past the last name defined
+        ; -- which grew only as names appeared. The call and save stacks
+        ; live above the table's full extent now, so that test would let
+        ; the heap eat them: a deep call during a big DIM, and the
+        ; frames are underneath an array.
         PUSH R3
         PUSH R2
-        LD   R0,[NNAME]
-        CALL nentry             ; X = one past the last name-table entry
+        CALL ltop
         POP  R2
         POP  R3
         MOV  R0,R2
@@ -3703,6 +3756,135 @@ subname:
         ST   [NLEN],R0
         RET
 
+; lstk -- X on the save stack's base.
+;
+; **Derived, not stored.** It is always directly above the call stack,
+; and page 0 was full to the byte -- a stored pointer would have meant
+; moving the map, which [D72] prices at forty claims for two bytes.
+lstk:   LD   R0,[CSTK]
+        MOV  R1,#<(MAXCALL*CALLFR)
+        ADD  R0,R1
+        MOV  XL,R0
+        LD   R0,[CSTK+1]
+        MOV  R1,#>(MAXCALL*CALLFR)
+        ADC  R0,R1
+        MOV  XH,R0
+        RET
+
+; ltop -- X one past everything the two stacks own, which is the floor
+; the heap may not come below.
+ltop:   CALL lstk
+        MOV  R0,XH
+        ADD  R0,#>LSTKSZ
+        MOV  XH,R0
+        RET
+
+; ---------------------------------------------------------------------
+; The save stack: what a parameter or a LOCAL hid, and where it went.
+;
+; **A parameter and a local are the same mechanism** -- save the
+; variable's current value on entry, restore it on the way out. That is
+; BBC BASIC's shape, and it is nearly free here because every variable
+; already lives at a fixed address: A-Z resident, or a name-table slot.
+; No new binding, no scope chain, and crucially **no cost at all to
+; reading the variable inside the sub** -- a parameter is an ordinary
+; variable at its ordinary address, so the sub's body runs at exactly
+; the speed it ran at before. Recursion works because each level saves
+; and restores its own.
+;
+; A record is the handle and the four bytes it hid. Residents only own
+; two of those -- the other two belong to the next letter -- so reading
+; four is harmless and only two are ever put back.
+; ---------------------------------------------------------------------
+
+; lpush -- save the variable whose handle is R2.
+lpush:  LD   R0,[LDEPTH]
+        CMP  R0,#(LSTKSZ/LSAVE)
+        BHS  .full
+        PUSH R2
+        MOV  R1,#LSAVE
+        MUL  R0,R1              ; X = depth * LSAVE
+        MOV  R0,XL
+        MOV  R1,XH
+        PUSH R1                 ; **lstk uses R0 and R1.** The offset
+        PUSH R0                 ;   was in them, so every save landed in
+        CALL lstk               ;   slot zero and the last one written
+        POP  R0                 ;   came back at every level: 4 3 2 1
+        POP  R1                 ;   going down and 2 2 2 coming up.
+        CALL addx16             ; X = the slot
+        POP  R2
+        MOV  R0,R2
+        ST   [X],R0             ; the handle it belongs to
+        INCW X
+        PUSHW X
+        MOV  R0,R2
+        CALL varaddr            ; X = where the variable lives
+        MOV  R0,XL
+        MOV  R1,XH
+        POPW X
+        PUSHW Y
+        MOV  YL,R0
+        MOV  YH,R1
+        MOV  R1,#4
+.cp:    LD   R0,[Y+]
+        ST   [X],R0
+        INCW X
+        SUB  R1,#1
+        BNE  .cp
+        POPW Y
+        LD   R0,[LDEPTH]
+        ADD  R0,#1
+        ST   [LDEPTH],R0
+        CLC
+        RET
+.full:  MOV  R0,#E_CALL
+        ST   [ERR],R0
+        SEC
+        RET
+
+; lunwind -- put back every save above depth R2.
+lunwind:
+        LD   R0,[LDEPTH]
+        CMP  R0,R2
+        BLS  .done
+        SUB  R0,#1
+        ST   [LDEPTH],R0
+        PUSH R2
+        MOV  R1,#LSAVE
+        MUL  R0,R1
+        MOV  R0,XL
+        MOV  R1,XH
+        PUSH R1                 ; lstk uses R0 and R1; see lpush
+        PUSH R0
+        CALL lstk
+        POP  R0
+        POP  R1
+        CALL addx16             ; X = the slot being undone
+        LD   R2,[X]             ; the handle
+        INCW X
+        MOV  R0,XL
+        MOV  R1,XH
+        PUSHW Y
+        MOV  YL,R0
+        MOV  YH,R1              ; Y walks the saved bytes
+        MOV  R0,R2
+        PUSH R2
+        CALL varaddr            ; X = where they go back
+        POP  R2
+        MOV  R1,#4              ; a resident owns only the first two
+        CMP  R2,#52
+        BHS  .four
+        MOV  R1,#2
+.four:  LD   R0,[Y+]
+        ST   [X],R0
+        INCW X
+        SUB  R1,#1
+        BNE  .four
+        POPW Y
+        POP  R2
+        BRA  lunwind
+.done:  RET
+
 ; cfr -- X on the frame at CDEPTH.
 cfr:    LD   R0,[CDEPTH]
         MOV  R1,#CALLFR
@@ -3785,6 +3967,9 @@ h_call: LD   R0,[CDEPTH]
         INCW X
         LD   R0,[LREC+1]
         ST   [X],R0
+        INCW X
+        LD   R0,[LDEPTH]        ; how far to unwind on the way back
+        ST   [X],R0
         LD   R0,[CDEPTH]
         ADD  R0,#1
         ST   [CDEPTH],R0
@@ -3797,13 +3982,278 @@ h_call: LD   R0,[CDEPTH]
         INCW Y                  ; the SUB token
         SKIPSP
         CALL nscan              ; and its name
-        JMP  stmt
+        JMP  argpass            ; the parameters, if it has any
+
+; ---------------------------------------------------------------------
+; argpass -- bind the arguments at the call site to the formals in the
+; SUB's header. Y is on the SUB's header, past its name; the call site
+; is in the frame this call just pushed.
+;
+; **Two lines are open and there is one Y**, so the SUB side stays in Y
+; and the call site is read from and written back to the frame slot it
+; already occupies. Nothing new stores it.
+;
+; The order is the one chosen deliberately: each formal is saved, then
+; its argument evaluated, then assigned, left to right. So an argument
+; naming one of this sub's own parameters sees the value already put
+; there -- `SUB F(A,B)` called `CALL F(1,A)` gives B the 1, not the
+; caller's A. Evaluating every argument first would avoid that and needs
+; somewhere to hold them, which the single string accumulator cannot be:
+; two string arguments would each have to reach the heap first.
+; ---------------------------------------------------------------------
+argpass:
+        SKIPSP
+        CMP  R2,#$28            ; '(' -- does this SUB take any?
+        BEQ  .some
+        ; None. The call site must not be offering any either, or its
+        ; `(1)` is left for the caller's own line to parse when the sub
+        ; returns -- which read as a subscript and said ?INDEX, naming
+        ; the call rather than the mismatch.
+        PUSHW Y
+        CALL cs_get
+        SKIPSP
+        CMP  R2,#$28
+        BEQ  .noargs
+        POPW Y
+        JMP  stmt               ; no parameters: nothing to bind
+
+.some:  ; the call site must open a list too. **Y is stacked around
+        ; every excursion**: cs_get puts the call site in it and there
+        ; is only one Y, so without this the loop walks the caller's
+        ; line looking for the sub's formals.
+        PUSHW Y                 ; the SUB side
+        CALL cs_get
+        SKIPSP
+        CMP  R2,#$28
+        BNE  .noargs
+        ; **Left sitting on the '(' deliberately.** `.each` skips one
+        ; byte on each side per argument -- the '(' first time round and
+        ; the ',' after -- so consuming it here as well put `eval` one
+        ; byte into the first argument's literal, where $07 is not a
+        ; token that can start anything.
+        CALL cs_put
+        POPW Y
+
+.each:  INCW Y                  ; the SUB side, over '(' or ','
+        CALL varidx             ; R0 = the formal's handle, Y past it
+        LD   R2,[ERR]
+        BNE  .bad
+        MOV  R2,R0
+
+        ; What this parameter is, read off its suffix **now** -- `eval`
+        ; scans names of its own and NBUF will not survive it.
+        CLR  R3
+        CMP  R2,#52
+        BLO  .typed             ; a resident A-Z is always an integer
+        PUSH R2
+        CALL isflt
+        POP  R2
+        BCS  .nfl
+        MOV  R3,#2
+        BRA  .typed
+.nfl:   PUSH R2
+        CALL isstr
+        POP  R2
+        BCS  .typed
+        MOV  R3,#1
+.typed: PUSH R3
+
+        PUSH R2
+        CALL lpush              ; what the caller had, kept
+        POP  R2
+        LD   R0,[ERR]
+        BNE  .bad3
+
+        ; over to the call site for the argument, and back again
+        PUSH R2
+        PUSHW Y                 ; the SUB side
+        CALL cs_get
+        INCW Y                  ; over '(' or ','
+        CALL eval
+        PUSH R1
+        PUSH R0
+        CALL cs_put             ; where the call site got to
+        ; **ERR is read while the value is still on the stack.** Reading
+        ; it into R0 after the pops destroys the low byte of an integer
+        ; argument, which is why every integer parameter arrived as 0
+        ; while floats and strings -- which travel in FACC and SACC --
+        ; came through correctly.
+        LD   R0,[ERR]
+        TST  R0
+        BNE  .bade
+        POP  R0
+        POP  R1
+        POPW Y                  ; the SUB side again
+        POP  R2
+        POP  R3                 ; what the parameter wants
+
+        CALL argst              ; assign, with the type checked
+        LD   R0,[ERR]
+        BNE  .bad
+
+        SKIPSP                  ; another formal?
+        CMP  R2,#$2C
+        BEQ  .each
+        SKIPSP
+        INCW Y                  ; the ')' on the SUB side
+        PUSHW Y
+        CALL cs_get             ; and on the call site
+        SKIPSP
+        CMP  R2,#$29
+        BNE  .bad2
+        INCW Y
+        CALL cs_put
+        POPW Y                  ; back to the SUB, which is where the
+        JMP  stmt               ;   next statement executed lives
+.bad2:  POPW Y
+        JMP  e_call
+.noargs:
+        POPW Y                  ; .some's copy of the SUB side. Branched
+        JMP  e_call             ;   to, not fallen into, so it undoes
+                                ;   its own push or the machine hangs
+.bade:  ADDW SP,#7              ; value, Y, handle, wanted type
+        RET
+.bad3:  ADDW SP,#1              ; the wanted type, never read
+.bad:   RET                     ; ERR is set; stmt stops
+
+; cs_get / cs_put -- Y is the call site, out of and back into the frame
+; of the call in progress. CDEPTH has already been bumped, so the frame
+; wanted is the one below it.
+cfrp:   LD   R0,[CDEPTH]
+        SUB  R0,#1
+        MOV  R1,#CALLFR
+        MUL  R0,R1
+        MOV  R0,XL
+        MOV  R1,XH
+        LD   R2,[CSTK]
+        MOV  XL,R2
+        LD   R2,[CSTK+1]
+        MOV  XH,R2
+        JMP  addx16
+
+cs_get: PUSH R0
+        PUSH R1
+        PUSH R2
+        CALL cfrp
+        LD   R0,[X]
+        MOV  YL,R0
+        INCW X
+        LD   R0,[X]
+        MOV  YH,R0
+        POP  R2
+        POP  R1
+        POP  R0
+        RET
+
+cs_put: PUSH R0
+        PUSH R1
+        PUSH R2
+        CALL cfrp
+        MOV  R0,YL
+        ST   [X],R0
+        INCW X
+        MOV  R0,YH
+        ST   [X],R0
+        POP  R2
+        POP  R1
+        POP  R0
+        RET
+
+; argst -- the argument in R0:R1 (or FACC, or SACC) into the formal
+; whose handle is R2, when the formal wants type R3.
+;
+; **The wanted type is decided before `eval` runs**, because `eval`
+; scans names of its own and NBUF is gone by the time the value
+; arrives. A resident A-Z is always an integer; anything longer carries
+; its suffix.
+argst:  ; **R0:R1 is the integer argument and almost everything here
+        ; wants R0.** Reading STYPE into it destroyed the low byte
+        ; before the store ever ran, so every integer parameter arrived
+        ; as 0 while floats and strings -- which travel in FACC and
+        ; SACC and never touch R0:R1 -- came through perfectly. Stacked
+        ; across the whole type decision.
+        PUSH R1
+        PUSH R0
+        LD   R0,[STYPE]
+        CMP  R0,R3
+        BEQ  .same
+        ; The only conversion: an integer handed to a float parameter
+        ; promotes, exactly as `A# = 1` does. Nothing else converts.
+        CMP  R3,#2
+        BNE  .type
+        TST  R0
+        BNE  .type
+        POP  R0
+        POP  R1
+        CALL ffromi             ; R0:R1 into FACC
+        BRA  .stf
+.same:  POP  R0
+        POP  R1
+        TST  R3
+        BEQ  .sti
+        CMP  R3,#2
+        BEQ  .stf
+        BRA  .sts
+.type:  ADDW SP,#2
+        MOV  R0,#E_TYPE
+        ST   [ERR],R0
+        RET
+
+.sti:   PUSH R1
+        PUSH R0
+        MOV  R0,R2
+        CALL varaddr
+        POP  R0
+        ST   [X],R0
+        INCW X
+        POP  R0
+        ST   [X],R0
+        RET
+
+.stf:   MOV  R0,R2
+        CALL varaddr
+        JMP  fstore
+
+        ; **The descriptor is cleared before the string is stored.**
+        ; Otherwise `sstore` reads the caller's maxlen, decides the new
+        ; value fits, and writes into the caller's characters -- which
+        ; RETURN then restores a descriptor pointing at. Cleared, it
+        ; allocates its own, which is what a parameter costs: one block
+        ; per call, and nothing reclaims it until RUN.
+.sts:   PUSH R2
+        MOV  R0,R2
+        CALL varaddr
+        CLR  R0
+        ST   [X],R0
+        INCW X
+        ST   [X],R0
+        INCW X
+        ST   [X],R0
+        INCW X
+        ST   [X],R0
+        POP  R2
+        MOV  R0,R2
+        CALL varaddr
+        JMP  sstore
 
 h_ret:  LD   R0,[CDEPTH]
         BNE  .live
         JMP  e_call             ; RETURN without CALL
 .live:  SUB  R0,#1
         ST   [CDEPTH],R0
+        ; **The saves come back before the frame does.** The frame's
+        ; fifth byte is the save depth when the call was made, so a sub
+        ; that took three parameters and declared two locals unwinds
+        ; five, whatever order they went on in.
+        CALL cfr
+        MOV  R0,XL
+        ADD  R0,#4
+        MOV  XL,R0
+        MOV  R0,XH
+        ADC  R0,#0
+        MOV  XH,R0
+        LD   R2,[X]
+        CALL lunwind
         CALL cfr
         LD   R0,[X]
         INCW X

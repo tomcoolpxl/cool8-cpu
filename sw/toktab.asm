@@ -142,4 +142,7 @@ TOKTAB:
         ; is why it is not CLR: CLS and CLG are BBC's too and the three
         ; belong together.
         .byte 5, "C","L","E","A","R"
+        ; $C8 LOCAL -- the same save stack parameters use, without the
+        ; assignment. BBC's name and BBC's mechanism.
+        .byte 5, "L","O","C","A","L"
         .byte 0

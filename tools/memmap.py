@@ -111,13 +111,13 @@ VECTORS = {"RESET": 0xFFF8, "NMI": 0xFFFA, "IRQ": 0xFFFC, "BRK": 0xFFFE}
 # `sw/basic.bas`'s own CONST copies of them will become EXTERNs.
 # ---------------------------------------------------------------------
 PROG = 0x0200               # stored program up, heap down: one region
-CSTK = 0xB66A               # the CALL stack, 8 frames of 4
-SACC = 0xB68A               # the string accumulator, 256 bytes
+CSTK = 0xB26A               # the CALL stack, 8 frames of 4
+SACC = 0xB28A               # the string accumulator, 256 bytes
 
 # The system storage region ends where the CALL stack begins; its floor
 # is computed from the claims below, not chosen (D67).
 SYSEND = CSTK - 1
-SCREEN = 0xA000             # the text map: 80 cells a row, 32 rows
+SCREEN = 0x9C00             # the text map: 80 cells a row, 32 rows
 CSTRIDE = 160               # ...at this pitch, which sw/console.asm and
                             #    the mode presets in cool8_vregs.v agree
                             #    on. It was 256 with 48 cells a row never
@@ -613,6 +613,39 @@ def check():
                            f"and the map is at {want_b}. A machine that "
                            f"never writes VID_MODE draws from the wrong "
                            f"address.")
+
+    # **And the Rust machine, which had its own copy too.** The check
+    # above read only the Verilog, so moving the map left `rust/` still
+    # presetting $A000: the console wrote to one address and the
+    # emulator's display read another, and the screen filled with
+    # fragments of the right characters in the wrong places. Every
+    # suite that reads pixels passed, because the two *models* still
+    # agreed with each other -- they were both wrong in the same way
+    # only where they were compared.
+    rustm = os.path.join(ROOT, "rust", "src", "machine.rs")
+    if os.path.exists(rustm):
+        with open(rustm, encoding="utf-8") as fh:
+            rl = fh.readlines()
+        # **Scoped to the presets and the reset values**, because a bare
+        # search for $8000 or $A000 also finds the sound engine's bit
+        # masks -- a check that cries wolf gets switched off.
+        for i, line in enumerate(rl, 1):
+            t = line.strip()
+            hit = None
+            if t.startswith("(0b") and "," in t:          # a mode preset
+                hit = re.search(r"0x([0-9A-Fa-f]{4})", t)
+            elif t.startswith("base:") or t.startswith("map_org:"):
+                hit = re.search(r"0x([0-9A-Fa-f]{4})", t)
+            if hit and int(hit.group(1), 16) != SCREEN:
+                # modes 2-6 draw from VRAM and preset 0x0000; only the
+                # text engines name this map.
+                if int(hit.group(1), 16) == 0:
+                    continue
+                bad.append(f"rust/src/machine.rs:{i} presets ${int(hit.group(1),16):04X} "
+                           f"where the map is ${SCREEN:04X}. The console and "
+                           f"the emulator's display would read different "
+                           f"memory, and every suite that compares the two "
+                           f"models would still pass.")
 
     # **Nobody may keep a private copy of the map's address or pitch.**
     # sw/boot.asm and sw/monitor.asm each held their own `$8000` and
