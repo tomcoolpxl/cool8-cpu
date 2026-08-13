@@ -285,7 +285,32 @@ a straight run of stores with no address recomputation between them.
 | `$FF21` | `PAT_BASE_H` | R/W | |
 | `$FF22` | `CUR_X` | R/W | Text cursor column. The displayed position is latched at the start of vertical blanking, as `VID_BASE` is, so a mid-frame move cannot split the block; reads return the written value at once |
 | `$FF23` | `CUR_Y` | R/W | Text cursor row, latched likewise |
-| `$FF24` | `CUR_CTRL` | R/W | `0` enable, `2:1` style (block/underline/bar/inverse), `4:3` blink rate. Writing `CUR_X` or `CUR_Y` resets the blink phase, effective at the same frame edge |
+| `$FF24` | `CUR_CTRL` | R/W | `0` enable, `4:3` blink rate, `2:1` unused. Writing `CUR_X` or `CUR_Y` resets the blink phase, effective at the same frame edge |
+
+**The style field is gone**, and with it `CUR_LINES`: the cursor inverts
+its whole cell, in every mode, which is the only style the editor ever
+asked for and the one a C64 draws. That removed the software cursor the
+console kept for the five modes the hardware did not cover — and with it
+the second place that remembered where the cursor was, which is what
+made it blink in a stale spot after a mode change.
+
+**The blink rate selects a bit of a frame counter**, so each rung is
+twice the last:
+
+| `4:3` | frames a phase | full cycle at 60 Hz |
+|---|---|---|
+| 0 | 8 | 3.75 Hz |
+| 1 | 16 | 1.88 Hz |
+| **2** | **32** | **0.94 Hz** — what `sw/console.asm` and the boot ROM write |
+| 3 | — | solid, no blink |
+
+Rate 2 is not a taste. The software cursor counted 32 frames a phase in
+`in_get` before the hardware took the job over, so it is what this
+machine's cursor has always done. Both writers said `$01` — rate 0 —
+for one release, and a cursor blinking four times faster than it ever
+had was the first thing anyone sitting in front of it noticed. `$11` is
+enabled at rate 2. Measured off the rendered picture, not the register:
+32 frames a phase.
 | `$FF25` | `CUR_LINES` | R/W | `3:0` first scanline, `7:4` last — an arbitrary slice of the 16-line cell |
 | `$FF26` | `VRAM_ADDR_L` | R/W | VRAM address, low |
 | `$FF27` | `VRAM_ADDR_H` | R/W | high |

@@ -147,8 +147,11 @@ reset:  LDW  X,#stack
         ST   [CUR_Y],R0
         ; CUR_LINES and the style bits are gone: the cursor inverts its
         ; whole cell now, in every mode, which is the only style the
-        ; editor ever asked for and the one a C64 draws.
-        MOV  R0,#$01            ; enabled
+        ; editor ever asked for and the one a C64 draws. The rate field
+        ; stays: $11 is enabled at rate 2, 32 frames a phase, the same
+        ; count the software cursor used and the same the console asks
+        ; for. $01 is rate 0 and blinks four times as fast.
+        MOV  R0,#$11            ; enabled, 32 frames a phase
         ST   [CUR_CTRL],R0
 
 ; Blue on the board LED: the ROM ran, RAM is clear, vectors are in, and

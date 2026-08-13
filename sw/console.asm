@@ -870,7 +870,16 @@ con_geom:
         ; silicon, and it inverts its cell wherever CUR_X/CUR_Y point.
         ; This used to enable it for text and disable it for everything
         ; else, because everything else was drawn by con_blink.
-        MOV  R0,#$01
+        ;
+        ; **Rate 2, which is 32 frames a phase.** The rate field is
+        ; CUR_CTRL[4:3] and it selects a bit of the frame counter:
+        ; 0 gives 8 frames a phase, 1 gives 16, 2 gives 32, 3 is solid.
+        ; This wrote $01 -- rate 0, four times faster than anything the
+        ; machine had ever done -- and it was noticed the moment someone
+        ; sat in front of it. The software cursor it replaced counted 32
+        ; frames in `in_get`, so 32 is not a taste, it is what this
+        ; machine's cursor has always done.
+        MOV  R0,#$11
         ST   [CUR_CTRL],R0
         CALL con_cursor         ; and where the console thinks it is
 
