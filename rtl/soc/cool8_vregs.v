@@ -215,13 +215,27 @@ module cool8_vregs (
         p_load = 1'b1;
         case (io_wdata[3:0])
             // engine, bpp, hdouble, vdouble
-            // **256 still, and the hardware no longer requires it.**
-            // The alignment rule is gone -- see cool8_fetch.v -- so 160
-            // is legal and would return 3072 bytes. What is not yet
-            // right is the console's side: at 160 the rows a scroll
-            // exposes do not line up with the rows it wrote, with
-            // VID_BASE and CTOP both provably correct. One session's
-            // work, and no hardware in the way of it.
+            // 160: eighty cells of char and attribute, the widest text
+            // this machine shows. It was 256 so the map's size was a
+            // power of two, which the mask needed to derive the origin
+            // ([D30]); the origin is a register now, so the 3072 bytes
+            // of padding bought nothing. Mode 1 writes the left forty
+            // cells of the same row and leaves the rest.
+            //
+            // **160 works and is one investigation from being on.**
+            // Flipping this, the reset value below, and con_row's
+            // arithmetic makes sim/test_main.py pass in full -- the
+            // whole system, typed at, at a 5120-byte map. What still
+            // fails is two graphics cases in test_run/test_basic:
+            // `MODE 4 : PLOT 10,3,15 : VPEEK(3*160+5)` reads zero
+            // because VID_BASE is $0500 by then, one graphics scroll
+            // in, and the test assumes a base of zero.
+            //
+            // **The reset value matters as much as the preset**, which
+            // is what cost the first attempt: a harness that pokes the
+            // image in and jumps to `main` never writes VID_MODE, so
+            // the console meets the reset stride, and con_row addressed
+            // rows 160 apart on a display reading them 256 apart.
             4'd0: begin p_ctrl = 6'b00_00_00; p_base = 16'h8000;
                         p_stride = 16'd256; p_vact = 10'd480; end
             4'd1: begin p_ctrl = 6'b01_00_00; p_base = 16'h8000;
