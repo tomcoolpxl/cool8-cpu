@@ -334,6 +334,28 @@ def check():
             bad.append("%-9s has no ;: signature (%s)" %
                        (e["name"], e["handler"]))
 
+    # **Every btab entry must have been parsed, not just every parsed
+    # entry checked.** `LEN` shared its line with the `btab:` label, so
+    # the reader -- which starts after the label -- never saw it: absent
+    # from the generated vocabulary, and invisible to the loop above,
+    # which can only refuse an entry it has. One `.word` per entry, so
+    # counting them is the independent measure.
+    words = 0
+    seen = False
+    for l in _lines(INTERP):
+        if l.startswith("btab:"):
+            seen = True
+            continue
+        if seen:
+            if re.match(r"^\s*\.word\s", l):
+                words += 1
+            elif re.match(r"^[A-Za-z_.]", l) and not l.startswith(";"):
+                break
+    if words != len(fns):
+        bad.append("btab has %d handlers and %d entries were read -- an "
+                   "entry the reader misses is one the checks above "
+                   "cannot see" % (words, len(fns)))
+
     # A declared return type has to match the tail the handler uses.
     for e in stmts + fns:
         if not e["sig"]:

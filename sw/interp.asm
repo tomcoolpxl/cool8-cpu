@@ -3727,8 +3727,16 @@ isbuilt:
 
 ; Length, the name, then the handler. Six characters is NSIG, and
 ; RIGHT$ is exactly six.
-btab:   .byte 3,"L","E","N"
+btab:
+        ; **On its own line, and that matters.** This entry shared
+        ; the line with the label, and `tools/vocab.py` starts
+        ; reading after the label -- so LEN was skipped by the
+        ; parser, missing from the generated vocabulary, and
+        ; invisible to the check that refuses an entry with no
+        ; signature. A check cannot flag what it never saw.
+        .byte 3,"L","E","N"
         .word slen
+                                ;: LEN(s:string) -> int
         .byte 5,"L","E","F","T","$"
         .word sleft
                                 ;: LEFT$(s:string, n:int) -> string  clamps past the end

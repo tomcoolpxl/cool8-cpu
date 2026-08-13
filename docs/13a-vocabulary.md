@@ -97,6 +97,7 @@ Matched by name, not tokenised — they have no token byte.
 
 | | |
 |---|---|
+| `LEN(s:string) -> int` |  |
 | `LEFT$(s:string, n:int) -> string` | clamps past the end |
 | `RIGHT$(s:string, n:int) -> string` | clamps past the end |
 | `MID$(s:string, start:int[, n:int]) -> string` | two arguments run to the end; empty past the end |
