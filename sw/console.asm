@@ -74,7 +74,7 @@ CBPC    = $7DE6                 ;: 1 bytes per cell row, which is the bpp
 CLIM    = $7DE7                 ;: 1 base high byte that forces a repaint
 
 CSCRN   = $8000                 ; the cell map
-CSTRIDE = 256                   ; bytes per map row: 80 cells of char and
+CSTRIDE = 160                   ; bytes per map row: 80 cells of char and
                                 ;   attribute, the widest text this
                                 ;   machine shows, and 160 is what this
                                 ;   wants to be: the hardware allows it
@@ -132,10 +132,23 @@ con_row:
         LD   R1,[CTOP]
         ADD  R0,R1
         AND  R0,#31
+        MOV  R1,R0              ; r * 160 = (5r) << 5, and 5r fits a byte
+        ADD  R0,R0
+        ADD  R0,R0
+        ADD  R0,R1
+        MOV  R1,R0
+        AND  R1,#7
+        ADD  R1,R1
+        ADD  R1,R1
+        ADD  R1,R1
+        ADD  R1,R1
+        ADD  R1,R1
+        SHR  R0
+        SHR  R0
+        SHR  R0
         ADD  R0,#>CSCRN
         MOV  XH,R0
-        CLR  R0
-        MOV  XL,R0
+        MOV  XL,R1
         RET
 
 ; con_cell -- X = the cell address of row R0, column R1. R0, R1 lost.

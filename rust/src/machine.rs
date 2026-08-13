@@ -471,8 +471,8 @@ pub struct Video {
 
 // Mode presets, as cool8vm.Video.PRESETS: (ctrl, base, stride, vactive).
 const PRESETS: [(u8, u16, u16, u16); 7] = [
-    (0b00_00_00, 0x8000, 256, 480),
-    (0b01_00_00, 0x8000, 256, 480),
+    (0b00_00_00, 0x8000, 160, 480),
+    (0b01_00_00, 0x8000, 160, 480),
     (0b11_10_01, 0x0000, 128, 480),
     (0b00_00_10, 0x0000, 80, 480),
     (0b11_10_10, 0x0000, 160, 480),
@@ -489,7 +489,7 @@ impl Video {
             ctrl: 0,
             base: 0x8000,
             map_org: 0x8000,
-            stride: 256,
+            stride: 160,
             pat_base: 0,
             scrl_x: 0,
             scrl_y: 0,

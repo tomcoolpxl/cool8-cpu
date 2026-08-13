@@ -129,10 +129,29 @@ reloc:  LDW  X,#src
 .bl:    LD   R0,[X]
         CMP  R0,#$FF
         BEQ  .bdone
-        ADD  R0,#$80            ; row base: $8000 + row * 256
+        ; Row base: $8000 + row * CSTRIDE. **This was `+ $80` into the
+        ; high byte**, which is row * 256 and was right for exactly as
+        ; long as the map had a 256-byte row. 160 is 5 * 32 and 5r fits
+        ; in a byte for r < 32, so the product is `q = 5r` then `q << 5`
+        ; -- high `q >> 3`, low `(q AND 7) << 5`, the same three adds
+        ; and shift sw/console.asm's con_row does.
+        MOV  R1,R0
+        ADD  R0,R0
+        ADD  R0,R0
+        ADD  R0,R1              ; q = 5r
+        MOV  R1,R0
+        AND  R1,#7
+        ADD  R1,R1
+        ADD  R1,R1
+        ADD  R1,R1
+        ADD  R1,R1
+        ADD  R1,R1              ; (q AND 7) << 5
+        SHR  R0
+        SHR  R0
+        SHR  R0                 ; q >> 3
+        ADD  R0,#$80
         MOV  YH,R0
-        CLR  R0
-        MOV  YL,R0
+        MOV  YL,R1
         INCW X
         LD   R1,[X]             ; the line's attribute
         INCW X

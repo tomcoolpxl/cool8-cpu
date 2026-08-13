@@ -156,15 +156,24 @@ def build_screen():
 
 
 def load_text_map(m, scr):
-    """The map is 128 cells wide (stride 256) with 80 shown, which is
-    D30's canonical shape — a screen row is not a map row."""
+    """80 cells of char and attribute a row, which is the stride the
+    mode 0 preset loads.
+
+    **The pitch is asked of the machine, not written down.** This said
+    `j * 256`, D30's 128-cell map, and it was a fourth copy of a number
+    that also lived in cool8_vregs.v, cool8_video_tb.v and
+    sw/console.asm — so when the map stopped being 256 bytes a row this
+    filled one layout and the display read another, 59,980 pixels
+    apart.
+    """
+    stride = m.bus.read(0xFF14) | (m.bus.read(0xFF15) << 8)
     for i in range(0x10000):
         m.bus.mem[i] = 0x00
     for j in range(ROWS):
         for k in range(COLS):
             c = scr[j * COLS + k]
-            m.bus.mem[0x8000 + j * 256 + k * 2] = c & 0xFF
-            m.bus.mem[0x8000 + j * 256 + k * 2 + 1] = c >> 8
+            m.bus.mem[0x8000 + j * stride + k * 2] = c & 0xFF
+            m.bus.mem[0x8000 + j * stride + k * 2 + 1] = c >> 8
 
 
 class Vram:

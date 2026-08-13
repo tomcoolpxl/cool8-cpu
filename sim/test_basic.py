@@ -169,7 +169,14 @@ class Machine:
         """
         if self.m.video.ctrl & 3 == 0:
             return self.m.row(r)
-        base = 0x8000 + ((r & 31) << 8)
+        # con_row, in Python, and the two numbers come out of the
+        # image: displayed row r is map row (CTOP + r) AND 31, and a
+        # map row is CSTRIDE bytes. This was `((r & 31) << 8)` -- a
+        # 256-byte row and no CTOP at all, so it read the right rows
+        # only on a screen that had never scrolled, and could not
+        # follow the map when the console stopped using 256.
+        top = self.m.bus.mem[self.sym_ctop]
+        base = 0x8000 + ((top + r) & 31) * self.cstride
         return "".join(chr(self.m.bus.mem[base + 2 * c])
                        for c in range(80)).replace("\x00", " ").rstrip()
 

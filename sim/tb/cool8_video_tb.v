@@ -174,10 +174,15 @@ module cool8_video_tb;
             io_wr(8'h10, {1'b1, 3'b000, m});
             g_dis = 1'b1;
             case (m)
+                // 160, as cool8_vregs.v's presets say. **This is a
+                // second copy of that table** and it went stale the
+                // moment the text map stopped being 256 bytes a row --
+                // 426,520 pixels wrong, from a testbench filling a map
+                // the hardware no longer reads that way.
                 4'd0: begin g_eng=0; g_bpp=0; g_hdbl=0; g_vdbl=0;
-                            g_base=16'h8000; g_stride=256; g_vact=480; end
+                            g_base=16'h8000; g_stride=160; g_vact=480; end
                 4'd1: begin g_eng=0; g_bpp=0; g_hdbl=1; g_vdbl=0;
-                            g_base=16'h8000; g_stride=256; g_vact=480; end
+                            g_base=16'h8000; g_stride=160; g_vact=480; end
                 4'd2: begin g_eng=1; g_bpp=2; g_hdbl=1; g_vdbl=1;
                             g_base=16'h0000; g_stride=128; g_vact=480; end
                 4'd3: begin g_eng=2; g_bpp=0; g_hdbl=0; g_vdbl=0;
@@ -241,10 +246,10 @@ module cool8_video_tb;
             g_curon = 1'b1;
             io_wr(8'h22, {1'b0, cx});
             io_wr(8'h23, {3'b000, cy});
-            io_wr(8'h25, lines);
-            // Rate 3 is the solid cursor, which is the one a testbench
-            // can predict without also modelling a frame counter.
-            io_wr(8'h24, {2'b11, style, 1'b1});
+            // $25 (CUR_LINES) and the style field are gone with the
+            // style mux; rate 3 is still the solid cursor, which is the
+            // one a testbench can predict without a frame counter.
+            io_wr(8'h24, {2'b11, 2'b00, 1'b1});
         end
     endtask
 
@@ -284,12 +289,23 @@ module cool8_video_tb;
 
     // ------------------------------------------------------ the model
 
-    function [15:0] row_addr;          // a text or tile map row, wrapped
+    // A text or tile map row, wrapped within the map.
+    //
+    // **This was the mask** -- `(g_base & ~m) | ((g_base + r*stride) & m)`
+    // with `m = stride*32 - 1` -- which is a third copy of the formula
+    // cool8_fetch.v used, and it stopped being right for the same
+    // reason: a mask can only derive the map's origin when the map is
+    // aligned to a power-of-two size. The origin is a register in the
+    // hardware now, and here it is `g_base`, which this bench never
+    // scrolls -- so the wrap is a compare and a subtract, and for r < 32
+    // it never fires.
+    function [15:0] row_addr;
         input [9:0] r;
-        reg [15:0] m;
+        reg [15:0] span, off;
         begin
-            m = (g_stride << 5) - 16'd1;
-            row_addr = (g_base & ~m) | ((g_base + r * g_stride) & m);
+            span = g_stride << 5;
+            off  = r * g_stride;
+            row_addr = g_base + ((off >= span) ? off - span : off);
         end
     endfunction
 
@@ -328,18 +344,16 @@ module cool8_video_tb;
                 at   = cw[15:8];
                 fb   = font[{cw[7:0], grow}];
                 lit  = fb[3'd7 - rel[2:0]];
+                // **One cursor, and it inverts the palette index.**
+                // The four styles and CUR_LINES are gone: the cursor is
+                // applied to the finished index in cool8_pixel.v, which
+                // is what let it cover the tile and bitmap modes as
+                // well, and a block that inverts its cell is the only
+                // style the editor ever asked for.
                 curhit = g_curon && ((rel >> 3) == {4'd0, g_curx}) &&
                          ((vsrc >> 4) == {5'd0, g_cury});
-                if (curhit) begin
-                    case (g_cstyle)
-                        2'd0: lit = 1'b1;
-                        2'd1: if (grow >= g_clines[3:0] &&
-                                  grow <= g_clines[7:4]) lit = 1'b1;
-                        2'd2: if (rel[2:0] < 3'd2) lit = 1'b1;
-                        default: lit = ~lit;
-                    endcase
-                end
                 idx = lit ? {4'h0, at[3:0]} : {4'h0, at[7:4]};
+                if (curhit) idx = idx ^ 8'h0F;
             end else if (g_eng == 2'd1) begin
                 // ---- tile: map entry, then the pattern row it names
                 vsrc = vlog + (g_scry & 10'd7);
@@ -558,9 +572,9 @@ module cool8_video_tb;
             for (k = 0; k < 65536; k = k + 1) mram[k] = 8'h00;
             for (j = 0; j < ROWS; j = j + 1)
                 for (k = 0; k < COLS; k = k + 1) begin
-                    mram[16'h8000 + j * 256 + k * 2]     =
+                    mram[16'h8000 + j * 160 + k * 2]     =
                         screen[j * COLS + k][7:0];
-                    mram[16'h8000 + j * 256 + k * 2 + 1] =
+                    mram[16'h8000 + j * 160 + k * 2 + 1] =
                         screen[j * COLS + k][15:8];
                 end
         end
@@ -638,10 +652,14 @@ module cool8_video_tb;
         set_scroll(10'd0, 10'd5);
         set_cursor(7'd13, 5'd4, 2'd0, 8'hF0);
         run_frame("text, scrolled", 2);
-        set_cursor(7'd40, 5'd12, 2'd1, 8'hEC);
-        run_frame("text, underline", 3);
-        set_cursor(7'd7, 5'd9, 2'd3, 8'hF0);
-        run_frame("text, inverse", 4);
+        // There is one cursor style now -- the block that inverts its
+        // cell -- so what these two phases vary is where it is, not what
+        // it looks like. They were "underline" and "inverse" while
+        // CUR_CTRL had a style field and CUR_LINES existed.
+        set_cursor(7'd40, 5'd12, 2'd0, 8'hEC);
+        run_frame("text, cursor mid-screen", 3);
+        set_cursor(7'd7, 5'd9, 2'd0, 8'hF0);
+        run_frame("text, cursor low", 4);
         g_curon = 1'b0; io_wr(8'h24, 8'h00);
         set_scroll(10'd0, 10'd0);
 

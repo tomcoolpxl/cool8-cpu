@@ -241,9 +241,9 @@ module cool8_vregs (
             // and con_row addressed rows 160 apart on a display reading
             // them 256 apart.
             4'd0: begin p_ctrl = 6'b00_00_00; p_base = 16'h8000;
-                        p_stride = 16'd256; p_vact = 10'd480; end
+                        p_stride = 16'd160; p_vact = 10'd480; end
             4'd1: begin p_ctrl = 6'b01_00_00; p_base = 16'h8000;
-                        p_stride = 16'd256; p_vact = 10'd480; end
+                        p_stride = 16'd160; p_vact = 10'd480; end
             4'd2: begin p_ctrl = 6'b11_10_01; p_base = 16'h0000;
                         p_stride = 16'd128; p_vact = 10'd480; end
             4'd3: begin p_ctrl = 6'b00_00_10; p_base = 16'h0000;
@@ -294,7 +294,7 @@ module cool8_vregs (
             ctrl_r   <= 6'b00_00_00;
             base_r   <= 16'h8000;
             maporg_r <= 16'h8000;
-            stride_r <= 16'd256;
+            stride_r <= 16'd160;
             pat_r    <= 16'h0000;
             scx_r    <= 10'd0;
             scy_r    <= 10'd0;
