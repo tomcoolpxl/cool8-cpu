@@ -11,7 +11,7 @@ Names come from `TOKTAB` and `btab`, the bytes the matcher compares against. Ret
 | `$80` | `PRINT [item][; \| ,]...` | strings and numbers; a trailing separator holds the newline |
 | `$81` | `SUB name` | a definition; stepped over when execution reaches it |
 | `$82` | `FUNCTION name` | parsed as SUB; there are no return values |
-| `$83` | `DIM name(size:int)` | one dimension, integer elements `!intonly` |
+| `$83` | `DIM name(size:int[,size:int[,size:int]])` | up to three dimensions; the name's suffix picks the element -- none integer, # float, $ string `!intonly` |
 | `$84` | `RUN` |  |
 | `$85` | `FOR var = from:int TO to:int [STEP step:int]` | eight deep `!intonly` |
 | `$86` | `NEXT [var]` | naming an outer var closes the inner loops |

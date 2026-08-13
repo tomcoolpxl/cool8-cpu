@@ -246,6 +246,24 @@ frames  = $B599                 ;: 2 the frame counter TIMER reads
 rseed   = $B59B                 ;: 2 the xorshift seed, 1 after init
 garg    = $B59D                 ;: 10 up to five parsed arguments
 lwk     = $B5A7                 ;: 10 dx, dy, err, sx, sy -- all words
+
+; DIM's working set, overlaid on `lwk`.
+;
+; **Same bargain sw/prog.asm's command scratch makes**, and the same
+; invariant written down: `lwk` is h_line's five words, one statement
+; runs at a time, and `eval` reaches builtins only -- never another
+; statement handler -- so nothing can be drawing a line while DIM is
+; parsing its bounds. Ten bytes that would otherwise come out of the
+; user's memory, in a region that is packed against the screen below and
+; the CALL stack above with nowhere to grow.
+;
+; `aelem` deliberately does NOT use this. `A(B(1))` nests, so the outer
+; call is mid-parse when the inner one runs; its working state goes on
+; the CPU stack instead.
+DTYPE   = lwk                   ; 0 integer, 1 float, 2 string
+DRANK   = lwk+1                 ; dimensions seen so far
+DTOT    = lwk+2                 ; the running product, in elements
+DCNT    = lwk+4                 ; up to three counts, two bytes each
 FORSTK  = $B5B1                 ;: 72 MAXFOR frames of FORFR
 irst    = $B5F9                 ;: 1 the NMI handler's restart flag
 DIRBUF  = $B5FA                 ;: 112 the staged direct line: a whole
@@ -306,6 +324,7 @@ E_DATA  = 19                    ; ?OUT OF DATA -- READ past the last DATA
 ; instead of printing and carrying on ([D68]).
 E_NOSPC = 20                    ; ?DISK FULL
 E_NOFILE = 21                   ; ?NO SUCH FILE
+E_REDIM = 22                    ; ?REDIM -- an array dimensioned twice
 ; 13 was E_AFULL, "too many symbols". There is no symbol table to fill:
 ; a label is a BASIC variable, so running out of them is E_NAMES.
 E_DONE  = 255

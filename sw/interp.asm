@@ -600,6 +600,12 @@ h_let:
         CALL varidx             ; R0 = the handle, Y past the name
         CMP  R0,#52
         BCC  .notstr            ; resident A-Z is never a string
+        ; The subscript first, for the reason `prim` gives: the suffix
+        ; test fired ahead of it, so `A$(3) = "x"` assigned the scalar
+        ; A$ and left the subscript behind.
+        SKIPSP
+        CMP  R2,#$28            ; '('
+        BEQ  .notstr
         PUSH R0
         CALL isflt
         POP  R0
@@ -1836,6 +1842,18 @@ prim:
         POP  R0
         BCC  .built
         POPW X
+
+        ; **The subscript is asked about before the suffix**, and it has
+        ; to be. The suffix test fired first, so `A$(3)` was read as the
+        ; scalar A$ and the subscript left for whatever came next to
+        ; choke on -- which is why typed arrays could not exist however
+        ; the storage was arranged. A builtin still goes first: LEFT$,
+        ; RIGHT$, MID$ and CHR$ all end in '$' and are followed by '(',
+        ; so they look exactly like string arrays from here.
+        SKIPSP
+        CMP  R2,#$28            ; '('
+        BEQ  .notstr            ; an array of any type: .sub sorts it out
+
         PUSH R0
         CALL isflt
         POP  R0
@@ -1856,11 +1874,24 @@ prim:
         INCW X
         LD   R1,[X]
         RET
+        ; **The element's type decides, and the scalar routines take
+        ; it from here unchanged.** `aelem` leaves X on the element and
+        ; R2 saying what it is, and a float element is exactly what
+        ; `floadv` wants -- three packed bytes at X -- while a string
+        ; element is exactly the four-byte descriptor `sload` wants.
+        ; That is why typed arrays cost so little: nothing new loads or
+        ; stores anything.
 .sub:   CALL arrelem
+        CMP  R2,#1
+        BEQ  .afl
+        CMP  R2,#2
+        BEQ  .ast
         LD   R0,[X]
         INCW X
         LD   R1,[X]
         RET
+.afl:   JMP  floadv
+.ast:   JMP  sload
         ; A literal needs no heap: tokenise keeps the quoted text
         ; verbatim, both quotes included, so it is copied straight out
         ; of the program into the accumulator.
@@ -2125,41 +2156,6 @@ esubs:  MOV  R0,#E_SUBS
 ;
 ; The block is a count word and then the elements, so the bound travels
 ; with the data and the name table entry stays ten bytes.
-aelem:  PUSH R1
-        PUSH R0
-        INCW Y                  ; the '('
-        CALL eval
-        SKIPSP
-        INCW Y                  ; the ')'
-        POP  R2
-        POP  R3
-        MOV  XL,R2
-        MOV  XH,R3
-        LD   R2,[X]             ; the count, which the block carries
-        INCW X
-        LD   R3,[X]
-        INCW X                  ; and now X is on element zero
-        PUSH R1
-        PUSH R0
-        TST  R1                 ; negative subscripts are out of range
-        BMI  .bad               ;   too, and unsigned compare misses them
-        SUB  R0,R2
-        SBC  R1,R3
-        BGE  .bad
-        POP  R0
-        POP  R1
-        SHL  R0                 ; two bytes an element
-        ROL  R1
-        ADDW X,R0
-        MOV  R2,XH
-        ADD  R2,R1
-        MOV  XH,R2
-        RET
-.bad:   POP  R0
-        POP  R1
-        JMP  esubs
-
-; arrelem -- X on the element named by handle R0, with Y on its '('.
 arrelem:
         CMP  R0,#52
         BCS  .named             ; a long name: NBUF and NLEN are set
@@ -2182,6 +2178,241 @@ arrelem:
         JMP  aelem
 
 ; ---------------------------------------------------------------------
+; aelem -- X = the address of the element, R2 = what kind it is.
+;
+; R0:R1 is the block and Y is on the '('. On return X points at the
+; element and R2 is 0, 1 or 2 -- integer, float or string -- which is
+; all a caller needs to pick between the scalar load and store routines
+; it already has.
+;
+; **Every byte of state is on the CPU stack, deliberately.** `A(B(1))`
+; nests: the outer call has parsed nothing when the inner one runs, so
+; anything in the storage region would be the outer subscript
+; overwritten by the inner, and the type with it. `h_dim` cannot nest
+; and does use scratch; this cannot and does not.
+;
+; The frame, from the top: d, index lo, index hi, type, rank, block lo,
+; block hi. `eval` is balanced, so the offsets hold across it.
+; ---------------------------------------------------------------------
+; **One dimension has its own path, and it is the one that matters.**
+; The general form below carries a seven-byte frame, a dimension
+; counter and a Horner step that a one-dimensional array never uses --
+; measured at about 147 cycles an access more than the untyped version
+; it replaced. This does the same job with three bytes of frame, the
+; count read straight out of the header, and no loop: the common case
+; does not pay for the general one.
+aelem:  MOV  XL,R0
+        MOV  XH,R1
+        LD   R2,[X]             ; rank
+        CMP  R2,#1
+        BNE  agen
+
+        PUSH R1                 ; block hi
+        PUSH R0                 ; block lo
+        INCW X
+        LD   R2,[X]             ; type
+        PUSH R2
+
+        INCW Y                  ; the '('
+        CALL eval
+        LD   R2,[ERR]
+        BNE  .bad1
+
+        LD   R2,[SP+1]          ; the block again, for count[0]
+        LD   R3,[SP+2]
+        MOV  XL,R2
+        MOV  XH,R3
+        INCW X                  ; past rank
+        INCW X                  ; past type
+        LD   R2,[X]
+        INCW X
+        LD   R3,[X]
+
+        TST  R1                 ; negative, which an unsigned compare
+        BMI  .bad1              ;   would read as 65535
+        SUB  R0,R2
+        SBC  R1,R3
+        BHS  .bad1              ; not below the bound
+        ADD  R0,R2              ; and back: (a - b) + b is a
+        ADC  R1,R3
+
+        SKIPSP
+        INCW Y                  ; the ')'
+        POP  R2                 ; type
+        PUSH R2
+
+        CMP  R2,#1              ; index * width, no multiply
+        BEQ  .f3
+        ADD  R0,R0
+        ROL  R1
+        CMP  R2,#2
+        BNE  .fh
+        ADD  R0,R0
+        ROL  R1
+        BRA  .fh
+.f3:    MOV  R2,R0
+        MOV  R3,R1
+        ADD  R0,R0
+        ROL  R1
+        ADD  R0,R2
+        ADC  R1,R3
+.fh:    POP  R2                 ; the type, for the caller
+        ADD  R0,#4              ; the header: rank, type, one count
+        MOV  R3,#0
+        ADC  R1,R3
+        POP  R3                 ; block lo
+        MOV  XL,R3
+        POP  R3                 ; block hi
+        MOV  XH,R3
+        JMP  addx16
+
+.bad1:  ADDW SP,#3
+        CLR  R2
+        JMP  esubs
+
+; agen -- two or three dimensions. R0:R1 is still the block.
+agen:   PUSH R1                 ; block hi
+        PUSH R0                 ; block lo
+        MOV  XL,R0
+        MOV  XH,R1
+        LD   R2,[X]             ; rank
+        INCW X
+        LD   R3,[X]             ; type
+        PUSH R2                 ; rank
+        PUSH R3                 ; type
+        CLR  R0
+        PUSH R0                 ; index hi
+        PUSH R0                 ; index lo
+        PUSH R0                 ; d
+
+        ; **The first dimension is peeled out of the loop.** It is the
+        ; only one for a one-dimensional array, and it needs no multiply
+        ; and no running index to combine with -- so the common case
+        ; pays for neither. Everything after it goes round `.next`.
+        BRA  .take
+
+.loop:  SKIPSP
+        CMP  R2,#$2C            ; ',' -- another subscript
+        BNE  .bad
+.take:  INCW Y                  ; over the '(' or that ','
+        CALL eval
+        LD   R2,[ERR]
+        BNE  .bad
+
+        ; count[d], out of the header
+        PUSH R1
+        PUSH R0
+        LD   R0,[SP+2]          ; d
+        ADD  R0,R0
+        ADD  R0,#2              ; past rank and type
+        LD   R2,[SP+7]          ; block lo
+        LD   R3,[SP+8]          ; block hi
+        MOV  XL,R2
+        MOV  XH,R3
+        ADDW X,R0
+        LD   R2,[X]
+        INCW X
+        LD   R3,[X]
+        POP  R0
+        POP  R1
+
+        ; **0 <= subscript < count[d], and the compare puts it back
+        ; rather than saving it.** This pushed all four registers to
+        ; compare without destroying them, which is eight stack
+        ; operations per dimension; subtracting and adding the same
+        ; value back is four instructions and exact. The sign test is
+        ; not redundant -- an unsigned compare lets -1 through as 65535,
+        ; and a signed one would fail on a legitimate count above 32767.
+        TST  R1
+        BMI  .bad
+        SUB  R0,R2
+        SBC  R1,R3
+        BHS  .bad               ; not below the bound
+        ADD  R0,R2              ; and back: (a - b) + b is a
+        ADC  R1,R3
+
+        LD   R2,[SP+0]          ; d
+        TST  R2
+        BNE  .horner
+        ST   [SP+1],R0          ; the first: the index *is* the subscript
+        MOV  R2,R1
+        ST   [SP+2],R2
+        BRA  .next
+
+        ; index = index * count[d] + subscript. The only multiply in the
+        ; path, and a one-dimensional array never arrives here.
+.horner:
+        PUSH R1                 ; subscript hi
+        PUSH R0                 ; subscript lo
+        LD   R0,[SP+3]          ; index lo
+        LD   R1,[SP+4]          ; index hi
+        CALL amul16             ; R1:R0 = index * count[d]
+        POP  R2                 ; subscript lo
+        ADD  R0,R2
+        POP  R2                 ; subscript hi
+        ADC  R1,R2
+        ST   [SP+1],R0
+        MOV  R2,R1
+        ST   [SP+2],R2
+
+.next:  LD   R0,[SP+0]          ; d = d + 1
+        ADD  R0,#1
+        ST   [SP+0],R0
+        LD   R2,[SP+4]          ; rank
+        CMP  R0,R2
+        BLO  .loop
+
+.flat:  SKIPSP
+        INCW Y                  ; the ')'
+        POP  R2                 ; d, spent
+        POP  R0                 ; index lo
+        POP  R1                 ; index hi
+        POP  R2                 ; type
+        PUSH R2                 ; ...which the caller wants as well
+
+        ; index * width. **No multiply anywhere**: 2 is a doubling, 4 is
+        ; two of them, and 3 is a doubling and an add.
+        CMP  R2,#1
+        BEQ  .e3
+        ADD  R0,R0
+        ROL  R1
+        CMP  R2,#2
+        BNE  .ehdr
+        ADD  R0,R0              ; a string descriptor is four
+        ROL  R1
+        BRA  .ehdr
+.e3:    MOV  R2,R0              ; three: (n << 1) + n
+        MOV  R3,R1
+        ADD  R0,R0
+        ROL  R1
+        ADD  R0,R2
+        ADC  R1,R3
+
+.ehdr:  POP  R2                 ; the type, this routine's second answer
+        POP  R3                 ; rank -- the header is 2 + 2*rank
+        ADD  R3,R3
+        ADD  R3,#2
+        ADD  R0,R3
+        MOV  R3,#0              ; MOV #imm leaves the carry alone, which
+        ADC  R1,R3              ;   is what makes this idiom work
+        POP  R3                 ; block lo
+        MOV  XL,R3
+        POP  R3                 ; block hi
+        MOV  XH,R3
+        JMP  addx16             ; X = block + header + index*width;
+                                ;   R2 survives it, and is the type
+
+        ; **R2 must be a type even on the way out.** The caller
+        ; branches on it, and `esubs` leaves it as whatever the failing
+        ; compare happened to put there -- so a bad subscript could
+        ; dispatch into `sload` with X on the multiply scratch. Zero is
+        ; the integer path, which reads two bytes and discards them
+        ; because `stmt` stops on ERR before the next statement.
+.bad:   ADDW SP,#7              ; d, index, type, rank, block
+        CLR  R2
+        JMP  esubs
+
+; ---------------------------------------------------------------------
 ; DIM name(bound)
 ;
 ; Eleven elements for DIM A(10), subscripts 0 to 10 -- BBC BASIC's rule
@@ -2190,50 +2421,261 @@ arrelem:
 ; becomes garbage, which is the same bargain assignment makes, and every
 ; RUN starts with an empty name table anyway.
 ; ---------------------------------------------------------------------
+; amul16 -- R1:R0 = R1:R0 * R3:R2, the low sixteen bits.
+;
+; `sw/lib.asm` has this routine and `sw/lib.asm` is not in the image, so
+; it is here rather than dragging the file in for twenty bytes. MUL
+; writes to X, so a caller's pointer is saved across it -- the cost of
+; that destination choice, and this is where it shows.
+;
+; **The low half is all that is wanted.** Every use is Horner-flattening
+; a subscript whose dimensions were range-checked at DIM, so the
+; flattened index cannot exceed the element count; `h_dim` is where the
+; product is checked for overflow, once, rather than here on every
+; access.
+amul16: PUSHW X
+        MUL  R0,R3              ; a.lo * b.hi
+        MOV  R3,XL
+        MUL  R1,R2              ; a.hi * b.lo
+        MOV  R1,XL
+        ADD  R3,R1              ; the cross terms, low byte only
+        MUL  R0,R2              ; a.lo * b.lo
+        MOV  R0,XL
+        MOV  R1,XH
+        ADD  R1,R3
+        POPW X
+        RET
+
 h_dim:  SKIPSP
-        CALL nscan
+        CALL nscan              ; the name, suffix and all, into NBUF
+
+        ; **The element type is the name's suffix**, read before
+        ; `arrname` appends the '(' that makes it an array key. That is
+        ; the whole of the typing: `A(`, `A#(` and `A$(` were already
+        ; three different names in the table, so nothing had to be
+        ; invented to tell them apart.
+        CLR  R0
+        ST   [DTYPE],R0
+        CALL isflt
+        BCS  .nf
+        MOV  R0,#1
+        ST   [DTYPE],R0
+        BRA  .haveto
+.nf:    CALL isstr
+        BCS  .haveto
+        MOV  R0,#2
+        ST   [DTYPE],R0
+.haveto:
         CALL arrname
         CALL nfind              ; X on the entry's value
+
+        ; **Dimensioned twice is an error, not a silent leak.** The old
+        ; block was simply abandoned, and with no garbage collector a
+        ; DIM inside a loop eats the heap and reports ?OUT OF MEM a long
+        ; way from the cause. A fresh entry has a zero block pointer,
+        ; which is what `nfind` writes and what `vclear` restores.
         PUSHW X
+        LD   R0,[X]
+        PUSHW X
+        INCW X
+        LD   R1,[X]
+        POPW X
+        OR   R0,R1
+        BEQ  .fresh
+        POPW X
+        MOV  R0,#E_REDIM
+        ST   [ERR],R0
+        RET
+
+.fresh: CLR  R0
+        ST   [DRANK],R0
+        MOV  R0,#1              ; the running product, in elements
+        ST   [DTOT],R0
+        CLR  R0
+        ST   [DTOT+1],R0
         SKIPSP
         INCW Y                  ; the '('
-        CALL eval
-        SKIPSP
-        INCW Y                  ; the ')'
-        ADD  R0,#1              ; the bound is inclusive
+
+.bound: CALL eval
+        LD   R2,[ERR]
+        BNE  .bail
+        ADD  R0,#1              ; inclusive: DIM A(10) is eleven elements
         MOV  R2,#0
         ADC  R1,R2
+
+        ; count[rank] = R0:R1
         PUSH R1
         PUSH R0
-        SHL  R0                 ; two bytes each, after the count word
+        LD   R0,[DRANK]
+        ADD  R0,R0
+        LDW  X,#DCNT
+        ADDW X,R0
+        POP  R0
+        ST   [X],R0
+        INCW X
+        POP  R0
+        ST   [X],R0
+
+        ; **The product has to be checked, not just computed.** A 16-bit
+        ; multiply that wraps gives a block *smaller* than the bounds
+        ; the subscript checks then use, so every write past the wrap
+        ; lands on whatever is next in the heap -- silent corruption,
+        ; from a DIM that looked like it worked. 65535 / count is the
+        ; largest running total that can survive the multiply, and DIM
+        ; is cold enough to afford the divide to find out.
+        LD   R0,[DRANK]
+        ADD  R0,R0
+        LDW  X,#DCNT
+        ADDW X,R0
+        LD   R2,[X]
+        INCW X
+        LD   R3,[X]
+        MOV  R0,R2              ; a zero-length dimension is refused
+        OR   R0,R3
+        BEQ  .huge
+        MOV  R0,#$FF
+        MOV  R1,#$FF
+        CALL udiv16             ; R0:R1 = 65535 / count
+        LD   R2,[DTOT]
+        LD   R3,[DTOT+1]
+        SUB  R0,R2              ; limit - total, borrow means total wins
+        SBC  R1,R3
+        BLO  .huge
+
+        LD   R0,[DTOT]
+        LD   R1,[DTOT+1]
+        LD   R0,[DRANK]
+        ADD  R0,R0
+        LDW  X,#DCNT
+        ADDW X,R0
+        LD   R2,[X]
+        INCW X
+        LD   R3,[X]
+        LD   R0,[DTOT]
+        LD   R1,[DTOT+1]
+        CALL amul16
+        ST   [DTOT],R0
+        MOV  R0,R1
+        ST   [DTOT+1],R0
+
+        LD   R0,[DRANK]
+        ADD  R0,#1
+        ST   [DRANK],R0
+
+        SKIPSP
+        CMP  R2,#$2C            ; ',' -- another dimension
+        BNE  .close
+        LD   R0,[DRANK]
+        CMP  R0,#3              ; three is the cap ([D71])
+        BHS  .huge
+        INCW Y
+        BRA  .bound
+
+.close: SKIPSP
+        INCW Y                  ; the ')'
+
+        ; bytes = 2 + 2*rank of header, then total elements of `width`.
+        ; **No multiply for the width**: 2 is a shift, 4 is two, and 3 is
+        ; a shift and an add. Only the Horner step in `aelem` ever needs
+        ; mul16, and a one-dimensional array never reaches it.
+        LD   R0,[DTOT]
+        LD   R1,[DTOT+1]
+        LD   R2,[DTYPE]
+        CMP  R2,#1
+        BEQ  .w3
+        PUSH R1                 ; width 2 and width 4 share the doubling
+        PUSH R0
+        ADD  R0,R0
         ROL  R1
-        ADD  R0,#2
+        ADDW SP,#2
+        CMP  R2,#2
+        BNE  .wdone
+        ADD  R0,R0              ; ...and a string descriptor doubles again
+        ROL  R1
+        BRA  .wdone
+.w3:    MOV  R2,R0              ; three: (n << 1) + n
+        MOV  R3,R1
+        ADD  R0,R0
+        ROL  R1
+        ADD  R0,R2
+        ADC  R1,R3
+.wdone:
+        PUSH R1
+        PUSH R0
+        LD   R2,[DRANK]         ; the header: rank, type, one count each
+        ADD  R2,R2
+        ADD  R2,#2
+        POP  R0
+        POP  R1
+        ADD  R0,R2
         MOV  R2,#0
         ADC  R1,R2
+        BCS  .huge              ; the size itself wrapped
+
         CALL halloc
-        BCS  .fail
-        POP  R2                 ; the count
-        POP  R3
+        BCS  .bail              ; halloc has set ERR
+
+        ; The block: header first, then every element zeroed. An
+        ; unwritten element reads as 0, 0.0 or "" -- a zeroed string
+        ; descriptor is an empty string, which is what `sload` makes of
+        ; a zero length without looking at the address.
         MOV  XL,R0
         MOV  XH,R1
-        ST   [X],R2
-        INCW X
-        ST   [X],R3
-        INCW X
         PUSH R1                 ; keep the block for the entry
         PUSH R0
-.zero:  MOV  R0,R2              ; an unwritten element reads zero, the
-        OR   R0,R3              ;   same as an unset scalar does
+        LD   R0,[DRANK]
+        ST   [X],R0
+        INCW X
+        LD   R0,[DTYPE]
+        ST   [X],R0
+        INCW X
+        CLR  R2
+.hdr:   LD   R0,[DRANK]
+        CMP  R2,R0
+        BHS  .hdone
+        PUSH R2
+        ADD  R2,R2
+        PUSHW X
+        LDW  X,#DCNT
+        ADDW X,R2
+        LD   R0,[X]
+        INCW X
+        LD   R1,[X]
+        POPW X
+        ST   [X],R0
+        INCW X
+        MOV  R0,R1
+        ST   [X],R0
+        INCW X
+        POP  R2
+        ADD  R2,#1
+        BRA  .hdr
+.hdone:
+        ; X is on element zero; DTOT elements of DTYPE's width follow.
+        LD   R2,[DTOT]
+        LD   R3,[DTOT+1]
+.zel:   MOV  R0,R2
+        OR   R0,R3
         BEQ  .done
         CLR  R0
         ST   [X],R0
         INCW X
         ST   [X],R0
         INCW X
-        SUB  R2,#1
+        LD   R1,[DTYPE]
+        TST  R1
+        BEQ  .znext
+        ST   [X],R0             ; float: a third byte
+        INCW X
+        CMP  R1,#2
+        BNE  .znext
+        ST   [X],R0             ; string: a fourth
+        INCW X
+.znext: SUB  R2,#1
         MOV  R0,#0
         SBC  R3,R0
-        BRA  .zero
+        BRA  .zel
+
 .done:  POP  R0
         POP  R1
         POPW X                  ; the name table entry
@@ -2241,14 +2683,32 @@ h_dim:  SKIPSP
         INCW X
         ST   [X],R1
         JMP  stmt
-.fail:  POP  R2                 ; halloc has set ERR
-        POP  R2
-        POPW X
+
+.huge:  MOV  R0,#E_MEM
+        ST   [ERR],R0
+.bail:  POPW X
         RET
 
 ; h_leta -- A(i) = expr. The element's address is worked out before the
 ; right-hand side is evaluated, because eval needs X for itself.
 h_leta: CALL arrelem
+        ; **Stop here if the subscript was refused.** `aelem` fails
+        ; before it consumes the ')', so carrying on skips the wrong
+        ; byte and `eval` parses whatever follows -- which reported
+        ; ?SYNTAX over the top of the ?INDEX that was already set, and
+        ; named the fault as the wrong thing entirely. `stmt` returns
+        ; immediately when ERR is set, so this is the whole of it. R3,
+        ; not R2: R2 is the element type.
+        LD   R3,[ERR]
+        BNE  .aerr
+        ; The element's type, and the scalar assignment routines take it
+        ; from here: h_letf wants X on three packed bytes and h_lets
+        ; wants X on a four-byte descriptor, which is what an element of
+        ; each kind already is.
+        CMP  R2,#1
+        BEQ  h_letf
+        CMP  R2,#2
+        BEQ  h_lets
         PUSHW X
         SKIPSP
         INCW Y                  ; the '='
@@ -2257,7 +2717,7 @@ h_leta: CALL arrelem
         ST   [X],R0
         INCW X
         ST   [X],R1
-        JMP  stmt
+.aerr:  JMP  stmt
 
 ; ---------------------------------------------------------------------
 ; Strings.

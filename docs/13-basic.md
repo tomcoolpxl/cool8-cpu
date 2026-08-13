@@ -30,7 +30,7 @@ the language does at its edges, measured on the machine.
 | `INPUT v` | a line of text, echoed as typed, ended by Return. **The variable's suffix decides what it was**: `A$` takes the text, `A#` a fraction, `A` an integer — §8 |
 | `DATA n, n, …` / `READ v, v` / `RESTORE` | numbers only (with `-`), scalar targets only; reading past the end is `?OUT OF DATA` |
 | `POKE a, b` / `PEEK(a)` | main RAM and the I/O page |
-| `DIM v(n)` | one-dimensional arrays on the heap |
+| `DIM v(n[,n[,n]])` | arrays on the heap, **up to three dimensions**. The name's suffix picks the element: none integer, `#` float, `$` string — `DIM A(9)`, `DIM A#(9)`, `DIM A$(4,4)`. Dimensioning one twice is `?REDIM` |
 | `SYS addr` | call machine code at an address; its `RET` comes back. **Replaced `ASM`** — see below |
 | `REM …` / `' …` | a comment: the rest of the line, whatever is in it. Both are stored with the text verbatim after a marker, so `LIST` gives back exactly what was typed and nothing inside is tokenised |
 | `END` | a clean stop |
@@ -1051,6 +1051,72 @@ since the assembler went, and it came from deleting a duplicate rather
 than a feature.
 
 ---
+
+## 9c. Arrays
+
+`DIM name(bound[,bound[,bound]])`, and **the name's suffix decides what
+the elements are** — the same rule as scalars, so `A(` , `A#(` and
+`A$(` are three different arrays and always were: `arrname` appends the
+`(` to the scanned name, and the suffix is already in it.
+
+| suffix | element | bytes |
+|---|---|---|
+| none | integer | 2 |
+| `#` | float | 3 |
+| `$` | string descriptor | 4 |
+
+Bounds are inclusive, so `DIM A(10)` has eleven elements, 0 to 10 —
+BBC BASIC's rule and Microsoft's, and what every published program
+assumes. An element never written reads as 0, 0.0 or `""`; a zeroed
+string descriptor is an empty string, which `sload` answers without
+looking at the address.
+
+**Subscripts are range-checked on every access**, each against its own
+dimension, and a negative one is caught too — an unsigned compare
+would let `-1` through as 65535. BBC BASIC checks only at `DIM`; this
+machine pays a compare per dimension to keep a bad index an `?INDEX`
+rather than a write into the middle of another array.
+
+**Three dimensions is the cap.** The flattening is Horner —
+`((i0*n1 + i1)*n2 + i2)*width` — which is one loop whatever the rank,
+so the limit is about keeping the header small rather than about code.
+
+### What it costs, measured
+
+The index arithmetic **never multiplies for the element width**: 2 is a
+doubling, 4 is two of them, and 3 is a doubling and an add. The only
+multiply is the Horner step, and a one-dimensional array never reaches
+it.
+
+One dimension has a separate path for that reason — no dimension
+counter, no loop, the count read straight out of the header, three bytes
+of frame instead of seven:
+
+| 20,000 iterations of `A(7)=A(7)+1` | frames |
+|---|---|
+| untyped, one-dimensional, before this | 307 |
+| typed and multi-dimensional, general path only | 349 |
+| **with the one-dimensional path** | **330** |
+
+So a 1-D integer array costs **7.5 % more** than the version that could
+only ever be 1-D and integer, and that is the price of an array knowing
+its own rank and type. Two dimensions is 452 frames on the same loop.
+
+### The heap, and what has no garbage collector
+
+A string array is 4 bytes an element and each element's descriptor
+points at its own characters. **Assigning a longer string abandons the
+old block**, and nothing reclaims it until `RUN`, `NEW` or an edit —
+there is no garbage collection here, which is the one place the C64 did
+more. The descriptor's `maxlen` field takes most of the sting out:
+assigning a same-or-shorter string reuses the space in place, so filling
+an array repeatedly with values that do not grow costs nothing.
+
+`DIM` refuses a product it cannot hold. `DIM Z(400,400)` is 160,000
+elements, which wraps a 16-bit count to a block far smaller than the
+bounds that are then range-checked against it — every write past the
+wrap would land on whatever is next in the heap. The check is one
+divide, at `DIM`, where it is free.
 
 ## 10b. Where a variable lives, and why only A-Z are resident
 

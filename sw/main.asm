@@ -522,7 +522,7 @@ sttab:
         .word h_sub             ; $82 FUNCTION
                                 ;: FUNCTION name  parsed as SUB; there are no return values
         .word h_dim             ; $83 DIM
-                                ;: DIM name(size:int)  one dimension, integer elements !intonly
+                                ;: DIM name(size:int[,size:int[,size:int]])  up to three dimensions; the name's suffix picks the element -- none integer, # float, $ string !intonly
         .word h_run             ; $84 RUN, up from the tail when
                                 ;: RUN
                                 ;   CONST left

@@ -729,6 +729,78 @@ def compact(code, syms):
               "%-11s clears the variables" % after,
               " | ".join(scr)[:80])
 
+    # ---- DIM: up to three dimensions, three element types ([D71]).
+    #
+    # The element type is the name's suffix, which costs nothing to
+    # parse because `arrname` appends '(' to the scanned name: A(, A#(
+    # and A$( were already three different keys in the name table.
+    M.cmd("NEW")
+    M.cmd("CLS")
+    for line, want, why in [
+        ("DIM A(5)",        None, None),
+        ("A(2)=77",         None, None),
+        ("PRINT A(2)",      "77", "a one-dimensional integer array"),
+        ("DIM B(2,3)",      None, None),
+        ("B(1,2)=42",       None, None),
+        ("PRINT B(1,2)",    "42", "two dimensions"),
+        ("DIM C(1,1,1)",    None, None),
+        ("C(1,1,1)=9",      None, None),
+        ("PRINT C(1,1,1)",  "9",  "three, which is the cap"),
+        ("DIM F#(3)",       None, None),
+        ("F#(1)=1.5",       None, None),
+        ("PRINT F#(1)",     "1.5", "float elements, three bytes each"),
+        ("DIM S$(3)",       None, None),
+        ('S$(1)="HI"',      None, None),
+        ("PRINT S$(1)",     "HI", "string elements, a descriptor each"),
+        ("DIM G#(2,2)",     None, None),
+        ("G#(1,1)=2.25",    None, None),
+        ("PRINT G#(1,1)",   "2.25", "and both at once"),
+    ]:
+        M.cmd(line)
+        if want is not None:
+            check(any(r.strip() == want for r in M.screen()), why,
+                  " | ".join(r.strip() for r in M.screen() if r.strip())[-70:])
+
+    # `aelem` keeps its whole working set on the CPU stack because this
+    # nests: the outer call has parsed nothing when the inner one runs.
+    M.cmd("A(0)=3")
+    M.cmd("A(3)=1")
+    M.cmd("PRINT A(A(0))")
+    check(any(r.strip() == "1" for r in M.screen()),
+          "a subscript that is itself a subscripted read",
+          " | ".join(r.strip() for r in M.screen() if r.strip())[-60:])
+
+    # Corners of a two-dimensional array must not alias, which is the
+    # check that would fail if the Horner flattening were wrong.
+    M.cmd("NEW")
+    M.cmd("DIM D(2,2)")
+    M.cmd("D(0,0)=7")
+    M.cmd("D(2,2)=8")
+    M.cmd("CLS")
+    M.cmd("PRINT D(0,0)")
+    check(any(r.strip() == "7" for r in M.screen()),
+          "opposite corners of a 2-D array are different elements",
+          " | ".join(r.strip() for r in M.screen() if r.strip())[:60])
+
+    for lines, want, why in [
+        (["DIM A(5)", "PRINT A(99)"],  "?INDEX", "a subscript past the bound"),
+        (["DIM A(5)", "PRINT A(-1)"],  "?INDEX", "a negative subscript"),
+        (["PRINT Q(1)"],               "?INDEX", "an array never dimensioned"),
+        (["DIM B(2,3)", "PRINT B(1)"], "?INDEX", "too few subscripts"),
+        (["DIM A(5)", "DIM A(5)"],     "?REDIM", "dimensioned twice"),
+        # 400*400 elements is 160,000, which wraps a 16-bit product to a
+        # block far smaller than the bounds then range-check against --
+        # every write past the wrap would land on the next thing in the
+        # heap. DIM checks the product rather than discovering it later.
+        (["DIM Z(400,400)"],      "?OUT OF MEM", "a product that overflows"),
+    ]:
+        M.cmd("NEW")
+        M.cmd("CLS")
+        for l in lines:
+            M.cmd(l)
+        check(any(r.strip() == want for r in M.screen()), why,
+              " | ".join(r.strip() for r in M.screen() if r.strip())[:70])
+
     # ---- a direct statement ends after itself.
     #
     # **The answer alone, and nothing after it.** The statement loop's

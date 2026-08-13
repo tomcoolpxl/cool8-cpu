@@ -2328,6 +2328,100 @@ implementation nobody is checking, which is how `test_lib` came to
 measure two programs against a third, private model of the I/O page
 and report 1.00x for a year.
 
+## D71 — Arrays carry their rank and their element type, and one dimension keeps its own path
+
+**Done.** `DIM` took one bound and every element was two bytes. It now
+takes up to three, and the element is an integer, a float or a string
+descriptor.
+
+**The typing was already there and nobody had used it.** `arrname`
+appends `(` to the scanned name to make the array's key, and the
+suffix is in the name before that happens — so `A(`, `A#(` and `A$(`
+have always been three different entries in the name table. Nothing had
+to be invented to tell them apart; what had to change was an ordering.
+
+**The one thing genuinely in the way was two lines of dispatch.** Both
+`prim` and `h_let` tested the suffix *before* testing for `(`, so
+`A$(3)` read as the scalar `A$` with a subscript left over for whatever
+came next to choke on. Typed arrays were impossible in this parser
+however the storage was arranged, and it was three instructions.
+
+### Why it is affordable
+
+The scalar load and store routines take exactly what an element is:
+`fstore`/`fload` want three packed bytes at X and take no Y at all,
+`sstore`/`sload` want the four-byte descriptor at X, and an integer is
+two bytes at X. `aelem` returns X on the element and the type in R2, so
+**float and string arrays need no load or store code of their own** —
+only a two-compare dispatch at each of the four sites.
+
+### The index arithmetic never multiplies for the width
+
+Widths are 2, 3 and 4, so scaling is a doubling, a doubling twice, or a
+doubling and an add. `amul16` is reached only by the Horner step that
+flattens the second and third dimensions, so **a one-dimensional array
+of any type never multiplies at all**.
+
+### One dimension has its own path, measured into existence
+
+The general form carries a seven-byte frame, a dimension counter and a
+Horner step a 1-D array never uses. Measured, that was **147 cycles an
+access** more than the untyped version it replaced — 307 frames to 349
+on 20,000 iterations of `A(7)=A(7)+1`. Two cheaper fixes were tried
+first and are worth recording because they did almost nothing:
+
+* **Peeling the first dimension out of the loop** and **making the
+  bounds check non-destructive** (subtract, branch, add the same value
+  back, rather than pushing all four registers around a compare). Both
+  are strictly better and both stayed. Together they moved the
+  measurement by less than a frame: about 36 cycles an access against a
+  147-cycle gap.
+
+The gap was the frame and the header, not the loop. A separate rank-1
+entry — three bytes of frame, the count read straight out of the
+header, no counter, no loop — costs **99 bytes** and brought it to 330
+frames. **7.5 % over the untyped version**, which is what an array
+knowing its own rank and type costs.
+
+### What was refused, and why the refusals matter
+
+* **Dimensioning twice is `?REDIM`**, the C64's answer. Re-allocating
+  silently was the old behaviour and it abandons the block; with no
+  garbage collector a `DIM` in a loop eats the heap and reports
+  ?OUT OF MEM a long way from the cause.
+* **A product that will not fit is `?OUT OF MEM` at `DIM`.**
+  `DIM Z(400,400)` is 160,000 elements; a 16-bit count wraps to a block
+  *smaller* than the bounds that are then range-checked against it, so
+  every write past the wrap lands on the next thing in the heap. One
+  divide against `65535 / count`, at `DIM`, where it is free.
+* **Subscripts stay range-checked at run time**, per dimension, where
+  BBC BASIC checks only at `DIM`. It costs a compare a dimension and
+  keeps a bad index an error rather than silent corruption.
+
+### `aelem` keeps its state on the CPU stack, and has to
+
+`A(B(1))` nests — the outer call has parsed nothing when the inner one
+runs — so scratch in the storage region would be the outer subscript,
+and the outer *type*, overwritten by the inner. `h_dim` cannot nest and
+does use scratch: ten bytes overlaid on `lwk`, which is `LINE`'s working
+set, on the same argument `sw/prog.asm`'s command scratch makes. The
+storage region is packed between the screen below and the CALL stack
+above with nowhere to grow, so ten borrowed bytes are ten the user keeps.
+
+### Two faults it exposed, both older than it
+
+* **`esubs` left R2 undefined.** Harmless while nothing branched on it;
+  with a type dispatch, a bad subscript could jump into `sload` with X
+  on the multiply scratch. The failure path sets R2 to 0 now.
+* **`h_leta` carried on after a refused subscript.** `aelem` fails
+  before consuming the `)`, so the assignment skipped the wrong byte and
+  `eval` reported `?SYNTAX` over the top of the `?INDEX` already set:
+  `20 V(9) = 1` named the wrong fault. It checks ERR now.
+
+  17,270 → 17,863 bytes, **593 for the feature**; room to grow 431.
+
+---
+
 ## D70 — The user area is one region of 40,448 bytes
 
 **Done.** [D69] deferred this on the grounds that the case for it was "a
