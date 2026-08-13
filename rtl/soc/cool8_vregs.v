@@ -66,6 +66,9 @@ module cool8_vregs (
     output wire [15:0] base,
     output wire [15:0] stride,
     output wire [15:0] pat_base,
+    // Where the text/tile map starts, as opposed to which row of it is
+    // displayed first. See the wrap in cool8_fetch.v.
+    output wire [15:0] map_org,
     output wire [9:0]  scrl_x,
     output wire [9:0]  scrl_y,
     output wire [7:0]  border,
@@ -118,6 +121,7 @@ module cool8_vregs (
     reg [7:0]  mode_r;
     reg [5:0]  ctrl_r;
     reg [15:0] base_r, stride_r, pat_r;
+    reg [15:0] maporg_r;
     reg [9:0]  scx_r, scy_r;
     reg [7:0]  border_r;
     reg [7:0]  rcmp_r;
@@ -145,6 +149,7 @@ module cool8_vregs (
     assign base      = base_r;
     assign stride    = stride_r;
     assign pat_base  = pat_r;
+    assign map_org   = maporg_r;
     assign scrl_x    = scx_r;
     assign scrl_y    = scy_r;
     assign border    = border_r;
@@ -210,11 +215,13 @@ module cool8_vregs (
         p_load = 1'b1;
         case (io_wdata[3:0])
             // engine, bpp, hdouble, vdouble
-            // **256, and it cannot be 160 yet -- see cool8_fetch.v.**
-            // The row wrap is a modulo now, so any stride is legal
-            // arithmetically; what is not yet legal is the *map origin*.
-            // The old mask did two jobs, and only one of them has been
-            // replaced.
+            // **256 still, and the hardware no longer requires it.**
+            // The alignment rule is gone -- see cool8_fetch.v -- so 160
+            // is legal and would return 3072 bytes. What is not yet
+            // right is the console's side: at 160 the rows a scroll
+            // exposes do not line up with the rows it wrote, with
+            // VID_BASE and CTOP both provably correct. One session's
+            // work, and no hardware in the way of it.
             4'd0: begin p_ctrl = 6'b00_00_00; p_base = 16'h8000;
                         p_stride = 16'd256; p_vact = 10'd480; end
             4'd1: begin p_ctrl = 6'b01_00_00; p_base = 16'h8000;
@@ -268,6 +275,7 @@ module cool8_vregs (
             mode_r   <= 8'h00;
             ctrl_r   <= 6'b00_00_00;
             base_r   <= 16'h8000;
+            maporg_r <= 16'h8000;
             stride_r <= 16'd256;
             pat_r    <= 16'h0000;
             scx_r    <= 10'd0;
@@ -317,6 +325,15 @@ module cool8_vregs (
                         if (p_load) begin
                             ctrl_r   <= p_ctrl;
                             base_r   <= p_base;
+                            // **The map's address, latched here and
+                            // nowhere else.** VID_BASE says which row is
+                            // displayed first and moves on every scroll;
+                            // this says where the map itself begins, and
+                            // only a mode change moves it. They used to
+                            // be the same register, separated by a mask,
+                            // which is what forced the map to be aligned
+                            // to its own size.
+                            maporg_r <= p_base;
                             stride_r <= p_stride;
                             vact_r   <= p_vact;
                         end

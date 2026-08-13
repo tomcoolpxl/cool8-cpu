@@ -642,11 +642,14 @@ fn bytes_of(hex: &str) -> Vec<u8> {
 /// m.row() uses on the Python side, which does the string munging.
 fn text_bytes(m: &machine::Machine) -> Vec<u8> {
     let v = &m.bus.video;
-    let wrap = ((v.stride << 5) as u16).wrapping_sub(1);
+    // Within the map, as cool8_fetch.v and render.rs wrap: the origin
+    // is a register, not `base` masked down to its own size.
+    let span = (v.stride << 5) as u16;
     let mut out = Vec::with_capacity(30 * 80);
     for r in 0..30u16 {
-        let ra = (v.base & !wrap)
-            | (v.base.wrapping_add(r.wrapping_mul(v.stride)) & wrap);
+        let n = v.base.wrapping_add(r.wrapping_mul(v.stride));
+        let ra = if n.wrapping_sub(v.map_org) >= span
+                 { n.wrapping_sub(span) } else { n };
         for c in 0..80u16 {
             out.push(m.bus.mem[ra.wrapping_add(2 * c) as usize]);
         }

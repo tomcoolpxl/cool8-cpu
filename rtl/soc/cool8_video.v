@@ -147,7 +147,7 @@ module cool8_video #(
 
     wire        disp_en, hdouble, vdouble, cur_on;
     wire [1:0]  engine, bpp_log;
-    wire [15:0] base, stride, pat_base;
+    wire [15:0] base, stride, pat_base, map_org;
     wire [9:0]  scrl_x, scrl_y, vactive, vstart;
     wire [10:0] hactive, hstart;
     wire [7:0]  border, pal_entry;
@@ -164,6 +164,7 @@ module cool8_video #(
         .disp_en(disp_en), .engine(engine), .bpp_log(bpp_log),
         .hdouble(hdouble), .vdouble(vdouble),
         .base(base), .stride(stride), .pat_base(pat_base),
+        .map_org(map_org),
         .scrl_x(scrl_x), .scrl_y(scrl_y), .border(border),
         .hactive(hactive), .hstart(hstart),
         .vactive(vactive), .vstart(vstart),
@@ -271,6 +272,7 @@ module cool8_video #(
         .disp_en(disp_en), .engine(engine),
         .hdouble(hdouble), .vdouble(vdouble),
         .base(base), .stride(stride), .pat_base(pat_base),
+        .map_org(map_org),
         .scrl_y(scrl_y), .vactive(vactive), .vstart(vstart),
         .ram_req(ram_req), .ram_addr(ram_addr), .ram_gnt(ram_gnt),
         .ram_rvalid(ram_rvalid), .ram_rdata(ram_rdata),

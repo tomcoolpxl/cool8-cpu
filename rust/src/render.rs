@@ -205,9 +205,15 @@ impl Renderer {
     /// within a line of when the hardware reads them.
     fn fill_row(&mut self, bank: usize, vv: &View, bus: &MachineBus) {
         let v = &bus.video;
-        let wrap = ((v.stride << 5) as u16).wrapping_sub(1);
+        // The same wrap cool8_fetch.v does: within the map, whose
+        // origin is its own register now rather than `base` rounded
+        // down by a mask. That is what lifts the "aligned to its own
+        // size" rule, and with it the power-of-two stride.
+        let span = (v.stride << 5) as u16;
         let wrapped = |ptr: u16| -> u16 {
-            (v.base & !wrap) | (ptr.wrapping_add(v.stride) & wrap)
+            let next = ptr.wrapping_add(v.stride);
+            if next.wrapping_sub(v.map_org) >= span { next.wrapping_sub(span) }
+            else { next }
         };
         match vv.engine {
             0 => {

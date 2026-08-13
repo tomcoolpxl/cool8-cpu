@@ -109,6 +109,7 @@ module cool8_fetch (
     input  wire        vdouble,
     input  wire [15:0] base,
     input  wire [15:0] stride,
+    input  wire [15:0] map_org,
     input  wire [15:0] pat_base,
     input  wire [9:0]  scrl_y,
     input  wire [9:0]  vactive,
@@ -157,7 +158,27 @@ module cool8_fetch (
 
     reg  [15:0] row_ptr;               // the row being fetched
     reg  [2:0]  trow;                  // the row inside a tile
-    reg  [15:0] wrap_mask;             // (stride * 32) - 1
+    reg  [15:0] wrap_span;             // stride * 32: the map's height
+
+    // The row pointer's wrap, for the two engines with a circular map.
+    //
+    // **This was `(base & ~mask) | ((row_ptr + stride) & mask)`**, and
+    // the mask did two jobs: it wrapped the pointer, and `base & ~mask`
+    // *derived the map's origin* -- VID_BASE carried the map address in
+    // its high bits and the scroll offset in its low ones. That is where
+    // the "8 KB map on an 8 KB boundary" rule came from, and with it a
+    // power-of-two stride ([D30]).
+    //
+    // The origin is its own register now, so both jobs are explicit and
+    // neither constrains the other: any stride, any address. A first
+    // attempt replaced only the wrapping and compared against `base`,
+    // which made the map slide with the scroll instead of rotating
+    // inside it -- correct until the screen scrolled, which no golden
+    // does and the editor does on the third line.
+    wire [15:0] rp_next = row_ptr + stride;
+    wire [15:0] rp_off  = rp_next - map_org;
+    wire [15:0] rp_wrap = (rp_off >= wrap_span) ? (rp_next - wrap_span)
+                                                : rp_next;
 
     reg  [7:0]  lo_byte;               // a text cell's first half
     reg  [15:0] ent;                   // a tile's map entry
@@ -301,7 +322,7 @@ module cool8_fetch (
             inflight    <= 1'b0;
             row_ptr     <= 16'h0000;
             trow        <= 3'd0;
-            wrap_mask   <= 16'h1FFF;
+            wrap_span   <= 16'h2000;
             lo_byte     <= 8'h00;
             ent         <= 16'h0000;
             pat_a       <= 16'h0000;
@@ -309,10 +330,9 @@ module cool8_fetch (
             primed      <= 1'b0;
             o_read_bank <= 1'b0;
         end else begin
-            // 32 rows of `stride`, less one. Registered rather than
-            // recomputed, to keep a shift and a decrement off the
-            // address path.
-            wrap_mask <= (stride << 5) - 16'd1;
+            // 32 rows of `stride`. Registered rather than recomputed,
+            // to keep the shift off the address path.
+            wrap_span <= (stride << 5);
 
             // Qualified by `disp_en` for the same reason `start_row` is:
             // with the display off nothing is being filled, so nothing
@@ -383,8 +403,7 @@ module cool8_fetch (
                             i        <= i + 1'b1;
                             if (i + 8'd1 == n) begin
                                 st      <= S_DONE;
-                                row_ptr <= (base & ~wrap_mask) |
-                                           ((row_ptr + stride) & wrap_mask);
+                                row_ptr <= rp_wrap;
                             end else st <= S_TXT_LO;
                         end
                     end
@@ -417,9 +436,7 @@ module cool8_fetch (
                                 // line of tile; the pattern row moves
                                 // every one.
                                 if (trow == 3'd7)
-                                    row_ptr <= (base & ~wrap_mask) |
-                                               ((row_ptr + stride) &
-                                                wrap_mask);
+                                    row_ptr <= rp_wrap;
                             end else st <= S_MAP;
                         end
                     end

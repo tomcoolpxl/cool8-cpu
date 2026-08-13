@@ -109,14 +109,14 @@ addx16: ADDW X,R0
 ; high byte of the address.
 ; base + row * 256: the wrapped row number IS the high byte.
 ;
-; **The 160-byte row is written and is not switched on.** con_setrow
-; caches this, so it runs once a line and the arithmetic below --
-; `q = 5r`, high `q >> 3`, low `(q AND 7) << 5` -- costs nothing where
-; it used to cost per character. That was [D30]'s objection and it is
-; answered. What is not answered is the map origin: see cool8_fetch.v.
-;   MOV R1,R0 / ADD R0,R0 / ADD R0,R0 / ADD R0,R1   -- q = 5r
-;   MOV R1,R0 / AND R1,#7 / five ADD R1,R1          -- low byte
-;   three SHR R0 / ADD R0,#>CSCRN                   -- high byte
+; **The 160-byte row is one step away and it is not this routine.** The
+; arithmetic for it is three adds and a byte shift -- 160 is 5 * 32 and
+; 5r fits in a byte for r < 32, so the product is `q = 5r` and then
+; `q << 5`, high `q >> 3` and low `(q AND 7) << 5`, no MUL and no spill
+; of X. It was written, and it works; what does not yet work is
+; con_scroll, where the rows a scroll exposes stop lining up with the
+; rows it wrote. The hardware is ready: cool8_fetch.v has an explicit
+; map origin now and neither the stride nor the alignment constrains it.
 con_row:
         LD   R1,[CTOP]
         ADD  R0,R1
@@ -689,7 +689,16 @@ con_scroll:
         LD   R1,[CKIND]
         TST  R1
         BNE  .gfx
-        ADD  R0,#>CSCRN         ; text: the origin is one register
+        ; Text: the display origin is the address of displayed row 0,
+        ; which con_row(0) computes -- it applies CTOP itself. Written
+        ; this way rather than as one store to VID_BASE_H so that the
+        ; stride lives in one place; at 256 only the high byte moves and
+        ; the low one is already zero.
+        CLR  R0
+        CALL con_row
+        MOV  R0,XL
+        ST   [VID_BASE_L],R0
+        MOV  R0,XH
         ST   [VID_BASE_H],R0
         BRA  .last
 .gfx:   CMP  R1,#1

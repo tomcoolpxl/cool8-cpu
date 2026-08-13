@@ -428,6 +428,9 @@ pub struct Video {
     pub mode: u8,
     pub ctrl: u8,
     pub base: u16,
+    /// Where the map starts, as opposed to which row is shown first.
+    /// Latched from the mode preset; a scroll moves `base` and not this.
+    pub map_org: u16,
     pub stride: u16,
     pub pat_base: u16,
     pub scrl_x: u16,
@@ -485,6 +488,7 @@ impl Video {
             mode: 0,
             ctrl: 0,
             base: 0x8000,
+            map_org: 0x8000,
             stride: 256,
             pat_base: 0,
             scrl_x: 0,
@@ -668,6 +672,7 @@ impl Video {
                 if let Some(p) = PRESETS.get((v & 0x0F) as usize) {
                     self.ctrl = p.0;
                     self.base = p.1;
+                    self.map_org = p.1;
                     self.stride = p.2;
                     self.vactive = p.3;
                 }
