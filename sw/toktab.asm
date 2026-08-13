@@ -27,7 +27,12 @@
 TOKTAB:
         .byte 5, "P","R","I","N","T"
         .byte 3, "S","U","B"
-        .byte 8, "F","U","N","C","T","I","O","N"
+        ; $82 was FUNCTION, which parsed as SUB and could not return
+        ; a value, so it was a longer word for a thing we already had.
+        ; Retired the way $A4 and $C6 are: a one-character entry nobody
+        ; can spell holds the byte open, so nothing after it renumbers
+        ; and a saved program still means what it said.
+        .byte 1, "!"
         .byte 3, "D","I","M"
         .byte 3, "R","U","N"    ; $84 was CONST (removed: an
                                 ;   interpreter folds nothing). RUN
@@ -133,4 +138,8 @@ TOKTAB:
 ; tokenise stores it as itself -- it only ever reaches a program as
 ; three packed bytes written by `tok_line` ([D68]).
         .byte 1, "!"
+        ; $C7 CLEAR -- variables away, program kept. BBC's name, which
+        ; is why it is not CLR: CLS and CLG are BBC's too and the three
+        ; belong together.
+        .byte 5, "C","L","E","A","R"
         .byte 0

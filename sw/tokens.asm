@@ -8,7 +8,7 @@
 
 K_PRINT    = $80
 K_SUB      = $81
-K_FUNCTION = $82
+K_FLT      = $82
 K_DIM      = $83
 K_RUN      = $84
 K_FOR      = $85
@@ -77,6 +77,7 @@ K_COMPACT  = $C3
 K_DRIVE    = $C4
 K_REM      = $C5
 K_FLT      = $C6
+K_CLEAR    = $C7
 
-NTOK    = 71                    ; keywords, $80-$C6
+NTOK    = 72                    ; keywords, $80-$C7
 T_LIT   = K_NUM                 ; the stored-number marker, as tokenise writes it

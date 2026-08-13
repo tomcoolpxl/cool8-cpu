@@ -13,7 +13,7 @@ F_LINE  = $02                   ; line numbers follow: GOTO, THEN, LIST
 TOKFLG:
         .byte 0                ; $80 PRINT
         .byte 0                ; $81 SUB
-        .byte 0                ; $82 FUNCTION
+        .byte 0                ; $82 !
         .byte 0                ; $83 DIM
         .byte 0                ; $84 RUN
         .byte 0                ; $85 FOR
@@ -82,3 +82,4 @@ TOKFLG:
         .byte 0                ; $C4 DRIVE
         .byte F_VERB           ; $C5 REM
         .byte 0                ; $C6 !
+        .byte 0                ; $C7 CLEAR

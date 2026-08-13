@@ -519,8 +519,8 @@ sttab:
                                 ;: PRINT [item][; | ,]...  strings and numbers; a trailing separator holds the newline
         .word h_sub             ; $81 SUB -- a definition, skipped
                                 ;: SUB name  a definition; stepped over when execution reaches it
-        .word h_sub             ; $82 FUNCTION
-                                ;: FUNCTION name  parsed as SUB; there are no return values
+        .word bad               ; $82 -- reserved, was FUNCTION
+                                ;: ! -- reserved  was FUNCTION, which only ever parsed as SUB
         .word h_dim             ; $83 DIM
                                 ;: DIM name(size:int[,size:int[,size:int]])  up to three dimensions; the name's suffix picks the element -- none integer, # float, $ string !intonly
         .word h_run             ; $84 RUN, up from the tail when
@@ -647,5 +647,7 @@ sttab:
         ; ?SYNTAX is the right answer.
         .word bad               ; $C6 !
                                 ;: ! -- reserved  the float literal marker, never a statement
+        .word h_clear           ; $C7 CLEAR
+                                ;: CLEAR  every variable away, the program kept
 
 

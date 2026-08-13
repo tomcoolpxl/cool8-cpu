@@ -141,15 +141,7 @@ MAXEXPR = 24
 irun:
         CLR  R0
         ST   [ERR],R0
-        LDW  X,#VARS            ; every variable starts at zero
-        MOV  R1,#52
-.iz:    CLR  R0
-        ST   [X],R0
-        INCW X
-        SUB  R1,#1
-        BNE  .iz
-        CALL vclear             ; and the heap and the name table with
-                                ;   them -- a RUN starts from nothing
+        CALL vwipe              ; every variable to zero, and the heap
         CLR  R0
         ST   [FDEPTH],R0        ; and no FOR loop is running
         ST   [DDEPTH],R0        ; nor a DO, which a second RUN must not
@@ -346,6 +338,23 @@ h_free: CALL prg_free           ; the count, then the word for it
         CALL con_puts
         CALL con_nl
         JMP  cnext
+
+; vwipe -- A-Z to zero, then the heap and the name table.
+;
+; RUN's variable clear, split out because CLEAR is exactly that and
+; nothing else: the program, and where it is, are untouched.
+vwipe:  LDW  X,#VARS
+        MOV  R1,#52
+.z:     CLR  R0
+        ST   [X],R0
+        INCW X
+        SUB  R1,#1
+        BNE  .z
+        JMP  vclear
+
+h_clear:
+        CALL vwipe
+        JMP  stmt
 
 h_cls:  CALL con_cls
         JMP  cnext
@@ -3668,6 +3677,18 @@ e_call: MOV  R0,#E_CALL
         RET
 
 ; subname -- the name in NBUF becomes the SUB of that name.
+; subname -- NBUF gets the sigil that makes it a SUB's name.
+;
+; **'!' and not '#'.** `#` is the float suffix, so `SUB FOO` and the
+; float variable `FOO#` keyed the same name-table entry: whichever was
+; written last won, and `CALL FOO` jumped into the float's bit pattern
+; and did nothing at all -- no error, no output. Measured: a SUB alone
+; prints, a SUB beside an unrelated `BAR#` prints, a SUB beside `FOO#`
+; is silent.
+;
+; `!` carries no bit 7 in `ctab`, so no identifier can ever end with it
+; -- the same property `(` has, which is what makes arrays a separate
+; namespace. Three sigils, three namespaces: none, `(`, `!`.
 subname:
         LD   R0,[NLEN]
         CMP  R0,#NSIG
@@ -3675,7 +3696,7 @@ subname:
         PUSH R0
         LDW  X,#NBUF
         ADDW X,R0
-        MOV  R0,#$23            ; '#'
+        MOV  R0,#$21            ; '!'
         ST   [X],R0
         POP  R0
 .bump:  ADD  R0,#1

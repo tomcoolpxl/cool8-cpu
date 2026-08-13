@@ -10,7 +10,6 @@ Names come from `TOKTAB` and `btab`, the bytes the matcher compares against. Ret
 |---|---|---|
 | `$80` | `PRINT [item][; \| ,]...` | strings and numbers; a trailing separator holds the newline |
 | `$81` | `SUB name` | a definition; stepped over when execution reaches it |
-| `$82` | `FUNCTION name` | parsed as SUB; there are no return values |
 | `$83` | `DIM name(size:int[,size:int[,size:int]])` | up to three dimensions; the name's suffix picks the element -- none integer, # float, $ string `!intonly` |
 | `$84` | `RUN` |  |
 | `$85` | `FOR var = from:int TO to:int [STEP step:int]` | eight deep `!intonly` |
@@ -53,6 +52,7 @@ Names come from `TOKTAB` and `btab`, the bytes the matcher compares against. Ret
 | `$C3` | `COMPACT` |  |
 | `$C4` | `DRIVE n:int` |  |
 | `$C5` | `REM text` | stored verbatim; nothing inside is tokenised |
+| `$C7` | `CLEAR` | every variable away, the program kept |
 
 ## Tokenised, but not statements
 
@@ -60,6 +60,7 @@ These hold a token but `sttab` sends them to `bad`, so meeting one where a state
 
 | token | | |
 |---|---|---|
+| `$82` | `! -- reserved` | was FUNCTION, which only ever parsed as SUB |
 | `$87` | `TO` | |
 | `$8A` | `WHILE` | |
 | `$8B` | `UNTIL` | |

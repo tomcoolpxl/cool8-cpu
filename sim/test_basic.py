@@ -729,6 +729,49 @@ def compact(code, syms):
               "%-11s clears the variables" % after,
               " | ".join(scr)[:80])
 
+    # ---- CLEAR, and the two namespaces SUB used to collide with.
+    M.cmd("NEW")
+    M.cmd("CLS")
+    M.cmd("10 PRINT 42")
+    M.cmd('A$="HI"')
+    M.cmd("B=7")
+    M.cmd("CLEAR")
+    M.cmd("PRINT B")
+    M.cmd("LIST")
+    scr = [r.strip() for r in M.screen()]
+    check("0" in scr and "10 PRINT 42" in scr,
+          "CLEAR drops the variables and keeps the program",
+          " | ".join(r for r in scr if r)[-60:])
+
+    # `subname` appended '#', which is the float suffix, so `SUB F` and
+    # the float `F#` were one name-table entry: CALL jumped into the
+    # float's bit pattern and did nothing, silently. '!' cannot end an
+    # identifier, the same property that makes '(' work for arrays.
+    for extra, why in ((None, "a SUB on its own"),
+                       ("5 F#=1.5", "a SUB beside the float F#"),
+                       ("5 DIM F(3)", "a SUB beside the array F()")):
+        M.cmd("NEW")
+        M.cmd("CLS")
+        if extra:
+            M.cmd(extra)
+        for l in ("10 CALL F", "20 END", "30 SUB F", "40 PRINT 999",
+                  "50 END SUB"):
+            M.cmd(l)
+        M.cmd("RUN")
+        check(any(r.strip() == "999" for r in M.screen()), why,
+              " | ".join(r.strip() for r in M.screen() if r.strip())[-50:])
+
+    # FUNCTION only ever parsed as SUB and could not return a value.
+    # Retired the way $A4 and $C6 are, so the token number stays held
+    # and the word becomes an ordinary name again.
+    M.cmd("NEW")
+    M.cmd("CLS")
+    M.cmd("FUNCTION=5")
+    M.cmd("PRINT FUNCTION")
+    check(any(r.strip() == "5" for r in M.screen()),
+          "FUNCTION is retired, and is an ordinary variable name now",
+          " | ".join(r.strip() for r in M.screen() if r.strip())[-40:])
+
     # ---- a SUB returns when execution reaches END SUB.
     #
     # It used to end the whole program: a SUB returned only through
