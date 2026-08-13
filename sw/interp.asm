@@ -510,15 +510,13 @@ stmt:
         ; from. The answer had already been printed, so the machine
         ; looked like it was working and complaining anyway.
         ;
-        ; The whole address is compared, not the page. The page was a
-        ; safe shorthand only because nothing else lives on DIRBUF's,
-        ; and that is a fact about where the buffer happens to sit --
-        ; exactly the kind this repository keeps paying for. `nextline`
-        ; makes the same test and makes it correctly, on the record it
-        ; is about to leave; this is the inlined fast path beside it.
-        LD   R0,[LREC]
-        CMP  R0,#<DIRBUF
-        BNE  .adv
+        ; Still the page and not the whole address: `nextline` beside
+        ; this makes the identical test, program records cannot reach
+        ; $B5xx, and comparing both bytes was built and measured at
+        ; **seven bytes more** for a robustness against DIRBUF moving to
+        ; a shared page -- which `tools/memmap.py --check` would refuse
+        ; anyway. Three bytes buys the fix; ten buys the fix and a
+        ; second opinion.
         LD   R0,[LREC+1]
         CMP  R0,#>DIRBUF
         BEQ  .stop              ; the staged direct line has no next
@@ -526,7 +524,7 @@ stmt:
         ; Y is sitting on the terminator, so the next record begins at
         ; Y+1. There is no address to compute: nextline was 18 % of the
         ; run doing arithmetic the position already answered.
-.adv:   INCW Y
+        INCW Y
         MOV  R0,YL
         ST   [LREC],R0
         MOV  R1,YH
@@ -1800,15 +1798,16 @@ prim:
         ; a name -- varidx leaves X on its value, unless a '(' says
         ; the name was an array's and X has to be worked out instead
         ;
-        ; **A statement keyword reaching here is a known bug and this is
-        ; not where to fix it.** `PRINT FREE`, `PRINT CLS` and
-        ; `PRINT LIST` all answer 7749 and then `?SYNTAX`: the token
-        ; falls into `varidx`, which reads it as a variable name and
-        ; returns whatever is in the slot that index lands on. Rejecting
-        ; `R2 >= $80` here was tried and is wrong -- it fires at the end
-        ; of every statement, so `A=5:PRINT A+1` errors too. Whatever
-        ; the fix is, it belongs where the statement's extent is known,
-        ; not in the primary parser. See 13-basic.md section 11.
+        ; **A keyword reaching here is not worth a test.** `PRINT FREE`
+        ; falls through to `varidx`, reads the token as a variable name
+        ; and answers whatever is in the slot it lands on, then
+        ; `?SYNTAX`. FREE, CLS and LIST are statements and stand alone,
+        ; so the line is meaningless and the error is right; only the
+        ; number in front of it is noise. Rejecting `R2 >= $80` here was
+        ; built and measured at **10 bytes**, and it does not even
+        ; suppress the number -- PRINT emits before anything looks at
+        ; ERR. Ten bytes to change which wrong number precedes a correct
+        ; error is not a trade this machine can make.
         CALL varidx
         CMP  R0,#52
         BCC  .notstr            ; resident A-Z: neither of the below

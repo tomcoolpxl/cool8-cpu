@@ -1104,18 +1104,26 @@ written and the error is right. It was mistaken for a fourth fault while
 this was being chased, which is what reading the reference first would
 have prevented.)
 
-**A statement keyword in an expression answers 7749.** `PRINT FREE`,
-`PRINT CLS`, `PRINT NEW` and `PRINT LIST` all print `7749` and then
-`?SYNTAX`: `prim` handles the tokens that can begin an expression and
-lets everything else fall into `varidx`, which reads the token as a
-variable name and returns whatever is in the slot that index lands on. A
-wrong number printed is worse than an error, and it is the same number
-whatever the keyword, which is what gave it away.
+**A statement keyword in an expression answers a junk number, and that
+is where it stays.** `PRINT FREE`, `PRINT CLS`, `PRINT NEW` and
+`PRINT LIST` each print a number and then `?SYNTAX`. FREE, CLS, NEW and
+LIST are **statements** — they stand alone, `FREE` is the whole command
+— so the line is meaningless and the error is correct. `prim` handles
+the tokens that can begin an expression and lets everything else fall
+into `varidx`, which reads the token as a variable name and returns
+whatever is in the slot that index lands on.
 
-**Rejecting `R2 >= $80` in `prim` is not the fix** — it was tried,
-measured and reverted. It fires at the end of every statement, so
-`A=5:PRINT A+1` fails too and the machine will not boot. Whatever the
-fix is, it belongs where the statement's extent is known rather than in
-the primary parser. It is *not* the record-walking fault above: that one
-is fixed and this survives it unchanged, so they were two bugs wearing
-one symptom.
+**Rejecting `R2 >= $80` in `prim` was built, measured and thrown away:
+10 bytes**, and it does not even remove the number — `PRINT` emits
+before anything looks at `ERR`, so the guard changed 7749 to −7167 and
+nothing else. Suppressing the number properly means `PRINT` testing
+`ERR` after every item, which is a test on the hot path of the most-used
+statement in the language, to improve the presentation of a line that is
+already being rejected. **The error alone is good enough**, and §12's
+ceiling is why. Recorded so the next reader does not rediscover the
+guard and keep it.
+
+(An earlier note here claimed the guard also broke every statement and
+stopped the machine booting. It did not: that was the record-walking
+fault above plus a stale `sw/org.asm`, and the guard was blamed for
+both. It works — it is simply not worth its bytes.)
