@@ -149,12 +149,18 @@ def build_disk():
     command; running is a different command.
     """
     import cool8disk as disk
+    import memmap
     import mkboot
     import test_basic as B
 
     os.makedirs(BUILD, exist_ok=True)
     code, _ = B.build()
-    boot = mkboot.build(code, dest=0xA000, build_dir=SIMBUILD)
+    # **memmap.ORG, not $A000.** The origin is derived from the image's
+    # size ([D69]), so a written-down destination tells the stub to
+    # relocate somewhere the image was not linked for -- and this is the
+    # image `poe emu` boots, so the suites all passed while the
+    # emulator ran garbage.
+    boot = mkboot.build(code, dest=memmap.ORG, build_dir=SIMBUILD)
     bootpath = os.path.join(BUILD, "BOOT.BIN")
     with open(bootpath, "wb") as fh:
         fh.write(boot)

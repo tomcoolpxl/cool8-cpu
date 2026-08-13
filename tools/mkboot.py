@@ -343,8 +343,17 @@ def _font16():
     return "\n".join(lines)
 
 
-def build(payload, dest=0xA000, org=0x0200, build_dir=None):
-    """The stub for `payload`, assembled, with the payload after it."""
+def build(payload, dest=None, org=0x0200, build_dir=None):
+    """The stub for `payload`, assembled, with the payload after it.
+
+    `dest` defaults to `memmap.ORG`, which is derived from the image's
+    size ([D69]). **It used to default to $A000**, and tools/flash.py
+    passed that explicitly -- so `poe disk` built the image `poe emu`
+    boots with the stub relocating to an address the image was not
+    linked for. Every suite passed, because sim/build_basic.py had
+    already been changed to pass ORG, and only the emulator ran garbage.
+    """
+    dest = memmap.ORG if dest is None else dest
     build_dir = build_dir or os.path.join(ROOT, "sim", "build")
     os.makedirs(build_dir, exist_ok=True)
 
@@ -376,9 +385,22 @@ def build(payload, dest=0xA000, org=0x0200, build_dir=None):
         stub = fh.read()
 
     end = dest + len(payload)
+    # **The image is top-aligned, so it must end at the I/O page.** Any
+    # other `dest` means the stub is relocating to an address the image
+    # was not linked for -- which is not a crash, it is a machine that
+    # boots and then executes the middle of a routine. tools/flash.py
+    # passed a written-down $A000 for exactly one build after [D69] made
+    # the origin derived, and every suite passed while `poe emu` ran
+    # garbage, because only that one path was not covered.
+    if end != memmap.TOP:
+        raise SystemExit(
+            "the stub would relocate to $%04X, and a %d-byte image linked "
+            "there ends at $%04X rather than $%04X. The origin is derived "
+            "(memmap.ORG = $%04X) -- pass that, or nothing."
+            % (dest, len(payload), end - 1, memmap.TOP - 1, memmap.ORG))
     if org + len(stub) + len(payload) > dest:
         raise SystemExit("the payload would land on its own destination")
-    if dest == 0xA000 and end > memmap.TOP:
+    if end > memmap.TOP:
         # The relocation would write into the I/O page — poking random
         # registers on the way — and the lost tail is the high code:
         # the blitter, the filesystem, the ISR. That failure presents
@@ -395,7 +417,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("image", help="the linked system image, e.g. basic.bin")
     ap.add_argument("-o", "--output", required=True)
-    ap.add_argument("--dest", type=lambda s: int(s, 0), default=0xA000,
+    ap.add_argument("--dest", type=lambda s: int(s, 0), default=memmap.ORG,
                     help="where the image was linked (default $A000)")
     args = ap.parse_args()
 
