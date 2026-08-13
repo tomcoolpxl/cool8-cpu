@@ -278,16 +278,26 @@ def main():
     # they did not: prg_free subtracted USERTOP, which is the last byte
     # a program may use rather than the first byte it may not, so FREE
     # answered one less than the screen it was printed under.
+    # **Parsed signed, and this check is why.** It read the number with
+    # `.isdigit()`, which is False for "-25088" -- so when [D70] pushed
+    # the free count past 32767 and `num_put` printed it signed, the
+    # machine said `-25088 BYTES FREE` under a banner reading `40448`
+    # and this check dropped the bad row on the floor before comparing.
+    # Both assertions passed. A filter that discards exactly the shape
+    # of the failure is not a filter, it is a blind spot.
     settle(m, syms)
     key(m, syms, "FREE\r")
     said = [r.strip() for r in m.text() if "BYTES FREE" in r]
-    nums = {int(r.split()[0]) for r in said if r.split()[0].isdigit()}
+    nums = set()
+    for r in said:
+        w = r.split()[0]
+        nums.add(int(w) if w.lstrip("-").isdigit() else w)
     check(len(said) >= 2 and len(nums) == 1,
           "FREE answers the same number the boot banner printed",
           "rows %s" % said)
     check(nums == {mkboot.FREE},
           "...and that number is the one the claims say",
-          "machine %s, tools/mkboot.py %d" % (sorted(nums), mkboot.FREE))
+          "machine %s, tools/mkboot.py %d" % (sorted(nums, key=str), mkboot.FREE))
 
     print()
     modes(syms)

@@ -301,8 +301,9 @@ and the emulator's self-test — the ones that verify a generated table
 still matches what generated it.
 
 `build` produces the boot ROM and the system image and **prints the
-sizes**, because the system has to stay inside `$A000-$FDFF` and nothing
-else warns you as it fills.
+sizes**, because the image grows down from `$FEFF` into a finite gap
+above system storage and nothing else warns you as it fills. `check`
+fails the build when that gap is gone and warns from 256 bytes out.
 
 ## Adding a command
 

@@ -68,7 +68,7 @@ num_div10:
 ; ---------------------------------------------------------------------
 num_put:
         TST  R1
-        BPL  .pos
+        BPL  num_putu
         PUSH R1
         PUSH R0
         MOV  R0,#$2D            ; '-'
@@ -81,7 +81,21 @@ num_put:
         CLR  R1
         SUB  R0,R2
         SBC  R1,R3
-.pos:   CLR  R2
+        ; and fall through
+
+; num_putu -- R0:R1 as decimal, **unsigned**, to the console.
+;
+; The same digits without the sign test, for the counts that are sizes
+; rather than values and can legitimately pass 32767.
+;
+; **FREE is why this exists.** It answers `SYSBOT - PROGEND`, which was
+; 31,350 at most while the user area was two pools; [D70] made it one
+; region of 40,448 and the first thing a booted machine said was
+; `-25088 BYTES FREE`. The count was right the whole time -- 40,448 and
+; -25,088 are the same sixteen bits -- and only the printing was wrong,
+; which is the failure that looks most like a memory bug and is not.
+num_putu:
+        CLR  R2
         PUSH R2                 ; the floor
 .dv:    CALL num_div10          ; quotient stays in R0:R1 for the next
         ADD  R2,#$30            ;   round, remainder is this digit

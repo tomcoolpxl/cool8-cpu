@@ -145,8 +145,8 @@ palette, not VRAM contents, not the sprites.
 
 | n | Kind | Pixels | Colours | Coordinates | Surface | Where |
 |---|---|---|---|---|---|---|
-| 0 | text | 80×30 cells, 8×16 glyphs | 16 fg + 16 bg per cell | col 0-79, row 0-29 | 8 KB | main RAM `$8000` |
-| 1 | text | 40×30 cells, wide glyphs | same | col 0-39 | 8 KB | main RAM `$8000` |
+| 0 | text | 80×30 cells, 8×16 glyphs | 16 fg + 16 bg per cell | col 0-79, row 0-29 | 5 KB | main RAM `$A000` |
+| 1 | text | 40×30 cells, wide glyphs | same | col 0-39 | 5 KB | main RAM `$A000` |
 | 2 | tiles | 40×30 tiles of 8×8 (320×240) | 16 per tile, from a bank | tile 0-39, 0-29 | 4 KB map + patterns | VRAM `$0000` |
 | 3 | bitmap | 640×480 | 2 (palette 0 and 1) | x 0-639, y 0-479 | 38,400 B, stride 80 | VRAM `$0000` |
 | 4 | bitmap | 320×240, doubled to full screen | 16 (palette 0-15) | x 0-319, y 0-239 | 38,400 B, stride 160 | VRAM `$0000` |
@@ -683,7 +683,7 @@ IF X < 0 THEN T = 0 - INT(0 - X) ELSE T = INT(X)
 ## 9b. The editor: every mode, the C64's law
 
 The editor works in **all seven modes** — 80 columns in modes 0 and
-3, 40 in 1, 2 and 4, 32 in 5 and 6. The cell map at `$8000` is the
+3, 40 in 1, 2 and 4, 32 in 5 and 6. The cell map at `$A000` is the
 truth in every one; what changes is the mirror (nothing in text
 modes, one map write per cell in tiles, a glyph blit in bitmaps), so
 `PRINT` output is visible wherever the machine happens to be.
@@ -902,44 +902,51 @@ numbers open, and renumbering is what `tools/vocab.py` generates.)
 
 ### What that means for the layout
 
-The repack that would give one contiguous ~39,900-byte user area needs
-the text map at `$A000`, which puts the image in `$C000-$FEFF` — **16,128
-bytes**. It is 17,217. **The gap is 1,089 bytes and the tidy-up above
-recovers 168 of them.** So the contiguous layout is not reachable by
-removing waste; it needs a feature cut (the transcendentals alone would
-do it) or the map-origin register that would let the map be 5,120 bytes
-and unaligned.
-
-Neither is needed for the space itself. After [D67]'s repack the machine
-hands out **31,350 + 6,581 = 37,931 bytes**, and
+**Nothing any more, and that is the point.** This section used to argue
+that the contiguous user area was out of reach without a feature cut,
+because it assumed the map had to be 8,192 bytes aligned to its own
+size. The map-origin register ([D69]) removed that assumption for 26
+logic cells, the map became 5,120 bytes at any address, and
+[D70](01-decisions.md#d70--the-user-area-is-one-region-of-40448-bytes)
+did the repack:
 
 ```
-65,536 - 512 (page 0, stack) - 1,418 (system) - 8,192 (screen)
-       - 17,217 (image) - 256 (I/O, vectors)  =  37,931
+65,536 - 512 (page 0, stack) - 5,120 (map) - 906 (system storage,
+         CALL stack, string accumulator) - 1,039 (slack) - 17,255
+         (image) - 256 (I/O, vectors)  =  40,448 in one region
 ```
 
-which is all of it. The question the layout answers is not *how much*
-but *in how many pools*: today a program is capped at 31,350 of text
-even with the 6,581-byte heap region idle, and arrays are capped at
-6,581 with 31,350 next door. Splitting the image into two segments --
-`fscmd.asm` is the cold, self-contained 2,081 bytes to move -- would
-make it one pool of about 37,500, at **zero runtime cost**, since every
-call is absolute. It trades ~430 bytes of total for the freedom to spend
-what is left in any proportion.
+So the size of BASIC is no longer a question about the user's memory.
+The image grows downward into the 1,039 bytes of slack, and until that
+runs out **`FREE` does not move at all** — where under the old layout
+every byte added to BASIC came straight out of the heap. When the slack
+is gone `poe check` fails the build; it warns from 256 bytes out.
+
+That makes the tidy-up above worth doing on its own merits — 168 bytes
+of genuine waste is 168 bytes — rather than as the down payment on a
+layout. The candidates in the table below are now about **what the
+machine should be able to do**, not about where anything lives.
 
 
 `python sim/build_basic.py` is the measurement, and it prints the free
 count rather than leaving it to arithmetic:
 
 ```
-  basic.bin   17,314 bytes  $A000-$E3A1
-  BOOT.BIN    20,076 bytes  (2762 of relocating stub)
-  free         7,006 bytes  to $FEFF
+  basic.bin   17,255 bytes  $BB99-$FEFF
+  BOOT.BIN    20,034 bytes  (2779 of relocating stub)
+  room         1,039 bytes  to grow down into, before system storage at $B789
+  the user's  40,448 bytes  $0200-$9FFF, one region
 ```
 
-That is after [D68]. It read 23,528 bytes with a compiled editor in it
-and 792 bytes free; the editor is assembly now, which is **6,214 bytes
-saved** and nearly nine times the headroom.
+That is after [D68] and [D70]. It read 23,528 bytes with a compiled
+editor in it; the editor is assembly now, which is **6,273 bytes saved**.
+
+**`room` is the number that can run out, not `free`.** The image is
+top-aligned and its origin derived, so it always ends at `$FEFF` and
+grows *downward* — "free to `$FEFF`" is structurally zero and was
+dropped. What is finite is the gap below the image, and `poe check`
+fails the build on the same quantity rather than letting BASIC quietly
+walk into system storage.
 
 `--by-file` breaks that down per source file, attributing each gap
 between consecutive labels to whichever file opened it, so interleaving
@@ -1042,3 +1049,62 @@ It reached 12 bytes free before the mul-level evaluator was unified
 (section 8), which gave 70 back. That is the largest single reclaim
 since the assembler went, and it came from deleting a duplicate rather
 than a feature.
+
+---
+
+## 11. Known wrong, reproduced, not yet fixed
+
+Faults found by typing at the machine while checking `FREE`. The first
+is fixed; the rest are recorded here because they are real, reproducible
+at HEAD through three separate input paths, and independent of the
+layout work.
+
+**`FREE` printed a negative number — fixed.** `prg_free` answers
+`SYSBOT - PROGEND`, which was at most 31,350 while the user area was two
+pools. [D70] made it one region of 40,448, and `num_put` is signed, so a
+freshly booted machine said `-25088 BYTES FREE` under a banner reading
+`40448`. The count was right the whole time — 40,448 and −25,088 are the
+same sixteen bits. `num_putu` is the unsigned entry into the same digits
+and `h_free` calls it.
+
+The check for this existed and passed. `sim/test_boot_basic.py` compared
+the banner against `FREE` and parsed the number with `.isdigit()`, which
+is `False` for `"-25088"` — so the bad row was dropped before the
+comparison and both assertions held. A filter that discards exactly the
+shape of the failure is a blind spot, not a filter.
+
+**A direct-mode statement prints its answer and then `?SYNTAX`.**
+
+```
+PRINT 6*7
+42
+?SYNTAX
+```
+
+Reproduced through `sim/test_basic.py`'s own `Machine.cmd`, through the
+PS/2 port, and through the serial console — three input paths, same
+result — and with every change in this branch reverted, so it predates
+them. A stored program does not do it: `10 PRINT 6*7` then `RUN` prints
+`42` and nothing else. Direct mode only.
+
+(`A=5:PRINT A+1` answering `?SYNTAX` is **not** part of this. There is
+no `:` separator in this language — section 1 — so that line is wrong as
+written and the error is right. It was mistaken for a fourth fault while
+this was being chased, which is what reading the reference first would
+have prevented.)
+
+**A statement keyword in an expression answers 7749.** `PRINT FREE`,
+`PRINT CLS`, `PRINT NEW` and `PRINT LIST` all print `7749` and then
+`?SYNTAX`: `prim` handles the tokens that can begin an expression and
+lets everything else fall into `varidx`, which reads the token as a
+variable name and returns whatever is in the slot that index lands on. A
+wrong number printed is worse than an error, and it is the same number
+whatever the keyword, which is what gave it away.
+
+**Rejecting `R2 >= $80` in `prim` is not the fix** — it was tried,
+measured and reverted. It fires at the end of every statement, so
+`A=5:PRINT A+1` fails too and the machine will not boot. Whatever the
+fix is, it belongs where the statement's extent is known rather than in
+the primary parser — and the spurious `?SYNTAX` above looks likely to
+share a cause with it, since both are the parser continuing past the end
+of a direct-mode statement.

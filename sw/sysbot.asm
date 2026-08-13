@@ -14,6 +14,17 @@
 ;
 ; Lowest system claim: MAINK at $B400, in main.asm.
 ; System storage spans $B400-$B669, 618 bytes claimed.
+;
+; The map's address and pitch are here for the same reason, and
+; because they have to reach the boot ROM as well as BASIC. They
+; did not, once: [D70] moved the map from $8000 to $A000 and
+; sw/boot.asm and sw/monitor.asm kept their own $8000, so the
+; ROM banner and the whole monitor drew into user RAM while the
+; display read somewhere else. Every suite passed -- the monitor's
+; gate reads the serial line, and the cosim compares two models
+; that were both looking at the right address and seeing nothing.
 ; ---------------------------------------------------------------------
 SYSBOT  = $A000                 ; the first byte not a program's
 USERTOP = $9FFF                 ; the last byte a program may use
+SCREEN  = $A000                 ; the text map, 5120 bytes
+CSTRIDE = 160                   ; bytes per map row: 80 cells of char+attr

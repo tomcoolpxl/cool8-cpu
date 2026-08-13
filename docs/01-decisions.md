@@ -859,6 +859,17 @@ crossings.
 
 ## D30 — The text map stride is a register, and the canonical map is 128×32
 
+> **The register is kept; the 128×32 map is superseded by
+> [D70](#d70--the-user-area-is-one-region-of-40448-bytes).** The map is
+> 80×32 at a stride of 160 — 5,120 bytes — because
+> [D69](#d69--the-map-is-derived-end-to-end) gave the fetch engine an
+> explicit map origin, which lifted the power-of-two stride and the 8 KB
+> alignment together. The reasoning below is still why `VID_STRIDE` is a
+> register; what it got wrong is treating "a power-of-two stride" and
+> "one add per row" as the same requirement. They are not: 160 = 5·32,
+> so `r·160` is three adds and a shift, all eight-bit, and X is never
+> spilled. See `con_row` in `sw/console.asm`.
+
 **Decided at M5.**
 
 A source conversation proposed a 64-column text mode on the grounds that
@@ -884,6 +895,13 @@ text layout is a **128×32-cell map, 8192 bytes, with 80×30 displayed**.
 | Row address | `MUL`, 12 cycles, clobbers X | `XH = base_page + r`, one add |
 | Circular scroll wrap | compare and subtract | `AND R0,#31` |
 | Spare rows off-screen | none | 2 |
+
+**The first row of that table is where this went wrong**, and [D70] is
+the correction: a 160-byte stride needs a `MUL` only if you ask for the
+product directly. Factored as 5·32 it is three adds and a shift, the
+partial product fits in a byte for all 32 rows, and X is untouched. The
+row count is a free choice — 32 rows at stride 160 keeps the two spare
+rows *and* costs 5,120 rather than 8,192.
 
 Rounding a map up to a power of two in both dimensions is what tilemap
 hardware has always done, and for this reason; the spare rows and
@@ -2310,9 +2328,90 @@ implementation nobody is checking, which is how `test_lib` came to
 measure two programs against a third, private model of the I/O page
 and report 1.00x for a year.
 
-## D69 — The map is derived end to end, and 41,499 bytes is the ceiling
+## D70 — The user area is one region of 40,448 bytes
 
-**Decided, and the layout work is finished.**
+**Done.** [D69] deferred this on the grounds that the case for it was "a
+program that does not exist yet". The case is not a program, it is the
+cap: under two pools a program was limited to 31,350 bytes of text with
+10,149 of heap sitting idle beside it, and an array-heavy program hit
+10,149 with 31,350 idle. Neither number is reachable by the other, and
+nothing the user can do moves the boundary.
+
+**The move.** System storage went from *under* the user area to *above*
+it, packed against the text map, and the map moved with it:
+
+| | [D69] | now |
+|---|---|---|
+| page 0, CPU stack | `$0000-$01FF` | `$0000-$01FF` |
+| **the user's** | `$0200-$7C75` **and** `$9400-$BBA4` | **`$0200-$9FFF`, one region** |
+| the text map | `$8000-$93FF` | `$A000-$B3FF` |
+| system storage, CSTK, SACC | `$7C76-$7FFF` | `$B400-$B789` |
+| slack — the image's room to grow | none | `$B78A-$BB98` |
+| the image | `$BBA5-$FEFF` | `$BB99-$FEFF` |
+| I/O and vectors | `$FF00-$FFFF` | `$FF00-$FFFF` |
+
+```
+65,536
+  -   512   page 0 and the CPU stack
+  - 5,120   the text map
+  -   906   system storage 618, CALL stack 32, string accumulator 256
+  - 1,039   slack between system storage and the image
+  - 17,255  the image
+  -   256   the I/O page and the vectors
+  =========
+   40,448   the user's, in one region
+```
+
+**It costs 1,051 bytes and that is the whole price**: 1,039 of slack and
+12 the image grew. The regions otherwise trade places and the totals are
+conserved, exactly as [D69] predicted — it only estimated the cost low.
+
+**The slack is not waste, it is a shock absorber, and this is the part
+[D69] did not see.** The image is top-aligned and its origin is derived,
+so it grows *downward*. Under the old layout the heap's ceiling was the
+image's origin, so **every byte BASIC gained came straight out of the
+user's memory**, silently, on every build. Now it comes out of the slack
+first: BASIC can gain 1,039 bytes and `FREE` does not move by one. When
+the slack runs out `tools/memmap.py --check` fails the build rather than
+quietly eating user memory — and it warns at 256 bytes remaining:
+
+```
+only 173 bytes between system storage ($B789) and the image ($B836).
+That is the growth room BASIC has left; move the map down before
+adding to it.
+```
+
+**What made it possible** was [D69]'s map-origin register, which is why
+that entry is not superseded so much as spent: with the alignment and
+the power-of-two stride both lifted, the map is 5,120 bytes and can sit
+at any address, so it could be packed against system storage instead of
+sitting in the middle of RAM splitting the user's memory in two. A
+128×32 map could not have been moved anywhere useful — 8,192 bytes has
+only seven possible homes and every one of them is in the way.
+
+**Forty claims moved and none of them by hand.** The `;:` annotations
+are the claims and `tools/memmap.py` derives `SYSBOT`, `USERTOP` and the
+image's `ORG` from them, so the repack is a change of constants plus a
+regenerate. What it did surface was six numbers written down in a second
+place — the stub's screen clear, `mkboot`'s banner row, `prg_free`'s
+floor, `test_basic`'s row reader, the video testbench's preset, and
+`flash.py`'s relocation target. Every one of them was a place the map
+was recomputed rather than read, which is the failure `AGENTS.md` names
+and this repository keeps paying for. The last of them shipped: the
+suites passed for a full commit while `poe emu` executed the middle of
+`sw/console.asm`.
+
+---
+
+## D69 — The map is derived end to end
+
+> **The ceiling arithmetic below is superseded by
+> [D70](#d70--the-user-area-is-one-region-of-40448-bytes)**, which did
+> the repack this entry deferred. The derivation, the hardware change
+> and the two rejected alternatives all stand — D70 is what the
+> map-origin register was *for*.
+
+**Decided, and this half of the layout work is finished.**
 
 [D30] chose an 8,192-byte text map to display 80x30, and `$A000` was
 written down as the image's origin when BASIC was compiled and 23,528
@@ -2351,12 +2450,13 @@ Rejected on the way, with the measurement that rejected it:
   sixteen flip-flops and an adder maintaining them every cycle, against
   a subtractor yosys shares with the compare beside it.
 
-**What the machine now hands out, and why there is no more:**
+**What the machine hands out after this entry, and why there is no
+more:**
 
 ```
 65,536
   -   512   page 0 and the CPU stack
-  - 1,418   system storage, CALL stack, string accumulator
+  -   906   system storage 618, CALL stack 32, string accumulator 256
   - 5,120   the text map
   - 17,243  the image
   -   256   the I/O page and the vectors
@@ -2364,20 +2464,30 @@ Rejected on the way, with the measurement that rejected it:
    41,499   the user's
 ```
 
-Today that is **31,350 of program text and 10,149 of heap**, in two
-pools: the program grows up from `$0200`, arrays and strings grow down
-from under the image. The two-pool arrangement is what stops a `DIM`
-competing with program text, which it did until the heap got its own
-region.
+(That middle line read 1,418 when this entry was written, which made the
+block disagree with its own total by 512. The claims are 618 + 32 + 256;
+41,499 was right, and is `$0200-$7C75` plus `$9400-$BBA4` measured.)
+
+At this point that was **31,350 of program text and 10,149 of heap**, in
+two pools: the program grew up from `$0200`, arrays and strings grew
+down from under the image. The two-pool arrangement is what stopped a
+`DIM` competing with program text, which it did until the heap got its
+own region.
 
 **The remaining question is pools, not bytes, and it is not a memory
 question.** Packing system storage above the screen would give one
-contiguous ~40,975-byte region -- *less* in total, because the regions
-simply trade places, and the totals are conserved by arithmetic. So it
+contiguous region -- slightly *less* in total, because the regions
+simply trade places and the totals are conserved by arithmetic. So it
 buys flexibility for lopsided programs (35 KB of text, or 10 KB of
-arrays) and costs about 500 bytes and a relocation of forty claims.
+arrays) and costs a few hundred bytes and a relocation of forty claims.
 Deferred rather than rejected: nothing about it gets easier or harder
 later, and the case for it is a program that does not exist yet.
+
+**That case arrived immediately, and [D70] is the repack.** The estimate
+above is the one thing here that was wrong — the cost is not "a few
+hundred bytes", it is 1,051, and what it buys is not hypothetical
+flexibility but the removal of a cap a 32 KB program hits with 10 KB
+sitting idle next door.
 
 **What is genuinely still on the table** is the image, at 17,243 bytes
 of the 24,037 that are not the user's. It is flat -- 470 labels, the
@@ -2627,13 +2737,21 @@ both languages. **One region satisfies all four**, so there is one.
 |---|---|
 | `$0000-$00FF` | free. Formerly "page 0" |
 | `$0100-$01FF` | the CPU stack, growing down from `$0200` |
-| `$0200-SYSBOT-1` | the user area: program up, heap down |
-| `SYSBOT-$7FFF` | **system storage** — every claim, contiguous |
-| `$8000-$9FFF` | the screen |
-| `$A000-$FDFF` | the image: code and tables, **no `.res`** |
-| `$FE00-$FEFF` | the I/O page, generated from the RTL by `tools/ioregs.py` |
-| `$FF00-$FFF7` | free |
+| `$0200-$9FFF` | the user area: program up, heap down, **one region** |
+| `$A000-$B3FF` | the screen, at `SYSBOT` — the region's lowest claim |
+| `$B400-SACC+255` | **system storage** — every claim, contiguous |
+| … `ORG-1` | slack: the image's room to grow, checked, never silent |
+| `ORG-$FEFF` | the image: code and tables, **no `.res`**. `ORG` is derived |
+| `$FF00-$FFF7` | the I/O page, generated from the RTL by `tools/ioregs.py` |
 | `$FFF8-$FFFF` | the vectors |
+
+*(The screen inside the system region, and the image's origin derived
+rather than written down, are [D69] and
+[D70](#d70--the-user-area-is-one-region-of-40448-bytes); when this entry
+was written the screen sat at `$8000` splitting the user area, the image
+began at a constant `$A000`, and the I/O page was at `$FE00`. The four
+rules below are unchanged and are why the move cost a change of
+constants rather than an audit.)*
 
 Four rules carry it:
 

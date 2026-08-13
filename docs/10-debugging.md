@@ -38,11 +38,18 @@ business carrying.
 ## 0. Driving the machine
 
 ```python
-import cool8rsvm as vm
+import cool8rsvm as vm, memmap
+org = memmap.ORG                    # derived from the image's size, [D69]
 m = vm.Machine()
-m.bus.mem[0xA000:0xA000 + len(code)] = code
-m.cpu.pc, m.cpu.sp, m.romen = 0xA000, 0x0200, False
+m.bus.mem[org:org + len(code)] = code
+m.cpu.pc, m.cpu.sp, m.romen = org, 0x0200, False
 ```
+
+**Never write the origin down.** It is `$FF00 − size`, so it moves every
+time BASIC's size changes; `sim/harness.py`'s `load()` defaults to
+`memmap.ORG` for exactly this reason. A hardcoded `$A000` is what made
+`poe emu` boot into the middle of `sw/console.asm` while all nineteen
+suites passed ([D70]).
 
 | | |
 |---|---|
@@ -97,7 +104,7 @@ Typing at the editor, reading the screen back, and measuring where the
 time went — one machine, one run:
 
 ```python
-import test_basic as B
+import test_basic as B, memmap, dbg
 code, syms = B.build()
 M = B.Machine(code, syms); M.settle()
 
@@ -107,7 +114,7 @@ M.cmd("10 PRINT 6 * 7"); M.cmd("20 END"); M.cmd("RUN")
 M.settle(120_000_000)
 
 M.screen()[-1]                      # '42'
-p = dbg.Profile(syms, 0xA000, 0xFE00)
+p = dbg.Profile(syms, memmap.ORG, memmap.TOP)
 p.by.update(M.m.profile_cycles())   # cycles by PC, rolled up by label
 print(p.report(3))                  # s_serialkey 4,430,535  33.5%
 ```
@@ -125,7 +132,8 @@ CPU used rather than ones guessed backwards from a symptom.
 
 ```python
 m.breakpoints.add(syms["s_putn"])
-m.type("PRINT 0 - 7")
+m.type("PRINT 0 - 7
+")
 m.run(cycles=40_000_000)
 print(m.trace_report(m.trace(16, syms, into=False)))
 ```
@@ -230,7 +238,7 @@ and the real divergence drowns.
 ```python
 import dbg
 img = dbg.Image(driver_source, org=0x0200, name="mydrv")
-r = dbg.Run(img, src=0x8000, stored=program_bytes)
+r = dbg.Run(img, src=0xA000, stored=program_bytes)
 try:
     r.go()
 except dbg.Fault as f:
@@ -278,7 +286,7 @@ that never set it at all. Read the machine's own registers; if the
 program forgets, the test must fail.
 
 **A proxy for "can it be seen" is not "can it be seen".** The cell map
-at `$8000` holds the text in all seven modes, so reading it back is an
+at `$A000` holds the text in all seven modes, so reading it back is an
 easy and tempting check — and it says only that the console wrote the
 glyph. In the tile and bitmap modes the display never reads that map:
 `bglyph` expands the font into VRAM, lighting palette index 1 at 1 bpp

@@ -85,8 +85,30 @@ and hoping.
 either — [D6](01-decisions.md) dropped the zero page and the direct-page
 register both, so `$0040` costs exactly what `$7E40` costs. It is
 ordinary RAM, and [D67](01-decisions.md) is where it stopped being
-treated as scarce: system storage is one packed region below the screen
-now, and `tools/memmap.py --check` refuses a byte with two owners.
+treated as scarce: system storage is one packed region, and
+`tools/memmap.py --check` refuses a byte with two owners.
+
+**What the software puts where** is not decoded by anything — the
+hardware sees 64 KB of flat RAM and the table above is all of it — but
+it is the map that matters when reading `sw/`, so:
+
+| Range | Size | Contents |
+|---|---|---|
+| `$0000–$00FF` | 256 | free. Formerly "page 0", special to nothing now |
+| `$0100–$01FF` | 256 | the CPU stack, growing down from `$0200` |
+| `$0200–$9FFF` | **40,448** | **the user's**: BASIC program up, heap down |
+| `$A000–$B3FF` | 5,120 | the text map — 80×32 cells, stride 160 |
+| `$B400–$B789` | 906 | system storage, the CALL stack, the string accumulator |
+| `$B78A–$BB98` | 1,039 | slack: the image's room to grow |
+| `$BB99–$FEFF` | 17,255 | the system image — BASIC, editor, floats |
+
+Every boundary in it is derived rather than written down: the image's
+origin is `$FF00 − size`, system storage's floor is its lowest `;:`
+claim, and the user's ceiling is the map. `python tools/memmap.py`
+prints it from the built image, which is the copy to trust — the two
+floating rows move whenever BASIC's size changes, and the slack row is
+what absorbs that. See
+[D70](01-decisions.md#d70--the-user-area-is-one-region-of-40448-bytes).
 
 **Writes always go to RAM**, even where the ROM overlay is active. That
 is what lets the boot code install the interrupt vectors at
@@ -717,8 +739,8 @@ where the resolution is below 640×480.
 
 | # | Engine | Memory | Displayed | Format | Bytes | Stride |
 |---|---|---|---|---|---|---|
-| 0 | text | main | 80×30 cells, 8×16 glyphs | char + attr | 8192 | 256 |
-| 1 | text | main | 40×30 cells, 16×16 | char + attr | 8192 | 256 |
+| 0 | text | main | 80×30 cells, 8×16 glyphs | char + attr | 5120 | 160 |
+| 1 | text | main | 40×30 cells, 16×16 | char + attr | 5120 | 160 |
 | 2 | tile | VRAM | 40×30 tiles of 8×8 → 320×240 | 2 B/entry, 4 bpp patterns | 4096 + patterns | 128 |
 | 3 | bitmap | VRAM | 640×480, native | 1 bpp | 38,400 | 80 |
 | 4 | bitmap | VRAM | 320×240 → doubled to full screen | 4 bpp | 38,400 | 160 |
@@ -759,14 +781,30 @@ cell.
 | Text | 8×16, 1 bpp glyph | `bg[7:4] fg[3:0]`, indices into a 16-entry palette bank |
 | Tile | 8×8, 4 bpp | `[7:6]` V/H flip, `[5:4]` pattern bank, `[3:0]` palette bank |
 
-**The canonical text map is 128×32 cells with 80×30 displayed**, stride
-256. That makes the address of row *r* one add on `XH` and the circular
-scroll wrap an `AND R0,#31`, where a 160-byte stride needs a `MUL` that
-clobbers X — the exact spill pattern
-[D21](01-decisions.md#d21--four-general-registers-is-enough-confirmed-question-closed)
-measured. `VID_STRIDE` is a register, so software that would rather have
-the 4800-byte screen back writes 160 and pays the multiply. Reasoning in
-[D30](01-decisions.md#d30--the-text-map-stride-is-a-register-and-the-canonical-map-is-12832).
+**The canonical text map is 80×32 cells with 80×30 displayed**, stride
+160, 5,120 bytes, at `$A000`. The two spare rows off the bottom are what
+the circular scroll rotates through, so a scroll is one register write
+and moves no memory.
+
+Row addressing costs no `MUL` and no spill of X, which is what
+[D30](01-decisions.md#d30--the-text-map-stride-is-a-register-and-the-canonical-map-is-12832)
+originally bought with a 256-byte stride and 8,192 bytes: 160 is 5·32,
+so row *r* is at `(5r) << 5`, `5r` fits in a byte for all 32 rows, and
+the address's high byte is `5r >> 3` with low byte `(5r AND 7) << 5`.
+Three adds and six shifts, all eight-bit. `con_row` in `sw/console.asm`
+is the routine; `con_cell` caches its result in `CROWA`, so a run of
+characters on one row pays it once.
+
+**Neither the stride nor the base is constrained by the hardware.** The
+fetch engine has an explicit map-origin register
+([D69](01-decisions.md#d69--the-map-is-derived-end-to-end)), so the
+circular wrap is computed against the map's origin rather than against
+`VID_BASE`, which is what a scroll moves. Any stride, any address. The
+5,120-byte map is what let the screen be packed against system storage
+and the user's memory become one region
+([D70](01-decisions.md#d70--the-user-area-is-one-region-of-40448-bytes)).
+`con_row` still wants the base page-aligned — that is software's own
+constraint, worth one add.
 
 Mode 1 is the same 8×16 glyphs **doubled horizontally only**, giving
 16×16 cells and the same 30 rows. It uses the real character set; there

@@ -25,6 +25,7 @@ sys.path.insert(0, os.path.join(ROOT, "tools"))
 import mkboot                                              # noqa: E402
 import test_basic as B                                     # noqa: E402
 
+import memmap                                              # noqa: E402
 from memmap import ORG, TOP                                # noqa: E402
 
 
@@ -35,11 +36,21 @@ def main():
         fh.write(boot)
 
     end = ORG + len(code)
-    free = TOP - end
+    # **The image is top-aligned, so "free to $FEFF" is always zero.**
+    # It was the right number when the origin was the constant $A000 and
+    # the image grew up towards the I/O page; since [D69] derived the
+    # origin the image grows *down*, and the number that can run out is
+    # the gap below it -- BASIC's room to grow before it reaches system
+    # storage. `memmap --check` fails the build on the same quantity.
+    room = ORG - (memmap.SACC + 256)
     print(f"  basic.bin  {len(code):>7,} bytes  ${ORG:04X}-${end - 1:04X}")
     print(f"  BOOT.BIN   {len(boot):>7,} bytes  "
           f"({len(boot) - len(code)} of relocating stub)")
-    print(f"  free       {free:>7,} bytes  to ${TOP - 1:04X}")
+    print(f"  room       {room:>7,} bytes  to grow down into, before "
+          f"system storage at ${memmap.SACC + 255:04X}")
+    print(f"  the user's {memmap.usertop() - memmap.PROG + 1:>7,} bytes  "
+          f"${memmap.PROG:04X}-${memmap.usertop():04X}, one region")
+    free = TOP - end
     if "--by-file" in sys.argv:
         by_file(syms)
     if "--by-command" in sys.argv:

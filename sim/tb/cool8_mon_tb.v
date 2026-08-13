@@ -49,9 +49,15 @@ module cool8_mon_tb;
 
     // **Whether the origin ever moved, not where it happens to be now.**
     // `vtop` wraps at 32 rows, so a session that scrolls a multiple of
-    // 32 times leaves VID_BASE back at $8000 and a sampled check reads
-    // that as "never scrolled". One extra line in the monitor's help
-    // text was enough to land on it. A latch cannot be fooled that way.
+    // 32 times leaves VID_BASE back at the map's origin and a sampled
+    // check reads that as "never scrolled". One extra line in the
+    // monitor's help text was enough to land on it. A latch cannot be
+    // fooled that way.
+    //
+    // **Compared against the machine's own origin register, not a
+    // number written here.** This read `!= 16'h8000` until [D70] moved
+    // the map, and a testbench with the old address in it fails for a
+    // reason that has nothing to do with what it is testing.
     reg          base_moved;
     reg          verbose;
     reg [1023:0] vcdfile;
@@ -92,7 +98,8 @@ module cool8_mon_tb;
 
     always @(posedge clk) begin
         if (!rst_n) base_moved <= 1'b0;
-        else if (u_soc.u_vid.u_vregs.base_r != 16'h8000) base_moved <= 1'b1;
+        else if (u_soc.u_vid.u_vregs.base_r !=
+                 u_soc.u_vid.u_vregs.maporg_r) base_moved <= 1'b1;
     end
 
     always #5 clk = ~clk;
@@ -467,27 +474,39 @@ module cool8_mon_tb;
         //   engine wraps within `base & ~(stride*32 - 1)` and a base
         //   allowed to walk past $9FFF takes the window with it;
         //
-        //   the origin stays a whole number of rows, because the wrap is
-        //   a mask and a base off a row boundary shifts every row on the
-        //   screen by the remainder.
+        //   the origin stays a whole number of rows, because a base off
+        //   a row boundary shifts every row on the screen by the
+        //   remainder. At stride 256 that meant a zero low byte; at 160
+        //   it is a modulo, which is why this is arithmetic now.
         //
         // Neither is visible in the serial output, which is why this is a
         // peek rather than an `expect_str`. The monitor scrolled by
         // copying until M7 and this check is what stops it regressing to
-        // that quietly — a bulk copy leaves VID_BASE at $8000 and passes
-        // every other phase in this file.
+        // that quietly — a bulk copy leaves VID_BASE at the origin and
+        // passes every other phase in this file.
+        //
+        // All three conditions are relative to `maporg_r` and `stride_r`
+        // read out of the machine, so this phase says nothing about
+        // where the map is and does not have to be edited when it moves.
         checks = checks + 1;
         if (!base_moved) begin
             errors = errors + 1;
             $display("FAIL VID_BASE never moved — scroll is copying again");
-        end else if (u_soc.u_vid.u_vregs.base_r[7:0] != 8'h00) begin
+        end else if (((u_soc.u_vid.u_vregs.base_r -
+                       u_soc.u_vid.u_vregs.maporg_r) %
+                      u_soc.u_vid.u_vregs.stride_r) != 0) begin
             errors = errors + 1;
-            $display("FAIL VID_BASE $%04h is not on a row boundary",
-                     u_soc.u_vid.u_vregs.base_r);
-        end else if (u_soc.u_vid.u_vregs.base_r[15:13] != 3'b100) begin
+            $display("FAIL VID_BASE $%04h is not on a row boundary (origin $%04h, stride %0d)",
+                     u_soc.u_vid.u_vregs.base_r,
+                     u_soc.u_vid.u_vregs.maporg_r,
+                     u_soc.u_vid.u_vregs.stride_r);
+        end else if ((u_soc.u_vid.u_vregs.base_r -
+                      u_soc.u_vid.u_vregs.maporg_r) >=
+                     (u_soc.u_vid.u_vregs.stride_r * 32)) begin
             errors = errors + 1;
-            $display("FAIL VID_BASE $%04h has left the 32-row map",
-                     u_soc.u_vid.u_vregs.base_r);
+            $display("FAIL VID_BASE $%04h has left the 32-row map at $%04h",
+                     u_soc.u_vid.u_vregs.base_r,
+                     u_soc.u_vid.u_vregs.maporg_r);
         end else if (verbose)
             $display("\n  ok  VID_BASE $%04h — scrolled in hardware",
                      u_soc.u_vid.u_vregs.base_r);

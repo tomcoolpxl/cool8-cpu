@@ -97,6 +97,37 @@ def main():
     check(m.bus.mem[0x3000] == 0x00,
           "and nothing was run")
 
+    # **On the screen, not only on the wire**, and this is the check that
+    # was missing. [D70] moved the text map and sw/boot.asm and
+    # sw/monitor.asm kept their own $8000: the ROM banner and every line
+    # the monitor printed went into user RAM while the display read
+    # $A000. Nothing failed. The monitor's own gate talks over the serial
+    # line, the cosim compares two models that agreed the map was blank,
+    # and a board would have come up showing nothing at all.
+    #
+    # `m.row()` reads through the machine's own VID_BASE, so this cannot
+    # be satisfied by a harness that knows where to look.
+    screen = "\n".join(m.row(r) for r in range(30))
+    check("COOL8" in screen,
+          "the ROM banner is on the screen, not just in memory",
+          repr([m.row(r).strip() for r in range(3)]))
+    check("COOL8 monitor" in screen,
+          "and the monitor's prompt is on the screen too",
+          repr([m.row(r).strip() for r in range(3, 7)]))
+
+    # Anything the monitor says on the wire it also has to put on the
+    # screen -- the two outputs are one routine and they must not drift.
+    m.type("?\r")
+    for _ in range(60):
+        m.run_frame()
+    said = m.uart.take().decode("latin-1")
+    screen = "\n".join(m.row(r) for r in range(30))
+    wire_only = [ln.strip() for ln in said.splitlines()
+                 if ln.strip() and ln.strip() not in screen]
+    check(not wire_only,
+          "everything the monitor puts on the wire reaches the screen",
+          f"only on the wire: {wire_only[:3]}")
+
     # ---- 3. the RAM is still clear where the boot sequence promises
     clear = all(m.bus.mem[a] == 0 for a in range(0xEF60, 0xEF70))
     check(clear, "autoboot tidied its scratch away",

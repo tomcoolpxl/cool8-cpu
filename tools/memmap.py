@@ -373,9 +373,20 @@ def sysbot_asm(write=False):
         ";\n"
         f"; Lowest system claim: {low.name} at ${low.addr:04X}, in {low.src}.\n"
         f"; System storage spans ${floor:04X}-${top:04X}, {used} bytes claimed.\n"
+        ";\n"
+        "; The map's address and pitch are here for the same reason, and\n"
+        "; because they have to reach the boot ROM as well as BASIC. They\n"
+        "; did not, once: [D70] moved the map from $8000 to $A000 and\n"
+        "; sw/boot.asm and sw/monitor.asm kept their own $8000, so the\n"
+        "; ROM banner and the whole monitor drew into user RAM while the\n"
+        "; display read somewhere else. Every suite passed -- the monitor's\n"
+        "; gate reads the serial line, and the cosim compares two models\n"
+        "; that were both looking at the right address and seeing nothing.\n"
         "; ---------------------------------------------------------------------\n"
         f"SYSBOT  = ${SCREEN:04X}                 ; the first byte not a program's\n"
-        f"USERTOP = ${SCREEN - 1:04X}                 ; the last byte a program may use\n")
+        f"USERTOP = ${SCREEN - 1:04X}                 ; the last byte a program may use\n"
+        f"SCREEN  = ${SCREEN:04X}                 ; the text map, {CSTRIDE * 32} bytes\n"
+        f"CSTRIDE = {CSTRIDE:<21} ; bytes per map row: {CSTRIDE // 2} cells of char+attr\n")
     path = os.path.join(SW, "sysbot.asm")
     if write:
         with open(path, "w", encoding="utf-8") as fh:
@@ -479,6 +490,29 @@ def check():
     got = open(path, encoding="utf-8").read() if os.path.exists(path) else ""
     if got != want:
         bad.append("sw/sysbot.asm is stale -- run `poe build` (memmap --emit)")
+
+    # **Nobody may keep a private copy of the map's address or pitch.**
+    # sw/boot.asm and sw/monitor.asm each held their own `$8000` and
+    # "stride 256" through [D70]. Both assembled, both ran, and both
+    # drew the ROM banner and the entire monitor into user RAM while the
+    # display read $A000 -- for a whole commit, because the monitor's
+    # gate reads the serial line and the cosim compares two models that
+    # were both looking at the map and both seeing nothing.
+    #
+    # The equates are generated into sw/sysbot.asm. This refuses a
+    # second definition of them anywhere in sw/, which is the only form
+    # the mistake can take: a bare literal in an instruction is caught
+    # by the machine, but an equate is silently self-consistent.
+    own = re.compile(r"^\s*(SCREEN|CSCRN|CSTRIDE)\s*=\s*[\$\d]", re.M)
+    for fn in sorted(os.listdir(SW)):
+        if not fn.endswith(".asm") or fn == "sysbot.asm":
+            continue
+        src = open(os.path.join(SW, fn), encoding="utf-8").read()
+        for mt in own.finditer(src):
+            line = src[:mt.start()].count("\n") + 1
+            bad.append(f"sw/{fn}:{line} defines {mt.group(1)} itself. "
+                       f"The map's address and pitch are generated into "
+                       f"sw/sysbot.asm -- include it and use them.")
 
     # **The image and system storage must not meet.** The image is
     # top-aligned, so it grows *downward* towards the string

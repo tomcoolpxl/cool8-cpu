@@ -349,7 +349,7 @@ h_new:  CALL prg_new              ; the program deleted itself: stop, as
         RET
 
 h_free: CALL prg_free           ; the count, then the word for it
-        CALL num_put
+        CALL num_putu           ; a size, not a value: 40,448 > 32767
         LDW  X,#MSGFREE
         CALL con_puts
         CALL con_nl
@@ -1774,6 +1774,16 @@ prim:
         BEQ  .lit
         ; a name -- varidx leaves X on its value, unless a '(' says
         ; the name was an array's and X has to be worked out instead
+        ;
+        ; **A statement keyword reaching here is a known bug and this is
+        ; not where to fix it.** `PRINT FREE`, `PRINT CLS` and
+        ; `PRINT LIST` all answer 7749 and then `?SYNTAX`: the token
+        ; falls into `varidx`, which reads it as a variable name and
+        ; returns whatever is in the slot that index lands on. Rejecting
+        ; `R2 >= $80` here was tried and is wrong -- it fires at the end
+        ; of every statement, so `A=5:PRINT A+1` errors too. Whatever
+        ; the fix is, it belongs where the statement's extent is known,
+        ; not in the primary parser. See 13-basic.md section 11.
         CALL varidx
         CMP  R0,#52
         BCC  .notstr            ; resident A-Z: neither of the below
