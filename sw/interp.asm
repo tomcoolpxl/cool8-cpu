@@ -577,7 +577,20 @@ h_rem:  LD   R2,[Y]
         BRA  h_rem
 .out:   JMP  stmt
 
-h_end:  MOV  R0,#E_DONE         ; a clean stop, not an error
+; END, and `END SUB` which is not the same statement at all.
+;
+; **Falling into `END SUB` used to stop the program.** A SUB returned
+; only through `RETURN`; `END SUB` was a marker `h_sub` scanned for when
+; stepping over a definition, and if execution ever reached one, `END`
+; ran and set E_DONE. A sub whose last statement was not RETURN ended
+; the whole program, silently and with the right answer already
+; printed -- the shape of fault this file keeps producing.
+h_end:  SKIPSP
+        CMP  R2,#K_SUB
+        BNE  .stop
+        INCW Y                  ; over SUB: this is a return, not a stop
+        JMP  h_ret
+.stop:  MOV  R0,#E_DONE         ; a clean stop, not an error
         ST   [ERR],R0
         RET
 

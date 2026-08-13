@@ -729,6 +729,32 @@ def compact(code, syms):
               "%-11s clears the variables" % after,
               " | ".join(scr)[:80])
 
+    # ---- a SUB returns when execution reaches END SUB.
+    #
+    # It used to end the whole program: a SUB returned only through
+    # RETURN, and `END SUB` was a marker h_sub scanned for when stepping
+    # over a definition, so reaching one ran END and set E_DONE. The
+    # answer was already printed, so it looked like it worked.
+    M.cmd("NEW")
+    M.cmd("CLS")
+    for l in ("10 CALL F", "20 PRINT 222", "30 END", "40 SUB F",
+              "50 PRINT 111", "60 END SUB"):
+        M.cmd(l)
+    M.cmd("RUN")
+    scr = [r.strip() for r in M.screen()]
+    check("111" in scr and "222" in scr,
+          "falling into END SUB returns, it does not stop the program",
+          " | ".join(r for r in scr if r)[-60:])
+    M.cmd("NEW")
+    M.cmd("CLS")
+    for l in ("10 PRINT 111", "20 END", "30 PRINT 222"):
+        M.cmd(l)
+    M.cmd("RUN")
+    scr = [r.strip() for r in M.screen()]
+    check("111" in scr and "222" not in scr,
+          "...and a bare END still stops it",
+          " | ".join(r for r in scr if r)[-60:])
+
     # ---- DIM: up to three dimensions, three element types ([D71]).
     #
     # The element type is the name's suffix, which costs nothing to
