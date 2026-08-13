@@ -73,7 +73,18 @@ CFROW   = $7DE5                 ;: 1 font rows per glyph, 8 or 16
 CBPC    = $7DE6                 ;: 1 bytes per cell row, which is the bpp
 CLIM    = $7DE7                 ;: 1 base high byte that forces a repaint
 
-CSCRN   = $8000                 ; the cell map, 8 KB aligned
+CSCRN   = $8000                 ; the cell map
+CSTRIDE = 256                   ; bytes per map row: 80 cells of char and
+                                ;   attribute, the widest text this
+                                ;   machine shows, and 160 is what this
+                                ;   wants to be: the hardware allows it
+                                ;   now, and the only thing still in the
+                                ;   way is sim/test_run.py's reader --
+                                ;   see the recipe in cool8_vregs.v. Named rather
+                                ;   than shifted so that nothing, the
+                                ;   suites included, can lose track of
+                                ;   it: a harness writing `<< 8` cannot
+                                ;   follow the map when it changes.
 A_TEXT  = $07                   ; light grey on black
 F8      = $FC00                 ; the 8x8 font, in VRAM
 F16     = $F600                 ; and the 8x16 set mode 3 uses

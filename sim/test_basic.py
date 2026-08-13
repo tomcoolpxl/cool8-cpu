@@ -60,6 +60,8 @@ class Machine:
     def __init__(self, code, syms, flash=None, render=False):
         # render=True attaches the scanline renderer, so m.fb() answers
         # — for the checks that look at actual pixels.
+        self.cstride = syms["cstride"]
+        self.sym_ctop = syms["ctop"]
         self.m = vm.Machine(flash_path=flash, render=render)
         self.m.bus.mem[ORG:ORG + len(code)] = code
         self.m.cpu.pc = syms["main"]

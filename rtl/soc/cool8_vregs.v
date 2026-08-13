@@ -222,20 +222,24 @@ module cool8_vregs (
             // of padding bought nothing. Mode 1 writes the left forty
             // cells of the same row and leaves the rest.
             //
-            // **160 works and is one investigation from being on.**
-            // Flipping this, the reset value below, and con_row's
-            // arithmetic makes sim/test_main.py pass in full -- the
-            // whole system, typed at, at a 5120-byte map. What still
-            // fails is two graphics cases in test_run/test_basic:
-            // `MODE 4 : PLOT 10,3,15 : VPEEK(3*160+5)` reads zero
-            // because VID_BASE is $0500 by then, one graphics scroll
-            // in, and the test assumes a base of zero.
+            // **The recipe for 160, which is four lines and one bug.**
+            // Set these two presets, the reset value below, CSTRIDE and
+            // con_row in sw/console.asm. That makes sim/test_main.py and
+            // sim/test_basic.py pass in full -- the whole system, typed
+            // at, on a 5120-byte map -- and leaves three cases in
+            // sim/test_run.py failing, all of them *reading* the screen
+            // in a graphics mode rather than drawing it: measured, the
+            // pixel lands correctly (VID_BASE is $0000 at PLOT time) and
+            // the PRINT that proves it executes. It is that suite's
+            // hand-computed cell address, which AGENTS.md forbids for
+            // exactly this reason and which has now been wrong twice.
             //
-            // **The reset value matters as much as the preset**, which
-            // is what cost the first attempt: a harness that pokes the
-            // image in and jumps to `main` never writes VID_MODE, so
-            // the console meets the reset stride, and con_row addressed
-            // rows 160 apart on a display reading them 256 apart.
+            // **The reset value matters as much as the preset**, and
+            // getting that wrong cost three attempts: a harness that
+            // pokes the image in and jumps to `main` never writes
+            // VID_MODE, so the console meets the reset stride below,
+            // and con_row addressed rows 160 apart on a display reading
+            // them 256 apart.
             4'd0: begin p_ctrl = 6'b00_00_00; p_base = 16'h8000;
                         p_stride = 16'd256; p_vact = 10'd480; end
             4'd1: begin p_ctrl = 6'b01_00_00; p_base = 16'h8000;
