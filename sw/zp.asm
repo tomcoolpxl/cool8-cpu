@@ -232,23 +232,23 @@ FLTY    = $00FE                 ;: 1 the left's type, across fpair
 ; ---- the keyboard, and the break key. sw/basic.bas's ASM block
 ; ---- declared these; the ROM's monitor has its own copies at MVARS
 ; ---- because the two are never resident together.
-irring  = $7DE9                 ;: 16 the decoded-key ring the ISR fills
-irhead  = $7DF9                 ;: 1 where the editor reads it
-irtail  = $7DFA                 ;: 1 where the ISR writes it
-kshift  = $7DFB                 ;: 1 either shift is down
-kbrk    = $7DFC                 ;: 1 the next code is a release
-kext    = $7DFD                 ;: 1 the next code had an $E0 before it
-kdown   = $7DFE                 ;: 16 the key-down bitmap KEY() reads
-ibreak  = $7E0E                 ;: 1 the break flag; ipoll reads it
+irring  = $B573                 ;: 16 the decoded-key ring the ISR fills
+irhead  = $B583                 ;: 1 where the editor reads it
+irtail  = $B584                 ;: 1 where the ISR writes it
+kshift  = $B585                 ;: 1 either shift is down
+kbrk    = $B586                 ;: 1 the next code is a release
+kext    = $B587                 ;: 1 the next code had an $E0 before it
+kdown   = $B588                 ;: 16 the key-down bitmap KEY() reads
+ibreak  = $B598                 ;: 1 the break flag; ipoll reads it
 
 ; ---- the interpreter's own workspace.
-frames  = $7E0F                 ;: 2 the frame counter TIMER reads
-rseed   = $7E11                 ;: 2 the xorshift seed, 1 after init
-garg    = $7E13                 ;: 10 up to five parsed arguments
-lwk     = $7E1D                 ;: 10 dx, dy, err, sx, sy -- all words
-FORSTK  = $7E27                 ;: 72 MAXFOR frames of FORFR
-irst    = $7E6F                 ;: 1 the NMI handler's restart flag
-DIRBUF  = $7E70                 ;: 112 the staged direct line: a whole
+frames  = $B599                 ;: 2 the frame counter TIMER reads
+rseed   = $B59B                 ;: 2 the xorshift seed, 1 after init
+garg    = $B59D                 ;: 10 up to five parsed arguments
+lwk     = $B5A7                 ;: 10 dx, dy, err, sx, sy -- all words
+FORSTK  = $B5B1                 ;: 72 MAXFOR frames of FORFR
+irst    = $B5F9                 ;: 1 the NMI handler's restart flag
+DIRBUF  = $B5FA                 ;: 112 the staged direct line: a whole
                                 ;    record -- $FFFF, len, tokens, 0 --
                                 ;    built fresh by dodirect each time
 
@@ -275,8 +275,8 @@ DIRBUF  = $7E70                 ;: 112 the staged direct line: a whole
 ; because they are not claims in the region: `pbuf` is deliberately laid
 ; over SACCBUF, and a claim would read as two owners rather than as the
 ; overlay it is.
-CSTKBUF = $7EE0                 ; the CALL stack, MAXCALL frames of 4
-SACCBUF = $7F00                 ; the string accumulator, SMAX + 1
+CSTKBUF = $B66A                 ; the CALL stack, MAXCALL frames of 4
+SACCBUF = $B68A                 ; the string accumulator, SMAX + 1
 
 ; ---- error codes. The interpreter's caller reads ERR; 255 is a clean
 ; ---- stop and everything else is a fault.

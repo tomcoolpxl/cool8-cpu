@@ -46,34 +46,44 @@
 ; emits no symbol and no size -- so `bglyph` reached them as raw
 ; literals like `[$00D2]` and nothing in the tree could say what lived
 ; there.
-CROWA   = $7DAD                 ;: 2 the address of row CCY, cached
-CONT    = $7DAF                 ;: 32 per map row: is it a continuation
-CMIR    = $7DCF                 ;: 2 the mirror for this mode, a vector
-CFONT   = $7DD1                 ;: 2 font base for the current cell height
-CBASE   = $7DD3                 ;: 2 bitmap display base, tracked
-CGS8    = $7DD5                 ;: 2 bitmap stride * 8: one cell row down
-CSTR    = $7DD7                 ;: 2 bitmap stride: one raster row
-GFA     = $7DD9                 ;: 2 bglyph: the font row address
-GVA     = $7DDB                 ;: 2 bglyph: the framebuffer cell address
-CCX     = $7DDD                 ;: 1 cursor column
-CCY     = $7DDE                 ;: 1 cursor row
-CTOP    = $7DDF                 ;: 1 which map row is displayed row 0
-CCOLS   = $7DE0                 ;: 1 visible columns: 80, 40 or 32
-CROWS   = $7DE1                 ;: 1 visible rows: 30 or 24
-CRPL    = $7DE2                 ;: 1 rows a full logical line spans
-CKIND   = $7DE3                 ;: 1 0 text, 1 tiles, 2 bitmap
+CROWA   = $B537                 ;: 2 the address of row CCY, cached
+CONT    = $B539                 ;: 32 per map row: is it a continuation
+CMIR    = $B559                 ;: 2 the mirror for this mode, a vector
+CFONT   = $B55B                 ;: 2 font base for the current cell height
+CBASE   = $B55D                 ;: 2 bitmap display base, tracked
+CGS8    = $B55F                 ;: 2 bitmap stride * 8: one cell row down
+CSTR    = $B561                 ;: 2 bitmap stride: one raster row
+GFA     = $B563                 ;: 2 bglyph: the font row address
+GVA     = $B565                 ;: 2 bglyph: the framebuffer cell address
+CCX     = $B567                 ;: 1 cursor column
+CCY     = $B568                 ;: 1 cursor row
+CTOP    = $B569                 ;: 1 which map row is displayed row 0
+CCOLS   = $B56A                 ;: 1 visible columns: 80, 40 or 32
+CROWS   = $B56B                 ;: 1 visible rows: 30 or 24
+CRPL    = $B56C                 ;: 1 rows a full logical line spans
+CKIND   = $B56D                 ;: 1 0 text, 1 tiles, 2 bitmap
 ; Four bytes the hardware cursor gave back -- CPHASE and GINV here, BLB
 ; in sw/input.asm -- kept as named claims rather than as holes, because
 ; `tools/memmap.py --check` refuses a gap and closing one properly means
 ; shifting every claim below it. Take them for the next thing that needs
 ; storage in this region; repack when something does.
-CSPARE  = $7DE4                 ;: 1 free: was CPHASE
-GSPARE  = $7DE8                 ;: 1 free: was GINV
-CFROW   = $7DE5                 ;: 1 font rows per glyph, 8 or 16
-CBPC    = $7DE6                 ;: 1 bytes per cell row, which is the bpp
-CLIM    = $7DE7                 ;: 1 base high byte that forces a repaint
+CSPARE  = $B56E                 ;: 1 free: was CPHASE
+GSPARE  = $B572                 ;: 1 free: was GINV
+CFROW   = $B56F                 ;: 1 font rows per glyph, 8 or 16
+CBPC    = $B570                 ;: 1 bytes per cell row, which is the bpp
+CLIM    = $B571                 ;: 1 base high byte that forces a repaint
 
-CSCRN   = $8000                 ; the cell map
+; **Page-aligned, and it has to be.** con_row adds only `>CSCRN` and
+; puts the row offset's low byte straight into XL -- every version of it
+; has, because the map began at $8000. At $A41B the low byte $1B was
+; silently dropped and every cell landed 27 bytes low, on top of the
+; stack, which is a corrupted return address and a machine that runs off
+; into nothing. The map is 5120 bytes and system storage starts at
+; $B400, so this is $A000 -- and the kilobyte between system
+; storage and the image is BASIC's room to grow into.
+CSCRN   = $A000                 ; the cell map, packed under
+                                ;   system storage rather than
+                                ;   sitting in the middle of RAM
 CSTRIDE = 160                   ; bytes per map row: 80 cells of char and
                                 ;   attribute, the widest text this
                                 ;   machine shows, and 160 is what this

@@ -2013,24 +2013,32 @@ halloc: LD   R2,[HEAP]
         LD   R3,[HEAP+1]
         SUB  R2,R0
         SBC  R3,R1
-        ; **Against the region's floor, not the name table.** The heap
-        ; used to come down from USERTOP towards the program text, so
-        ; the test was "has it reached the names?" -- which made every
-        ; allocation depend on how long the program was. It has its own
-        ; region between the screen and the image now, so the floor is a
-        ; constant and a program can no longer collide with its own
-        ; arrays.
+        ; **A request bigger than the heap wraps, and used to pass.**
+        ; `HEAP - size` borrows when the array is larger than everything
+        ; below the heap, and the borrowed result is a *high* address --
+        ; so the compare against the name table said yes and the array
+        ; was allocated somewhere above the machine. It never showed
+        ; while a DIM big enough to do it was also bigger than the
+        ; 64 KB the bound can express; [D69]'s repack made the user's
+        ; region large enough that the old test case stopped failing and
+        ; this one started. Carry clear is borrow ([D9]).
+        BLO  .full
+        ; **Against the name table.** The heap comes down from USERTOP
+        ; towards the program text and its names, so the question is
+        ; whether it has reached them -- one region, shared, which is
+        ; what [D69]'s repack chose over two fixed ones.
+        PUSH R3
+        PUSH R2
+        LD   R0,[NNAME]
+        CALL nentry             ; X = one past the last name-table entry
+        POP  R2
+        POP  R3
         MOV  R0,R2
-        MOV  R1,#<HEAPBOT
+        MOV  R1,XL
         SUB  R0,R1
         MOV  R0,R3
-        MOV  R1,#>HEAPBOT
+        MOV  R1,XH
         SBC  R0,R1
-        ; **BLO, not BLT.** The old floor was the name table down at
-        ; $02xx, where a signed compare happened to be right; HEAPBOT is
-        ; $A000, which reads as negative, so BLT never fired and a DIM
-        ; of 40,000 bytes was allowed to allocate below the screen.
-        ; Carry clear is borrow is unsigned less-than ([D9]).
         BLO  .full
         ST   [HEAP],R2
         ST   [HEAP+1],R3

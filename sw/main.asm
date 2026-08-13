@@ -28,7 +28,7 @@
 ; Three bytes, and the image has one door again.
         JMP  main
 
-MAINK   = $7C76                 ;: 2 the key just read
+MAINK   = $B400                 ;: 2 the key just read
 
 ; ---------------------------------------------------------------------
 ; The stack, stated once, bottom first.
@@ -122,15 +122,14 @@ main_pre:
         ST   [CSTK],R0
         MOV  R0,#>CSTKBUF
         ST   [CSTK+1],R0
-        ; **The heap has its own region now.** It came down from
-        ; USERTOP, so a DIM and the program text ate the same bytes and
-        ; `FREE` told you about only one of them. Top-aligning the image
-        ; leaves a gap between the screen and it -- HEAPTOP..HEAPBOT in
-        ; the generated sw/org.asm -- and that gap is exactly "what
-        ; BASIC is not using", so it grows whenever the image shrinks.
-        MOV  R0,#<HEAPTOP
+        ; The heap comes down from the top of the user's region, which
+        ; is one region again: the screen, system storage and the image
+        ; are all above it now, so `$0200` runs contiguously to USERTOP
+        ; and a program may spend it as text or as arrays in any
+        ; proportion ([D69]).
+        MOV  R0,#<USERTOP
         ST   [HEAP],R0
-        MOV  R0,#>HEAPTOP
+        MOV  R0,#>USERTOP
         ST   [HEAP+1],R0
         LD   R0,[PROGEND]       ; PEND and the name table both start at
         ST   [PEND],R0          ;   the end of the program text
@@ -444,7 +443,13 @@ main:
 .wz:    ST   [X],R0
         INCW X
         MOV  R1,XH
-        CMP  R1,#$7F
+        ; **To the top of the user's region, which is the map's floor.**
+        ; This said $7F, the page above the old user area, and [D69]'s
+        ; repack moved that top from $7C75 to $A3FF -- leaving
+        ; $7F00-$A3FF unwiped, where a stale byte reads as a line record
+        ; and the interpreter walks off into it. `?SYNTAX IN -32763` was
+        ; a line number read out of $8005.
+        CMP  R1,#>CSCRN
         BNE  .wz
         MOV  R0,#1              ; a zeroed xorshift stays zero forever
         ST   [rseed],R0

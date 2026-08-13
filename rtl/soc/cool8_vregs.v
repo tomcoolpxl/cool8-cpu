@@ -240,9 +240,9 @@ module cool8_vregs (
             // VID_MODE, so the console meets the reset stride below,
             // and con_row addressed rows 160 apart on a display reading
             // them 256 apart.
-            4'd0: begin p_ctrl = 6'b00_00_00; p_base = 16'h8000;
+            4'd0: begin p_ctrl = 6'b00_00_00; p_base = 16'hA000;
                         p_stride = 16'd160; p_vact = 10'd480; end
-            4'd1: begin p_ctrl = 6'b01_00_00; p_base = 16'h8000;
+            4'd1: begin p_ctrl = 6'b01_00_00; p_base = 16'hA000;
                         p_stride = 16'd160; p_vact = 10'd480; end
             4'd2: begin p_ctrl = 6'b11_10_01; p_base = 16'h0000;
                         p_stride = 16'd128; p_vact = 10'd480; end
@@ -292,8 +292,8 @@ module cool8_vregs (
         if (!rst_n) begin
             mode_r   <= 8'h00;
             ctrl_r   <= 6'b00_00_00;
-            base_r   <= 16'h8000;
-            maporg_r <= 16'h8000;
+            base_r   <= 16'hA000;
+            maporg_r <= 16'hA000;
             stride_r <= 16'd160;
             pat_r    <= 16'h0000;
             scx_r    <= 10'd0;

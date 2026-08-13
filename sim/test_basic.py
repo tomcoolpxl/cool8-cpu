@@ -61,6 +61,7 @@ class Machine:
         # render=True attaches the scanline renderer, so m.fb() answers
         # — for the checks that look at actual pixels.
         self.cstride = syms["cstride"]
+        self.cscrn = syms["cscrn"]
         self.sym_ctop = syms["ctop"]
         self.m = vm.Machine(flash_path=flash, render=render)
         self.m.bus.mem[ORG:ORG + len(code)] = code
@@ -77,7 +78,12 @@ class Machine:
         # or the flash stub has cleared the screen to spaces. The
         # editor reads rows back, and a row padded with NULs instead of
         # spaces stores as a bloated record.
-        self.m.bus.mem[0x8000:0xA000] = b"\x20\x07" * 0x1000
+        # The map, wherever the image put it. [D69] moved it above the
+        # user's region, so clearing $8000 cleared program space and
+        # left the real map full of NULs -- which `ed_read` cannot trim,
+        # so an eight-character line stored as a seventy-five byte one.
+        scrn, cs = syms["cscrn"], syms["cstride"]
+        self.m.bus.mem[scrn:scrn + cs * 32] = b" " * (cs * 16)
         # rawkey's `.rk0` is reached only when nothing is waiting, so it
         # is the one address that means "idle" rather than "busy".
         self.idle = syms["in_raw.rk0"]
@@ -176,7 +182,7 @@ class Machine:
         # only on a screen that had never scrolled, and could not
         # follow the map when the console stopped using 256.
         top = self.m.bus.mem[self.sym_ctop]
-        base = 0x8000 + ((top + r) & 31) * self.cstride
+        base = self.cscrn + ((top + r) & 31) * self.cstride
         return "".join(chr(self.m.bus.mem[base + 2 * c])
                        for c in range(80)).replace("\x00", " ").rstrip()
 

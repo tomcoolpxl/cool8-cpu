@@ -27,21 +27,21 @@
 ; zeros: the two names fold together in a case-insensitive symbol
 ; lookup, and fs_find copies into its own anyway, so a claim here was
 ; eleven bytes of duplicate state pointed at by nothing.
-FSADDR  = $7C9A                 ;: 2 where the bytes are, or go
-FSLENW  = $7C98                 ;: 2 how many of them
-FSDRV   = $7C97                 ;: 1 the mounted drive
-FSIDX   = $7C96                 ;: 1 the directory entry being read
-FSOK    = $7C95                 ;: 1 did the last call succeed
-FSCI    = $7C93                 ;: 2 COMPACT: the entry the scan is on
-FSCSRC  = $7C91                 ;: 2 COMPACT: the page it is feeding out
-FSCLEFT = $7C8F                 ;: 2 COMPACT: pages left in this file
-FSPG16  = $7C7F                 ;: 16 COMPACT: one sector's source pages
+FSADDR  = $B424                 ;: 2 where the bytes are, or go
+FSLENW  = $B422                 ;: 2 how many of them
+FSDRV   = $B421                 ;: 1 the mounted drive
+FSIDX   = $B420                 ;: 1 the directory entry being read
+FSOK    = $B41F                 ;: 1 did the last call succeed
+FSCI    = $B41D                 ;: 2 COMPACT: the entry the scan is on
+FSCSRC  = $B41B                 ;: 2 COMPACT: the page it is feeding out
+FSCLEFT = $B419                 ;: 2 COMPACT: pages left in this file
+FSPG16  = $B409                 ;: 16 COMPACT: one sector's source pages
 
 ; fs.asm's own state, by name now rather than by address. The compiled
 ; version reached `fsent` and `fsfpg` as the literals $007B and $0078
 ; with a comment saying they must track FSVARS -- which is the invisible
 ; allocator [D67] spent a session removing everywhere else.
-FSPBUF  = $7F00                 ; one page in transit, over the string
+FSPBUF  = $B68A                 ; one page in transit, over the string
                                 ;   accumulator: the two lifetimes cannot
                                 ;   meet, since SACC exists only while a
                                 ;   program runs and every command here
@@ -603,8 +603,8 @@ fsc_pbfill:
 ;
 ; Built in the scratch sector first, so the old directory is still there
 ; to read while the new one is being written.
-FSSLOT  = $7C7E                 ;: 1 rewritedir: entries written so far
-FSDST   = $7C7C                 ;: 2 rewritedir: the next data page
+FSSLOT  = $B408                 ;: 1 rewritedir: entries written so far
+FSDST   = $B406                 ;: 2 rewritedir: the next data page
 
 fsc_rewritedir:
         MOV  R0,#<SCRATCH
@@ -754,10 +754,10 @@ fsc_rewritedir:
 ; than into RAM: there is nowhere in RAM to put 4 KB that is not the
 ; user's program or their sprites.
 ; =====================================================================
-FSSECT  = $7C7B                 ;: 1 COMPACT: the sector being filled
-FSN     = $7C7A                 ;: 1 COMPACT: live pages found for it
-FSDONE  = $7C79                 ;: 1 COMPACT: past the last live page
-FSMOVED = $7C78                 ;: 1 COMPACT: this sector needs rewriting
+FSSECT  = $B405                 ;: 1 COMPACT: the sector being filled
+FSN     = $B404                 ;: 1 COMPACT: live pages found for it
+FSDONE  = $B403                 ;: 1 COMPACT: past the last live page
+FSMOVED = $B402                 ;: 1 COMPACT: this sector needs rewriting
 
 fsc_compact:
         CLR  R0

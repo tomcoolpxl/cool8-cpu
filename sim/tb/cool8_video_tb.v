@@ -180,9 +180,9 @@ module cool8_video_tb;
                 // 426,520 pixels wrong, from a testbench filling a map
                 // the hardware no longer reads that way.
                 4'd0: begin g_eng=0; g_bpp=0; g_hdbl=0; g_vdbl=0;
-                            g_base=16'h8000; g_stride=160; g_vact=480; end
+                            g_base=16'hA000; g_stride=160; g_vact=480; end
                 4'd1: begin g_eng=0; g_bpp=0; g_hdbl=1; g_vdbl=0;
-                            g_base=16'h8000; g_stride=160; g_vact=480; end
+                            g_base=16'hA000; g_stride=160; g_vact=480; end
                 4'd2: begin g_eng=1; g_bpp=2; g_hdbl=1; g_vdbl=1;
                             g_base=16'h0000; g_stride=128; g_vact=480; end
                 4'd3: begin g_eng=2; g_bpp=0; g_hdbl=0; g_vdbl=0;
@@ -572,9 +572,9 @@ module cool8_video_tb;
             for (k = 0; k < 65536; k = k + 1) mram[k] = 8'h00;
             for (j = 0; j < ROWS; j = j + 1)
                 for (k = 0; k < COLS; k = k + 1) begin
-                    mram[16'h8000 + j * 160 + k * 2]     =
+                    mram[16'hA000 + j * 160 + k * 2]     =
                         screen[j * COLS + k][7:0];
-                    mram[16'h8000 + j * 160 + k * 2 + 1] =
+                    mram[16'hA000 + j * 160 + k * 2 + 1] =
                         screen[j * COLS + k][15:8];
                 end
         end

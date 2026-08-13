@@ -37,6 +37,7 @@ ROOT, BUILD = H.ROOT, H.BUILD
 CODE = 0x4000            # the driver, clear of the store
 PROGBOT = 0x0200          # where sw/prog.asm keeps the program
 PROG = 0x3000
+import memmap
 from memmap import VARS                                    # noqa: E402
 FAILS = H.FAILS
 
@@ -131,10 +132,12 @@ def boot(prog, budget=20_000_000, mode=0x80, mk=None):
     m.bus.mem[syms["progend"]] = end & 0xFF
     m.bus.mem[syms["progend"] + 1] = end >> 8
     m.io_write(0x10, mode)                  # VID_MODE, before con_init reads it
-    m.io_write(0x12, 0x00)
-    m.io_write(0x13, 0x80)
-    m.io_write(0x14, 0x00)
-    m.io_write(0x15, 0x01)
+    # **The preset carries the base and the stride.** Writing
+    # VID_MODE loads VID_CTRL, VID_BASE, VID_STRIDE and the vertical
+    # extent; these four writes then put them back to $8000 and 256
+    # by hand, which was a private copy of the layout and stopped
+    # being true the moment [D69] moved the map. Deleted, not
+    # updated: the numbers belong to the machine.
     # budget=None loads without running, for the one case that has to
     # arm the machine's stack watermark before the first instruction.
     return m, syms, (m.run(budget=budget) if budget else None)
@@ -1092,8 +1095,15 @@ def main():
 
     # The heap comes down toward the name table and they must meet at
     # an error rather than through each other.
+    #
+    # **Sized from the region, not written down.** 20,000 elements is
+    # 40,004 bytes, which did not fit while the user's area was 31,350
+    # and does fit now that [D69]'s repack made it one contiguous
+    # 41,472. A bound big enough to fail at any plausible size is the
+    # only one that stays a test of the check rather than of the number.
+    big = (memmap.usertop() - 0x0200) // 2 + 1000
     err = run_err(program(spaced(10, [K["DIM"]], name("BIG"), "(",
-                                 num(20000), ")"),
+                                 num(big), ")"),
                           line(20, [K["END"]])))
     check(err == 5, "a DIM that will not fit stops with ?OUT OF MEMORY",
           f"ERR was {err}, wanted 5")

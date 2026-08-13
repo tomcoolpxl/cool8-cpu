@@ -42,10 +42,12 @@ def run(body, screen=(), cx=0, cy=0, mode=0x80, budget=20_000_000):
     """
     m, syms = H.drive(body, at=0x4000, sp=memmap.RAMTOP)
     m.io_write(0x10, mode)                  # VID_MODE
-    m.io_write(0x12, 0x00)
-    m.io_write(0x13, 0x80)
-    m.io_write(0x14, 0x00)
-    m.io_write(0x15, 0x01)
+    # **The preset carries the base and the stride.** Writing
+    # VID_MODE loads VID_CTRL, VID_BASE, VID_STRIDE and the vertical
+    # extent; these four writes then put them back to $8000 and 256
+    # by hand, which was a private copy of the layout and stopped
+    # being true the moment [D69] moved the map. Deleted, not
+    # updated: the numbers belong to the machine.
     m.bus.mem[syms["progend"]] = PROGBOT & 0xFF
     m.bus.mem[syms["progend"] + 1] = PROGBOT >> 8
     if m.run(budget=budget) != "halt":

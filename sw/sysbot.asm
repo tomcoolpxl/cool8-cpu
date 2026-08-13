@@ -7,8 +7,13 @@
 ; the first one read. Written as a number for that reason, and
 ; checked against the claims by `poe check`.
 ;
-; Lowest claim: MAINK at $7C76, in main.asm.
-; The region spans $7C76-$7EDF, 618 bytes claimed.
+; The user region ends at the text map. After [D69] the map,
+; system storage and the image are all above it, so $0200 runs
+; contiguously to USERTOP and the heap comes down from the top
+; of the same region the program grows up through.
+;
+; Lowest system claim: MAINK at $B400, in main.asm.
+; System storage spans $B400-$B669, 618 bytes claimed.
 ; ---------------------------------------------------------------------
-SYSBOT  = $7C76                 ; the lowest claim in sw/
-USERTOP = $7C75                 ; the last byte a program may use
+SYSBOT  = $A000                 ; the first byte not a program's
+USERTOP = $9FFF                 ; the last byte a program may use

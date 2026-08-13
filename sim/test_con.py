@@ -63,10 +63,12 @@ def run(code, mode=M_TEXT80, steps=20_000_000):
     m.cpu.sp = memmap.RAMTOP
     m.romen = False
     m.io_write(0x10, mode)                  # VID_MODE
-    m.io_write(0x12, 0x00)                  # VID_BASE_L
-    m.io_write(0x13, 0x80)                  # VID_BASE_H, the cell map
-    m.io_write(0x14, 0x00)                  # VID_STRIDE, 256
-    m.io_write(0x15, 0x01)
+    # **The preset carries the base and the stride.** Writing
+    # VID_MODE loads VID_CTRL, VID_BASE, VID_STRIDE and the vertical
+    # extent; these four writes then put them back to $8000 and 256
+    # by hand, which was a private copy of the layout and stopped
+    # being true the moment [D69] moved the map. Deleted, not
+    # updated: the numbers belong to the machine.
     if m.run(budget=steps) != "halt":
         print("  the driver did not halt: pc $%04X" % m.cpu.pc)
         raise SystemExit("the driver did not halt")

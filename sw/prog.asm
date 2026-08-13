@@ -16,7 +16,7 @@
 ; ---------------------------------------------------------------------
 
 PROGBOT = $0200                 ; the program text starts here
-PROGEND = $7CA7                 ;: 2 first free byte above it
+PROGEND = $B431                 ;: 2 first free byte above it
 
         .include "token.asm"    ; which brings num, console and the map
 
@@ -217,7 +217,7 @@ prg_free:
 ; `tools/memmap.py` cannot see this invariant, which is exactly why it
 ; is stated here rather than assumed.
 ; ---------------------------------------------------------------------
-PRGW    = $7CA1                 ;: 6 the top-level commands' scratch
+PRGW    = $B42B                 ;: 6 the top-level commands' scratch
 
 PRGN    = PRGW+0                ; prg_store: the line number
 PRGP    = PRGW+2                ;   where it goes

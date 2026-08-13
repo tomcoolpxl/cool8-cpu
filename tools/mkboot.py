@@ -110,9 +110,14 @@ reloc:  LDW  X,#src
         ; turns it back on at the end of init, already in place.
         CLR  R0
         ST   [$FF24],R0
-        LDW  Y,#$8000           ; clear: char 32, attr $07 -- 4096
-        CLR  R2                 ; CELLS, two bytes each. $2000 here
-        MOV  R3,#$10            ; once cleared 16 KB and half of the
+        LDW  Y,#$A000           ; clear: char 32, attr $07 -- 2560
+        CLR  R2                 ; **CELLS, two bytes each.** 160 bytes a
+        MOV  R3,#$0A            ;   row for 32 rows is 5120 bytes, which
+                                ;   is $0A00 cells -- not $1400. Counting
+                                ;   bytes here cleared twice the map and
+                                ;   ran straight over the image above it,
+                                ;   which reads as a relocation that
+                                ;   never happened.
                                 ; relocated image with it
 .sc:    MOV  R0,#$20
         ST   [Y],R0
@@ -149,7 +154,7 @@ reloc:  LDW  X,#src
         SHR  R0
         SHR  R0
         SHR  R0                 ; q >> 3
-        ADD  R0,#$80
+        ADD  R0,#$A0            ; + >CSCRN
         MOV  YH,R0
         MOV  YL,R1
         INCW X

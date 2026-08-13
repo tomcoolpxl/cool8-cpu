@@ -167,13 +167,14 @@ def load_text_map(m, scr):
     apart.
     """
     stride = m.bus.read(0xFF14) | (m.bus.read(0xFF15) << 8)
+    base = m.bus.read(0xFF12) | (m.bus.read(0xFF13) << 8)
     for i in range(0x10000):
         m.bus.mem[i] = 0x00
     for j in range(ROWS):
         for k in range(COLS):
             c = scr[j * COLS + k]
-            m.bus.mem[0x8000 + j * stride + k * 2] = c & 0xFF
-            m.bus.mem[0x8000 + j * stride + k * 2 + 1] = c >> 8
+            m.bus.mem[base + j * stride + k * 2] = c & 0xFF
+            m.bus.mem[base + j * stride + k * 2 + 1] = c >> 8
 
 
 class Vram:

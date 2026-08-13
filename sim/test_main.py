@@ -58,9 +58,14 @@ class Machine:
         self.m.cpu.sp = 0x0200
         self.m.romen = False
         # What every real boot guarantees: the ROM or the flash stub has
-        # cleared the screen to spaces. A row padded with NULs instead
-        # stores as a bloated record.
-        self.m.bus.mem[0x8000:0xA000] = b"\x20\x07" * 0x1000
+        # cleared the map to spaces. A row padded with NULs stores as an
+        # eighty-character record. **Wherever the image put the map** --
+        # [D69] moved it above the user's region, and clearing $8000
+        # cleared program space while the real map stayed zero.
+
+
+        scrn, cs = syms["cscrn"], syms["cstride"]
+        self.m.bus.mem[scrn:scrn + cs * 32] = b" " * (cs * 16)
         self.idle = syms["in_raw.rk0"]
         self.irhead = syms["irhead"]
         self.irtail = syms["irtail"]
