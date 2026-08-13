@@ -889,6 +889,13 @@ The largest spans:
 | `GTEXT` | 160 |
 | `SOUND` / `PITCH` | 86 |
 
+**And none of it matters much: see
+[D72](01-decisions.md#d72--basics-size-is-not-a-budget-to-optimise-against-the-ceiling-is-a-slider).**
+The image's ceiling is wherever we put system storage and the text map,
+so a feature is decided on its merits and not on whether it fits. What
+follows is worth knowing because dead code is untidy, not because the
+bytes are scarce.
+
 **Recoverable without giving anything up — 31 bytes, and that is all.**
 This table read 168 and was wrong on every line; each was checked
 against the machine rather than re-copied.

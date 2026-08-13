@@ -552,6 +552,68 @@ def check():
     if got != want:
         bad.append("sw/sysbot.asm is stale -- run `poe build` (memmap --emit)")
 
+    # **A hole above the screen is not free space, it is a lost
+    # kilobyte.** The packing check treats SYSBOT -- the screen -- as
+    # the region's floor and verifies the claims above it are
+    # contiguous, which says nothing about the gap between the top of
+    # the map and the lowest claim that is not the map. Moving SCREEN
+    # down a kilobyte to give BASIC room does exactly that: the user
+    # loses 1,024 bytes, nothing claims them, and the image gains
+    # nothing because system storage has not moved. Measured, and it
+    # passed every check at the time.
+    lowest = min((c.addr for c in cs if c.addr > SCREEN_END), default=None)
+    if lowest is not None and lowest > SCREEN_END + 1:
+        bad.append(f"${SCREEN_END + 1:04X}-${lowest - 1:04X} is a "
+                   f"{lowest - SCREEN_END - 1}-byte hole between the top of "
+                   f"the text map and the lowest claim above it. Nothing can "
+                   f"reach it: the user's region ends at the map and the "
+                   f"image stops at the claims. Move the claims down with "
+                   f"the map, or the bytes are simply gone.")
+
+    # **And the hardware has to agree, which nothing checked.**
+    #
+    # The text modes' presets and the reset values in cool8_vregs.v
+    # carry the map's address and pitch as literals, and this file
+    # carried a comment saying they "agree" -- a hope, not a test. That
+    # is the same shape as the I/O page before tools/ioregs.py, and it
+    # is what makes moving the screen expensive: five places, three
+    # languages, and only the software half is derived.
+    #
+    # `poe check` reads the Verilog now. It is deliberately a check and
+    # not a generator: the RTL is normative for what the silicon does
+    # ([D28]), so the right failure is "these disagree", not Python
+    # quietly rewriting a mode preset.
+    vregs = os.path.join(ROOT, "rtl", "soc", "cool8_vregs.v")
+    if os.path.exists(vregs):
+        with open(vregs, encoding="utf-8") as fh:
+            v = fh.read()
+        want_b, want_s = f"16'h{SCREEN:04X}", f"16'd{CSTRIDE}"
+        # The text engines are modes 0 and 1; everything else draws from
+        # VRAM and has nothing to do with this map.
+        for m in (0, 1):
+            i = v.find("4'd%d: begin" % m)
+            blk = v[i:i + 240] if i >= 0 else ""
+            gb = re.search(r"p_base\s*=\s*(16'h[0-9A-Fa-f]{4})", blk)
+            gs = re.search(r"p_stride\s*=\s*(16'd\d+)", blk)
+            if not gb or not gs:
+                bad.append(f"cool8_vregs.v: mode {m}'s preset could not be "
+                           f"read, so the check in tools/memmap.py is not "
+                           f"checking anything -- fix it before trusting it")
+                continue
+            if gb.group(1).lower() != want_b.lower() or gs.group(1) != want_s:
+                bad.append(f"cool8_vregs.v mode {m} presets the map at "
+                           f"{gb.group(1)} stride {gs.group(1)}, and "
+                           f"tools/memmap.py says {want_b} stride {want_s}. "
+                           f"The display and the console would read "
+                           f"different memory.")
+        for reg in ("base_r", "maporg_r"):
+            mt = re.search(r"%s\s*<=\s*(16'h[0-9A-Fa-f]{4})" % reg, v)
+            if mt and mt.group(1).lower() != want_b.lower():
+                bad.append(f"cool8_vregs.v resets {reg} to {mt.group(1)}, "
+                           f"and the map is at {want_b}. A machine that "
+                           f"never writes VID_MODE draws from the wrong "
+                           f"address.")
+
     # **Nobody may keep a private copy of the map's address or pitch.**
     # sw/boot.asm and sw/monitor.asm each held their own `$8000` and
     # "stride 256" through [D70]. Both assembled, both ran, and both

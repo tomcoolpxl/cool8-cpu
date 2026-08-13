@@ -2328,6 +2328,75 @@ implementation nobody is checking, which is how `test_lib` came to
 measure two programs against a third, private model of the I/O page
 and report 1.00x for a year.
 
+## D72 — BASIC's size is not a budget to optimise against; the ceiling is a slider
+
+**Decided.** The image had 462 bytes of room to grow and the previous
+session's instinct was to hunt for bytes to make space for the next
+feature. That is the wrong instinct here and this entry exists to stop
+it recurring.
+
+**Nothing about 17,832 bytes is a physical limit.** The machine has 64 KB
+of flat RAM and the map is ours: the image is top-aligned under the I/O
+page and grows *down* until it meets system storage, so the ceiling is
+wherever we put system storage and the text map. Moving them down gives
+BASIC more room and costs the user's program space, byte for byte. There
+is no third party to negotiate with.
+
+**So features are decided on their merits, not on whether they fit.**
+40,448 bytes of user memory is already more than a C64 hands a BASIC
+program, and a feature worth 2 KB of image is worth 2 KB of a region
+that large. What is *not* acceptable is spending bytes on guards that
+buy nothing ([D71] backs out 17 such), or leaving genuinely dead code in
+— that is tidiness, not budgeting.
+
+### What moving it actually costs, measured rather than assumed
+
+Moving `SCREEN` from `$A000` to `$9C00` and rebuilding gives the user
+1,024 fewer bytes and BASIC **exactly none**:
+
+```
+  the user's  39,424 bytes  $0200-$9BFF     (was 40,448)
+  room           462 bytes                  (unchanged)
+  $B000-$B3FF is a 1024-byte hole nothing claims
+```
+
+The map moved; system storage did not. Every claim in the region is a
+hand-written address in the module that owns it — `CROWA = $B537` and
+about forty more — so the image is still stopped at `$B400` and the
+kilobyte is simply gone. **It passed every check at the time**, which is
+the part worth fixing rather than remembering.
+
+Two checks were added, and both were made to fail before being believed:
+
+* **A hole between the top of the map and the lowest claim above it.**
+  The packing check treats the screen as the region's floor and verifies
+  what is above it is contiguous, which says nothing about that gap.
+* **The RTL has to agree about where the map is.** `cool8_vregs.v`
+  carries the address in the mode 0 and mode 1 presets and in the reset
+  values of `base_r` and `maporg_r`, and `tools/memmap.py` carried a
+  comment saying they "agree" — a hope, not a test, and the same shape
+  as the I/O page before [`tools/ioregs.py`]. `poe check` reads the
+  Verilog now. A check and not a generator: the RTL is normative for
+  what the silicon does, so the right failure is "these disagree", not
+  Python quietly rewriting a mode preset.
+
+### What would make the slider actually cheap
+
+The forty claims are the cost, and they are hand-written addresses only
+because nothing generates them. Each already declares its size — 
+`CROWA = $B537 ;: 2 the address of row CCY, cached` — so a module could
+declare the size alone and let `tools/memmap.py` assign the address and
+emit the equates, exactly as it already does for `SYSBOT`, `USERTOP`,
+`SCREEN`, `CSTRIDE` and the image's `.org`. Then moving the region is
+one constant and a regenerate, and this entry's title becomes true
+without qualification.
+
+That is not done. It is the obvious next step if the ceiling is ever
+actually reached, and it is written down here so that the next reader
+reaches for it instead of reaching for a feature to cut.
+
+---
+
 ## D71 — Arrays carry their rank and their element type, and one dimension keeps its own path
 
 **Done.** `DIM` took one bound and every element was two bytes. It now
