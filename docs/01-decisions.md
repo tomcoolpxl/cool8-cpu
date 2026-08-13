@@ -2310,6 +2310,84 @@ implementation nobody is checking, which is how `test_lib` came to
 measure two programs against a third, private model of the I/O page
 and report 1.00x for a year.
 
+## D69 — The map is derived end to end, and 41,499 bytes is the ceiling
+
+**Decided, and the layout work is finished.**
+
+[D30] chose an 8,192-byte text map to display 80x30, and `$A000` was
+written down as the image's origin when BASIC was compiled and 23,528
+bytes. Both were right when they were made and neither was true any
+more: the image is 17,243 bytes and the padding existed only so a mask
+could work.
+
+**Four things were derived rather than declared:**
+
+| | was | is |
+|---|---|---|
+| the image's origin | `$A000`, a constant | `$FF00 - size`, generated into `sw/org.asm` |
+| the system floor | `SYSBOT = irring` | the lowest claim anywhere, generated into `sw/sysbot.asm` |
+| the text map's pitch | `<< 8` in five places | `CSTRIDE`, read from the image |
+| the heap's floor | `$A000` | the top of the map, from `CSTRIDE * 32` |
+
+**The hardware change that unlocked the last two.** `VID_BASE` carried
+the map's address in its high bits and the scroll offset in its low
+ones, and `base & ~mask` in `cool8_fetch.v` separated them -- which is
+why the map had to be aligned to a power-of-two size, and why the stride
+had to be one. The origin is its own register now, latched from the mode
+preset and not software-visible, so a scroll moves `VID_BASE` and cannot
+move it. **26 logic cells**, and both constraints lift at once: any
+stride, any address. The map is 5,120 bytes.
+
+Rejected on the way, with the measurement that rejected it:
+
+* **Wrapping against `base` instead of an origin register.** 32 cells
+  and it fitted -- and it wraps within `[base, base+span)`, so the map
+  slides with the scroll rather than rotating inside it. Every row of
+  the screen reads from the wrong address as soon as anything scrolls,
+  at any stride. `sim/test_vm.py` passed throughout, because no golden
+  scrolls; the editor broke on the third line typed.
+* **Registering `base + span` to save a subtractor.** The obvious
+  refinement, and it costs **36 cells more** (5,193 against 5,157):
+  sixteen flip-flops and an adder maintaining them every cycle, against
+  a subtractor yosys shares with the compare beside it.
+
+**What the machine now hands out, and why there is no more:**
+
+```
+65,536
+  -   512   page 0 and the CPU stack
+  - 1,418   system storage, CALL stack, string accumulator
+  - 5,120   the text map
+  - 17,243  the image
+  -   256   the I/O page and the vectors
+  =========
+   41,499   the user's
+```
+
+Today that is **31,350 of program text and 10,149 of heap**, in two
+pools: the program grows up from `$0200`, arrays and strings grow down
+from under the image. The two-pool arrangement is what stops a `DIM`
+competing with program text, which it did until the heap got its own
+region.
+
+**The remaining question is pools, not bytes, and it is not a memory
+question.** Packing system storage above the screen would give one
+contiguous ~40,975-byte region -- *less* in total, because the regions
+simply trade places, and the totals are conserved by arithmetic. So it
+buys flexibility for lopsided programs (35 KB of text, or 10 KB of
+arrays) and costs about 500 bytes and a relocation of forty claims.
+Deferred rather than rejected: nothing about it gets easier or harder
+later, and the case for it is a program that does not exist yet.
+
+**What is genuinely still on the table** is the image, at 17,243 bytes
+of the 24,037 that are not the user's. It is flat -- 470 labels, the
+twenty largest spans are 28 % of it -- so a diet means giving something
+up, and [13-basic.md](13-basic.md) section 10 sizes the candidates:
+transcendentals 1,020, `COMPACT` 527, float formatting 408. Every byte
+cut there moves the origin down and lands in the heap automatically.
+
+---
+
 ## D68 — The system is six subsystems, not two languages; [D66]'s port gets a shape
 
 **Done.** [D66] is right that `sw/basic.bas` has to go and wrong about
