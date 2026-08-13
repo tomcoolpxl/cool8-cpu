@@ -496,16 +496,41 @@ stmt:
         SKIPSP             ; end of line? one load, past the spaces.
         TST  R2
         BNE  .more
+        ; **Ask about the record that just ran, before overwriting the
+        ; pointer to it.** This tested `R1` -- the high byte of the
+        ; *next* record -- after LREC had already been advanced, so it
+        ; only answered correctly while a direct line began and ended on
+        ; the same page. DIRBUF sits at $B5FA, six bytes below the
+        ; boundary, so `PRINT 6` ends at $B602 and the next record is on
+        ; page $B6: the test compared $B6 against $B5, said "not the
+        ; direct line", and walked on. LREC then marched up through
+        ; memory four bytes at a time reading zeros as empty records
+        ; until it reached the image at $BB97 and tried to run it --
+        ; which is where the `?SYNTAX` after every direct statement came
+        ; from. The answer had already been printed, so the machine
+        ; looked like it was working and complaining anyway.
+        ;
+        ; The whole address is compared, not the page. The page was a
+        ; safe shorthand only because nothing else lives on DIRBUF's,
+        ; and that is a fact about where the buffer happens to sit --
+        ; exactly the kind this repository keeps paying for. `nextline`
+        ; makes the same test and makes it correctly, on the record it
+        ; is about to leave; this is the inlined fast path beside it.
+        LD   R0,[LREC]
+        CMP  R0,#<DIRBUF
+        BNE  .adv
+        LD   R0,[LREC+1]
+        CMP  R0,#>DIRBUF
+        BEQ  .stop              ; the staged direct line has no next
+
         ; Y is sitting on the terminator, so the next record begins at
         ; Y+1. There is no address to compute: nextline was 18 % of the
         ; run doing arithmetic the position already answered.
-        INCW Y
+.adv:   INCW Y
         MOV  R0,YL
         ST   [LREC],R0
         MOV  R1,YH
         ST   [LREC+1],R1
-        CMP  R1,#>DIRBUF        ; a record on DIRBUF's page is the
-        BEQ  .stop              ;   staged direct line: it has no next
         LD   R2,[PEND]
         LD   R3,[PEND+1]
         SUB  R0,R2

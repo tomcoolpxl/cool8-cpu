@@ -1073,19 +1073,30 @@ is `False` for `"-25088"` — so the bad row was dropped before the
 comparison and both assertions held. A filter that discards exactly the
 shape of the failure is a blind spot, not a filter.
 
-**A direct-mode statement prints its answer and then `?SYNTAX`.**
+**A direct-mode statement printed its answer and then `?SYNTAX` —
+fixed.** Every statement that parsed an expression did it; `FREE` and
+`LIST`, which parse none, did not. A stored program never did.
 
-```
-PRINT 6*7
-42
-?SYNTAX
-```
+The statement loop has an inlined fast path where `nextline` would be —
+`nextline was 18 % of the run doing arithmetic the position already
+answered` — and it asks "was that the staged direct line?" **after**
+advancing `LREC` to the next record, so it tested the page of the record
+it was moving *to*. That is only the same page while a direct line
+begins and ends on one. `DIRBUF` sits at `$B5FA`, six bytes below the
+boundary, so `PRINT 6` ends at `$B602` and the next record is on page
+`$B6`: the test compared `$B6` against `$B5`, said "not the direct
+line", and walked on. `LREC` then marched up through memory four bytes
+at a time, reading zeros as empty records, until it reached the image at
+`$BB97` and tried to execute it.
 
-Reproduced through `sim/test_basic.py`'s own `Machine.cmd`, through the
-PS/2 port, and through the serial console — three input paths, same
-result — and with every change in this branch reverted, so it predates
-them. A stored program does not do it: `10 PRINT 6*7` then `RUN` prints
-`42` and nothing else. Direct mode only.
+The answer had already been printed, so the machine looked like it was
+working and complaining anyway — which is the hardest shape to read.
+
+Two things made it: `nextline` and the fast path beside it are two
+implementations of one question and only one was right, and the surviving
+one compared a *page* where the buffer's placement was doing the work.
+The whole address is compared now. Where `DIRBUF` sits is no longer
+load-bearing.
 
 (`A=5:PRINT A+1` answering `?SYNTAX` is **not** part of this. There is
 no `:` separator in this language — section 1 — so that line is wrong as
@@ -1105,6 +1116,6 @@ whatever the keyword, which is what gave it away.
 measured and reverted. It fires at the end of every statement, so
 `A=5:PRINT A+1` fails too and the machine will not boot. Whatever the
 fix is, it belongs where the statement's extent is known rather than in
-the primary parser — and the spurious `?SYNTAX` above looks likely to
-share a cause with it, since both are the parser continuing past the end
-of a direct-mode statement.
+the primary parser. It is *not* the record-walking fault above: that one
+is fixed and this survives it unchanged, so they were two bugs wearing
+one symptom.

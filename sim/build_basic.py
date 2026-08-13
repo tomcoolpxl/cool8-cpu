@@ -7,8 +7,13 @@
 which is fine for a test and no use at all when what you want is the
 artifact. This produces both of them and prints what they cost, because
 the size at every milestone is the number this project is judged on --
-the system has to stay inside `$A000-$FDFF` and nothing warns you as it
-fills.
+the image grows *down* from `$FEFF` into a finite gap above system
+storage, and nothing else warns you as it closes.
+
+It also brings `sw/org.asm` and `sw/sysbot.asm` up to date, because
+`test_basic.build()` does: they are inputs to the assembly and derived
+from it, so a build that assumed some other job had written them first
+failed whenever the size of BASIC changed and passed on the next run.
 """
 
 import os
@@ -26,31 +31,43 @@ import mkboot                                              # noqa: E402
 import test_basic as B                                     # noqa: E402
 
 import memmap                                              # noqa: E402
-from memmap import ORG, TOP                                # noqa: E402
+
+# **`memmap.ORG` at the point of use, never a local copy.** It is
+# derived from the size of the image, and `test_basic.build()` brings
+# the generated `.org` up to date as part of building -- so a name bound
+# at import time is the origin from *before* that happened. On a tree
+# with sw/org.asm missing, this file bound the $A000 fallback, built a
+# correct image at $BB8F, and then told the stub to relocate to $A000.
+def ORG():
+    return memmap.ORG
+
+
+def TOP():
+    return memmap.TOP
 
 
 def main():
     code, syms = B.build()
-    boot = mkboot.build(code, dest=ORG, build_dir=BUILD)
+    boot = mkboot.build(code, dest=ORG(), build_dir=BUILD)
     with open(os.path.join(BUILD, "BOOT.BIN"), "wb") as fh:
         fh.write(boot)
 
-    end = ORG + len(code)
+    end = ORG() + len(code)
     # **The image is top-aligned, so "free to $FEFF" is always zero.**
     # It was the right number when the origin was the constant $A000 and
     # the image grew up towards the I/O page; since [D69] derived the
     # origin the image grows *down*, and the number that can run out is
     # the gap below it -- BASIC's room to grow before it reaches system
     # storage. `memmap --check` fails the build on the same quantity.
-    room = ORG - (memmap.SACC + 256)
-    print(f"  basic.bin  {len(code):>7,} bytes  ${ORG:04X}-${end - 1:04X}")
+    room = ORG() - (memmap.SACC + 256)
+    print(f"  basic.bin  {len(code):>7,} bytes  ${ORG():04X}-${end - 1:04X}")
     print(f"  BOOT.BIN   {len(boot):>7,} bytes  "
           f"({len(boot) - len(code)} of relocating stub)")
     print(f"  room       {room:>7,} bytes  to grow down into, before "
           f"system storage at ${memmap.SACC + 255:04X}")
     print(f"  the user's {memmap.usertop() - memmap.PROG + 1:>7,} bytes  "
           f"${memmap.PROG:04X}-${memmap.usertop():04X}, one region")
-    free = TOP - end
+    free = TOP() - end
     if "--by-file" in sys.argv:
         by_file(syms)
     if "--by-command" in sys.argv:
@@ -170,7 +187,7 @@ def by_sub(syms):
     labels as `s_<name>.<something>`, so a routine's span runs to the
     next dot-free symbol and takes its own locals with it.
     """
-    marks = sorted((a, n) for n, a in syms.items() if ORG <= a < TOP)
+    marks = sorted((a, n) for n, a in syms.items() if ORG() <= a < TOP())
     tops = [(a, n) for a, n in marks if "." not in n]
     rows = []
     for i, (a, n) in enumerate(tops):
@@ -233,7 +250,7 @@ def by_module(syms):
     symbol with a compiled body, so "remaining" falls on its own as the
     port proceeds. Nothing has to be ticked off by hand.
     """
-    marks = sorted((a, n) for n, a in syms.items() if ORG <= a < TOP)
+    marks = sorted((a, n) for n, a in syms.items() if ORG() <= a < TOP())
     tops = [(a, n) for a, n in marks if "." not in n]
     size = {}
     for i, (a, n) in enumerate(tops):
@@ -392,7 +409,7 @@ def by_file(syms):
     # first version reported 41 KB for a file that is not in the build
     # at all. A file whose name matches a symbol it does not own is the
     # same trap, so a file needs several labels in range to be believed.
-    top = max(v for v in syms.values() if v < TOP)
+    top = max(v for v in syms.values() if v < TOP())
     owner, count = {}, {}
     # **The .bas sources count too, and leaving them out hid the
     # largest file in the image.** basic.bas is the editor, compiled
@@ -413,7 +430,7 @@ def by_file(syms):
                              src, re.M | re.I)]
         for n in names:
             a = syms.get(n.lower())
-            if a is not None and ORG <= a <= top:
+            if a is not None and ORG() <= a <= top:
                 owner.setdefault(a, base)
                 count[base] = count.get(base, 0) + 1
     owner = {a: f for a, f in owner.items() if count[f] >= 4}

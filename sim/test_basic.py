@@ -52,6 +52,21 @@ FAILS = H.FAILS
 
 def build():
     # The system is sw/main.asm now, not compiled BASIC ([D68]).
+    #
+    # **sw/org.asm and sw/sysbot.asm are inputs to this assembly and
+    # derived from it**, so they are made current here rather than by
+    # whichever `build` job happened to run first. Without this, a
+    # change to the size of BASIC failed `poe build` once and passed on
+    # the next run, with an error that named neither the size nor the
+    # ordering. memmap.ensure() writes only what actually moved.
+    #
+    # ORG is re-read afterwards because it is captured at import: a
+    # module that loaded before the origin moved would go on loading the
+    # image at the old address, which is the same class of fault one
+    # level up.
+    global ORG
+    memmap.ensure()
+    ORG = memmap.ORG
     return H.assemble(os.path.join(H.SW, "main.asm"), name="basic",
                       lower=True, write=True)
 
@@ -665,6 +680,32 @@ def compact(code, syms):
     M.cmd("PRINT V")
     check(any(r.strip() == "66" for r in M.screen()),
           "with variables carried across the chain")
+
+    # ---- a direct statement ends after itself.
+    #
+    # **The answer alone, and nothing after it.** The statement loop's
+    # inlined `nextline` asked whether the record just run was the
+    # staged direct line *after* advancing LREC to the next one, so it
+    # tested the page it was moving to. DIRBUF is at $B5FA, six bytes
+    # below the boundary, so `PRINT 6` ends on the next page and the
+    # test missed: LREC walked up through memory four bytes at a time
+    # until it reached the image and tried to run it. Every direct
+    # statement that parsed an expression printed its answer and then
+    # `?SYNTAX`, which reads like a parser bug and was a record bug.
+    #
+    # Checked with a statement that produces output and one that does
+    # not, because the fault is in what happens *after* either.
+    M.cmd("NEW")
+    M.cmd("CLS")
+    for line in ("PRINT 6*7", 'PRINT "HI"', "POKE 0,0", "MODE 0", "A=5"):
+        M.cmd(line)
+    scr = [r.strip() for r in M.screen() if r.strip()]
+    check("?SYNTAX" not in scr,
+          "a direct statement stops at the end of its own record",
+          " | ".join(scr))
+    check("42" in scr and "HI" in scr,
+          "...and still produces its answer",
+          " | ".join(scr))
 
 
 if __name__ == "__main__":

@@ -30,7 +30,9 @@ import memmap                                            # noqa: E402
 import vocab                                             # noqa: E402
 
 FAILS = H.FAILS
-ORG = memmap.ORG
+# Read through `memmap` rather than bound here: the origin is derived
+# and test_basic.build() may move it, so a copy taken at import is the
+# address the image was linked at last time.
 K = {n: t for t, n in vocab.keywords()}
 
 
@@ -53,7 +55,7 @@ class Machine:
         # back unable to tell a working mode from a black screen.
         self.m = (vm.Machine(font=H.font(), render=True) if render
                   else vm.Machine())
-        self.m.bus.mem[ORG:ORG + len(code)] = code
+        self.m.bus.mem[memmap.ORG:memmap.ORG + len(code)] = code
         self.m.cpu.pc = syms["main"]
         self.m.cpu.sp = 0x0200
         self.m.romen = False
@@ -119,8 +121,8 @@ def main():
     print("  the whole system on the new modules, sw/main.asm")
     print()
     code, syms = build()
-    print(f"  image: {len(code):,} bytes at ${ORG:04X}, "
-          f"{memmap.TOP - ORG - len(code):,} free")
+    print(f"  image: {len(code):,} bytes at ${memmap.ORG:04X}, "
+          f"{memmap.TOP - memmap.ORG - len(code):,} free")
     print()
 
     M = Machine(code, syms)

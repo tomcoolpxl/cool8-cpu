@@ -31,6 +31,7 @@ sys.path.insert(0, HERE)
 
 import cool8asm                                # noqa: E402
 import ioregs                                  # noqa: E402
+import memmap                                  # noqa: E402
 
 ROM_BASE = 0xF000
 ROM_SIZE = 0x1000
@@ -45,7 +46,16 @@ IO_SIZE = ioregs.IO_TOP - ioregs.IO_BASE + 1
 
 
 def build(source):
-    """Return the 4096-byte ROM image, or exit with a diagnosis."""
+    """Return the 4096-byte ROM image, or exit with a diagnosis.
+
+    **The generated equates are made current first.** sw/boot.asm and
+    sw/monitor.asm include `sysbot.asm` for SCREEN and CSTRIDE ([D70]),
+    so this entry point needs them on disk exactly as the image build
+    does -- and on a tree where they are absent, or where the size of
+    BASIC has moved the origin, whichever job ran first decided whether
+    the build worked. memmap.ensure() writes only what actually moved.
+    """
+    memmap.ensure()
     try:
         a = cool8asm.assemble(source)
     except cool8asm.AsmError as e:
