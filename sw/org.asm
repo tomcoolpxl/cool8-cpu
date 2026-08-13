@@ -18,4 +18,8 @@
 ; the program text for the same bytes. It grows when BASIC
 ; shrinks, which is the whole point of deriving the origin.
 HEAPTOP = $BBA4                 ; the heap's first byte, growing down
-HEAPBOT = $A000                 ; and the screen is the floor
+HEAPBOT = $9400                 ; the top of the text map, which is
+;                                 160 bytes a row for 32 rows. It
+;                                 was $A000 while the map was 8192
+;                                 bytes; the 3072 the stride change
+;                                 gave back are the heap's now.
