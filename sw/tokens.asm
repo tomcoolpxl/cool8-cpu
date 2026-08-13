@@ -79,6 +79,8 @@ K_REM      = $C5
 K_FLT      = $C6
 K_CLEAR    = $C7
 K_LOCAL    = $C8
+K_TAB      = $C9
+K_SPC      = $CA
 
-NTOK    = 73                    ; keywords, $80-$C8
+NTOK    = 75                    ; keywords, $80-$CA
 T_LIT   = K_NUM                 ; the stored-number marker, as tokenise writes it

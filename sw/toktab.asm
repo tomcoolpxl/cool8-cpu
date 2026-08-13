@@ -145,4 +145,8 @@ TOKTAB:
         ; $C8 LOCAL -- the same save stack parameters use, without the
         ; assignment. BBC's name and BBC's mechanism.
         .byte 5, "L","O","C","A","L"
+        ; $C9 TAB and $CA SPC -- PRINT layout, and only PRINT: they are
+        ; in sttab pointing at `bad`, so one on its own is ?SYNTAX.
+        .byte 3, "T","A","B"
+        .byte 3, "S","P","C"
         .byte 0

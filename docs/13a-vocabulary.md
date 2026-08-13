@@ -88,6 +88,8 @@ These hold a token but `sttab` sends them to `bad`, so meeting one where a state
 | `$B3` | `STEP` | |
 | `$B5` | `(removed)` | was TILE x, y, tile, attr -- the map entry through the VRAM port |
 | `$C6` | `! -- reserved` | the float literal marker, never a statement |
+| `$C9` | `TAB(col:int)` | in PRINT: spaces out to that column, or nothing if already past it |
+| `$CA` | `SPC(n:int)` | in PRINT: n spaces |
 
 ## Functions
 

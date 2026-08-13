@@ -2328,6 +2328,36 @@ implementation nobody is checking, which is how `test_lib` came to
 measure two programs against a third, private model of the I/O page
 and report 1.00x for a year.
 
+## D75 — TAB and SPC are items, not functions
+
+**Done**, and the smallest of the three language additions this
+milestone: `PRINT "A"; TAB(10); "B"` and `PRINT "A"; SPC(5); "B"`.
+
+**They are taken in `PRINT`'s item loop, before `eval`.** That is the
+whole design decision. Written as *functions* they would have to return
+something, and the evaluator has exactly three value shapes — an integer
+in R0:R1, a float in FACC, a string in SACC — none of which is "I moved
+the cursor and there is nothing to print". Every builtin returns a
+value; these do not, so they are not builtins.
+
+The consequence is that they mean nothing outside a `PRINT`, which is
+also true on the machines this borrows from. Their `sttab` slots point
+at `bad`, so `10 TAB(5)` on its own is `?SYNTAX` rather than a statement
+that quietly does nothing.
+
+**`TAB` past the cursor does nothing.** It does not wrap to the next
+line and does not emit a newline: a `PRINT` that silently gains a line
+break when one field runs long turns a misaligned report into a
+scrambled one, and the misalignment is the more useful failure. Measured:
+`PRINT "12345678"; TAB(4); "OVER"` gives `12345678OVER`.
+
+`TAB` reads the console's own `CCX` rather than counting what it has
+printed, so it is correct after anything else that moved the cursor.
+
+  18,492 → 18,571 bytes, 79 for both.
+
+---
+
 ## D74 — The map moved down a kilobyte, and its address lived in five places
 
 **Done, and it is [D72] arriving.** The image reached **-188 bytes** of

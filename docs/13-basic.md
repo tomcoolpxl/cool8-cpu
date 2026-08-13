@@ -29,6 +29,7 @@ the language does at its edges, measured on the machine.
 | `LOCAL name[,name]` | inside a SUB: the caller's values come back on `RETURN`. Zeroed on entry |
 | `CLEAR` | every variable away, the program kept — BBC's name, beside `CLS` and `CLG` |
 | `PRINT a; b$; c` | `;` butts items together, `,` inserts one space, a trailing separator holds the newline. Negative numbers print signed |
+| `PRINT TAB(col)` / `PRINT SPC(n)` | layout inside `PRINT` only: `TAB` spaces out to a column and does nothing if already past it, `SPC` emits `n` spaces. Neither is a function and neither means anything outside a `PRINT` |
 | `INPUT v` | a line of text, echoed as typed, ended by Return. **The variable's suffix decides what it was**: `A$` takes the text, `A#` a fraction, `A` an integer — §8 |
 | `DATA n, n, …` / `READ v, v` / `RESTORE` | numbers only (with `-`), scalar targets only; reading past the end is `?OUT OF DATA` |
 | `POKE a, b` / `PEEK(a)` | main RAM and the I/O page |

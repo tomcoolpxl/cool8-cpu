@@ -729,6 +729,31 @@ def compact(code, syms):
               "%-11s clears the variables" % after,
               " | ".join(scr)[:80])
 
+    # ---- TAB and SPC, which are items rather than values ([D75]).
+    for line, want, why in [
+        ('PRINT "A";TAB(10);"B"', "A         B", "TAB pads out to a column"),
+        ('PRINT TAB(5);"X"', "     X", "TAB from the left margin"),
+        ('PRINT "12345678";TAB(4);"OVER"', "12345678OVER",
+         "TAB past the cursor does nothing -- no wrap, no newline"),
+        ('PRINT "A";SPC(5);"B"', "A     B", "SPC emits that many spaces"),
+        ('PRINT SPC(3);"S"', "   S", "SPC from the left margin"),
+        ('PRINT "A";SPC(0);"B"', "AB", "SPC(0) emits none"),
+    ]:
+        M.cmd("CLS")
+        M.cmd(line)
+        check(any(r.rstrip() == want for r in M.screen()), why,
+              " | ".join(repr(r.rstrip()) for r in M.screen() if r.strip())[:70])
+
+    # They are `bad` in sttab, so one outside a PRINT is refused rather
+    # than being a statement that quietly does nothing.
+    M.cmd("NEW")
+    M.cmd("CLS")
+    M.cmd("10 TAB(5)")
+    M.cmd("RUN")
+    check(any(r.strip().startswith("?SYNTAX") for r in M.screen()),
+          "TAB outside a PRINT is ?SYNTAX",
+          " | ".join(r.strip() for r in M.screen() if r.strip())[-40:])
+
     # ---- SUB and CALL take parameters, and LOCAL ([D73]).
     #
     # A parameter and a local are one mechanism: save the variable on

@@ -35,6 +35,12 @@ It compiles: `CONST`, `DIM` including arrays and `AT`, assignment,
 expressions and as statements, and the temporaries that non-leaf
 operands need.
 
+(`FUNCTION` was retired from the language by [D73] and `SUB` grew
+parameters and `LOCAL` in the same entry -- so the interpreter now has,
+at run time, most of what this list describes the compiler doing ahead
+of time. The list is left as it was: it records what the shelved
+compiler accepted, not what the language is.)
+
 It does not do `PRINT`, `INLINE`, `ASM` blocks, `EXTERN`, string
 literals or `INCLUDE`.
 

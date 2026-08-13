@@ -1023,7 +1023,17 @@ h_print:
         BNE  .item
         CALL pnl
         JMP  stmt
-.item:  CALL eval
+        ; **TAB and SPC are items, not values.** They produce spacing
+        ; and leave nothing for the type machinery to look at, so they
+        ; are taken before `eval` rather than inside it -- which is also
+        ; why they are `bad` in sttab: one outside a PRINT is ?SYNTAX
+        ; rather than a statement that quietly does nothing.
+.item:  SKIPSP
+        CMP  R2,#K_TAB
+        BEQ  .tab
+        CMP  R2,#K_SPC
+        BEQ  .spc
+        CALL eval
         LD   R2,[STYPE]
         BNE  .nn
         BRA  .num
@@ -1078,6 +1088,41 @@ h_print:
         TST  R2
         BNE  .item
         JMP  stmt               ; a trailing separator: no newline
+
+        ; TAB(col): out to that column. **Already past it does
+        ; nothing** -- it does not wrap to the next line, because a
+        ; PRINT that silently gains a newline when a field runs long is
+        ; a report that misaligns rather than one that overflows.
+.tab:   INCW Y                  ; over the token
+        CALL earg               ; ( col )
+        PUSHW Y
+        MOV  R2,R0
+.tl:    LD   R0,[CCX]
+        CMP  R0,R2
+        BHS  .tdone
+        MOV  R0,#$20
+        PUSH R2
+        CALL con_emit           ; which owns Y, hence the push above
+        POP  R2
+        BRA  .tl
+.tdone: POPW Y
+        JMP  .sep
+
+        ; SPC(n): n spaces, wherever the cursor is.
+.spc:   INCW Y
+        CALL earg
+        PUSHW Y
+        MOV  R2,R0
+.sl:    TST  R2
+        BEQ  .sdone
+        MOV  R0,#$20
+        PUSH R2
+        CALL con_emit
+        POP  R2
+        SUB  R2,#1
+        BRA  .sl
+.sdone: POPW Y
+        JMP  .sep
 
 pnl:    PUSHW Y
         CALL con_nl

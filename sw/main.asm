@@ -660,5 +660,9 @@ sttab:
                                 ;: CLEAR  every variable away, the program kept
         .word h_local           ; $C8 LOCAL
                                 ;: LOCAL name[,name]  inside a SUB: the caller's values come back on RETURN
+        .word bad               ; $C9 TAB -- PRINT only
+                                ;: TAB(col:int)  in PRINT: spaces out to that column, or nothing if already past it
+        .word bad               ; $CA SPC -- PRINT only
+                                ;: SPC(n:int)  in PRINT: n spaces
 
 
