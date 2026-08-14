@@ -1423,23 +1423,28 @@ user variable now has a seventh significant character too.
 
 ### Real gaps that would cost real bytes
 
-**Data files: reading landed in [D82]**, `OPENIN`/`BGET`/`EOF`/`CLOSE`,
-for 172 bytes. Writing is `SAVE name AT addr, len`, which was always
-there — the filesystem is append-only, so a streaming `BPUT` would fight
-it. What is still missing is a line-oriented read; `BGET` gives bytes and
-a program builds strings from them. The C64 does this with `OPEN`/`CLOSE`/`INPUT#`/`PRINT#`,
-the BBC with `OPENIN`/`OPENOUT`/`BGET`/`BPUT`/`EOF`/`PTR`. It is the
-only *capability* on this page rather than a convenience: `DATA`/`READ`
-is the whole of persistent data today, and it is compiled in.
+**Data files: done, and this was the only *capability* on the page.**
+Reading is [D82]'s `OPENIN`/`BGET`/`EOF`/`CLOSE`, 172 bytes; writing is
+`SAVE name AT addr, len`, which was always there. The filesystem is
+append-only, so a streaming `BPUT` would fight it rather than use it —
+the asymmetry is the format's.
+
+**What is left of it is a line-oriented read.** `BGET` gives bytes, so a
+program builds a line with `A$ = A$ + CHR$(BGET)` until it meets a
+carriage return — and that recopies the accumulator every character, so
+reading an 80-column line is 3,200 byte moves. Fine for a few lines,
+wrong for a big file. BBC's `GET$#` is the shape; it costs real bytes.
 
 **Error trapping.** `ON ERROR`, `ERR`, `ERL`, `REPORT` — BBC has all
 four, the C64 none. It needs a saved line number and a handler vector,
 so it is not free, and it is the difference between a program that can
 recover from `?DIV BY 0` and one that cannot.
 
-**Smaller, and each self-contained:** `MID$` as an assignment target
-(`MID$(A$,2,3)="XY"` — C64 only); `ASN` and `ACS`, which the float
-package can already almost do.
+**Smaller, and self-contained:** `ASN` and `ACS`, which the float
+package can already almost do — `ATN` is there and the identities are
+one divide and one square root apart.
+
+(`MID$` as an assignment target was on this list and landed in [D83].)
 
 **One logarithm is enough, and this list used to say otherwise.** BBC
 ships `LOG` base-10 *and* `LN` natural; ours is natural, named `LOG`,
