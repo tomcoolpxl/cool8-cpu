@@ -2371,6 +2371,31 @@ four-instruction shim in `main.asm`, the layer that may call both.
 `SYS $3000` is the same act with the address typed rather than stored,
 and both arrive at the same `JMP [X]`.
 
+### Reviewed after it worked, and it came out smaller with a guard
+
+Three things, and the arithmetic is the point:
+
+**Copying X into Y cost four `MOV`s through R0.** `PUSHW X` / `POPW Y`
+is the same move in two bytes -- and the address is being pushed anyway,
+so it is one extra push and a pop rather than eight bytes of shuffling.
+
+**Y was popped and immediately pushed again** around the jump. Pushing
+it *under* the address means one save covers both the load and the code
+being run, and X comes back out from over it.
+
+**A file shorter than its own two-byte header** wrapped the count to
+65,534 and poured it over the interpreter. The guard went in after the
+pushes first, which cost thirteen bytes of stack tidy-up to save eight
+-- **the image went up**. `fs_stream` takes `fslen` from the directory
+entry rather than from the stream, so the length is known before the
+header is read: checked there, nothing is on the stack, the existing
+`?NO FILE` exit will do, and the subtract has already answered because
+carry clear is a borrow ([D9]). One branch, no compare, no unwinding.
+
+19,689 as first written, **19,683 reviewed** -- six bytes smaller with a
+guard it did not have. The version that put the guard in the obvious
+place was the expensive one.
+
 ### Making one needs no new syntax
 
 The header is two bytes below the code, so BASIC writes it:

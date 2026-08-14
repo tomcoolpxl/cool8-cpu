@@ -191,6 +191,16 @@ def stream(code, syms):
           'SYS "name" loads a PRG where its header says, and jumps',
           " | ".join(rows(M))[-40:])
 
+    # A file shorter than its own two-byte header would wrap the count
+    # to 65,534 and pour it over the interpreter. `fs_stream` sets fslen
+    # from the directory entry, so the length is known before the header
+    # is read and the guard is one branch on the borrow ([D9]).
+    M = typed("POKE $2FFE,0", 'SAVE "RUNT.BIN" AT $2FFE, 1',
+              'SYS "RUNT.BIN"', "PRINT 1")
+    check(any(x == "1" for x in rows(M)),
+          "...a file shorter than its header is refused, not run",
+          " | ".join(rows(M))[-40:])
+
     M = typed('SYS "NOSUCH.BIN"')
     check(any("NO FILE" in x for x in rows(M)),
           "...and says so when there is no such file",

@@ -1081,24 +1081,36 @@ h_sysf:
         TST  R0
         BEQ  .nf
         CALL fs_stream          ; open it; fslen is the whole file
+        ; **The length is known before the header is read**, because
+        ; `fs_stream` takes it from the directory entry rather than from
+        ; the stream. So the guard goes here, where nothing is on the
+        ; stack yet and the existing error exit will do: a file shorter
+        ; than its own two-byte header would otherwise wrap the count to
+        ; 65,534 and pour it over the interpreter.
+        ;
+        ; The subtract answers it -- carry clear is a borrow ([D9]) -- so
+        ; this is one branch, no compare, and no unwinding. Checked after
+        ; the pushes first, which cost thirteen bytes of tidy-up to save
+        ; eight; the whole guard is two here.
+        LD   R2,[fslen]
+        LD   R3,[fslen+1]
+        SUB  R2,#2
+        SBC  R3,#0
+        BCC  .nf
         LD   R0,[FLS_DATA]      ; the address it asks for, low first
         MOV  XL,R0
         LD   R0,[FLS_DATA]
         MOV  XH,R0
-        PUSHW X                 ; kept: it is where we jump
-        PUSHW Y                 ; fs_rest walks Y over the destination
-        MOV  R0,XL
-        MOV  YL,R0
-        MOV  R0,XH
-        MOV  YH,R0
-        LD   R2,[fslen]         ; ...and the rest of the file is the code
-        LD   R3,[fslen+1]
-        SUB  R2,#2
-        SBC  R3,#0
-        CALL fs_rest
-        POPW Y
-        POPW X
+        ; **Y goes down first, so it is still saved when we jump.** The
+        ; token pointer has to survive both the load and the code being
+        ; run; pushing it under the address means one save covers both,
+        ; and X comes back out from over it.
         PUSHW Y
+        PUSHW X                 ; kept: it is where we jump
+        PUSHW X                 ; and again, to come back out as Y --
+        POPW Y                  ;   two bytes against four MOVs via R0
+        CALL fs_rest
+        POPW X
         CALL .go
         POPW Y
         JMP  stmt
