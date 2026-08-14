@@ -1083,13 +1083,7 @@ h_openin:
         LD   R0,[FSOK]
         TST  R0
         BEQ  .nf
-        LD   R0,[fsent+14]      ; the length is the countdown
-        ST   [fslen],R0
-        LD   R0,[fsent+15]
-        ST   [fslen+1],R0
-        CALL fs_seekfile
-        CALL fls_seek
-        CALL fls_open
+        CALL fs_stream          ; fs_load's prologue: position and count
         MOV  R0,#1
         ST   [FROPEN],R0
         JMP  cnext
@@ -1125,13 +1119,22 @@ frshut: CALL fls_close
 ; BGET -- the next byte, 0..255. Past the end, or with nothing open, it
 ; is -1: a value no byte can be, so a program may test it instead of
 ; calling EOF for every byte.
-ibget:  LD   R0,[FROPEN]
+; frdone -- Z set when there is nothing more to read: either nothing is
+; open, or the count has run out. **The one place that knows what spent
+; means**, and both BGET and EOF ask it rather than each carrying the
+; test. If FROPEN is zero the load itself sets Z; otherwise the two
+; length bytes OR to zero exactly when the file is finished.
+frdone: LD   R0,[FROPEN]
+        BEQ  .z
+        LD   R0,[fslen]
+        LD   R1,[fslen+1]
+        OR   R0,R1
+.z:     RET
+
+ibget:  CALL frdone
         BEQ  .end
         LD   R0,[fslen]
         LD   R1,[fslen+1]
-        MOV  R2,R0
-        OR   R2,R1
-        BEQ  .last
         SUB  R0,#1              ; one fewer to come
         SBC  R1,#0
         ST   [fslen],R0
@@ -1141,34 +1144,31 @@ ibget:  LD   R0,[FROPEN]
         ; was written as "shut on the next call", which left the flash
         ; open on a program that read exactly its file and stopped -- and
         ; the comment claiming otherwise was the only thing anyone would
-        ; have checked. Ten bytes to make it true.
+        ; have checked.
         PUSH R0
-        LD   R0,[fslen]
-        LD   R1,[fslen+1]
-        OR   R0,R1
+        CALL frdone
         BNE  .out
         CALL frshut
 .out:   POP  R0
         CLR  R1
         JMP  retnum
-.last:  CALL frshut             ; already spent, and something asked again
-.end:   MOV  R0,#$FF
-        MOV  R1,R0
-        JMP  retnum
+        ; Past the end is -1: the same sixteen bits `itrue` returns, so
+        ; it borrows the tail rather than spelling them again. Different
+        ; meaning, identical answer -- and -1 is chosen here for exactly
+        ; [D47]'s reason, that no byte can be it.
+.end:   CALL frclose            ; the *checking* entry: frdone is Z for
+                                ;   "never opened" too, and closing a
+                                ;   flash that was never open is not
+                                ;   what frshut is for
+        JMP  itrue
 
-; EOF -- -1 when there is nothing more, which is TRUE ([D47]). A stream
-; that was never opened is at its end, which is the honest answer and
-; costs no separate error.
-ieof:   LD   R0,[FROPEN]
-        BEQ  .yes
-        LD   R0,[fslen]
-        LD   R1,[fslen+1]
-        MOV  R2,R0
-        OR   R2,R1
-        BEQ  .yes
-        CLR  R0                 ; FALSE
-        MOV  R1,R0
-        JMP  retnum
+; EOF -- **`frdone` in the language's own truth values**, and that is
+; the whole routine. -1 when there is nothing more, which is TRUE
+; ([D47]); a stream that was never opened is at its end, which is the
+; honest answer and costs no separate error.
+ieof:   CALL frdone
+        BEQ  itrue
+        JMP  ifalse
 .yes:   MOV  R0,#$FF
         MOV  R1,R0
         JMP  retnum

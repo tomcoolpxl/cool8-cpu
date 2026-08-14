@@ -2505,6 +2505,42 @@ And `LOAD name, line`, the merge form, was not documented at all. Both
 were found by reading the code to design this, and both are corrected at
 the `;:` comments the vocabulary generates from.
 
+### Twenty-two bytes back, by saying each thing once
+
+Three sharings found by reading the finished code rather than by
+measuring it -- the image is 19,475 to **19,453**:
+
+**`frdone` is the one place that knows what "spent" means.** `BGET` and
+`EOF` each carried the test: is anything open, and has the count run
+out. If `FROPEN` is zero the load itself sets Z; otherwise the two
+length bytes OR to zero exactly when the file is finished. One routine,
+and the answer arrives in the flags.
+
+**`EOF` is now three instructions**, because it is `frdone` expressed in
+the language's own truth values: `CALL frdone`, `BEQ itrue`, `JMP
+ifalse`. [D80] already made `TRUE`/`FALSE` share one tail; this makes
+`EOF` a third caller rather than a second implementation of -1 and 0.
+
+**`BGET` past the end borrows `itrue`.** Different meaning, identical
+answer -- and -1 is chosen there for exactly [D47]'s reason, that no
+byte can be it. The `.end` path calls `frclose` and not `frshut`,
+because `frdone` is also Z for "never opened" and closing a flash that
+was never open is not what `frshut` is for.
+
+**And `fs_stream` makes this decision's own claim true in code.** The
+entry above says OPENIN is "`fs_load` with its loop taken out", and both
+carried the same seven instructions -- length from the entry, seek,
+`fls_seek`, `fls_open` -- until there was a second copy to compare
+against. `fs_load` calls it now and so does OPENIN, and it ends in a
+`JMP` rather than a `CALL` because there is nothing to do afterwards.
+
+**One that did not pay, so it is not retried:** `interp.asm` has a
+`true`/`false` pair returning -1 and 0, and the inline copy in the
+`AND`/`OR` path costs eight bytes either way -- `CALL true`, `BRA`,
+`CALL false` is exactly as long as spelling the constants. `itrue` and
+`ifalse` cannot be built on them either; their shared-tail form is
+already the shortest thing that also sets `STYPE`.
+
 ### The edges
 
 `BGET` past the end is **-1**, a value no byte can be, so a program may

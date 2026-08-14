@@ -449,21 +449,29 @@ fs_seekent:
 ; fs_load -- X points at a name, Y is where it goes.
 ; C=1 and fslen set on success, C=0 if there is no such file.
 ; ---------------------------------------------------------------------
+; fs_stream -- the entry already found, put a byte stream on its first
+; byte and set fslen to how many there are.
+;
+; **This is the half of fs_load that is not the loop**, and BASIC's
+; OPENIN is the same act stopped there ([D82]). Both carried it
+; separately until the second copy existed to compare against; a JMP
+; rather than a CALL at the end because there is nothing to do after.
+fs_stream:
+        LD   R0,[fsent+14]
+        ST   [fslen],R0
+        LD   R0,[fsent+15]
+        ST   [fslen+1],R0
+        CALL fs_seekfile
+        CALL fls_seek
+        JMP  fls_open
+
 fs_load:
         PUSH R0
         PUSH R2
         PUSH R3
         CALL fs_find
         BCC  .fl9
-
-        LD   R0,[fsent+14]
-        ST   [fslen],R0
-        LD   R0,[fsent+15]
-        ST   [fslen+1],R0
-
-        CALL fs_seekfile
-        CALL fls_seek
-        CALL fls_open
+        CALL fs_stream
         LD   R2,[fsent+14]
         LD   R3,[fsent+15]
 .fl1:   MOV  R0,R2
