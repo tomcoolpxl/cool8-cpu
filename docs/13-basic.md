@@ -1448,11 +1448,36 @@ which would report the line. The handler starts with `FOR`, `DO` and
 `CALL` nesting cleared, which is BBC's behaviour and the reason the rest
 was cheap.
 
-**Smaller, and self-contained:** `ASN` and `ACS`, which the float
-package can already almost do — `ATN` is there and the identities are
-one divide and one square root apart.
+**`ASN` and `ACS` are not going in, because `ATN` and `SQR` are enough.**
+Not because `SIN` is there — a function does not give you its inverse —
+but because the identities are one divide and one square root apart, and
+both are already resident:
+
+```
+ASN(X#) = ATN(X# / SQR(FLT(1) - X# * X#))
+ACS(X#) = PI / FLT(2) - ASN(X#)
+```
+
+Measured on the machine: `ASN(0.5)` gives **0.5235** against a true
+0.5236, which is the 24-bit float's four digits and not an error, and
+`ACS(0.5)` gives 1.047.
+
+**The edge is `ASN(±1)`**, where `SQR(1 - X#*X#)` is zero and the
+division raises `?DIV BY 0`. The answer there is ±`PI/2`, and a program
+that can reach it should say so itself. Two builtins' worth of bytes to
+remove one special case from the user's problem is the wrong trade at
+this size.
 
 (`MID$` as an assignment target was on this list and landed in [D83].)
+
+### Nothing else on this page is outstanding
+
+Section 12 opened as a list of gaps against C64 BASIC 2.0 and BBC BASIC.
+Every one is now either implemented ([D80] the five small ones, [D82]
+data files, [D83] `MID$` and the cursor clamp, [D85] error trapping) or
+closed with a reason — the logarithm, `ASN`/`ACS`, and everything under
+"absent on purpose". What is left is the deliberate list, and it is
+deliberate.
 
 **One logarithm is enough, and this list used to say otherwise.** BBC
 ships `LOG` base-10 *and* `LN` natural; ours is natural, named `LOG`,
