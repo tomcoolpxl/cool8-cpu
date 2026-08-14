@@ -382,12 +382,54 @@ irpush: LD   R1,[irhead]
 ; rather than a search -- and a record outside the program is a typed
 ; line, which prints no number.
 ; =====================================================================
+; **The handler is entered from here, and that is why it is cheap.**
+; The interpreter unwinds a fault by returning -- every handler, every
+; loop, every CALL frame -- so by the time an error is visible in this
+; routine the CPU stack is already back at main's level. Trapping needs
+; no longjmp and no saved stack pointer: it needs a line number.
+;
+; `goton` is the whole of the jump. It is GOTO's own tail -- prg_find,
+; LREC, openline, ipoll, JMP stmt -- and `stmt` returns when the program
+; stops, so CALL goton reads as "run from this line until it ends" and
+; the loop below catches whatever it ends with.
+;
+; **Three things this deliberately does not do.** It does not trap
+; E_STOP, or a program with a handler and a loop could never be stopped
+; by the break key. It does not trap E_DONE, which is a clean finish.
+; And it **disarms on entry**, so a fault inside the handler prints
+; rather than re-entering it forever; a program that wants to go on
+; catching says `ON ERROR GOTO` again, which is BBC's arrangement too.
 main_err:
-        LD   R0,[ERR]
+.again: LD   R0,[ERR]
         TST  R0
         BEQ  .out
         CMP  R0,#E_DONE         ; 255 is a clean stop, not a fault
         BEQ  .clr
+        CMP  R0,#E_STOP         ; the break key stays the user's
+        BEQ  .tell
+        LD   R0,[EHAND]
+        LD   R1,[EHAND+1]
+        MOV  R2,R0
+        OR   R2,R1
+        BEQ  .tell              ; nothing armed: say so as before
+        PUSH R0
+        PUSH R1
+        LD   R0,[ERR]
+        ST   [ELAST],R0         ; what ERR will report
+        CLR  R0
+        ST   [ERR],R0
+        ST   [EHAND],R0         ; disarmed: the handler runs untrapped
+        ST   [EHAND+1],R0
+        POP  R1
+        POP  R0
+        CALL goton
+        BRA  .again
+        ; **ERR again, because the handler test spent R0.** The walk
+        ; below indexes the message table on it, and reaching here
+        ; through the `no handler armed` branch left EHAND's low
+        ; byte there -- which is zero, so every untrapped fault
+        ; printed the table's first entry walked to nowhere.
+.tell:  LD   R0,[ERR]
         PUSHW X
         PUSHW Y
         LDW  X,#RUNTAB          ; walk to the message ERR - 1 selects
@@ -690,5 +732,7 @@ sttab:
                                 ;: OPENIN name:string  positions a read stream at the file's first byte; one at a time
         .word h_close           ; $D0 CLOSE
                                 ;: CLOSE  abandons the read stream; harmless if none is open
+        .word bad               ; $D1 ERROR -- a clause after ON
+                                ;: ON ERROR GOTO line:int  arm a handler; GOTO 0 disarms. ERR says which fault fired
 
 

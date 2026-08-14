@@ -4128,6 +4128,9 @@ btab:
         .byte 5,"T","I","M","E","R"
         .word itimer
                                 ;: TIMER -> int  frames since boot
+        .byte 3,"E","R","R"
+        .word ierr
+                                ;: ERR -> int  the code of the fault ON ERROR caught, 0 if none has
         .byte 4,"B","G","E","T"
         .word ibget
                                 ;: BGET -> int  the next byte of the open stream, or -1 past the end
@@ -5533,6 +5536,13 @@ itimer: LD   R0,[frames]
         LD   R1,[frames+1]
         JMP  retnum
 
+; ERR -- which fault the handler was entered for. Zero until one is
+; caught, and it is *not* cleared by reading: a handler that wants to
+; know twice should not have to save it.
+ierr:   LD   R0,[ELAST]
+        CLR  R1
+        JMP  retnum
+
 ; POS and VPOS -- where the cursor is, which TAB already knew and
 ; nothing could ask. The console's own CCX and CCY, so they are right
 ; after anything that *moved* the cursor rather than after anything that
@@ -5834,7 +5844,26 @@ dnext:  PUSHW Y
 ; ON n GOTO l1, l2, ... -- the nth number in the list, or fall through.
 ; The list is numbers, not expressions, which is what makes walking it
 ; without evaluating it possible.
-h_on:   CALL eval
+; ON ERROR GOTO n arms a handler; ON e GOTO n1,n2 is the computed jump.
+; **One token apart, and the test costs nothing** because `ON` has to
+; SKIPSP before its expression anyway -- `ERROR` is a keyword, so this
+; is a compare against a byte rather than a name match.
+;
+; `ON ERROR GOTO 0` disarms, which is what MS BASIC means by it and
+; needs no code: zero is the "no handler" value, and nothing looks the
+; line up until a fault actually fires.
+h_on:   SKIPSP
+        CMP  R2,#K_ERROR
+        BNE  .comp
+        INCW Y                  ; over ERROR
+        SKIPSP
+        INCW Y                  ; ...and over the GOTO
+        CALL eval
+        ST   [EHAND],R0
+        MOV  R0,R1
+        ST   [EHAND+1],R0
+        JMP  stmt
+.comp:  CALL eval
         ST   [garg],R0
         SKIPSP
         INCW Y                  ; the GOTO

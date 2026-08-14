@@ -1239,6 +1239,58 @@ def newwords(code, syms):
     check(shows(M, "11"), "seven significant characters, not six",
           " | ".join(r.strip() for r in M.screen() if r.strip())[-40:])
 
+    # ---- ON ERROR GOTO / ERR ([D85]).
+    #
+    # The handler is entered from `main_err`, after the interpreter has
+    # unwound the fault by returning -- so the stack is already clean
+    # and the jump is `goton`, GOTO's own tail.
+    def prog(*lines, budget=40_000_000):
+        M = B.Machine(code, syms)
+        M.settle()
+        M.cmd("CLS")
+        for l in lines:
+            M.cmd(reg(l))
+        M.m.type("RUN\r")
+        M.settle(budget)
+        return M
+
+    M = prog('10 ON ERROR GOTO 100', '20 A = 1/0', '30 PRINT "SKIPPED"',
+             '40 END', '100 PRINT "CAUGHT"; ERR', '110 END')
+    check(shows(M, "CAUGHT15") and not shows(M, "SKIPPED"),
+          "ON ERROR catches, and ERR says which fault it was",
+          " | ".join(r.strip() for r in M.screen() if r.strip())[-40:])
+
+    M = prog('10 ON ERROR GOTO 100', '20 OPENIN "NOSUCH"', '30 END',
+             '100 PRINT ERR', '110 END')
+    check(shows(M, "21"), "...a different fault gives a different ERR",
+          " | ".join(r.strip() for r in M.screen() if r.strip())[-40:])
+
+    # GOTO 0 disarms, which needs no code: zero is the "no handler"
+    # value and nothing looks a line up until a fault fires.
+    M = prog('10 ON ERROR GOTO 100', '20 ON ERROR GOTO 0', '30 A = 1/0',
+             '40 END', '100 PRINT "CAUGHT"', '110 END')
+    check(shows(M, "?DIV BY 0 IN 30") and not shows(M, "CAUGHT"),
+          "...ON ERROR GOTO 0 disarms it",
+          " | ".join(r.strip() for r in M.screen() if r.strip())[-40:])
+
+    # Disarmed on entry, so a fault inside the handler prints rather
+    # than re-entering it forever.
+    M = prog('10 ON ERROR GOTO 100', '20 A = 1/0', '30 END',
+             '100 B = 1/0', '110 END')
+    check(shows(M, "?DIV BY 0 IN 100"),
+          "...and a fault inside the handler is not caught again",
+          " | ".join(r.strip() for r in M.screen() if r.strip())[-40:])
+
+    # **The message walk indexes on R0**, and the handler test spends
+    # it. Reaching the print through "nothing armed" once left EHAND's
+    # low byte there -- zero -- and every untrapped fault printed the
+    # table walked to nowhere. An armed program is not enough to catch
+    # that; it takes an unarmed one.
+    M = prog('10 A = 1/0', '20 END')
+    check(shows(M, "?DIV BY 0 IN 10"),
+          "...and an untrapped fault still names itself",
+          " | ".join(r.strip() for r in M.screen() if r.strip())[-40:])
+
     # ---- MID$ as an assignment target, and the guard in front of it.
     #
     # It overwrites in place and never changes the length, which is the

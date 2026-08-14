@@ -105,6 +105,15 @@ SFRAC   = $00FF                 ;: 1 VAL's fraction digits, $FF until a
                                 ;    and every `AT` in sw/*.bas and refuses
                                 ;    a byte with two owners. [D67] moves
                                 ;    this out of page 0 entirely.
+; ---- error trapping ([D85]). Page 0's free run, which is where the
+; editor's compiled variables used to be.
+;
+; EHAND is the handler's line, 0 for disarmed -- so `ON ERROR GOTO 0`
+; turns it off with no code at all, which is what MS BASIC means by
+; it. ELAST is what `ERR` reports, kept separately because trapping
+; has to clear ERR before the handler runs.
+EHAND   = $00A5                 ;: 2 the ON ERROR line, 0 = off
+ELAST   = $00A7                 ;: 1 the code ERR reports
 EDEPTH  = $00A3                 ;: 1 expression nesting -- STEP took their
                                 ;    old $21-$22, and $12-$13 is BENT's,
                                 ;    which the first draft of this move

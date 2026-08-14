@@ -96,6 +96,7 @@ These hold a token but `sttab` sends them to `bad`, so meeting one where a state
 | `$C9` | `TAB(col:int)` | in PRINT: spaces out to that column, or nothing if already past it |
 | `$CA` | `SPC(n:int)` | in PRINT: n spaces |
 | `$CD` | `NOT n:int` | -1 - n, bitwise; binds looser than a comparison and tighter than AND `!intonly` |
+| `$D1` | `ON ERROR GOTO line:int` | arm a handler; GOTO 0 disarms. ERR says which fault fired |
 
 ## Functions
 
@@ -116,6 +117,7 @@ Matched by name, not tokenised — they have no token byte.
 | `KEY(code:int) -> int` | is that key held down `!intonly` |
 | `RND(n:int) -> int` | 0..n-1; RND(0) is the raw word `!intonly` |
 | `TIMER -> int` | frames since boot |
+| `ERR -> int` | the code of the fault ON ERROR caught, 0 if none has |
 | `BGET -> int` | the next byte of the open stream, or -1 past the end |
 | `EOF -> int` | -1 when the stream has no more bytes, or none is open |
 | `GET$ -> string` | one line of the open stream, without its CR; empty at the end |

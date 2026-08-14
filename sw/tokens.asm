@@ -87,6 +87,7 @@ K_NOT      = $CD
 K_STOP     = $CE
 K_OPENIN   = $CF
 K_CLOSE    = $D0
+K_ERROR    = $D1
 
-NTOK    = 81                    ; keywords, $80-$D0
+NTOK    = 82                    ; keywords, $80-$D1
 T_LIT   = K_NUM                 ; the stored-number marker, as tokenise writes it

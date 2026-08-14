@@ -163,4 +163,8 @@ TOKTAB:
         ; they take no argument and never begin a statement.
         .byte 6, "O","P","E","N","I","N"
         .byte 5, "C","L","O","S","E"
+        ; $D1 ERROR -- a clause, only ever after ON. In sttab it is
+        ; `bad`, so one on its own is ?SYNTAX rather than a
+        ; statement that quietly does nothing.
+        .byte 5, "E","R","R","O","R"
         .byte 0

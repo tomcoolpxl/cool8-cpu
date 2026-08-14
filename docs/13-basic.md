@@ -1441,10 +1441,12 @@ It calls `BGET` once per character, which is slow and is the trade:
 character — 3,200 byte moves for an 80-column line — where this appends
 in place.
 
-**Error trapping.** `ON ERROR`, `ERR`, `ERL`, `REPORT` — BBC has all
-four, the C64 none. It needs a saved line number and a handler vector,
-so it is not free, and it is the difference between a program that can
-recover from `?DIV BY 0` and one that cannot.
+**Error trapping: `ON ERROR GOTO n` and `ERR` landed in [D85]**, 134
+bytes. `ON ERROR GOTO 0` disarms. What is not there is `RESUME` — the
+handler cannot retry or continue where the fault happened — and `ERL`,
+which would report the line. The handler starts with `FOR`, `DO` and
+`CALL` nesting cleared, which is BBC's behaviour and the reason the rest
+was cheap.
 
 **Smaller, and self-contained:** `ASN` and `ACS`, which the float
 package can already almost do — `ATN` is there and the identities are

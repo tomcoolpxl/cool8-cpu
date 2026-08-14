@@ -2328,6 +2328,71 @@ implementation nobody is checking, which is how `test_lib` came to
 measure two programs against a third, private model of the I/O page
 and report 1.00x for a year.
 
+## D85 -- Error trapping is cheap because the interpreter already unwinds
+
+`ON ERROR GOTO n` and `ERR`. **134 bytes**, image 19,453 to 19,587, and
+the reason it is not 400 is structural rather than clever.
+
+**The interpreter unwinds a fault by returning.** A handler sets `ERR`,
+`stmt` sees it and returns, and every loop, every `CALL` frame and every
+nested expression unwinds the same way until `main_err` in `main.asm`
+prints the message. So by the time an error is *visible* anywhere it
+could be caught, **the CPU stack is already back at main's level**.
+Trapping needs no longjmp, no saved stack pointer and no unwinding of
+its own: it needs a line number.
+
+And the jump already existed. `goton` is GOTO's own tail -- `prg_find`,
+`LREC`, `openline`, `ipoll`, `JMP stmt` -- and `stmt` returns when the
+program stops, so `CALL goton` reads as "run from this line until it
+ends" and a loop around it catches whatever it ends with.
+
+### What was deliberately left out
+
+**No `RESUME`.** The handler cannot retry the failed statement or
+continue after it, because the position inside the line did not survive
+the unwind that made everything else cheap. Preserving it is the
+expensive half of error handling in any interpreter, and this decision
+is the half that is nearly free.
+
+**The handler starts with every stack cleared** -- `FOR`, `DO` and
+`CALL` nesting is gone, for the same reason. **This is BBC BASIC's
+behaviour**, which resets the stack on `ON ERROR`, so it is the honest
+arrangement rather than a shortcut. A handler cannot return into the
+loop that failed.
+
+**`E_STOP` is not trappable.** A program with a handler and a loop would
+otherwise be unstoppable from the keyboard. `E_DONE` is not either: it
+is a clean finish, not a fault.
+
+**Disarmed on entry**, so a fault inside the handler prints instead of
+re-entering it forever. A program that wants to go on catching says `ON
+ERROR GOTO` again -- BBC's arrangement as well.
+
+### Two things that cost nothing
+
+**`ON ERROR GOTO 0` disarms**, which is what MS BASIC means by it and
+needs no code at all: zero is the "no handler" value and nothing looks a
+line up until a fault fires.
+
+**The `ON` test is one byte.** `ON ERROR GOTO n` and `ON e GOTO n1,n2`
+are one token apart, and `h_on` has to `SKIPSP` before its expression
+anyway -- so telling them apart is a compare against `K_ERROR` rather
+than a name match.
+
+### The bug the armed tests could not have found
+
+The message walk indexes the table on `R0`, and the new handler test
+spends it: reaching the print through "nothing armed" left `EHAND`'s low
+byte there -- zero -- so **every untrapped fault printed the table
+walked to nowhere**. `?DIV BY 0 IN 10` came out as line noise.
+
+Five tests of a program *with* a handler all passed while that was true.
+It took an unarmed one to see it, which is the same shape as the pixel
+gate that rendered no cursor: a check that only exercises the new path
+cannot see what the new path broke on the old one.
+
+---
+
 ## D84 -- The pixel gate had no cursor in it, and found a bug the hour it did
 
 `AGENTS.md` calls `sim/test_vm.py` normative: **`rust/` and `rtl/` are
