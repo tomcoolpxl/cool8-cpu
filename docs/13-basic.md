@@ -122,7 +122,7 @@ signed. (`INT` was an arithmetic shift by 8 when §8 was fixed point.
 It is the float-to-integer floor now, and shifts nothing.)
 
 **Overflow is silent by design**, not by omission: a check costs bytes
-on every operation and the size ceiling in §12 is the reason there is
+on every operation and the size ceiling in §10 is the reason there is
 none.
 
 ## 3. Functions
@@ -1366,7 +1366,7 @@ before anything looks at `ERR`, so the guard changed 7749 to −7167 and
 nothing else. Suppressing the number properly means `PRINT` testing
 `ERR` after every item, which is a test on the hot path of the most-used
 statement in the language, to improve the presentation of a line that is
-already being rejected. **The error alone is good enough**, and §12's
+already being rejected. **The error alone is good enough**, and §10's
 ceiling is why. Recorded so the next reader does not rediscover the
 guard and keep it.
 
@@ -1374,3 +1374,66 @@ guard and keep it.
 stopped the machine booting. It did not: that was the record-walking
 fault above plus a stale `sw/org.asm`, and the guard was blamed for
 both. It works — it is simply not worth its bytes.)
+
+## 12. Measured against C64 BASIC 2.0 and BBC BASIC
+
+**Both reference lists were fetched, not recalled** — BBC BASIC's
+`TOKENS` table out of the annotated disassembly `AGENTS.md` names, the
+C64's out of its own token table, $80–$CB. Ours is
+[13a-vocabulary.md](13a-vocabulary.md), generated from the tables that
+implement it, so all three sides of this comparison are the bytes rather
+than anyone's memory of them.
+
+The point of the exercise is not to reach parity. It is to know which
+absences are decisions and which are just gaps, because those read
+identically from inside.
+
+### Missing, small, and the language looks unfinished without them
+
+| | why it stands out |
+|---|---|
+| **`STOP`** | [D78] gave us `CONT`, and nothing in the language can stop a program for it to resume — only the break key can. Both references have `STOP`, and `ipoll` already does the whole job: `CALL icsv`, set `E_STOP`, return. Perhaps 15 bytes with its token, unmeasured |
+| **`INPUT` with a prompt, and more than one variable** | `INPUT "NAME? "; A$` and `INPUT A, B` are the first line of half the programs ever typed into either reference. Ours takes one variable and prints nothing. This is the largest everyday gap in the language |
+| **`VPOS`** | `POS` landed in [D78] and its twin did not. A cursor column with no cursor row is an odd shape to leave behind |
+| **`PI`, `TRUE`, `FALSE`** | Three constants. `TRUE` especially: [D47] made TRUE = −1 a load-bearing fact of this language and there is no way to write it |
+| **`STRING$(n, s)`** | Repeat. Every text UI wants a rule of dashes, and `FOR`/`PRINT ;` is the workaround everyone writes once |
+
+### Real gaps that would cost real bytes
+
+**Data files are the big one.** There is a filesystem — `SAVE`, `LOAD`,
+`DIR`, `ERA`, `COMPACT`, `DRIVE` — and a program cannot read or write a
+file with it. The C64 does this with `OPEN`/`CLOSE`/`INPUT#`/`PRINT#`,
+the BBC with `OPENIN`/`OPENOUT`/`BGET`/`BPUT`/`EOF`/`PTR`. It is the
+only *capability* on this page rather than a convenience: `DATA`/`READ`
+is the whole of persistent data today, and it is compiled in.
+
+**Error trapping.** `ON ERROR`, `ERR`, `ERL`, `REPORT` — BBC has all
+four, the C64 none. It needs a saved line number and a handler vector,
+so it is not free, and it is the difference between a program that can
+recover from `?DIV BY 0` and one that cannot.
+
+**Smaller, and each self-contained:** `MID$` as an assignment target
+(`MID$(A$,2,3)="XY"` — C64 only); `ASN` and `ACS`, which the float
+package can already almost do; base-10 `LOG` — ours is natural, which is
+BBC's `LN`, and BBC ships both.
+
+### Absent on purpose, and should stay that way
+
+`LET` (assignment needs no keyword), `GOSUB`/`ON…GOSUB` (`SUB`/`CALL`
+with parameters is strictly better — [D73]), `DEF FN`/`FN` (retired as
+`FUNCTION`, same decision), `CLR` (`CLEAR`), `FRE` (`FREE`), `GET`
+(`INKEY`), `USR` (`SYS`, `CALL`), `WAIT` (`PAUSE`, `VSYNC`), `DIV`
+(`/` truncates towards zero already — §2), `REPEAT`/`UNTIL` (`DO`/`LOOP`),
+`PROC`/`ENDPROC` (`SUB`), `VDU`/`OSCLI` (`POKE` and the register map),
+`GCOL`/`MOVE`/`DRAW`/`POINT` (`PLOT`/`LINE` take their colour directly),
+`ENVELOPE`, `ADVAL` (no such hardware), `CHAIN`, `AUTO`, `OLD`, `WIDTH`,
+`TRACE`, `EVAL`, `HIMEM`/`LOMEM`/`PAGE`/`TOP` (`FREE`, and [D72] means
+the boundary is a slider rather than a fact worth exposing).
+
+**And the reverse direction matters as much.** Neither reference has
+`KEY(scancode)` reading a held key, `DO`/`LOOP` with the test at either
+end, `EXIT DO`, `ELSEIF`, `LOCAL` in the C64's case, three-dimensional
+typed arrays, or sixteen banks of palette. The list above is what a
+1982 program would miss, not a measure of the language.
+
+---
