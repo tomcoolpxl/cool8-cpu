@@ -1239,11 +1239,35 @@ def newwords(code, syms):
     check(shows(M, "11"), "seven significant characters, not six",
           " | ".join(r.strip() for r in M.screen() if r.strip())[-40:])
 
-    M = say("PRINT VPOS")
-    rows = [r.strip() for r in M.screen() if r.strip()]
-    check(bool(rows) and rows[-1].lstrip("-").isdigit(),
-          "VPOS answers a row, the way POS answers a column",
-          " | ".join(rows)[-40:])
+    # **Relative, not absolute.** "is it a number" would pass for a VPOS
+    # that returned a constant, which is the failure this has to see: a
+    # newline moves the cursor down one and the answer has to follow.
+    M = B.Machine(code, syms)
+    M.settle()
+    for ln in ["10 CLS", "20 A = VPOS", "30 PRINT", "40 B = VPOS",
+               "50 PRINT B - A", "60 END"]:
+        M.cmd(reg(ln))
+    M.m.type("RUN\r")
+    M.settle(20_000_000)
+    check(shows(M, "1"), "VPOS tracks the row -- a newline moves it by one",
+          " | ".join(r.strip() for r in M.screen() if r.strip())[-40:])
+
+    # STRING$ builds in the accumulator and so does concatenation, which
+    # is the one place they can tread on each other.
+    M = say('PRINT "<" + STRING$(2,"ab") + ">"')
+    check(shows(M, "<abab>"), "...and it composes with concatenation",
+          " | ".join(r.strip() for r in M.screen() if r.strip())[-40:])
+
+    M = say('PRINT LEN(STRING$(2,STRING$(3,"z")))')
+    check(shows(M, "6"), "...including STRING$ of a STRING$",
+          " | ".join(r.strip() for r in M.screen() if r.strip())[-40:])
+
+    # A direct-mode STOP records a line outside the program, which is
+    # what h_cont already rejects as stale -- no check was written for
+    # this, it falls out.
+    M = say("STOP", "CONT")
+    check(shows(M, "?CONT"), "a direct STOP has nothing for CONT to resume",
+          " | ".join(r.strip() for r in M.screen() if r.strip())[-40:])
 
     # STOP is the break key's own tail, so what this really asks is
     # whether CONT can resume from it -- the same machinery [D78] built.
