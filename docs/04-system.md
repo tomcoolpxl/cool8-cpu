@@ -96,11 +96,18 @@ it is the map that matters when reading `sw/`, so:
 |---|---|---|
 | `$0000–$00FF` | 256 | free. Formerly "page 0", special to nothing now |
 | `$0100–$01FF` | 256 | the CPU stack, growing down from `$0200` |
-| `$0200–$9BFF` | **39,424** | **the user's**: program up, heap down, and the name table, call stack and save stack above the program ([D73]) |
-| `$9C00–$AFFF` | 5,120 | the text map — 80×32 cells, stride 160 |
-| `$B000–$B369` | 874 | system storage and the string accumulator |
-| `$B36A–$B47E` | 277 | slack: the image's room to grow |
-| `$B47F–$FEFF` | 19,073 | the system image — BASIC, editor, floats |
+| `$0200–$97FF` | **38,400** | **the user's**: program up, heap down, and the name table, call stack and save stack above the program ([D73]) |
+| `$9800–$ABFF` | 5,120 | the text map — 80×32 cells, stride 160 |
+| `$AC00–$AF69` | 874 | system storage and the string accumulator |
+| `$AF6A–$B21C` | 691 | slack: the image's room to grow |
+| `$B21D–$FEFF` | 19,683 | the system image — BASIC, editor, floats |
+
+**The map moved down 1 KB in [D82]**, with the user's agreement, to make
+room for the read stream — `FREE` went 39,424 to 38,400 and it is
+[standing rule 5](../AGENTS.md) that it does not move again without one.
+The four rows above it are derived and move whenever BASIC's size does;
+`python tools/memmap.py` prints them from the built image, which is the
+copy to trust.
 
 **Do not move the map to make room. Ask first** — it is a
 [standing rule](../AGENTS.md), because every byte the map moves down

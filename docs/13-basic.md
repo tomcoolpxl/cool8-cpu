@@ -947,10 +947,10 @@ every register.
 
 ## 10. Sizes and the ceiling
 
-### Where the 19,073 bytes are — measured, 2026-08-14
+### Where the 19,683 bytes are — measured, 2026-08-14
 
-The image is **flat**. 371 routines with a measured span, and the twenty
-largest are 4,859 bytes — **25 %** of it. There is no hog to remove and no
+The image is **flat**. 387 routines with a measured span, and the twenty
+largest are 4,890 bytes — **25 %** of it. There is no hog to remove and no
 single decision to reverse; a diet means giving something up.
 
 The largest spans:
@@ -959,8 +959,8 @@ The largest spans:
    385  h_dim           375  fstr            347  tok_line
    297  erel            296  fatan           273  prim
    266  h_line          251  fsc_rewritedir  249  flog
-   221  fsc_compact     209  con_geom        209  argpass
-   207  main_loop
+   240  con_geom        221  fsc_compact     209  argpass
+   207  main_loop       204  fsin            203  prg_store
 ```
 
 `python tools/cool8asm.py sw/main.asm --pressure` prints this, sorted by
@@ -1038,8 +1038,8 @@ did the repack:
 
 ```
 65,536 - 512 (page 0, stack) - 5,120 (map) - 874 (system storage and
-         the string accumulator) - 277 (slack) - 19,073 (image)
-         - 256 (I/O, vectors)  =  39,424 in one region
+         the string accumulator) - 691 (slack) - 19,683 (image)
+         - 256 (I/O, vectors)  =  38,400 in one region
 ```
 
 **That is [D74]'s map position**, a kilobyte below where [D70] left it.
@@ -1051,7 +1051,7 @@ needed came out of `CSTKBUF`, a dead 32-byte reservation, which is where
 that kind of byte comes from.
 
 So the size of BASIC is no longer a question about the user's memory.
-The image grows downward into the slack — 277 bytes of it today — and
+The image grows downward into the slack — 691 bytes of it today — and
 until that runs out **`FREE` does not move at all** — where under the old layout
 every byte added to BASIC came straight out of the heap. When the slack
 is gone `poe check` fails the build; it warns from 256 bytes out.
@@ -1066,10 +1066,10 @@ machine should be able to do**, not about where anything lives.
 count rather than leaving it to arithmetic:
 
 ```
-  basic.bin   19,073 bytes  $B47F-$FEFF
-  BOOT.BIN    21,769 bytes  (2696 of relocating stub)
-  room           277 bytes  to grow down into, before system storage at $B369
-  the user's  39,424 bytes  $0200-$9BFF, one region
+  basic.bin   19,683 bytes  $B21D-$FEFF
+  BOOT.BIN    22,379 bytes  (2696 of relocating stub)
+  room           691 bytes  to grow down into, before system storage at $AF69
+  the user's  38,400 bytes  $0200-$97FF, one region
 ```
 
 **Run it rather than reading these**, which is the point of quoting the

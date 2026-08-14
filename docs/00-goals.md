@@ -100,7 +100,7 @@ blitter and three megahertz doing it — see
 | Resource | Available | Used |
 |---|---|---|
 | LUT4 | — | CPU **695**, video **1972**, flash **277**, keyboard **162**, UART **141**, sound **141**, the rest **249** |
-| Logic cells | 5280 | **5183 — 98 %** (2026-08-14) |
+| Logic cells | 5280 | **5098 — 96 %** (2026-08-14, after [D82] moved the map to `$9800`; the origin's bit pattern is worth tens of cells — [D81] has the table) |
 | EBR (block RAM) | 30 × 4 Kbit | Boot ROM 8, font 8, sprite line buffer 5, background line buffer 2, palette 1, sprite descriptors 1, sound voices 1, UART FIFO 1, keyboard FIFO 1 → **28** |
 | SPRAM | 4 × 32 KB = 128 KB | 2 blocks = 64 KB CPU RAM; **2 blocks = 64 KB video RAM** ([D28](01-decisions.md)) — **4 of 4** |
 | DSP | 8 | **0, and that is the right answer.** The pixel port's `y × stride` was believed to use one; `ice40_dsp` declines it in the flattened design though it maps standalone. Chased: **the whole multiply costs 8 logic cells** (5183 with, 5175 without), so a DSP could buy 8 cells and a hard primitive dependency. The sound engine avoids one on purpose. It earns its place the day a voice reads a wavetable |
