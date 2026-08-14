@@ -729,6 +729,56 @@ def compact(code, syms):
               "%-11s clears the variables" % after,
               " | ".join(scr)[:80])
 
+    # ---- PAUSE, POS and NOT ([D78]).
+    M.cmd("NEW")
+    for lines, want, why in [
+        (["10 T=TIMER", "20 PAUSE 30", "30 PRINT TIMER-T", "40 END"],
+         "30", "PAUSE waits the frames it is given"),
+        (["10 T=TIMER", "20 PAUSE 0", "30 PRINT TIMER-T", "40 END"],
+         "0", "PAUSE 0 waits none"),
+    ]:
+        M.cmd("NEW")
+        M.cmd("CLS")
+        for l in lines:
+            M.cmd(l)
+        M.cmd("RUN")
+        check(any(r.strip() == want for r in M.screen()), why,
+              " | ".join(r.strip() for r in M.screen() if r.strip())[-50:])
+
+    M.cmd("NEW")
+    for line, want, why in [
+        ('PRINT POS', "0", "POS at the left margin"),
+        ('PRINT "AB";POS', "AB2", "POS after two characters"),
+        ('PRINT TAB(10);POS', None, "POS reads the cursor TAB moved"),
+        ('PRINT NOT 0', "-1", "NOT 0 is TRUE, which is -1"),
+        ('PRINT NOT -1', "0", "NOT TRUE is 0"),
+        ('PRINT NOT 5', "-6", "NOT is the bitwise complement"),
+    ]:
+        M.cmd("CLS")
+        M.cmd(line)
+        if want is None:
+            check(any(r.rstrip() == " " * 10 + "10" for r in M.screen()), why,
+                  " | ".join(repr(r.rstrip()) for r in M.screen() if r.strip())[:60])
+        else:
+            check(any(r.strip() == want for r in M.screen()), why,
+                  " | ".join(r.strip() for r in M.screen() if r.strip())[:50])
+
+    # NOT binds looser than a comparison and tighter than AND, which is
+    # Microsoft's precedence and why it is taken at `erel` rather than in
+    # `prim` -- in prim it would bind tightest and mean (NOT A) = 1.
+    M.cmd("NEW")
+    M.cmd("A=5")
+    M.cmd("CLS")
+    M.cmd("IF NOT A=1 THEN PRINT 111")
+    check(any(r.strip() == "111" for r in M.screen()),
+          "NOT groups as NOT (A = 1), not (NOT A) = 1",
+          " | ".join(r.strip() for r in M.screen() if r.strip())[:50])
+    M.cmd("CLS")
+    M.cmd("IF NOT A=5 THEN PRINT 222")
+    check(not any(r.strip() == "222" for r in M.screen()),
+          "...and the true comparison comes back false",
+          " | ".join(r.strip() for r in M.screen() if r.strip())[:50])
+
     # ---- strings order, and MID$ takes two arguments ([D76]).
     M.cmd("NEW")
     M.cmd("CLS")

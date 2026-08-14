@@ -54,6 +54,8 @@ Names come from `TOKTAB` and `btab`, the bytes the matcher compares against. Ret
 | `$C5` | `REM text` | stored verbatim; nothing inside is tokenised |
 | `$C7` | `CLEAR` | every variable away, the program kept |
 | `$C8` | `LOCAL name[,name]` | inside a SUB: the caller's values come back on RETURN |
+| `$CB` | `PAUSE frames:int` | wait, still answering the break key `!intonly` |
+| `$CC` | `CONT` | resume a program the break key stopped |
 
 ## Tokenised, but not statements
 
@@ -90,6 +92,7 @@ These hold a token but `sttab` sends them to `bad`, so meeting one where a state
 | `$C6` | `! -- reserved` | the float literal marker, never a statement |
 | `$C9` | `TAB(col:int)` | in PRINT: spaces out to that column, or nothing if already past it |
 | `$CA` | `SPC(n:int)` | in PRINT: n spaces |
+| `$CD` | `NOT n:int` | -1 - n, bitwise; binds looser than a comparison and tighter than AND `!intonly` |
 
 ## Functions
 
@@ -110,6 +113,7 @@ Matched by name, not tokenised — they have no token byte.
 | `KEY(code:int) -> int` | is that key held down `!intonly` |
 | `RND(n:int) -> int` | 0..n-1; RND(0) is the raw word `!intonly` |
 | `TIMER -> int` | frames since boot |
+| `POS -> int` | the cursor's column, 0 at the left margin |
 | `VPEEK(addr:int) -> int` | `!intonly` |
 | `SIN(x:float) -> float` | radians |
 | `COS(x:float) -> float` | radians |
@@ -124,6 +128,6 @@ Matched by name, not tokenised — they have no token byte.
 
 ## The `!intonly` list
 
-16 of them. Each reads `R0:R1` and never tests `STYPE`, so handing one a float does not raise an error — it acts on whatever the integer registers last held. This list is generated so it cannot quietly grow.
+18 of them. Each reads `R0:R1` and never tests `STYPE`, so handing one a float does not raise an error — it acts on whatever the integer registers last held. This list is generated so it cannot quietly grow.
 
-`DIM`, `FOR`, `PEEK`, `POKE`, `SYS`, `MODE`, `SOUND`, `PLOT`, `LINE`, `CLG`, `PITCH`, `GTEXT`, `CHR$`, `KEY`, `RND`, `VPEEK`.
+`DIM`, `FOR`, `PEEK`, `POKE`, `SYS`, `MODE`, `SOUND`, `PLOT`, `LINE`, `CLG`, `PITCH`, `GTEXT`, `PAUSE`, `NOT`, `CHR$`, `KEY`, `RND`, `VPEEK`.

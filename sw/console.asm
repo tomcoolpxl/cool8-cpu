@@ -1092,6 +1092,7 @@ RUNTAB:
         .asciz "DISK FULL"
         .asciz "NO FILE"
         .asciz "REDIM"
+        .asciz "CONT"
         .byte 0
 
 MSGIN:    .asciz " IN "

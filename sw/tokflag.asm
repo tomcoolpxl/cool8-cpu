@@ -86,3 +86,6 @@ TOKFLG:
         .byte 0                ; $C8 LOCAL
         .byte 0                ; $C9 TAB
         .byte 0                ; $CA SPC
+        .byte 0                ; $CB PAUSE
+        .byte 0                ; $CC CONT
+        .byte 0                ; $CD NOT

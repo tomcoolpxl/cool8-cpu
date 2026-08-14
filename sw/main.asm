@@ -664,5 +664,11 @@ sttab:
                                 ;: TAB(col:int)  in PRINT: spaces out to that column, or nothing if already past it
         .word bad               ; $CA SPC -- PRINT only
                                 ;: SPC(n:int)  in PRINT: n spaces
+        .word h_pause           ; $CB PAUSE
+                                ;: PAUSE frames:int  wait, still answering the break key !intonly
+        .word h_cont            ; $CC CONT
+                                ;: CONT  resume a program the break key stopped
+        .word bad               ; $CD NOT -- a prefix in an expression
+                                ;: NOT n:int  -1 - n, bitwise; binds looser than a comparison and tighter than AND !intonly
 
 

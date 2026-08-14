@@ -2328,6 +2328,70 @@ implementation nobody is checking, which is how `test_lib` came to
 measure two programs against a third, private model of the I/O page
 and report 1.00x for a year.
 
+## D78 — PAUSE, POS, NOT and CONT, and where a break can be resumed from
+
+**Done.** Four keywords the C64 and the BBC both have and this machine
+did not, found by diffing the generated vocabulary against the C64
+manual's 71 keywords and BBC's own token table.
+
+**`PAUSE n` waits n frames**, not milliseconds, because `frames` is what
+the machine counts and what `TIMER` reports — so `PAUSE 60` and `TIMER`
+measure the same second. It polls `ipoll` rather than spinning: a wait
+that cannot be interrupted is a machine that has hung as far as anyone
+watching is concerned, and this is the one statement whose whole job is
+to take a long time. Measured exact at 0, 5, 30 and 60.
+
+**`POS` reads the console's `CCX`**, not a count of what was printed, so
+it is right after anything that moved the cursor — `PRINT TAB(10);POS`
+gives 10. `TAB` already knew the number and nothing could ask for it.
+
+**`NOT` is taken at `erel` and not in `prim`, and the level is the whole
+decision.** Microsoft's precedence puts it below the relations and above
+`AND`/`OR`, so `NOT A = 1` means `NOT (A = 1)`. `erel` is exactly the
+relational level with `AND`/`OR` above it in `.more`, so taking `NOT` at
+that entry gives the grouping for free; in `prim` it would bind tightest
+and mean `(NOT A) = 1`. Recursive, so `NOT NOT x` is x, and since TRUE
+is -1 ([D47]) the complement serves logic and bits with one operation.
+
+### CONT, and why the depths travel with the position
+
+`ipoll` is where the break flag becomes `?BREAK`, and **all four of its
+callers are loop and branch back-edges**, each one `JMP stmt`
+immediately after. So when it fires, `LREC` and `Y` already name the
+statement that was about to run — `CONT` resumes exactly there rather
+than somewhere in the middle of one. Nothing had to be added to find a
+resume point; it was already the only place a break could be noticed.
+
+**The five nesting depths go with it.** `idrct` resets `FDEPTH`,
+`DDEPTH`, `EDEPTH`, `CDEPTH` and `FSP` for every direct line — and
+`CONT` is a direct line. The FOR, DO, ELSE and CALL stacks still hold
+their frames; only the counters saying how many would be zero by the
+time `CONT` ran. Without them, continuing out of a loop is
+`?NEXT WITHOUT FOR`. Measured: a break at A=6835 inside
+`FOR I=1 TO 20000`, then `CONT`, and the program finishes with A=20000.
+
+**It is validated against the program, not only against a flag.** The
+ten-byte record lives above the name table, which is itself at
+`PROGEND`, so editing the program *moves it* and the bytes read there
+are whatever is in the heap. A saved `LREC` outside `$0200..PROGEND`
+cannot be a statement of the program that is loaded now — which arrives
+at the C64's "editing a line loses CONT" from the other end, and also
+covers `NEW` and `RUN`, where `PROGEND` moves to `PROGBOT`. Four ways to
+fail and all of them answer `?CONT`, its own error rather than `?CALL`,
+which means "no such SUB".
+
+### The bug that made PAUSE do nothing
+
+`PAUSE` snapshots the frame counter in R2 and spins until it changes.
+**`ipoll` returns the break flag in R2** — so the compare was against 0,
+every iteration looked like a tick, and `PAUSE 30` waited zero frames
+while a 4,000-iteration `FOR` took nine. It measured as working code
+that returned instantly, which is the shape a timing statement fails in.
+
+  18,570 → 18,861 bytes, 291 for the four.
+
+---
+
 ## D77 — The palette is in the bitstream, and that bought 76 logic cells
 
 **Done.** `rtl/soc/cool8_pal.v` reads its 256 entries at elaboration,

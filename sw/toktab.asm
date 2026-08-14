@@ -149,4 +149,9 @@ TOKTAB:
         ; in sttab pointing at `bad`, so one on its own is ?SYNTAX.
         .byte 3, "T","A","B"
         .byte 3, "S","P","C"
+        ; $CB PAUSE, $CC CONT, $CD NOT. Appended, so nothing renumbers
+        ; and a program on disk still means what it said.
+        .byte 5, "P","A","U","S","E"
+        .byte 4, "C","O","N","T"
+        .byte 3, "N","O","T"
         .byte 0

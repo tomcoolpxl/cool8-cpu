@@ -36,6 +36,15 @@ ROOT = H.ROOT
 
 FAILS = H.FAILS
 
+# Escape sequences as names, so nothing that edits this file has to
+# survive a round trip through a shell that eats backslashes.
+DOWN = chr(27) + '[B'
+HOME = chr(27) + '[H'
+RUNCMD = 'RUN' + chr(13)
+CONTCMD = 'CONT' + chr(13)
+CTRLC = bytes([3])
+
+
 
 def reg(line):
     """`{VRAM_ADDR_L}` in a test program becomes the register's address.
@@ -992,6 +1001,41 @@ def main():
     check(shows(M, "?BREAK IN 10") or shows(M, "?BREAK IN 20"),
           "Ctrl-C stops a program that never would",
           " | ".join(r.strip() for r in M.screen() if r.strip()))
+
+    # ---- and CONT goes back to it ([D78]).
+    #
+    # A FOR loop across the break, deliberately: `idrct` resets the
+    # nesting depths for every direct line and CONT is one, so the
+    # counters are zero by the time it runs even though the FOR stack
+    # still holds its frame. If CONT did not carry the depths back this
+    # would be ?NEXT WITHOUT FOR rather than a finished loop.
+    M = B.Machine(code, syms)
+    M.settle()
+    for ln in ["10 FOR I=1 TO 20000", "20 A=A+1", "30 NEXT", "40 PRINT A",
+               "50 END"]:
+        M.cmd(ln)
+    M.type(DOWN * 29, chunk=3)
+    M.type(HOME, chunk=3)
+    M.m.type(RUNCMD)
+    M.m.run(cycles=8_000_000)
+    M.m.uart.feed(CTRLC)
+    M.settle(80_000_000)
+    check(shows(M, "?BREAK IN 10") or shows(M, "?BREAK IN 20")
+          or shows(M, "?BREAK IN 30"),
+          "a FOR loop can be broken into",
+          " | ".join(r.strip() for r in M.screen() if r.strip())[-40:])
+    M.m.type(CONTCMD)
+    M.settle(3_000_000_000)
+    rows = [r.strip() for r in M.screen() if r.strip()]
+    check(bool(rows) and rows[-1] == "20000",
+          "CONT resumes it, and the loop still knows where it was",
+          " | ".join(rows)[-60:])
+    M.cmd("CLS")
+    M.cmd("CONT")
+    check(any(r.strip() == "?CONT" for r in M.screen()),
+          "...and a second CONT has nothing to resume",
+          " | ".join(r.strip() for r in M.screen() if r.strip())[-40:])
+
 
     print()
     k = keyboard(code, syms)

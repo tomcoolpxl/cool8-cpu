@@ -404,6 +404,132 @@ h_clear:
         CALL vwipe
         JMP  stmt
 
+; ---------------------------------------------------------------------
+; PAUSE n -- n frames, and the break key still works.
+;
+; Frames rather than milliseconds because `frames` is what the machine
+; counts and what TIMER reports, so `PAUSE 60` and `TIMER` measure the
+; same second. Sixty a second.
+;
+; **It polls `ipoll` rather than spinning.** A wait that cannot be
+; interrupted is a machine that has hung as far as anyone watching is
+; concerned, and this is the one statement whose whole job is to take a
+; long time.
+;
+; The count is on the CPU stack, not in a claim: PAUSE cannot nest and
+; the storage region has nothing spare.
+; ---------------------------------------------------------------------
+h_pause:
+        CALL eval
+        PUSH R1
+        PUSH R0
+.next:  LD   R0,[SP+0]
+        LD   R1,[SP+1]
+        MOV  R2,R0
+        OR   R2,R1
+        BEQ  .done
+        LD   R2,[frames]        ; wait for the counter to tick once
+.spin:  PUSH R2                 ; **ipoll returns the break flag in R2**
+        CALL ipoll              ;   and this is the frame it is watching
+        POP  R2                 ;   -- without the save, the compare
+        LD   R0,[ERR]           ;   below was against 0 and PAUSE
+                                ;   returned instantly, measured at
+                                ;   zero frames waited
+        BNE  .done
+        LD   R0,[frames]
+        CMP  R0,R2
+        BEQ  .spin
+        LD   R0,[SP+0]
+        SUB  R0,#1
+        ST   [SP+0],R0
+        BCS  .next              ; carry set is no borrow ([D9])
+        LD   R0,[SP+1]
+        SUB  R0,#1
+        ST   [SP+1],R0
+        BRA  .next
+.done:  ADDW SP,#2
+        JMP  stmt
+
+; ---------------------------------------------------------------------
+; CONT -- resume the program the break key stopped.
+;
+; **Validated against the program, not only against a flag.** The record
+; lives at a derived address above the name table, which is itself at
+; PROGEND -- so editing the program moves it and the bytes read there
+; are whatever happened to be in the heap. A saved LREC outside
+; $0200..PROGEND cannot be a statement of the program that is loaded
+; now, which is the same thing the C64 means by "editing a line loses
+; CONT", arrived at from the other end.
+; ---------------------------------------------------------------------
+h_cont: CALL csave
+        MOV  R0,XL
+        ADD  R0,#9
+        MOV  R1,XH
+        MOV  R2,#0
+        ADC  R1,R2
+        MOV  XL,R0
+        MOV  XH,R1
+        LD   R0,[X]
+        TST  R0
+        BEQ  .no
+        CLR  R0
+        ST   [X],R0             ; one resume per break
+
+        CALL csave
+        LD   R0,[X]             ; the record it stopped in
+        INCW X
+        LD   R1,[X]
+        INCW X
+        PUSH R1                 ; ...checked before anything is restored
+        PUSH R0
+        LD   R2,[PROGEND]
+        LD   R3,[PROGEND+1]
+        SUB  R0,R2
+        SBC  R1,R3
+        BHS  .stale             ; at or past the end: a different program
+        POP  R0
+        POP  R1
+        ST   [LREC],R0
+        ST   [LREC+1],R1
+
+        LD   R0,[X]             ; Y, kept while the depths go back
+        INCW X
+        PUSH R0
+        LD   R0,[X]
+        INCW X
+        PUSH R0
+        LD   R0,[X]
+        ST   [FDEPTH],R0
+        INCW X
+        LD   R0,[X]
+        ST   [DDEPTH],R0
+        INCW X
+        LD   R0,[X]
+        ST   [EDEPTH],R0
+        INCW X
+        LD   R0,[X]
+        ST   [CDEPTH],R0
+        INCW X
+        LD   R0,[X]
+        ST   [LDEPTH],R0
+        POP  R0
+        MOV  YH,R0
+        POP  R0
+        MOV  YL,R0
+        JMP  stmt
+
+        ; **Not ?CALL, which means "no such SUB".** Four ways to get
+        ; here and all of them are the same fact: there is no break to
+        ; go back to. Nothing was stopped; the program was edited, so
+        ; the saved record names a statement that is not there any more;
+        ; NEW or RUN emptied it; or this break has already been
+        ; continued once.
+.stale: POP  R0
+        POP  R1
+.no:    MOV  R0,#E_CONT
+        ST   [ERR],R0
+        RET
+
 h_cls:  CALL con_cls
         JMP  cnext
 
@@ -1471,6 +1597,25 @@ eval:   CALL erel
         RET
 
 erel:
+        ; **NOT is here and not in `prim`, and the level is the whole
+        ; point.** Microsoft's precedence puts it below the relations
+        ; and above AND/OR, so `NOT A = 1` means `NOT (A = 1)`. `erel`
+        ; is exactly the relational level and AND/OR sit above it in
+        ; `.more`, so taking NOT at this entry gives that grouping for
+        ; free. In `prim` it would bind tightest and mean `(NOT A) = 1`.
+        ;
+        ; Recursive, so `NOT NOT x` is x. TRUE is -1 ([D47]), so the
+        ; complement is the same operation for logic and for bits and
+        ; there is one of it.
+        SKIPSP
+        CMP  R2,#K_NOT
+        BNE  .noneg
+        INCW Y
+        CALL erel
+        XOR  R0,#$FF
+        XOR  R1,#$FF
+        RET
+.noneg:
         CALL prim               ; the first operand
         ; ---- { ^ * / MOD operand }, highest precedence.
         ;
@@ -3773,6 +3918,9 @@ btab:
         .byte 5,"T","I","M","E","R"
         .word itimer
                                 ;: TIMER -> int  frames since boot
+        .byte 3,"P","O","S"
+        .word ipos
+                                ;: POS -> int  the cursor's column, 0 at the left margin
         .byte 5,"V","P","E","E","K"
         .word ivpeek
                                 ;: VPEEK(addr:int) -> int !intonly
@@ -3879,12 +4027,78 @@ lstk:   LD   R0,[CSTK]
         MOV  XH,R0
         RET
 
-; ltop -- X one past everything the two stacks own, which is the floor
-; the heap may not come below.
-ltop:   CALL lstk
+; csave -- X on CONT's record, directly above the save stack.
+;
+; Ten bytes in the user's memory with the two stacks, for their reason:
+; the storage region is packed and this is per-program state, like the
+; name table it sits above.
+csave:  CALL lstk
         MOV  R0,XH
         ADD  R0,#>LSTKSZ
         MOV  XH,R0
+        RET
+
+; ltop -- X one past everything the stacks and CONT's record own, which
+; is the floor the heap may not come below.
+ltop:   CALL csave
+        MOV  R0,XL
+        ADD  R0,#CSAVESZ
+        MOV  R1,XH
+        MOV  R2,#0
+        ADC  R1,R2
+        MOV  XL,R0
+        MOV  XH,R1
+        RET
+
+; icsv -- remember where a break happened, so CONT can go back to it.
+;
+; **`ipoll` fires at a statement boundary and nowhere else.** All four
+; of its callers are loop and branch back-edges, each one `JMP stmt`
+; immediately after -- so LREC and Y already name the statement that
+; was about to run, and CONT resumes exactly there rather than
+; somewhere in the middle of one.
+;
+; The five depths go with it because `idrct` resets them for every
+; direct line, CONT included: the FOR, DO, ELSE, CALL and save stacks
+; still hold their frames, but the counters that say how many would be
+; zero by the time CONT ran. Without these, continuing out of a loop
+; would be ?NEXT WITHOUT FOR.
+icsv:   PUSHW X
+        PUSH R0
+        PUSH R1
+        CALL csave
+        LD   R0,[LREC]
+        ST   [X],R0
+        INCW X
+        LD   R0,[LREC+1]
+        ST   [X],R0
+        INCW X
+        MOV  R0,YL
+        ST   [X],R0
+        INCW X
+        MOV  R0,YH
+        ST   [X],R0
+        INCW X
+        LD   R0,[FDEPTH]
+        ST   [X],R0
+        INCW X
+        LD   R0,[DDEPTH]
+        ST   [X],R0
+        INCW X
+        LD   R0,[EDEPTH]
+        ST   [X],R0
+        INCW X
+        LD   R0,[CDEPTH]
+        ST   [X],R0
+        INCW X
+        LD   R0,[LDEPTH]
+        ST   [X],R0
+        INCW X
+        MOV  R0,#1
+        ST   [X],R0
+        POP  R1
+        POP  R0
+        POPW X
         RET
 
 ; ---------------------------------------------------------------------
@@ -4725,6 +4939,7 @@ ipoll:  LD   R2,[ibreak]
         BEQ  .none
         CLR  R2
         ST   [ibreak],R2
+        CALL icsv               ; where to come back to, for CONT
         MOV  R2,#E_STOP
         ST   [ERR],R2
 .none:  RET
@@ -5065,6 +5280,13 @@ irnd:   CALL earg               ; ( expression )
 ; which is a game's whole afternoon. No parentheses, like INKEY.
 itimer: LD   R0,[frames]
         LD   R1,[frames+1]
+        JMP  retnum
+
+; POS -- where the cursor is, which TAB already knew and nothing could
+; ask. The console's own CCX, so it is right after anything that moved
+; the cursor rather than after anything that printed.
+ipos:   LD   R0,[CCX]
+        CLR  R1
         JMP  retnum
 
 ; VPEEK(a) -- the port's prefetch is armed by the address write and the

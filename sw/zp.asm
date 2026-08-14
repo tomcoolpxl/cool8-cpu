@@ -171,6 +171,7 @@ DSGN    = $003B                 ;: 1 bit 0 negates the quotient, bit 1
 CALLFR  = 5                     ; Y, LREC, and how many saves to undo
 MAXCALL = 32                    ; nesting, which parameters make useful
 LSTKSZ  = 256                   ; the save stack, 51 saved variables
+CSAVESZ = 10                    ; CONT's record: where, and how deep
 LSAVE   = 5                     ; a handle and the four bytes it hid
 CSTK    = $003C                 ;: 2 where that stack lives
 CDEPTH  = $003E                 ;: 1 calls active, 0 = none
@@ -358,6 +359,7 @@ E_DATA  = 19                    ; ?OUT OF DATA -- READ past the last DATA
 E_NOSPC = 20                    ; ?DISK FULL
 E_NOFILE = 21                   ; ?NO SUCH FILE
 E_REDIM = 22                    ; ?REDIM -- an array dimensioned twice
+E_CONT  = 23                    ; ?CONT -- nothing to continue
 ; 13 was E_AFULL, "too many symbols". There is no symbol table to fill:
 ; a label is a BASIC variable, so running out of them is E_NAMES.
 E_DONE  = 255

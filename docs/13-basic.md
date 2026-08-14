@@ -37,6 +37,8 @@ the language does at its edges, measured on the machine.
 | `SYS addr` | call machine code at an address; its `RET` comes back. **Replaced `ASM`** — see below |
 | `REM …` / `' …` | a comment: the rest of the line, whatever is in it. Both are stored with the text verbatim after a marker, so `LIST` gives back exactly what was typed and nothing inside is tokenised |
 | `END` | a clean stop |
+| `PAUSE n` | wait `n` frames, sixty to the second — the same clock `TIMER` reports. The break key still works during one |
+| `CONT` | resume the program the break key stopped, at the statement that was about to run. `?CONT` if there is nothing to resume |
 
 Numbers are decimal or `$` hex (`$FE10`). Variables `A`–`Z` are
 resident and free to find; longer names cost a lookup. `A$`–`Z$` are
@@ -130,6 +132,8 @@ one accumulator, four-byte descriptors, no garbage collection.
 
 | | |
 |---|---|
+| `POS` | the cursor's column, 0 at the left margin. No parentheses |
+| `NOT n` | the bitwise complement, `-1 - n`. Binds looser than a comparison and tighter than `AND` — `NOT A = 1` is `NOT (A = 1)` |
 | `RND(n)` | 0..n-1 from a 16-bit xorshift; `RND(0)` is the raw word |
 | `TIMER` | frames since power-on, 60 per second, wraps at 65536 (~18 min). No parentheses |
 | `INKEY` | the next typed key, or 0 if none is waiting. No parentheses. Ordinary keys are ASCII (`Z` is 90, Esc is 27, Return 13); named keys are `K_UP` 256, `K_DOWN` 257, `K_LEFT` 258, `K_RIGHT` 259, `K_HOME` 260, `K_END` 261, `K_DEL` 262, `K_INS` 263 |
