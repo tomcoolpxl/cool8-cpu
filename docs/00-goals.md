@@ -103,7 +103,8 @@ blitter and three megahertz doing it — see
 | Logic cells | 5280 | **5183 — 98 %** (2026-08-14) |
 | EBR (block RAM) | 30 × 4 Kbit | Boot ROM 8, font 8, sprite line buffer 5, background line buffer 2, palette 1, sprite descriptors 1, sound voices 1, UART FIFO 1, keyboard FIFO 1 → **28** |
 | SPRAM | 4 × 32 KB = 128 KB | 2 blocks = 64 KB CPU RAM; **2 blocks = 64 KB video RAM** ([D28](01-decisions.md)) — **4 of 4** |
-| DSP | 8 | **0 — and the design asks for one.** `cool8_pixport.v` computes `y × stride` around an `SB_MAC16` and says so in its comments, `mkbit.py` passes `synth_ice40 -dsp`, and the placed report lists no DSP at all. Either it stopped being inferred or it never was; this table said 1 while the same block said 5022 logic cells, and the design is 5183. **Unresolved** — worth cells and possibly the 0.84 MHz of `sclk` that also went missing |
+| DSP | 8 | **0, and that is the right answer.** The pixel port's `y × stride` was believed to use one; `ice40_dsp` declines it in the flattened design though it maps standalone. Chased: **the whole multiply costs 8 logic cells** (5183 with, 5175 without), so a DSP could buy 8 cells and a hard primitive dependency. The sound engine avoids one on purpose. It earns its place the day a voice reads a wavetable |
+
 | PLL | 1 | **1** — 25.125 MHz for the raster, ÷3 for everything else ([D32](01-decisions.md)) |
 | Timing | — | closes at 8.375 MHz; `sclk` Fmax **11.07 mean**, 10.77–11.23 across six placer seeds (`tools/mkbit.py --seeds 6`, 2026-08-14) |
 

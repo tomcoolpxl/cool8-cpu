@@ -95,21 +95,26 @@ path: measured, both variants, six seeds each, and the baseline won —
 At 97 % occupancy the placer's freedom is the constraint, so only
 removing logic will move Fmax.
 
-## Found by the 2026-08-14 documentation audit, not yet chased
+## Chased and closed: the DSP block
 
-**The pixel port's multiply is not in a DSP, and the design asks for
-one.** `cool8_pixport.v` builds `y × stride` around an `SB_MAC16` and
-argues for it in its comments; `tools/mkbit.py` passes `synth_ice40
--dsp`; the placed report lists no DSP block at all. 00-goals.md and
-README both claimed one, alongside a cell count of 5022 — so the claim
-and the measurement were written together and only the measurement
-moved.
+**The design uses no DSP and should not.** `cool8_pixport.v` computes
+`y × stride` and its header claimed one of the eight `SB_MAC16` blocks;
+`00-goals.md` and README repeated it. `tools/mkbit.py` does pass
+`synth_ice40 -dsp`, and `ice40_dsp` **checks this multiply and declines
+it** -- it maps when the module is synthesised alone and not when the
+design is flattened around it.
 
-Worth chasing because it is the right shape to explain both numbers that
-drifted: a 16×16 multiply in LUT4s costs cells, and it sits on the pixel
-port's address path where it could cost `sclk`. The next step is cheap —
-`yosys -p 'synth_ice40 -dsp' ...` on `cool8_pixport.v` alone and read
-whether the `$mul` maps or is left as logic.
+Rather than force it, the multiply was priced: replaced with a shift and
+rebuilt. **5,183 cells with it, 5,175 without — the whole multiply is 8
+logic cells.** yosys is already reducing it far below a general 11×16
+multiplier, so instantiating an `SB_MAC16` by hand could recover 8 cells
+and add a vendor primitive to a module that does not need one.
+
+Closed. The comments in `cool8_pixport.v` and `cool8_snd.v` said
+otherwise and now carry the number, so this is not re-opened by the next
+reader counting idle DSP blocks. **It earns its place the day a voice
+reads a wavetable or a sample**, which is the upgrade `cool8_snd.v`
+names and is still a good one.
 
 ## Shelved: TinyTapeout
 

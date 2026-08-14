@@ -39,8 +39,10 @@
 // shapes no hardware ADSR offers. No hardware would make the machine
 // louder; it would make it bigger.
 //
-// **And no DSP block**, although seven sit idle. A square wave times a
-// 4-bit volume is a sign and a mux, not a multiply. The DSP earns its
+// **And no DSP block**, although all eight sit idle -- the pixel port's
+// multiply was long believed to take one and does not; it is 8 logic
+// cells of ordinary logic. A square wave times a 4-bit volume is a sign
+// and a mux, not a multiply. The DSP earns its
 // place the day a voice reads a wavetable or a sample out of memory —
 // that is the upgrade path and it is a good one — but spending it on
 // squares would buy nothing.

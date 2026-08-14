@@ -25,8 +25,17 @@
 //
 // So this is not a small blitter. It is the address arithmetic, which is
 // the part the CPU is genuinely bad at: `y * stride` on an 8-bit machine
-// is a sequenced multiply, and here it is one of the eight SB_MAC16
-// blocks the design had never used.
+// is a sequenced multiply and here it is one expression.
+//
+// **It is not a DSP block, although it was written expecting to be.**
+// `synth_ice40 -dsp` is passed and `ice40_dsp` checks this multiply and
+// declines it -- it maps when the module is synthesised alone and not
+// when the design is flattened around it. Chased in 2026-08, and the
+// answer is to leave it: **the whole multiply costs 8 logic cells**,
+// measured by replacing it with a shift and rebuilding (5183 against
+// 5175). yosys is already reducing it far below a general 11x16
+// multiplier, so a DSP could buy 8 cells and a hard primitive
+// dependency. Do not re-open this without a measurement that beats 8.
 //
 // ## The byte is the unit
 //
@@ -125,8 +134,9 @@ module cool8_pixport (
     wire [1:0]  pshift = 2'd3 - bpp_log;
     wire [3:0]  bpp    = 4'd1 << bpp_log;
 
-    // The multiply is a whole SB_MAC16 that would otherwise sit idle, and
-    // it is the difference between a pixel port and a novelty.
+    // 8 logic cells, measured -- not the SB_MAC16 the header once
+    // claimed. It is still the difference between a pixel port and a
+    // novelty; it is just cheaper than anyone thought.
     wire [31:0] mul_r  = {5'd0, pix_y} * stride;
 
     wire [2:0]  sb     = (pix_x << bpp_log) & 3'd7;
