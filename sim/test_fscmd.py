@@ -146,6 +146,30 @@ def stream(code, syms):
           "...and CLOSE on nothing is not an error",
           " | ".join(rows(M))[-60:])
 
+    # ---- **A statement after a disk command on the same line.**
+    #
+    # [D86] made `:` legal and seventeen handlers ended in `cnext`,
+    # which skips to the *next line* -- harmless while nothing could
+    # follow them, and a silently dropped statement the moment one
+    # could. Thirteen of them never moved the program and now end in
+    # `JMP stmt`; SAVE..AT and LOAD..AT additionally had to save Y,
+    # because fs_save and fs_load walk it over the data.
+    M = typed('POKE $3000,96', 'SAVE "F.BIN" AT $3000, 1:PRINT 9')
+    check(any(x == "9" for x in rows(M)),
+          "a statement after SAVE..AT on one line still runs",
+          " | ".join(rows(M))[-40:])
+
+    M = typed('POKE $3000,96', 'SAVE "F.BIN" AT $3000, 1',
+              'POKE $3000,0', 'LOAD "F.BIN" AT $3000:PRINT PEEK($3000)')
+    check(any(x == "96" for x in rows(M)),
+          "...and after LOAD..AT, which had spent Y on the data",
+          " | ".join(rows(M))[-40:])
+
+    for cmd in ("CLS", "FREE", "CLOSE", "DRIVE 0", "DIR", "COMPACT"):
+        M = typed(cmd + ":PRINT 9")
+        check(any(x == "9" for x in rows(M)),
+              "...and after %s" % cmd, " | ".join(rows(M))[-40:])
+
     # ---- GET$: a loop around BGET, and nothing else.
     line = ('POKE $3000,72', 'POKE $3001,73', 'POKE $3002,13',
             'POKE $3003,79', 'POKE $3004,75', 'SAVE "L" AT $3000, 5')

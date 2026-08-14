@@ -238,6 +238,21 @@ esyn:   MOV  R0,#E_SYN
 ; command was its line's last statement by construction (there is no
 ; ':'), and nextline already knows how to say "that was the direct
 ; line" or open the next record with Y rebuilt.
+; cnext -- abandon the rest of this line and go to the next.
+;
+; **Only for statements that moved the program under the interpreter.**
+; DELETE, RENUM, a program LOAD and a MERGE all rewrite the records that
+; `LREC` is pointing into, so carrying on where we stood would run
+; whatever landed there. Everything else -- CLS, FREE, DIR, SAVE, ERA,
+; DRIVE, COMPACT, OPENIN, CLOSE, LIST, LOAD..AT -- leaves the program
+; alone and ends in `JMP stmt`, which continues on the line and reaches
+; the next record by itself when the line runs out.
+;
+; **That distinction did not matter until [D86].** With no separator
+; there was never anything after these statements, so skipping the rest
+; of the line was free; the moment `:` became legal, `CLS:PRINT 1`
+; silently dropped the PRINT. Thirteen of the seventeen were wrong the
+; day the colon landed.
 cnext:  CALL nextline
         BCS  .cn
         RET
@@ -270,13 +285,13 @@ h_list: CALL rangel
         LD   R2,[garg+2]
         LD   R3,[garg+3]
         CALL prg_list
-        JMP  cnext
+        JMP  stmt 
 
 ; DELETE a[-[b]]
 h_del:  CALL rangel
         BTST R3,#1
         BNE  .r1                ; no first number: nothing to do
-        JMP  cnext
+        JMP  stmt 
 .r1:    BTST R3,#2
         BNE  .r2
         LD   R0,[garg]          ; DELETE n: that line
@@ -337,7 +352,7 @@ h_free: CALL prg_free           ; the count, then the word for it
         LDW  X,#MSGFREE
         CALL con_puts
         CALL con_nl
-        JMP  cnext
+        JMP  stmt 
 
 ; vwipe -- A-Z to zero, then the heap and the name table.
 ;
@@ -531,7 +546,7 @@ h_cont: CALL csave
         RET
 
 h_cls:  CALL con_cls
-        JMP  cnext
+        JMP  stmt 
 
 h_run:  LD   R0,[LREC+1]        ; direct only: a program restarting
         CMP  R0,#>DIRBUF        ;   itself stacks a frame per restart

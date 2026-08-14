@@ -927,16 +927,16 @@ fsc_scrpg:
 ; ([D68]).
 ; =====================================================================
 h_dir:  CALL fsc_dir
-        JMP  cnext
+        JMP  stmt 
 
 h_compact:
         CALL fsc_compact
-        JMP  cnext
+        JMP  stmt 
 
 h_drive:
         CALL eval
         CALL fsc_drive
-        JMP  cnext
+        JMP  stmt 
 
 h_era:  CALL tname
         BCS  .nm
@@ -949,7 +949,7 @@ h_era:  CALL tname
         MOV  R0,#E_NOFILE
         ST   [ERR],R0
         RET
-.ok:    JMP  cnext
+.ok:    JMP  stmt 
 
 ; SAVE "N"            -- the program
 ; SAVE "N" AT a, l    -- l raw bytes from address a (the BBC's *SAVE)
@@ -962,7 +962,7 @@ h_save: CALL tname
         BEQ  .at
         CALL fsc_save_prog
         BCC  .bad
-        JMP  cnext
+        JMP  stmt 
 .at:    INCW Y
         CALL eval               ; the address
         ST   [FSADDR],R0
@@ -973,11 +973,20 @@ h_save: CALL tname
         ST   [FSLENW],R0
         MOV  R0,R1
         ST   [FSLENW+1],R0
+        ; **Y is the data pointer down there.** `fs_save` walks it
+        ; over the bytes being written and `fs_load` over the bytes
+        ; being read, and neither puts it back -- which is why both of
+        ; these ended in `cnext` before [D86]: `nextline` rebuilds the
+        ; position from LREC and does not care what Y held. With a
+        ; colon after them the rest of the line is real, so the two
+        ; bytes to save it are cheaper than losing a statement.
+        PUSHW Y
         CALL fsc_save
+        POPW Y
         LD   R0,[FSOK]
         TST  R0
         BEQ  .bad
-        JMP  cnext
+        JMP  stmt 
 .bad:   MOV  R0,#E_NOSPC
         ST   [ERR],R0
         RET
@@ -1036,14 +1045,16 @@ h_load: CALL tname
         LD   R0,[FSOK]
         TST  R0
         BEQ  .nf
+        PUSHW Y                 ; fs_load walks Y over the bytes it reads
         CALL fsc_load
+        POPW Y
         LD   R0,[FSOK]
         TST  R0
         BNE  .lok
 .nf:    MOV  R0,#E_NOFILE
         ST   [ERR],R0
         RET
-.lok:   JMP  cnext
+.lok:   JMP  stmt 
 
 
 ; tname -- a quoted 8.3 name at Y into the editor's line buffer and
@@ -1086,7 +1097,7 @@ h_openin:
         CALL fs_stream          ; fs_load's prologue: position and count
         MOV  R0,#1
         ST   [FROPEN],R0
-        JMP  cnext
+        JMP  stmt 
 .nf:    MOV  R0,#E_NOFILE
         ST   [ERR],R0
         RET
@@ -1095,7 +1106,7 @@ h_openin:
 ; program that ends early should not have to ask whether it did.
 h_close:
         CALL frclose
-        JMP  cnext
+        JMP  stmt 
 
 ; frclose -- shut whatever is open, from anywhere, harmlessly.
 ;

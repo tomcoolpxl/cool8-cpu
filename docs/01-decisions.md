@@ -2377,6 +2377,33 @@ CMP R2,#$27 / BEQ .rem      ; apostrophe
 JMP h_let                   ; a name
 ```
 
+### And it broke seventeen statements silently, which is the real story
+
+`cnext` is `nextline` + `stmt`: it **abandons the rest of the line**.
+Seventeen handlers ended that way, and while nothing could follow them
+that was free. The moment `:` became legal, `CLS:PRINT 1` dropped the
+`PRINT` — no error, no clue.
+
+The rule turns out to be exact: **`cnext` is only for statements that
+moved the program under the interpreter.** `DELETE`, `RENUM`, a program
+`LOAD` and a `MERGE` rewrite the records `LREC` points into, so carrying
+on from where we stood would run whatever landed there. The other
+thirteen leave the program alone and now end in `JMP stmt`, which
+continues on the line and reaches the next record by itself.
+
+**Two of them needed more than that, and the reason is worth keeping.**
+`SAVE ..AT` and `LOAD ..AT` still swallowed the line after the change,
+because `fs_save` walks `Y` over the bytes it writes and `fs_load` over
+the bytes it reads, and **neither puts it back**. That is what `cnext`
+was really hiding: `nextline` rebuilds the position from `LREC` and does
+not care what `Y` held. Four bytes of `PUSHW Y`/`POPW Y` and they behave.
+
+Found by writing `LOAD "GAME.BIN" AT $3000:SYS $3000` and watching the
+`SYS` not happen — the first thing anyone will type when they ship a
+binary. Eight of ten disk commands were already right; the empirical
+test found the two that were not faster than reading seventeen call
+sites would have.
+
 ### What it does not change
 
 **A line is still at most 80 characters** -- the editor's logical line,
