@@ -2328,6 +2328,74 @@ implementation nobody is checking, which is how `test_lib` came to
 measure two programs against a third, private model of the I/O page
 and report 1.00x for a year.
 
+## D79 — Sixteen banks of sixteen, and they are published palettes
+
+**Done, and free.** [D77] put the palette in the bitstream and left
+fourteen of its sixteen banks black. They are filled now, and the
+bitstream measured **5,121 logic cells before and after** — a bank is
+EBR INIT bits, and those were already being written.
+
+**256 entries was never one palette.** A tile attribute's low nibble
+selects a bank of sixteen, so the table is sixteen palettes and the bank
+is the unit worth designing. Modes 0, 1, 4 and 5 read bank 0; mode 3
+reaches only entries 0 and 1; mode 6 is the only one that sees all 256
+at once.
+
+**Bank 0's slots are load-bearing and the rest are free.** A text cell's
+attribute is `bg[7:4] fg[3:0]`, so entry 4 of bank 0 must be the red a
+program means when it writes 4 — that bank stays softened CGA and its
+values are unchanged, byte for byte. Nothing indexes banks 1–15 by
+meaning; a tile or sprite points at a bank and takes what is in it. So
+those are chosen for how they look together, which is what a *designed*
+palette is for and what CGA's semantics prevent bank 0 from being.
+
+| bank | palette | author | source |
+|---|---|---|---|
+| 0 | Softened CGA | COOL8 | the boot ROM's, values eased |
+| 1 | PICO-8 | Lexaloffle | [lospec](https://lospec.com/palette-list/pico-8) |
+| 2 | DawnBringer 16 | DawnBringer | [lospec](https://lospec.com/palette-list/dawnbringer-16) |
+| 3 | Sweetie 16 | GrafxKid | [lospec](https://lospec.com/palette-list/sweetie-16) |
+| 4 | Endesga 16 | Endesga | [lospec](https://lospec.com/palette-list/endesga-16) |
+| 5 | AAP-16 | Adigun A. Polack | [lospec](https://lospec.com/palette-list/aap-16) |
+| 6 | Arne 16 | Arne Niklas Jansson | [lospec](https://lospec.com/palette-list/arne-16) |
+| 7 | Steam Lords | Slynyrd | [lospec](https://lospec.com/palette-list/steam-lords) |
+| 8 | Island Joy 16 | Kerrie Lake | [lospec](https://lospec.com/palette-list/island-joy-16) |
+| 9 | Bubblegum 16 | PineappleOnPizza | [lospec](https://lospec.com/palette-list/bubblegum-16) |
+| 10 | Commodore 64 | Commodore | [lospec](https://lospec.com/palette-list/commodore64) |
+| 11 | NA16 | Nauris | [lospec](https://lospec.com/palette-list/na16) |
+| 12 | ZX Spectrum | Sinclair | [lospec](https://lospec.com/palette-list/zx-spectrum) |
+| 13 | MSX | Texas Instruments | [lospec](https://lospec.com/palette-list/msx) |
+| 14 | CGA | IBM | the hard 0/A/5/F levels bank 0 softens |
+| 15 | Greyscale | COOL8 | a linear ramp, for dithering and masks |
+
+### Fetched, not remembered
+
+Every one came from lospec.com rather than recall, and that was not
+ceremony: **AAP-16 and Arne 16 both came back different from what I
+would have written down.** The rule about saying "not confirmed" rather
+than filling a value in from memory earns its place on palettes exactly
+as it does on BBC BASIC's internals.
+
+Two banks carry fifteen published colours because the hardware they
+describe has fifteen — the Spectrum's BRIGHT black *is* black, and the
+TMS9918's sixteenth entry is transparent, which over nothing is black.
+Both lead with black and say so, rather than being silently padded.
+
+### One quantiser, and it rounds
+
+The 24-bit originals are what `tools/palette.py` holds; `q444` is the
+only place a colour is converted, so "what did we change" has one
+answer: nothing but the depth. It rounds rather than truncating —
+`v >> 4` discards the low nibble and darkens everything by up to 6 %,
+where rounding keeps white white. It also makes a bank authored *as*
+twelve bits round-trip exactly, which is how bank 0 came through
+unchanged and is the check that says the conversion is honest.
+
+`python tools/palette.py --show` prints all sixteen with their authors
+and sources.
+
+---
+
 ## D78 — PAUSE, POS, NOT and CONT, and where a break can be resumed from
 
 **Done.** Four keywords the C64 and the BBC both have and this machine

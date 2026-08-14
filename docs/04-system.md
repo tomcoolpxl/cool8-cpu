@@ -770,10 +770,37 @@ cheaper** than the software it replaced. `tools/palette.py` owns the
 colours and generates the emulator's copy from the same table.
 
 256 entries is **sixteen banks of sixteen**, because a tile attribute's
-low nibble selects a bank. Bank 0 is softened CGA -- the slot meanings
-are load-bearing, a text attribute being `bg[7:4] fg[3:0]` -- and bank 1
-is PICO-8. Modes 0, 1, 4 and 5 read bank 0; mode 3 reaches only entries
-0 and 1; mode 6 sees all 256. Logical pixels are doubled
+low nibble selects a bank. Modes 0, 1, 4 and 5 read bank 0; mode 3
+reaches only entries 0 and 1; mode 6 sees all 256.
+
+**Bank 0's slots are load-bearing; banks 1-15 are designed palettes**
+([D79]). A text attribute is `bg[7:4] fg[3:0]`, so bank 0 keeps CGA's
+slot meanings — entry 4 is red because a program writing 4 means red.
+Nothing indexes the other banks by meaning, so each is a published
+sixteen chosen for how it looks:
+
+| bank | palette | author | source |
+|---|---|---|---|
+| 0 | Softened CGA | COOL8 | the boot ROM's, values eased |
+| 1 | PICO-8 | Lexaloffle | [lospec](https://lospec.com/palette-list/pico-8) |
+| 2 | DawnBringer 16 | DawnBringer | [lospec](https://lospec.com/palette-list/dawnbringer-16) |
+| 3 | Sweetie 16 | GrafxKid | [lospec](https://lospec.com/palette-list/sweetie-16) |
+| 4 | Endesga 16 | Endesga | [lospec](https://lospec.com/palette-list/endesga-16) |
+| 5 | AAP-16 | Adigun A. Polack | [lospec](https://lospec.com/palette-list/aap-16) |
+| 6 | Arne 16 | Arne Niklas Jansson | [lospec](https://lospec.com/palette-list/arne-16) |
+| 7 | Steam Lords | Slynyrd | [lospec](https://lospec.com/palette-list/steam-lords) |
+| 8 | Island Joy 16 | Kerrie Lake | [lospec](https://lospec.com/palette-list/island-joy-16) |
+| 9 | Bubblegum 16 | PineappleOnPizza | [lospec](https://lospec.com/palette-list/bubblegum-16) |
+| 10 | Commodore 64 | Commodore | [lospec](https://lospec.com/palette-list/commodore64) |
+| 11 | NA16 | Nauris | [lospec](https://lospec.com/palette-list/na16) |
+| 12 | ZX Spectrum | Sinclair | [lospec](https://lospec.com/palette-list/zx-spectrum) |
+| 13 | MSX | Texas Instruments | [lospec](https://lospec.com/palette-list/msx) |
+| 14 | CGA | IBM | the hard 0/A/5/F levels bank 0 softens |
+| 15 | Greyscale | COOL8 | a linear ramp, for dithering and masks |
+
+`python tools/palette.py --show` prints them with their sources. The
+24-bit originals live there and one function quantises them, so the only
+thing this machine changes about a published palette is its depth. Logical pixels are doubled
 where the resolution is below 640×480.
 
 | # | Engine | Memory | Displayed | Format | Bytes | Stride |
