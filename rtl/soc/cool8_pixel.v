@@ -114,7 +114,7 @@ module cool8_pixel #(
     input  wire [9:0]  scrl_x,
     input  wire [9:0]  scrl_y,
     input  wire [6:0]  cur_x,
-    input  wire [5:0]  cur_y,
+    input  wire [4:0]  cur_y,
     input  wire        cur_on
 );
 
@@ -131,7 +131,7 @@ module cool8_pixel #(
     reg [9:0]  c_vact, c_vstart;
     reg [9:0]  c_scrx, c_scry;
     reg [6:0]  c_curx;
-    reg [5:0]  c_cury;
+    reg [4:0]  c_cury;
     reg        c_curon;
     reg [3:0]  c_sbank;
 
@@ -284,7 +284,7 @@ module cool8_pixel #(
     reg        d1_steal;
     reg        d1_last, d2_last;
     reg [7:0]  d1_cell, d2_cell;
-    reg [5:0]  d1_trow, d2_trow;
+    reg [4:0]  d1_trow, d2_trow;
     reg [9:0]  sb_q, sb_d;
     reg [4:0]  d1_tag, d2_tag;
 
@@ -311,7 +311,7 @@ module cool8_pixel #(
             d1_steal  <= 1'b0;
             d1_last   <= 1'b0;  d2_last  <= 1'b0;
             d1_cell   <= 8'd0;  d2_cell  <= 8'd0;
-            d1_trow   <= 6'd0;  d2_trow  <= 6'd0;
+            d1_trow   <= 5'd0;  d2_trow  <= 5'd0;
             sb_q      <= 10'd0; sb_d     <= 10'd0;
             d1_tag    <= 5'd0;  d2_tag   <= 5'd0;
         end else begin
@@ -333,12 +333,19 @@ module cool8_pixel #(
             d2_last  <= d1_last;
             d1_steal <= (c_eng == E_TILE) & last_of_tile;
             d1_cell  <= sx1[10:3];  d2_cell <= d1_cell;
-            // A cell is 16 source lines, or 8 where the line doubler is
-            // stretching them to fill the screen -- which is exactly the
-            // modes the console gives CFROW 8. The cursor is the only
-            // consumer, and with one divisor it landed on the wrong row
-            // in every doubled mode.
-            d1_trow  <= c_vdbl ? vsrc[8:3] : {1'b0, vsrc[9:4]};
+            // **One divisor, because every mode's console row is 16
+            // display lines.** 30 rows over 480 in modes 0-4 and 6, 24
+            // over 384 in mode 5: sixteen every time. The doubler
+            // stretches source lines to fill the screen and the console
+            // halves its glyph height to match, so the *display* pitch
+            // of a row never changes -- and this counts display lines.
+            //
+            // It was `c_vdbl ? vsrc[7:3] : vsrc[8:4]`, which made the
+            // cursor cell eight lines tall in the doubled modes: half
+            // height, and on the wrong row once the row number no
+            // longer meant the same thing on both sides. Choosing per
+            // mode was the fault; there is nothing to choose.
+            d1_trow  <= vsrc[8:4];
             d2_trow <= d1_trow;
 
             // A stolen cycle carries a map entry, not a pattern: leaving

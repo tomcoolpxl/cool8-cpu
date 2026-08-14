@@ -353,7 +353,10 @@ impl Renderer {
                 // stretching them, which is exactly the modes the
                 // console gives CFROW 8.
                 cell_of = rel >> 3;
-                trow_of = if vv.vdouble { vrel >> 3 } else { vrel >> 4 };
+                // One divisor: every mode's console row is 16 display
+                // lines, so there is nothing to choose. cool8_pixel.v
+                // makes the same unconditional computation.
+                trow_of = vrel >> 4;
                 match vv.engine {
                     0 => {
                         // ---- text

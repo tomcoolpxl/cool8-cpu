@@ -2328,74 +2328,95 @@ implementation nobody is checking, which is how `test_lib` came to
 measure two programs against a third, private model of the I/O page
 and report 1.00x for a year.
 
-## D81 -- CUR_Y is not CCY, and five bits could not say so
+## D81 -- One divisor, because a console row is always 16 display lines
 
-**The cursor sat on the wrong line in modes 2, 4 and 5.** Reported from
-the machine, measured off the rendered frame: with `CCY` at 29 the text
-was at display rows 464-479 and the cursor was at 232-239 -- half way up
-a screen whose text was at the bottom.
+**The cursor was on the wrong row in modes 2, 4 and 5, and half height
+in all four doubled modes.** Reported from the machine and measured off
+the rendered frame: with `CCY` at 29 the text was at display rows
+464-479 and the cursor at 232-239, eight lines tall instead of sixteen.
 
-`con_cursor` wrote `CCY` into `CUR_Y` raw, and the two are not the same
-unit. The hardware counts a cursor row as **8 display lines wherever the
-line doubler is on and 16 where it is not**, while the console's own row
-is 16 display lines in every mode but 6. So in the doubled modes the
-cursor moved half a row for every row the text moved.
+`d1_trow` chose its divisor on the line doubler:
 
-| | cursor row | console row | needs |
-|---|---|---|---|
-| 0, 1, 3 | 16 lines | 16 | x1 |
-| **2, 4, 5** | **8 lines** | **16** | **x2** |
-| 6 | 8 lines | 8 | x1 |
+```verilog
+d1_trow <= c_vdbl ? {1'b0, vsrc[7:3]} : vsrc[8:4];
+```
 
-`GEOMTAB` gained a seventh column, `CCURSH`, holding that as a shift.
+so a cursor cell was 8 display lines in modes 2, 4, 5 and 6 and 16
+elsewhere. **There was nothing to choose.** Every mode's console row is
+16 display lines -- 30 rows over 480 in modes 0-4 and 6, 24 over 384 in
+mode 5 -- because the doubler stretches source lines to fill the screen
+and the console halves its glyph height to match. The *display* pitch of
+a row never changes. One divisor:
 
-### The five-bit ceiling, which is why this needed the RTL
+```verilog
+d1_trow <= vsrc[8:4];
+```
 
-Doubling `CCY` is the fix and it does not fit: row 29 doubled is 58, and
-`cury_r` was `io_wdata[4:0]`. A doubled mode has sixty 8-line rows and
-the register could address thirty-two of them, so **the bottom half of
-the screen was unreachable** -- 58 wrapped to 26 and the cursor landed
-somewhere else again. `cury_r`, `cury_d`, `cur_y`, `c_cury`, `d1_trow`
-and `d2_trow` are six bits now.
+### The first fix treated the symptom, and cost more everywhere
 
-The `d1_trow` derivation moved with them, from
-`c_vdbl ? {1'b0, vsrc[7:3]} : vsrc[8:4]` to
-`c_vdbl ? vsrc[8:3] : {1'b0, vsrc[9:4]}` -- the same two divisors, no
-longer truncated at the top.
+It scaled `CCY` by a per-mode shift in a new seventh `GEOMTAB` column,
+and needed a sixth bit in `CUR_Y` to hold the doubled row -- 29 doubled
+is 58. That put a load, a test, a branch and a shift into `con_cursor`,
+which runs on **every cursor move**, and widened `cury_r`, `cury_d`,
+`cur_y`, `c_cury`, `d1_trow` and `d2_trow`. It bought a correctly placed
+cursor that was still half height, because scaling the row number cannot
+change the cell's height.
 
-### Both models were wrong, identically, and the gates agreed with them
+Removing the choice removes all of it: `CUR_Y` is five bits again,
+`con_cursor` is four instructions with no arithmetic, `GEOMTAB` is six
+columns wide, and the cursor is full height in all seven modes.
 
-`rust/src/machine.rs` masked `cur_y & 0x1F` and `render.rs` computed
-`vrel >> 3`, which is exactly what the RTL did. So `sim/cosim.py` and
-`sim/test_vm.py` compared two models that shared the mistake and found
-nothing to report.
+### It costs 62 cells, and that is measured rather than argued
+
+| | cells |
+|---|---|
+| the mux, half-height cursor | 5,121 |
+| six-bit `CUR_Y` and a software shift | 5,143 |
+| **one divisor, full-height cursor** | **5,183** (98 %, 97 free) |
+
+**Removing a mux made the design bigger**, which is the opposite of what
+the netlist says should happen, and reverting only that one line put
+5,183 back to 5,121. At 96-98 % occupancy the packing is evidently
+sensitive to it in a way the source does not show. Recorded because the
+next reader will assume the simpler expression is also the cheaper one,
+and here it is not -- and because it is the price of a cursor that is
+the right size, which is not negotiable against 62 cells while 97
+remain.
+
+### Both models were wrong, identically, and the gates agreed
+
+`render.rs` computed `if vdouble { vrel >> 3 } else { vrel >> 4 }` --
+exactly the RTL's mux -- so `sim/cosim.py` and `sim/test_vm.py` compared
+two implementations that shared the mistake and found nothing.
 
 **This is [D74]'s note arriving in person**: gating two implementations
 against each other catches a disagreement and cannot catch a shared
-assumption. What caught it was a person looking at the screen, and what
-localised it was `m.fb()` -- two frames a blink apart differ in exactly
-the cursor cell, which isolates it without knowing the invert rule.
+assumption. A person looking at the screen caught it. `m.fb()` localised
+it -- two frames a blink apart differ in exactly the cursor cell, which
+isolates it without knowing the invert rule.
 
 ### The test asserts the answer, not the table
 
-`sim/test_main.py` already walked all seven modes checking the console
-against `GEOMTAB`. The obvious cursor check -- `CUR_Y == CCY << CCURSH`
--- compares the console with itself and **a table of zeros passes it in
-every mode**, which is precisely the bug. The expectation is written out
-instead: modes 2, 4 and 5 double, the rest do not.
+`sim/test_main.py` walks all seven modes. The obvious check --
+`CUR_Y == CCY << CCURSH` -- compares the console with itself, and a
+table of zeros passes it in every mode, which was the bug. The invariant
+is written out instead and is now simply **`CUR_Y == CCY`**, in every
+mode, which is what having nothing to choose means.
 
-It reads `CUR_Y` through `bus.read`, not `bus.mem`. The register lives
-in the video block and RAM at that address is not it; reading the wrong
-one answers 0 in every mode and looks like a broken cursor rather than a
-broken test.
+It reads `CUR_Y` through `bus.read`, not `bus.mem`: the register lives
+in the video block and RAM at that address answers 0 in every mode,
+which looks like a broken cursor rather than a broken test.
 
-### Still open, and not this decision's
+### Two faults this did not touch
 
-**Mode 6 draws its text in the top half of the screen.** `CROWS` is 30
-and its rows are 8 display lines, so the text occupies 240 of 480 lines
--- the "tiny characters in the upper half" this was first reported
-alongside. Its cursor agrees with its text, so it is not a cursor fault
-and the fix here does not touch it.
+**Mode 6 draws 8-line glyphs**, so its text fills 240 of 480 lines and
+its cursor now overhangs it. 30 rows over 480 is 16 display lines, so
+the glyph height is what is wrong -- `bglyph` draws `CFROW` source rows
+and modes 4 and 6 both say 8, yet mode 4 comes out 16 display lines.
+The difference is in the bitmap row arithmetic, not confirmed here.
+
+**Mode 5 has 24 rows and the console does not clamp `CCY`** when the
+mode narrows, so a cursor left at row 29 is off its screen entirely.
 
 ---
 

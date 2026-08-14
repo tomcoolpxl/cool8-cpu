@@ -220,8 +220,7 @@ def main():
         if want[2] == 1:
             want[3], want[4] = 4, 8
         got = [M.m.bus.mem[syms[n]] for n in
-               ("ccols", "crows", "ckind", "cbpc", "cfrow", "crpl",
-                "ccursh")]
+               ("ccols", "crows", "ckind", "cbpc", "cfrow", "crpl")]
         check(got == want, "...and the console followed: MODE %d geometry"
               % mode, "console %s, GEOMTAB says %s" % (got, want))
 
@@ -241,17 +240,21 @@ def main():
         # block and RAM at that address is not it. Reading the wrong one
         # answers 0 in every mode, which looks like a broken cursor
         # rather than a broken test.
-        # **Expected here, not read from CCURSH.** Checking CUR_Y against
-        # `CCY << CCURSH` compares the console with itself: a table of
-        # zeros -- which is what the bug was -- satisfies it in every
-        # mode. These are the doubled modes, measured off the rendered
-        # frame, and a wrong table now fails rather than agrees.
+        # **CUR_Y is CCY, in every mode, and that is the invariant.**
+        # A console row is 16 display lines everywhere -- 30 over 480, or
+        # mode 5's 24 over 384 -- so the hardware's cursor row and the
+        # console's row are the same number. The cursor was half height
+        # and on the wrong row in modes 2, 4 and 5 while the hardware
+        # picked its divisor off the line doubler.
+        #
+        # `bus.read`, not `bus.mem`: CUR_Y is a register in the video
+        # block and RAM at that address answers 0 in every mode, which
+        # looks like a broken cursor rather than a broken test.
         ccy = M.m.bus.mem[syms["ccy"]]
         cury = M.m.bus.read(syms["cur_y"])
-        want_cury = ccy * (2 if mode in (2, 4, 5) else 1)
-        check(cury == want_cury,
+        check(cury == ccy,
               "...and MODE %d puts the cursor on the text's row" % mode,
-              "CCY %d wants CUR_Y %d, reads %d" % (ccy, want_cury, cury))
+              "CCY %d, CUR_Y reads %d" % (ccy, cury))
 
     M = Machine(code, syms)
     M.settle()
