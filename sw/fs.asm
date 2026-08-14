@@ -465,6 +465,26 @@ fs_stream:
         CALL fls_seek
         JMP  fls_open
 
+; fs_rest -- R2:R3 bytes from the open stream to Y, and shut it.
+;
+; **The back half of fs_load**, the way `fs_stream` is its front half.
+; Both halves have a second caller now: BASIC's `SYS "name"` opens a
+; stream, takes two bytes off it for the address, and pours the rest
+; wherever they said -- which is the same act with a different count and
+; a different destination.
+fs_rest:
+.fr1:   MOV  R0,R2
+        OR   R0,R3
+        BEQ  .fr8
+        LD   R0,[FLS_DATA]
+        ST   [Y],R0
+        INCW Y
+        SUB  R2,#1
+        BCS  .fr1
+        SUB  R3,#1
+        BRA  .fr1
+.fr8:   JMP  fls_close
+
 fs_load:
         PUSH R0
         PUSH R2
@@ -474,17 +494,7 @@ fs_load:
         CALL fs_stream
         LD   R2,[fsent+14]
         LD   R3,[fsent+15]
-.fl1:   MOV  R0,R2
-        OR   R0,R3
-        BEQ  .fl8
-        LD   R0,[FLS_DATA]
-        ST   [Y],R0
-        INCW Y
-        SUB  R2,#1
-        BCS  .fl1
-        SUB  R3,#1
-        BRA  .fl1
-.fl8:   CALL fls_close
+        CALL fs_rest
         POP  R3
         POP  R2
         POP  R0

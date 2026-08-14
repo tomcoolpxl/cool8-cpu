@@ -170,6 +170,39 @@ def stream(code, syms):
         check(any(x == "9" for x in rows(M)),
               "...and after %s" % cmd, " | ".join(rows(M))[-40:])
 
+    # ---- SYS "name": the C64's PRG trick ([D87]).
+    #
+    # The first two bytes of the file are where the rest goes, low byte
+    # first, because this machine is little-endian like the 6502 the
+    # format comes from. So a released binary carries its own address
+    # and the user types no number.
+    import harness as HH
+    src = ("        .org $3000@        MOV  R0,#88@"
+           "        ST   [$3200],R0@        RET@").replace("@", "\n")
+    obj, _ = HH.assemble_text(src, name="prgtest")
+    mk = ["POKE $2FFE,0", "POKE $2FFF,$30"]
+    mk += ["POKE $%04X,%d" % (0x3000 + i, b) for i, b in enumerate(obj)]
+    mk += ['SAVE "G.BIN" AT $2FFE, %d' % (len(obj) + 2)]
+    wipe = ["POKE $3200,0"] + ["POKE $%04X,0" % (0x3000 + i)
+                               for i in range(len(obj))]
+
+    M = typed(*(mk + wipe), 'SYS "G.BIN"', "PRINT PEEK($3200)")
+    check(any(x == "88" for x in rows(M)),
+          'SYS "name" loads a PRG where its header says, and jumps',
+          " | ".join(rows(M))[-40:])
+
+    M = typed('SYS "NOSUCH.BIN"')
+    check(any("NO FILE" in x for x in rows(M)),
+          "...and says so when there is no such file",
+          " | ".join(rows(M))[-40:])
+
+    # The numeric form must survive the fork: `sys_pre` tests one quote
+    # and hands everything else to h_sys unchanged.
+    M = typed(*mk, "POKE $3200,0", "SYS $3000", "PRINT PEEK($3200)")
+    check(any(x == "88" for x in rows(M)),
+          "...and SYS with an address still jumps to it",
+          " | ".join(rows(M))[-40:])
+
     # ---- GET$: a loop around BGET, and nothing else.
     line = ('POKE $3000,72', 'POKE $3001,73', 'POKE $3002,13',
             'POKE $3003,79', 'POKE $3004,75', 'SAVE "L" AT $3000, 5')

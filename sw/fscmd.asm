@@ -1057,6 +1057,56 @@ h_load: CALL tname
 .lok:   JMP  stmt 
 
 
+; SYS "name" -- load a binary and jump into it, the C64's PRG trick.
+;
+; **The first two bytes of the file are where the rest goes**, low byte
+; first because this machine is little-endian like the 6502 the format
+; comes from. So a released binary carries its own address and the user
+; types no number: `SYS "GAME.BIN"` is the whole of starting a game.
+;
+; It is `fs_load` with two bytes taken off the front. `fs_stream` opens
+; the file and sets `fslen`; two reads give the destination; `fs_rest`
+; pours what is left there and shuts the stream. Both halves already
+; existed -- this decision is the third caller of one and the second of
+; the other.
+;
+; `SYS $3000` is the same act with the address typed instead of stored,
+; and both end at the same `JMP [X]`.
+h_sysf:
+        CALL tname
+        BCS  .nm
+        JMP  esyn
+.nm:    CALL fsc_find
+        LD   R0,[FSOK]
+        TST  R0
+        BEQ  .nf
+        CALL fs_stream          ; open it; fslen is the whole file
+        LD   R0,[FLS_DATA]      ; the address it asks for, low first
+        MOV  XL,R0
+        LD   R0,[FLS_DATA]
+        MOV  XH,R0
+        PUSHW X                 ; kept: it is where we jump
+        PUSHW Y                 ; fs_rest walks Y over the destination
+        MOV  R0,XL
+        MOV  YL,R0
+        MOV  R0,XH
+        MOV  YH,R0
+        LD   R2,[fslen]         ; ...and the rest of the file is the code
+        LD   R3,[fslen+1]
+        SUB  R2,#2
+        SBC  R3,#0
+        CALL fs_rest
+        POPW Y
+        POPW X
+        PUSHW Y
+        CALL .go
+        POPW Y
+        JMP  stmt
+.go:    JMP  [X]
+.nf:    MOV  R0,#E_NOFILE
+        ST   [ERR],R0
+        RET
+
 ; tname -- a quoted 8.3 name at Y into the editor's line buffer and
 ; through its own parsename, which owns the .EXT and padding rules.
 ; Carry set on success.

@@ -107,6 +107,17 @@ ed_direct:
         CALL idrct
         JMP  main_err           ; ?WHAT IN nn, if it set ERR
 
+; sys_pre -- SYS an address, or SYS a file ([D87]).
+;
+; Here for `run_pre`'s reason: `interp.asm` holds `h_sys` and is below
+; `fscmd.asm`, which holds the loader, so the fork cannot live in either
+; -- only in the layer that may call both. A quote is the whole test.
+sys_pre:
+        SKIPSP
+        CMP  R2,#$22            ; '"' -- a file rather than an address
+        BEQ  h_sysf
+        JMP  h_sys
+
 ; run_pre -- RUN, with the read stream shut first ([D82]).
 ;
 ; **Here and not in `h_run`, because of the layering.** `interp.asm` is
@@ -630,8 +641,8 @@ sttab:
         .word bad               ; $9B XOR
         .word bad               ; $9C CARD
         .word bad               ; $9D AT
-        .word h_sys             ; $9E SYS
-                                ;: SYS addr:int  jumps; the routine's own RET comes back !intonly
+        .word sys_pre           ; $9E SYS
+                                ;: SYS addr:int | name:string  jumps to an address, or loads a PRG and jumps where its first two bytes say !intonly
         .word bad               ; $9F EXTERN
         .word bad               ; $A0 INCLUDE
         .word bad               ; $A1 INLINE

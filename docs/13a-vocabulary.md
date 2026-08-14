@@ -24,7 +24,7 @@ Names come from `TOKTAB` and `btab`, the bytes the matcher compares against. Ret
 | `$92` | `RETURN` |  |
 | `$93` | `CALL name` | no parameters and no locals |
 | `$98` | `POKE addr:int, value:int` | `!intonly` |
-| `$9E` | `SYS addr:int` | jumps; the routine's own RET comes back `!intonly` |
+| `$9E` | `SYS addr:int \| name:string` | jumps to an address, or loads a PRG and jumps where its first two bytes say `!intonly` |
 | `$A2` | `GOTO line:int` |  |
 | `$A5` | `MODE n:int` | `!intonly` |
 | `$A6` | `VSYNC` | waits for the next frame |

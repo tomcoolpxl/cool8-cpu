@@ -2328,6 +2328,64 @@ implementation nobody is checking, which is how `test_lib` came to
 measure two programs against a third, private model of the I/O page
 and report 1.00x for a year.
 
+## D87 -- SYS "name": a binary carries its own address
+
+`SYS "GAME.BIN"` loads a file and jumps into it. **91 bytes**, image
+19,598 to 19,689.
+
+**The first two bytes of the file are where the rest goes**, low byte
+first -- which is the C64's PRG format, and it transfers exactly because
+this machine is little-endian like the 6502 it comes from
+([02-isa.md](02-isa.md) section 3). So a released binary needs no
+accompanying number: the address travels with the code.
+
+Before this, starting a shipped game meant a BASIC stub --
+`10 LOAD "GAME.BIN" AT $3000:SYS $3000` -- saved beside the binary, with
+the address typed in twice and correct in both places. That still works
+and is still the way to ship something that wants a BASIC front end.
+This is the one-liner for something that does not.
+
+### It is fs_load with two bytes taken off the front
+
+[D82] split `fs_load` into `fs_stream` (find, seek, open, count) and
+left the loop inline. That loop is `fs_rest` now -- "R2:R3 bytes from
+the open stream to Y, and shut it" -- so:
+
+```
+fs_load       = fs_find + fs_stream + fs_rest        (count from the entry)
+SYS "name"    = fs_find + fs_stream + two reads
+                        + fs_rest + JMP [X]          (count less two)
+```
+
+Both halves already existed and each has one more caller. Nothing about
+loading a file was written twice for this.
+
+### The fork is one quote, and it is in main.asm
+
+`SYS $3000` and `SYS "GAME.BIN"` differ by a character. The test cannot
+live in `h_sys`, which is in `interp.asm`, because the loader is in
+`fscmd.asm` **above** it and no module may call upward ([D68]) -- the
+same wall `run_pre` met in [D82]. So `sttab`'s `SYS` entry points at a
+four-instruction shim in `main.asm`, the layer that may call both.
+
+`SYS $3000` is the same act with the address typed rather than stored,
+and both arrive at the same `JMP [X]`.
+
+### Making one needs no new syntax
+
+The header is two bytes below the code, so BASIC writes it:
+
+```basic
+POKE $2FFE,0 : POKE $2FFF,$30
+SAVE "GAME.BIN" AT $2FFE, len+2
+```
+
+A save-side keyword was considered and dropped: it would be a second way
+to say what `POKE` and `SAVE ..AT` already say, and the header is two
+bytes rather than a format.
+
+---
+
 ## D86 -- The colon is seven bytes, because the loop was always there
 
 `A=5:PRINT A` works. So does `A=5 PRINT A`, and **it always did** --
