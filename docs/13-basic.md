@@ -1362,11 +1362,12 @@ one compared a *page* where the buffer's placement was doing the work.
 The whole address is compared now. Where `DIRBUF` sits is no longer
 load-bearing.
 
-(`A=5:PRINT A+1` answering `?SYNTAX` is **not** part of this. There is
-no `:` separator in this language — section 1 — so that line is wrong as
-written and the error is right. It was mistaken for a fourth fault while
-this was being chased, which is what reading the reference first would
-have prevented.)
+(`A=5:PRINT A+1` answering `?SYNTAX` was **not** part of this. There
+was no `:` separator then, so the line was wrong as written and the
+error was right — it was mistaken for a fourth fault while this was
+being chased. [D86] has since made it legal, and found that
+`A=5 PRINT A+1` had worked all along: `stmt` was already a loop over
+statements rather than over lines.)
 
 **A statement keyword in an expression answers a junk number, and that
 is where it stays.** `PRINT FREE`, `PRINT CLS`, `PRINT NEW` and
