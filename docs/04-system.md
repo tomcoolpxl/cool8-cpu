@@ -759,7 +759,21 @@ The fetch engine is parameterised by `VID_CTRL`, `VID_BASE`,
 over that one engine, not separate hardware**; `VID_MODE` loads the
 registers and software may override any of them afterwards.
 
-All modes use the 256-entry, 12-bit palette. Logical pixels are doubled
+All modes use the 256-entry, 12-bit palette.
+
+**The bitstream carries a default and nothing writes one at boot**
+([D77]). The palette RAM used to come up zeroed -- 256 entries of black,
+border included -- so the ROM, the flash stub and the console each wrote
+part of one. `rtl/soc/cool8_pal.v` reads `pal.hex` at elaboration now,
+the way `cool8_rom.v` reads the boot image, and it is **76 logic cells
+cheaper** than the software it replaced. `tools/palette.py` owns the
+colours and generates the emulator's copy from the same table.
+
+256 entries is **sixteen banks of sixteen**, because a tile attribute's
+low nibble selects a bank. Bank 0 is softened CGA -- the slot meanings
+are load-bearing, a text attribute being `bg[7:4] fg[3:0]` -- and bank 1
+is PICO-8. Modes 0, 1, 4 and 5 read bank 0; mode 3 reaches only entries
+0 and 1; mode 6 sees all 256. Logical pixels are doubled
 where the resolution is below 640×480.
 
 | # | Engine | Memory | Displayed | Format | Bytes | Stride |

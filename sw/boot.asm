@@ -88,24 +88,13 @@ reset:  LDW  X,#stack
 ; ---------------------------------------------------------------------
 ; Step 3: bring up video, and say something.
 ;
-; The palette has to go in first. Block RAM comes up zeroed from the
-; bitstream, so every entry is black and a screen brought up without it
-; is a screen with nothing on it -- including the border, which is
-; entry $00. Sixteen entries is all text mode indexes.
-;
-; PAL_IDX counts *entries*; the half within an entry is implicit and
-; advances with each write of PAL_DATA, so the whole table is one loop
-; and one register write to start it.
+; **No palette here any more.** It used to seed sixteen entries
+; because the block RAM came up zeroed and a screen without a palette
+; is a black screen -- border included. The bitstream carries the
+; default now ([D77], tools/palette.py), so the ROM comes up in colour
+; without spending a byte or a cycle on it, and the table it used to
+; hold is 32 bytes of ROM back.
 ; ---------------------------------------------------------------------
-
-        CLR  R0
-        ST   [PAL_IDX],R0
-        LDW  X,#palette
-        MOV  R0,#32
-.pal:   LD   R1,[X+]
-        ST   [PAL_DATA],R1
-        SUB  R0,#1
-        BNE  .pal
 
 ; Mode 0 with the display enabled: 80x30 cells of 8x16, the map at
 ; SCREEN with a stride of CSTRIDE. Writing VID_MODE loads VID_CTRL,
@@ -306,24 +295,6 @@ vectors:
 
 ; The sixteen CGA colours, as the 12-bit VGA PMOD wants them: the first
 ; byte of a pair is 0000RRRR and the second GGGGBBBB.
-
-palette:
-        .byte $00,$00           ; 0 black
-        .byte $00,$0A           ; 1 blue
-        .byte $00,$A0           ; 2 green
-        .byte $00,$AA           ; 3 cyan
-        .byte $0A,$00           ; 4 red
-        .byte $0A,$0A           ; 5 magenta
-        .byte $0A,$50           ; 6 brown
-        .byte $0A,$AA           ; 7 light grey
-        .byte $05,$55           ; 8 dark grey
-        .byte $05,$5F           ; 9 light blue
-        .byte $05,$F5           ; A light green
-        .byte $05,$FF           ; B light cyan
-        .byte $0F,$55           ; C light red
-        .byte $0F,$5F           ; D light magenta
-        .byte $0F,$F5           ; E yellow
-        .byte $0F,$FF           ; F white
 
 banner: .ascii "COOL8"
         .byte 0

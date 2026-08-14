@@ -308,6 +308,12 @@ args = ["--check"]
 about = "every I/O register the RTL decodes is named, and no $FExx equate in sw/ points at an address no peripheral answers at"
 
 [[tool.cool8.jobs.check]]
+id = "palette"
+run = "tools/palette.py"
+args = ["--check"]
+about = "the default palette the bitstream carries and the one the emulator starts with are the same 256 entries"
+
+[[tool.cool8.jobs.check]]
 id = "vocab"
 run = "tools/vocab.py"
 args = ["--check"]

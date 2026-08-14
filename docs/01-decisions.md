@@ -2328,6 +2328,87 @@ implementation nobody is checking, which is how `test_lib` came to
 measure two programs against a third, private model of the I/O page
 and report 1.00x for a year.
 
+## D77 — The palette is in the bitstream, and that bought 76 logic cells
+
+**Done.** `rtl/soc/cool8_pal.v` reads its 256 entries at elaboration,
+exactly as `cool8_rom.v` reads the boot image. Every software copy is
+deleted.
+
+**The block RAM came up zeroed** — 256 entries of black, *including
+entry 0, which is the border* — so a machine that never wrote the
+palette showed nothing at all. Three separate pieces of software wrote
+one to avoid that: the boot ROM's sixteen, the flash stub's thirty-two,
+and `sw/console.asm`'s one-entry override for mode 3. Three answers to
+"what colour is blue", and the screen was black for the interval between
+reset and whichever of them ran first.
+
+### It is free, and then some — measured, not assumed
+
+The palette is 256 x 12 bits = 3,072, which is one EBR of 4,096. **That
+block is allocated whether or not it has contents**; only its INIT bits
+change. So the expectation was zero cost. The measurement was better:
+
+| | logic cells | EBR |
+|---|---|---|
+| software palettes | 5,197 / 5,280 (98 %) | 28 / 30 |
+| **in the bitstream** | **5,121 / 5,280 (96 %)** | 28 / 30 |
+
+**−76 cells**, and reproducible: the baseline was re-run and came back
+at exactly 5,197, the new one at exactly 5,121. nextpnr is deterministic
+at a fixed seed, so this is not placement noise — it was checked
+precisely because 76 cells at 98 % occupancy is the kind of number worth
+being wrong about.
+
+### The objection that does not survive contact
+
+"Baking it into the RTL means a resynthesis to change a colour." True,
+and **the boot ROM is also in the bitstream** — `cool8_rom.v`
+`$readmemh`s `boot.hex`, which yosys embeds. Changing the ROM's palette
+table always required exactly the same rebuild. There was never a
+flexibility difference to lose.
+
+### One source, two generated copies
+
+`tools/palette.py` owns the colours. It emits `rust/src/pal.rs` — which
+is committed and drift-checked, the arrangement `tools/mkrsopc.py` has
+for `optab.rs` — and stages `pal.hex` into the run directory for
+whoever is about to elaborate, which is what `font.hex` and `boot.hex`
+already do and why neither of those is committed either.
+
+**The emulator had to be brought along or nothing would have caught
+it.** `machine.rs` initialised `pal: [0; 256]`. Had the hardware shipped
+a palette and the emulator not, both models would still have agreed with
+*each other* on every golden frame, because software wrote a palette
+over the top before any of them were captured — the shared-assumption
+failure [D74] is about. `poe check` now refuses drift between the two.
+
+### What was deleted
+
+* The boot ROM's sixteen-entry table and its loop — **32 bytes of ROM
+  back**, in the one part of the machine that cannot be reflashed.
+* The flash stub's thirty-two entries and their loop.
+* **Mode 3's entry-1 override.** One bit per pixel can only name entries
+  0 and 1, so mode 3 draws in entry 1 whatever it is; the console used
+  to force it to white. It is bank 0's blue now, dim against black and
+  chosen rather than inherited. The check that guarded it was rewritten
+  rather than deleted: entry 1 must still differ from entry 0, because
+  *that* is the fault the override existed for — text that cannot be
+  seen at all.
+
+### The banks, which is what 256 entries actually are
+
+In the tile mode the attribute's low nibble selects a **bank of
+sixteen**, so the table is sixteen palettes and a bank is the unit worth
+designing. Modes 0, 1, 4 and 5 read bank 0; mode 3 reaches only entries
+0 and 1; mode 6 is the only one that sees all 256 at once. Bank 0 is
+softened CGA — the slot *meanings* are load-bearing, since a text
+attribute is `bg[7:4] fg[3:0]` — and bank 1 is PICO-8. **Fourteen banks
+are still black**, and they are where a designed sixteen goes.
+
+  boot ROM 3,511 -> 3,479 bytes. Logic cells 5,197 -> 5,121.
+
+---
+
 ## D76 — Strings order, and it cost nothing because six copies became one
 
 **Done.** `<`, `<=`, `>`, `>=` compare strings character by character;

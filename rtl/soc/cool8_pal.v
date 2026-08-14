@@ -38,7 +38,7 @@
 
 `default_nettype none
 
-module cool8_pal (
+module cool8_pal #(parameter INIT_FILE = "pal.hex") (
     // ---- system domain: PAL_IDX / PAL_DATA
     input  wire        sclk,
     input  wire        we,             // a write of PAL_DATA
@@ -53,6 +53,15 @@ module cool8_pal (
 );
 
     reg [11:0] pal [0:255];
+
+    // **The default palette, in the bitstream.** The block RAM comes up
+    // zeroed otherwise -- 256 entries of black, border included, so a
+    // machine that never writes the palette shows nothing at all. The
+    // EBR is allocated either way; only its INIT bits change, so this
+    // is measured at zero cells. Same arrangement cool8_rom.v has for
+    // the boot image, and the same caveat: the file must resolve from
+    // the working directory at elaboration.
+    initial $readmemh(INIT_FILE, pal);
     reg [3:0]  red;                    // the even byte, waiting for its pair
     reg [11:0] q;
 

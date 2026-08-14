@@ -166,6 +166,9 @@ def main():
     # vvp elaborate the SoC.
     font, _, _ = mkfont.build(os.path.join(ROOT, "assets", "font",
                                            "spleen-8x16.bdf"))
+    import palette
+    palette.stage(BUILD)
+
     with open(os.path.join(BUILD, "font.hex"), "w") as fh:
         for b in font:
             fh.write("%02x\n" % b)

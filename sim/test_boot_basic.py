@@ -121,14 +121,18 @@ def modes(syms):
                  b("cbpc"), b("cfrow"), b("ckind"),
                  m.bus.read(0xFF13), m.bus.read(0xFF12),
                  m.bus.read(0xFF15), m.bus.read(0xFF14)))
-        # One bit per pixel can only name palette entries 0 and 1, and
-        # entry 1 of the boot palette is CGA blue. Mode 3 overrides it
-        # to white, because blue is the only colour it could otherwise
-        # write text in.
+        # One bit per pixel can only name palette entries 0 and 1, so
+        # mode 3 writes its text in entry 1 whatever that is. The
+        # console used to force it to white; the bitstream carries the
+        # palette now ([D77]) and entry 1 is bank 0's blue, which is a
+        # choice rather than an accident. **What still has to hold is
+        # that it is not black** -- entry 1 equal to entry 0 is text
+        # that cannot be seen, which is the fault the override existed
+        # for and the one worth keeping a check on.
         if mode == 3:
             pal = m.palette()
-            check(pal[1] == pal[15],
-                  "...and MODE 3 writes its text in white, not CGA blue",
+            check(pal[1] != pal[0] and pal[1] != 0,
+                  "...and MODE 3's text colour is visible against entry 0",
                   "entry 1 is $%03X, entry 15 is $%03X" % (pal[1], pal[15]))
         key(m, syms, "CLS\r")
 

@@ -168,6 +168,9 @@ def main():
 
     # ---- the font, and a screen of text through it
     img, present, fb = mkfont.build(BDF)
+    import palette
+    palette.stage(BUILD)
+
     with open(os.path.join(BUILD, "font.hex"), "w") as fh:
         for b in img:
             fh.write("%02x\n" % b)

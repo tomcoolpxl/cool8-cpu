@@ -909,21 +909,14 @@ con_geom:
         ; full height. 30 rows x 16 is the whole screen, where 8-line
         ; cells covered half of it.
         ;
-        ; **Entry 1 is white here and nowhere else.** One bit per pixel
-        ; can only name entries 0 and 1, and entry 1 of the boot
-        ; palette is CGA blue -- correct for a bank whose slot meanings
-        ; are kept, and wrong for the only colour this mode can write
-        ; text in. So mode 3, alone, overrides it. The 4 and 8 bpp modes
-        ; reach entry 15 and want no override; a draft that seeded both
-        ; for every mode was chasing a different bug entirely, which
-        ; turned out to be tools/mkboot.py writing the palette to the
-        ; I/O page's old address.
-        MOV  R0,#1
-        ST   [PAL_IDX],R0
-        MOV  R0,#$0F
-        ST   [PAL_DATA],R0
-        MOV  R0,#$FF
-        ST   [PAL_DATA],R0
+        ; **Entry 1 is no longer overridden here.** It used to be
+        ; forced to white for this mode alone: one bit per pixel can
+        ; only name entries 0 and 1, and entry 1 of a zeroed palette was
+        ; whatever the last writer left. The bitstream carries the
+        ; palette now ([D77]), so entry 1 is bank 0's blue and mode 3
+        ; draws in it -- dim against black, and a deliberate choice
+        ; rather than an accident. Ten bytes; restoring it is a PAL_IDX
+        ; and two PAL_DATA writes.
 .fset:  STW  [CFONT],X
 
         LD   R0,[VID_BASE_L]    ; where the display is reading now

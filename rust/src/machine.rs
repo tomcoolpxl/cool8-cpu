@@ -484,7 +484,7 @@ impl Video {
     fn new() -> Video {
         Video {
             vram: vec![0u8; 0x10000].into_boxed_slice().try_into().unwrap(),
-            pal: [0; 256],
+            pal: crate::pal::DEFAULT,   // the bitstream's, see tools/palette.py
             mode: 0,
             ctrl: 0,
             base: 0x9C00,

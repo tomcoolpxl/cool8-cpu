@@ -85,19 +85,10 @@ reloc:  LDW  X,#src
         ; the startup chime live here, run once, and are reclaimed --
         ; the machine's whole make-up ritual in memory it gives back.
 
-        ; palette bank 0: the editor's sixteen, CGA slot meanings kept
-        ; so attribute nibbles stay true, values softened. Bank 1: the
-        ; Pico-8 sixteen, quantised to RGB444 -- a designed game
-        ; palette for sprites and tiles to point at.
-        CLR  R0
-        ST   [$FF1E],R0
-        LDW  X,#paltab
-        MOV  R2,#64
-.pl:    LD   R0,[X]
-        ST   [$FF1F],R0
-        INCW X
-        SUB  R2,#1
-        BNE  .pl
+        ; **No palettes here either.** These thirty-two were the
+        ; machine's make-up ritual, run once at $0200 and reclaimed.
+        ; The bitstream carries them now ([D77]), so the ritual is
+        ; shorter and the colours are up before this stub even loads.
 
         ; the boot screen. It lives here, not in the image: 400-odd
         ; bytes of text and painting that run once and are reclaimed.
@@ -228,17 +219,6 @@ font8:
 
 font16:
 @FONT16@
-
-paltab: ; bank 0 -- softened CGA, semantics preserved
-        .byte $00,$00, $01,$2B, $01,$A4, $02,$AB
-        .byte $0B,$32, $0A,$3A, $0B,$72, $0B,$BC
-        .byte $05,$56, $05,$9F, $06,$E7, $07,$EE
-        .byte $0F,$66, $0E,$7E, $0F,$D5, $0F,$FF
-        ; bank 1 -- Pico-8, quantised to RGB444
-        .byte $00,$00, $01,$23, $07,$25, $00,$85
-        .byte $0A,$53, $05,$55, $0C,$CC, $0F,$FE
-        .byte $0F,$04, $0F,$A0, $0F,$E2, $00,$E3
-        .byte $02,$AF, $08,$79, $0F,$7A, $0F,$CA
 
 btext:
 @BANNER@

@@ -19,6 +19,7 @@ mod cpu;
 mod emu;
 mod machine;
 mod optab;
+mod pal;
 mod render;
 
 use cpu::Bus as _;
