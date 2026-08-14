@@ -1010,6 +1010,20 @@ coarse step goes with **fine step 0**, not with fine step 7. Pair the
 base with 7 and one frame shows a row and seven pixels at once and the
 next comes back, which reads as a shudder with an odd frame in it.
 
+**A fine scroll makes the window touch 31 rows, not 30.** Thirty rows
+of 16 are the whole 480 lines, so any non-zero `VID_SCRL_Y` shows the
+bottom of row `B` and the top of row `B+30`. Of a 32-row ring that
+leaves exactly **one** row off screen, `B+31`, and it is the only one
+software may draw into. Filling 31 rows before scrolling puts the draw
+one row early — into `B+30`, the part-shown one — and every new row is
+then built in full view along the bottom edge. Fill 32.
+
+**The cursor is not gated by engine.** `cur_cell` XORs the finished
+palette index, so it is visible in text, tile and bitmap alike, and a
+graphics program that never asked for a cursor gets one blinking
+wherever `CUR_X`/`CUR_Y` were left. `CUR_CTRL` bit 0 turns it off in the
+chip — `POKE $FF24,0` — rather than anything having to paint over it.
+
 `VID_BASE` is also two byte-writes, and a frame start between them
 latches an address that was never meant to exist: going from `$0980` to
 `$0A00`, a low byte written first gives `$0900` — a row *backwards*.
