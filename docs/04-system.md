@@ -993,6 +993,29 @@ the line buffer already.
 `VID_BASE` is latched at the start of vertical blanking, so a page flip
 never tears.
 
+**The tile row offset is latched with it, and the text one is not.** In
+tile mode `VID_SCRL_Y`'s low three bits are sampled once at frame start
+(`trow <= scrl_y[2:0]`); in text mode the fetch adds `scrl_y[3:0]` to
+the source line as it goes. So a tile-mode fine scroll changes on a
+frame boundary and a text-mode one changes wherever the raster happens
+to be — which is a raster effect if you want one and a tear if you do
+not.
+
+**And `VID_IRQ`'s vblank flag sets at that same instant, which decides
+how a scroll must be written.** By the time software sees the flag the
+latch has already happened, so *everything written after it lands on the
+next frame* — base and tile offset alike. A smooth scroll therefore
+writes, into one gap, the pair of values that belong to one frame: the
+coarse step goes with **fine step 0**, not with fine step 7. Pair the
+base with 7 and one frame shows a row and seven pixels at once and the
+next comes back, which reads as a shudder with an odd frame in it.
+
+`VID_BASE` is also two byte-writes, and a frame start between them
+latches an address that was never meant to exist: going from `$0980` to
+`$0A00`, a low byte written first gives `$0900` — a row *backwards*.
+Write both immediately after seeing the vblank flag, where a whole frame
+of margin stands between them and the next latch.
+
 ### 5.6 Sprites
 
 Independent of the background mode — a separate line buffer merged at
