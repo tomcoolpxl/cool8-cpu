@@ -393,7 +393,7 @@ over a range near 10^±38.
 | | |
 |---|---|
 | `SIN COS TAN ATN` | radians |
-| `SQR LOG EXP` | `LOG` is natural; a bad argument returns it unchanged, see below |
+| `SQR LOG EXP` | `LOG` is **natural** — the C64's meaning, not BBC's base-10, and there is no `LN`: base-10 is `LOG(x)/LOG(10)`. A bad argument returns it unchanged, see below |
 | `ABS(n)` | magnitude, **keeping the type** — a float stays a float |
 | `SGN(n)` | −1, 0 or 1, **always an integer**, whichever type went in |
 | `STR$(n)` | text, for a float too — the digits `PRINT` would give |
@@ -1439,8 +1439,22 @@ recover from `?DIV BY 0` and one that cannot.
 
 **Smaller, and each self-contained:** `MID$` as an assignment target
 (`MID$(A$,2,3)="XY"` — C64 only); `ASN` and `ACS`, which the float
-package can already almost do; base-10 `LOG` — ours is natural, which is
-BBC's `LN`, and BBC ships both.
+package can already almost do.
+
+**One logarithm is enough, and this list used to say otherwise.** BBC
+ships `LOG` base-10 *and* `LN` natural; ours is natural, named `LOG`,
+which is the Microsoft and C64 meaning. That was written up as a gap on
+the grounds that "BBC ships both" — but shipping both is BBC's choice,
+not a requirement, and base-10 is `LOG(x)/LOG(10)`: one division the
+user can write.
+
+Adding `LN` as a second name for the same function was drafted and
+thrown away, because it is worse than nothing: a BBC program saying `LN`
+would then be right while the same program saying `LOG` would silently
+get natural where it expected base-10. **Half a program working is the
+failure mode this language spends bytes to avoid**, so `LOG` is natural,
+it is the only one, and the divergence from BBC is stated rather than
+papered over.
 
 ### Absent on purpose, and should stay that way
 

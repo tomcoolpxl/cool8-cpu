@@ -908,6 +908,33 @@ con_geom:
         ; machine's cursor has always done.
         MOV  R0,#$11
         ST   [CUR_CTRL],R0
+
+        ; **A narrower mode strands the cursor off the screen.** Mode 5
+        ; is 24 rows where every other mode is 30, and modes 5 and 6 are
+        ; 32 columns where mode 0 is 80 -- so a cursor at row 29 or
+        ; column 70 is simply outside the display the moment the mode
+        ; changes. The hardware never draws it and the editor goes on
+        ; writing where nothing is shown, which reads as a dead machine.
+        ;
+        ; Clamped here rather than in `h_mode`, because this is where the
+        ; new geometry becomes true and every other caller -- con_init,
+        ; con_warm, a warm restart into whatever mode a program left --
+        ; needs it just as much.
+        LD   R0,[CCY]
+        LD   R1,[CROWS]
+        SUB  R1,#1
+        CMP  R0,R1
+        BLS  .yok
+        ST   [CCY],R1
+.yok:   LD   R0,[CCX]
+        LD   R1,[CCOLS]
+        SUB  R1,#1
+        CMP  R0,R1
+        BLS  .xok
+        ST   [CCX],R1
+.xok:   CALL con_setrow         ; CROWA caches the row's address, so it
+                                ;   has to follow CCY or the next
+                                ;   character lands on the old row
         CALL con_cursor         ; and where the console thinks it is
 
         ; **The palette is the boot stub's, not this routine's.** A

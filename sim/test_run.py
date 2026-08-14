@@ -1239,6 +1239,43 @@ def newwords(code, syms):
     check(shows(M, "11"), "seven significant characters, not six",
           " | ".join(r.strip() for r in M.screen() if r.strip())[-40:])
 
+    # ---- MID$ as an assignment target, and the guard in front of it.
+    #
+    # It overwrites in place and never changes the length, which is the
+    # whole reason it exists: no allocation and no garbage. Everything
+    # clamps, so it can neither extend a string nor run off the end.
+    M = say('AA$="HELLO"', 'MID$(AA$,2,3)="xyz"', "PRINT AA$")
+    check(shows(M, "HxyzO"), "MID$ on the left overwrites in place",
+          " | ".join(r.strip() for r in M.screen() if r.strip())[-40:])
+
+    M = say('AB$="HELLO"', 'MID$(AB$,3)="ZZZ"', "PRINT AB$")
+    check(shows(M, "HEZZZ"), "...two arguments run to the end",
+          " | ".join(r.strip() for r in M.screen() if r.strip())[-40:])
+
+    M = say('AC$="HI"', 'MID$(AC$,1,9)="WORLD"', "PRINT AC$")
+    check(shows(M, "WO"), "...a longer replacement truncates, not grows",
+          " | ".join(r.strip() for r in M.screen() if r.strip())[-40:])
+
+    M = say('AD$="HI"', 'MID$(AD$,9,2)="XY"', "PRINT AD$")
+    check(shows(M, "HI"), "...and past the end writes nothing",
+          " | ".join(r.strip() for r in M.screen() if r.strip())[-40:])
+
+    M = say('AE$="HELLO"', 'MID$(AE$,2,3)="ab"', "PRINT LEN(AE$)")
+    check(shows(M, "5"), "...the length never changes",
+          " | ".join(r.strip() for r in M.screen() if r.strip())[-40:])
+
+    # `h_let` tests one folded byte before committing to the compare, so
+    # these are the check that the guard costs nothing correct: an
+    # ordinary assignment to M, and a name beginning with M that is not
+    # MID$ at all.
+    M = say("M=7", "PRINT M")
+    check(shows(M, "7"), "...and M= is still an ordinary assignment",
+          " | ".join(r.strip() for r in M.screen() if r.strip())[-40:])
+
+    M = say('MX$="ab"', "PRINT MX$")
+    check(shows(M, "ab"), "...as is a name that merely begins with M",
+          " | ".join(r.strip() for r in M.screen() if r.strip())[-40:])
+
     # **Relative, not absolute.** "is it a number" would pass for a VPOS
     # that returned a constant, which is the failure this has to see: a
     # newline moves the cursor down one and the answer has to follow.

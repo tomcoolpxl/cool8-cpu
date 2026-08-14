@@ -783,8 +783,142 @@ h_end:  SKIPSP
 ; A name is one letter here: A-Z are resident, which is BBC BASIC's
 ; A%-Z% and is why a loop counter costs nothing to find.
 ; ---------------------------------------------------------------------
+; ---------------------------------------------------------------------
+; MID$(a$, start [, n]) = expr -- the one assignment target that is not
+; a variable or an array element.
+;
+; **A special case here because it is a special case in the language.**
+; Every BASIC that has this implements it apart from ordinary assignment,
+; because the left-hand side is a function call in every other context.
+; The C64 has it; BBC BASIC does not.
+;
+; It **overwrites in place and never changes the length**, which is the
+; whole reason it exists: no allocation, no garbage, and a fixed-width
+; field can be rewritten as often as a program likes. Everything is
+; clamped to what is there -- past the end writes nothing, too long a
+; replacement is truncated -- so it cannot extend a string or run off
+; the end of one.
+; ---------------------------------------------------------------------
+
+midnam: .byte "m","i","d","$","("
+
+; ismid -- is the statement `MID$(`? C set and Y past it if so, Y
+; untouched if not.
+;
+; Folded with OR $20, which turns a letter lower case and leaves `$` and
+; `(` alone -- both already have bit 5 set. So this reads `mid$(` and
+; `MID$(` alike without the tokeniser having to fold identifiers, which
+; it does not: a name that is not a keyword is copied verbatim.
+ismid:  PUSHW Y
+        LDW  X,#midnam
+        MOV  R3,#5
+.mc:    LD   R0,[X]
+        INCW X
+        LD   R1,[Y]
+        INCW Y
+        OR   R1,#$20
+        CMP  R0,R1
+        BNE  .no
+        SUB  R3,#1
+        BNE  .mc
+        POPW X                  ; matched: drop the saved Y, keep the walk
+        SEC
+        RET
+.no:    POPW Y
+        CLC
+        RET
+
+h_midst:
+        CALL varidx             ; the target, X on its descriptor
+        CMP  R0,#52
+        BCS  .long
+        JMP  esyn               ; A-Z is never a string, so nor is this
+.long:  PUSHW X
+        CALL isstr
+        BCC  .str
+        POPW X
+        JMP  esyn
+.str:   CALL sopen              ; ','
+        CALL eval               ; where to start, counting from one
+        PUSH R0
+        ; **Two arguments means "to the end"**, the same shape `smid`
+        ; uses for reading, and for the same reason: the count is asked
+        ; for only if a ',' follows, and everything below clamps.
+        SKIPSP
+        CMP  R2,#$29            ; ')'
+        BNE  .three
+        INCW Y
+        MOV  R0,#$FF
+        BRA  .have
+.three: CALL earg               ; , n )
+.have:  PUSH R0
+        SKIPSP
+        INCW Y                  ; the '='
+        CALL eval               ; the replacement, into the accumulator
+        POP  R3                 ; how many
+        POP  R2                 ; where
+        POPW X                  ; the descriptor
+        LD   R0,[ERR]
+        BEQ  .go
+        JMP  stmt
+.go:    PUSHW Y                 ; Y is the token pointer; borrow it
+
+        TST  R2                 ; one-based, and 0 reads as 1
+        BNE  .s1
+        MOV  R2,#1
+.s1:    SUB  R2,#1              ; ...so this is the offset
+
+        MOV  R1,#2
+        LD   R1,[X+R1]          ; what the variable actually holds
+        CMP  R2,R1
+        BCC  .in
+        BRA  .done              ; start past the end: nothing to write
+.in:    SUB  R1,R2              ; room from there to the end
+        CMP  R3,R1
+        BCC  .n1
+        MOV  R3,R1
+.n1:    LD   R0,[SLEN]          ; and no more than there is to say
+        CMP  R3,R0
+        BCC  .n2
+        MOV  R3,R0
+.n2:    TST  R3
+        BEQ  .done
+
+        LD   R0,[X]             ; the heap bytes, at the offset
+        INCW X
+        LD   R1,[X]
+        MOV  XL,R0
+        MOV  XH,R1
+        ADDW X,R2
+        LD   R0,[SACC]
+        MOV  YL,R0
+        LD   R0,[SACC+1]
+        MOV  YH,R0
+.cp:    LD   R0,[Y+]
+        ST   [X],R0
+        INCW X
+        SUB  R3,#1
+        BNE  .cp
+.done:  POPW Y
+        JMP  stmt               ; `stmt` empties the accumulator, and a
+                                ;   handler that does it too is six bytes
+                                ;   saying what the loop already said
+
 h_let:
-        CALL varidx             ; R0 = the handle, Y past the name
+        ; **One byte before anything else.** This is the hottest
+        ; statement in the language -- `A = A + 1` inside a loop is here
+        ; every iteration -- and MID$ on the left is rare, so the first
+        ; character answers it and only a name beginning with M pays for
+        ; the rest. Calling `ismid` unconditionally cost thirteen
+        ; instructions per assignment to say no, which is the shape
+        ; `nextline` was already caught in.
+        LD   R0,[Y]
+        OR   R0,#$20
+        CMP  R0,#$6D            ; 'm', folded
+        BNE  .let
+        CALL ismid              ; MID$(a$,s[,n]) = ... ?
+        BCS  h_midst
+.let:   CALL varidx             ; R0 = the handle, Y past the name
         CMP  R0,#52
         BCC  .notstr            ; resident A-Z is never a string
         ; The subscript first, for the reason `prim` gives: the suffix

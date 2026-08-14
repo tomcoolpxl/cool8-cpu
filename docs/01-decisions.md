@@ -2328,6 +2328,72 @@ implementation nobody is checking, which is how `test_lib` came to
 measure two programs against a third, private model of the I/O page
 and report 1.00x for a year.
 
+## D83 -- The small fixes, and one that was not a gap at all
+
+Three items off [13-basic.md](13-basic.md) section 12's short list.
+**211 bytes**, image 19,264 to 19,475.
+
+### The cursor was stranded by a narrower mode -- 31 bytes
+
+Mode 5 is 24 rows where every other mode is 30, and modes 5 and 6 are 32
+columns where mode 0 is 80. Nothing clamped `CCX`/`CCY` when the mode
+changed, so a cursor at row 29 was simply outside mode 5's display: the
+hardware never drew it and the editor went on writing where nothing was
+shown, which reads as a dead machine.
+
+Clamped in `con_geom` rather than in `h_mode`, because that is where the
+new geometry becomes true and `con_init`, `con_warm` and a warm restart
+into whatever mode a program left all need it just as much. `con_setrow`
+follows, because `CROWA` caches the row's address and would otherwise
+put the next character on the row the cursor used to be on.
+
+### MID$ on the left -- 180 bytes
+
+`MID$(a$, start [, n]) = expr`, which the C64 has and BBC BASIC does
+not. It **overwrites in place and never changes the length** -- no
+allocation, no garbage, and a fixed-width field can be rewritten as
+often as a program likes. Everything clamps: past the end writes
+nothing, a longer replacement truncates, and two arguments run to the
+end the way `smid` already reads them.
+
+**A special case, because it is one in the language.** The left-hand
+side is a function call in every other context, so every BASIC that has
+this implements it apart from ordinary assignment.
+
+**And the guard in front of it is one byte, not five.** `h_let` is the
+hottest statement in the language -- `A = A + 1` inside a loop is there
+every iteration -- so testing the first character and entering the full
+compare only for a name beginning with M is the difference between four
+instructions per assignment and thirteen. The first draft called `ismid`
+unconditionally, which is the shape
+[`nextline`](13-basic.md) was already caught in: arithmetic on the hot
+path answering a question that is almost always no.
+
+The compare folds with `OR $20`, which lowercases a letter and leaves
+`$` and `(` alone -- both already have bit 5 set -- so `mid$(` and
+`MID$(` both match without the tokeniser folding identifiers, which it
+does not.
+
+### One logarithm is enough, and the gap list was wrong
+
+Section 12 listed "base-10 `LOG`" as a gap because BBC ships `LOG`
+base-10 *and* `LN` natural, while ours is natural named `LOG` -- the
+Microsoft and C64 meaning. **Shipping both is BBC's choice, not a
+requirement**, and base-10 is `LOG(x)/LOG(10)`: one division the user
+can write.
+
+Adding `LN` as a second name for the same function was drafted and
+thrown away, because it is worse than nothing. A BBC program saying `LN`
+would then be right while the same program saying `LOG` would silently
+get natural where it expected base-10 -- **half a program working**,
+which is the failure mode this language spends bytes to avoid. So `LOG`
+stays natural, it is the only one, and section 3 now says which it is
+instead of leaving a reader to assume BBC's.
+
+Zero bytes, and the entry that called it a gap is corrected.
+
+---
+
 ## D82 -- The read stream is `fs_load` with its loop given to BASIC
 
 **A program could not read a file.** There was a filesystem -- `SAVE`,
