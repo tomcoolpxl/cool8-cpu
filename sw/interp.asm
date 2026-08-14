@@ -3994,6 +3994,12 @@ btab:
         .byte 5,"T","I","M","E","R"
         .word itimer
                                 ;: TIMER -> int  frames since boot
+        .byte 4,"B","G","E","T"
+        .word ibget
+                                ;: BGET -> int  the next byte of the open stream, or -1 past the end
+        .byte 3,"E","O","F"
+        .word ieof
+                                ;: EOF -> int  -1 when the stream has no more bytes, or none is open
         .byte 3,"P","O","S"
         .word ipos
                                 ;: POS -> int  the cursor's column, 0 at the left margin

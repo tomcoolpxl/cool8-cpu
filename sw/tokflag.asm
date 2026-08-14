@@ -90,3 +90,5 @@ TOKFLG:
         .byte 0                ; $CC CONT
         .byte 0                ; $CD NOT
         .byte 0                ; $CE STOP
+        .byte 0                ; $CF OPENIN
+        .byte 0                ; $D0 CLOSE

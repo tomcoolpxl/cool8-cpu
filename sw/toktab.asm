@@ -158,4 +158,9 @@ TOKTAB:
         ; other half: [D78] gave the language a way to resume and left
         ; only the break key able to reach it.
         .byte 4, "S","T","O","P"
+        ; $CF OPENIN, $D0 CLOSE -- the read stream ([D82]). BGET
+        ; and EOF are matched by name in btab, like TIMER, because
+        ; they take no argument and never begin a statement.
+        .byte 6, "O","P","E","N","I","N"
+        .byte 5, "C","L","O","S","E"
         .byte 0

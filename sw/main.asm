@@ -28,7 +28,7 @@
 ; Three bytes, and the image has one door again.
         JMP  main
 
-MAINK   = $B000                 ;: 2 the key just read
+MAINK   = $AC00                 ;: 2 the key just read
 
 ; ---------------------------------------------------------------------
 ; The stack, stated once, bottom first.
@@ -637,9 +637,9 @@ sttab:
         .word h_cls             ; $BE CLS
                                 ;: CLS
         .word h_save            ; $BF SAVE
-                                ;: SAVE name:string [AT addr:int]
+                                ;: SAVE name:string [AT addr:int, len:int]  no AT saves the program; AT saves len bytes of memory, and the length is not optional
         .word h_load            ; $C0 LOAD
-                                ;: LOAD name:string [AT addr:int]
+                                ;: LOAD name:string [AT addr:int | , line:int]  no AT loads a program and chains into it; AT loads raw bytes, the file's own length; a comma merges from that line up
         .word h_dir             ; $C1 DIR
                                 ;: DIR
         .word h_era             ; $C2 ERA
@@ -672,5 +672,9 @@ sttab:
                                 ;: NOT n:int  -1 - n, bitwise; binds looser than a comparison and tighter than AND !intonly
         .word h_stop            ; $CE STOP
                                 ;: STOP  stops with ?BREAK, and CONT resumes; the break key's own tail
+        .word h_openin          ; $CF OPENIN
+                                ;: OPENIN name:string  positions a read stream at the file's first byte; one at a time
+        .word h_close           ; $D0 CLOSE
+                                ;: CLOSE  abandons the read stream; harmless if none is open
 
 

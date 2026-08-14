@@ -27,21 +27,22 @@
 ; zeros: the two names fold together in a case-insensitive symbol
 ; lookup, and fs_find copies into its own anyway, so a claim here was
 ; eleven bytes of duplicate state pointed at by nothing.
-FSADDR  = $B024                 ;: 2 where the bytes are, or go
-FSLENW  = $B022                 ;: 2 how many of them
-FSDRV   = $B021                 ;: 1 the mounted drive
-FSIDX   = $B020                 ;: 1 the directory entry being read
-FSOK    = $B01F                 ;: 1 did the last call succeed
-FSCI    = $B01D                 ;: 2 COMPACT: the entry the scan is on
-FSCSRC  = $B01B                 ;: 2 COMPACT: the page it is feeding out
-FSCLEFT = $B019                 ;: 2 COMPACT: pages left in this file
-FSPG16  = $B009                 ;: 16 COMPACT: one sector's source pages
+FSADDR  = $AC24                 ;: 2 where the bytes are, or go
+FSLENW  = $AC22                 ;: 2 how many of them
+FSDRV   = $AC21                 ;: 1 the mounted drive
+FSIDX   = $AC20                 ;: 1 the directory entry being read
+FSOK    = $AC1F                 ;: 1 did the last call succeed
+FSCI    = $AC1D                 ;: 2 COMPACT: the entry the scan is on
+FSCSRC  = $AC1B                 ;: 2 COMPACT: the page it is feeding out
+FSCLEFT = $AC19                 ;: 2 COMPACT: pages left in this file
+FSPG16  = $AC09                 ;: 16 COMPACT: one sector's source pages
+
 
 ; fs.asm's own state, by name now rather than by address. The compiled
 ; version reached `fsent` and `fsfpg` as the literals $007B and $0078
 ; with a comment saying they must track FSVARS -- which is the invisible
 ; allocator [D67] spent a session removing everywhere else.
-FSPBUF  = $B26A                 ; one page in transit, over the string
+FSPBUF  = $AE6A                 ; one page in transit, over the string
                                 ;   accumulator: the two lifetimes cannot
                                 ;   meet, since SACC exists only while a
                                 ;   program runs and every command here
@@ -603,8 +604,8 @@ fsc_pbfill:
 ;
 ; Built in the scratch sector first, so the old directory is still there
 ; to read while the new one is being written.
-FSSLOT  = $B008                 ;: 1 rewritedir: entries written so far
-FSDST   = $B006                 ;: 2 rewritedir: the next data page
+FSSLOT  = $AC08                 ;: 1 rewritedir: entries written so far
+FSDST   = $AC06                 ;: 2 rewritedir: the next data page
 
 fsc_rewritedir:
         MOV  R0,#<SCRATCH
@@ -754,10 +755,10 @@ fsc_rewritedir:
 ; than into RAM: there is nowhere in RAM to put 4 KB that is not the
 ; user's program or their sprites.
 ; =====================================================================
-FSSECT  = $B005                 ;: 1 COMPACT: the sector being filled
-FSN     = $B004                 ;: 1 COMPACT: live pages found for it
-FSDONE  = $B003                 ;: 1 COMPACT: past the last live page
-FSMOVED = $B002                 ;: 1 COMPACT: this sector needs rewriting
+FSSECT  = $AC05                 ;: 1 COMPACT: the sector being filled
+FSN     = $AC04                 ;: 1 COMPACT: live pages found for it
+FSDONE  = $AC03                 ;: 1 COMPACT: past the last live page
+FSMOVED = $AC02                 ;: 1 COMPACT: this sector needs rewriting
 
 fsc_compact:
         CLR  R0
@@ -1048,6 +1049,110 @@ h_load: CALL tname
 ; tname -- a quoted 8.3 name at Y into the editor's line buffer and
 ; through its own parsename, which owns the .EXT and padding rules.
 ; Carry set on success.
+; =====================================================================
+; The open read stream: OPENIN, BGET, EOF, CLOSE ([D82])
+;
+; **This is `fs_load` with its loop taken out and given to BASIC.**
+; fs_load finds the file, reads the length out of the entry, seeks,
+; opens the flash and then pulls bytes from FLS_DATA one at a time. Every
+; one of those steps already existed; what was missing was a way to stop
+; between two of them and let a program decide what the byte meant.
+;
+; So there is no page buffer, no offset and no address here. The flash
+; stream is positioned and self-advancing, and the only state a reader
+; needs is **how much is left** -- which is `fslen`, already declared as
+; "length, in and out" -- and **whether it is open**, which is FROPEN,
+; the one byte this region kept in reserve.
+;
+; **One file at a time is the hardware, not a shortcut.** The flash has
+; a single address pointer and one open stream; a second reader would
+; re-seek on every byte. BBC BASIC's channel number would buy nothing
+; and cost a table, so BGET and EOF take no argument, the way INKEY and
+; TIMER do not.
+;
+; The stream closes itself at the last byte. CLOSE is for abandoning one
+; early, and is safe on a stream that is already shut.
+; =====================================================================
+
+; OPENIN "name" -- position the stream at the first byte.
+h_openin:
+        CALL tname
+        BCS  .nm
+        JMP  esyn
+.nm:    CALL fsc_find
+        LD   R0,[FSOK]
+        TST  R0
+        BEQ  .nf
+        LD   R0,[fsent+14]      ; the length is the countdown
+        ST   [fslen],R0
+        LD   R0,[fsent+15]
+        ST   [fslen+1],R0
+        CALL fs_seekfile
+        CALL fls_seek
+        CALL fls_open
+        MOV  R0,#1
+        ST   [FROPEN],R0
+        JMP  cnext
+.nf:    MOV  R0,#E_NOFILE
+        ST   [ERR],R0
+        RET
+
+; CLOSE -- abandon the stream. Harmless if nothing is open, because a
+; program that ends early should not have to ask whether it did.
+h_close:
+        LD   R0,[FROPEN]
+        BEQ  .shut
+        CALL fls_close
+        CLR  R0
+        ST   [FROPEN],R0
+.shut:  JMP  cnext
+
+; frshut -- the last byte just went out, so drop the stream. Shared by
+; BGET's tail and by CLOSE, which is the whole of "closed" in one place.
+frshut: CALL fls_close
+        CLR  R0
+        ST   [FROPEN],R0
+        RET
+
+; BGET -- the next byte, 0..255. Past the end, or with nothing open, it
+; is -1: a value no byte can be, so a program may test it instead of
+; calling EOF for every byte.
+ibget:  LD   R0,[FROPEN]
+        BEQ  .end
+        LD   R0,[fslen]
+        LD   R1,[fslen+1]
+        MOV  R2,R0
+        OR   R2,R1
+        BEQ  .last
+        SUB  R0,#1              ; one fewer to come
+        SBC  R1,#0
+        ST   [fslen],R0
+        ST   [fslen+1],R1
+        LD   R0,[FLS_DATA]
+        CLR  R1
+        JMP  retnum
+.last:  CALL frshut             ; spent: shut it here rather than at the
+.end:   MOV  R0,#$FF            ;   next call, so a file read to its end
+        MOV  R1,R0              ;   needs no CLOSE at all
+        JMP  retnum
+
+; EOF -- -1 when there is nothing more, which is TRUE ([D47]). A stream
+; that was never opened is at its end, which is the honest answer and
+; costs no separate error.
+ieof:   LD   R0,[FROPEN]
+        BEQ  .yes
+        LD   R0,[fslen]
+        LD   R1,[fslen+1]
+        MOV  R2,R0
+        OR   R2,R1
+        BEQ  .yes
+        CLR  R0                 ; FALSE
+        MOV  R1,R0
+        JMP  retnum
+.yes:   MOV  R0,#$FF
+        MOV  R1,R0
+        JMP  retnum
+
 tname:  SKIPSP
         CMP  R2,#34
         BNE  .no

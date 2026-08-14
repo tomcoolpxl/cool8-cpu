@@ -76,6 +76,82 @@ def name(m, syms):
                    m.bus.mem[syms["fsname"]:syms["fsname"] + 11])
 
 
+def stream(code, syms):
+    """OPENIN / BGET / EOF / CLOSE, on a real volume ([D82]).
+
+    **The whole point is that nothing is loaded.** `SAVE ... AT` writes
+    the bytes and the stream reads them back one at a time out of the
+    flash, so this is also the check that the two halves agree about
+    where a file's data lives.
+    """
+    import test_basic as TB
+
+    img = os.path.join(H.BUILD, "stream.img")
+    if os.path.exists(img):
+        os.remove(img)
+    d = disk.Image(img, create=True)
+    disk.Volume(d, 0).format("COOL8")
+    d.save()
+
+    def typed(*lines):
+        M = TB.Machine(code, syms, flash=img)
+        M.settle()
+        M.cmd("CLS")
+        for l in lines:
+            M.cmd(l)
+        return M
+
+    def rows(M):
+        return [r.strip() for r in M.screen() if r.strip()]
+
+    put = ('POKE $3000,65', 'POKE $3001,66', 'POKE $3002,67',
+           'SAVE "ABC" AT $3000, 3')
+
+    M = typed(*put, 'OPENIN "ABC"', 'PRINT BGET; BGET; BGET')
+    check(any(r == "656667" for r in rows(M)),
+          "BGET streams a file back a byte at a time",
+          " | ".join(rows(M))[-60:])
+
+    # The stream shuts itself on the last byte, so a file read to its end
+    # needs no CLOSE -- and EOF has to agree with that.
+    M = typed(*put, 'OPENIN "ABC"', 'PRINT BGET; BGET; BGET', 'PRINT EOF')
+    check(any(r == "-1" for r in rows(M)),
+          "...and EOF is TRUE once it is spent",
+          " | ".join(rows(M))[-60:])
+
+    M = typed(*put, 'OPENIN "ABC"', 'PRINT EOF')
+    check(any(r == "0" for r in rows(M)),
+          "...and FALSE while bytes remain",
+          " | ".join(rows(M))[-60:])
+
+    # Past the end is -1, which no byte can be, so a program may test the
+    # value instead of calling EOF for every byte.
+    M = typed(*put, 'OPENIN "ABC"', 'PRINT BGET; BGET; BGET; BGET')
+    check(any(r.endswith("-1") for r in rows(M)),
+          "...and a read past the end is -1, not a wrapped byte",
+          " | ".join(rows(M))[-60:])
+
+    M = typed('PRINT BGET', 'PRINT EOF')
+    check(rows(M).count("-1") >= 2,
+          "with nothing open, BGET and EOF both answer -1",
+          " | ".join(rows(M))[-60:])
+
+    M = typed(*put, 'OPENIN "ABC"', 'CLOSE', 'PRINT EOF')
+    check(any(r == "-1" for r in rows(M)),
+          "CLOSE abandons a stream early",
+          " | ".join(rows(M))[-60:])
+
+    M = typed('CLOSE')
+    check(not any("?" in r for r in rows(M)),
+          "...and CLOSE on nothing is not an error",
+          " | ".join(rows(M))[-60:])
+
+    M = typed('OPENIN "NOPE"')
+    check(any("NO FILE" in r for r in rows(M)),
+          "OPENIN of a missing file says so",
+          " | ".join(rows(M))[-60:])
+
+
 def main():
     print("  the disk commands, sw/fscmd.asm")
     print()
@@ -107,6 +183,10 @@ def main():
     check(m.bus.mem[syms["edip"]] == 2,
           "...and the scan stops on it, so the number is still there",
           "edip=%d" % m.bus.mem[syms["edip"]])
+
+    print()
+    stream(*H.assemble(os.path.join(H.SW, "main.asm"),
+                     name="mainimg", lower=True, write=True))
 
     return H.report()
 

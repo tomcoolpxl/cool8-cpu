@@ -2328,6 +2328,78 @@ implementation nobody is checking, which is how `test_lib` came to
 measure two programs against a third, private model of the I/O page
 and report 1.00x for a year.
 
+## D82 -- The read stream is `fs_load` with its loop given to BASIC
+
+**A program could not read a file.** There was a filesystem -- `SAVE`,
+`LOAD`, `DIR`, `ERA`, `COMPACT` -- and `DATA`/`READ` was the whole of
+persistent data, compiled into the program text. [13-basic.md](13-basic.md)
+section 12 called it the only *capability* gap in the language rather
+than a convenience.
+
+`OPENIN name$`, `BGET`, `EOF`, `CLOSE`. **172 bytes**, image 19,073 to
+19,245.
+
+### Almost all of it already existed
+
+`fs_load` finds the file, takes the length out of the directory entry,
+seeks, opens the flash and then pulls bytes from `FLS_DATA` one at a
+time. That last part is a loop. **This decision is that loop taken out
+and handed to the interpreter** -- the prologue is `OPENIN`, one
+iteration is `BGET`, the epilogue is `CLOSE`.
+
+So there is no page buffer, no offset and no address of its own. The
+flash stream is positioned and self-advancing; the reader needs to know
+only how much is left and whether it is open.
+
+### The state is two things that were already there
+
+**Zero new bytes.** The countdown is `fslen`, declared in `FSVARS` as
+"length, in and out" and doing exactly that job. The flag is `FROPEN`,
+which was `GSPARE` -- the byte `sw/console.asm` kept as a named claim
+for "the next thing that needs storage in this region". This was it, and
+it was the last one: `memmap.check()` reports the region packed to the
+byte, and refused the first two placements tried.
+
+### One file at a time is the hardware, not a shortcut
+
+The flash has a single address pointer and one open stream, so a second
+reader would re-seek on every byte. BBC BASIC's channel number would buy
+nothing here and cost a table, so `BGET` and `EOF` take no argument --
+the way `INKEY` and `TIMER` do not.
+
+### Reading only, because writing already exists and is append-only
+
+`SAVE name AT addr, len` writes an arbitrary block of memory to a file
+and `LOAD name AT addr` reads it back. That is the write path, and it
+was there all along.
+
+**A streaming `BPUT` would fight the filesystem rather than use it.**
+`fs_save` puts data at the tail of the volume and needs the length
+before it starts, because flash is write-once until erased and the
+format is append-only. Byte-at-a-time writing would need either a
+whole-file RAM buffer -- which is `SAVE ... AT` again -- or reserved
+space of unknown size. So the asymmetry is the design's, not an omission.
+
+### Two published signatures were wrong, and they are the write path
+
+`SAVE name:string [AT addr:int]` omitted the length, which is **not**
+optional -- `h_save` evaluates the address, a comma, then the length.
+And `LOAD name, line`, the merge form, was not documented at all. Both
+were found by reading the code to design this, and both are corrected at
+the `;:` comments the vocabulary generates from.
+
+### The edges
+
+`BGET` past the end is **-1**, a value no byte can be, so a program may
+test the value instead of calling `EOF` for every byte. `EOF` is -1 when
+spent, which is TRUE ([D47]). The stream **shuts itself on the last
+byte**, so a file read to its end needs no `CLOSE`; `CLOSE` is for
+abandoning one early and is harmless on a stream already shut. A stream
+never opened is at its end, which is the honest answer and costs no
+error.
+
+---
+
 ## D81 -- One divisor, because a console row is always 16 display lines
 
 **The cursor was on the wrong row in modes 2, 4 and 5, and half height

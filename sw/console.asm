@@ -49,32 +49,37 @@
 ; emits no symbol and no size -- so `bglyph` reached them as raw
 ; literals like `[$00D2]` and nothing in the tree could say what lived
 ; there.
-CROWA   = $B137                 ;: 2 the address of row CCY, cached
-CONT    = $B139                 ;: 32 per map row: is it a continuation
-CMIR    = $B159                 ;: 2 the mirror for this mode, a vector
-CFONT   = $B15B                 ;: 2 font base for the current cell height
-CBASE   = $B15D                 ;: 2 bitmap display base, tracked
-CGS8    = $B15F                 ;: 2 bitmap stride * 8: one cell row down
-CSTR    = $B161                 ;: 2 bitmap stride: one raster row
-GFA     = $B163                 ;: 2 bglyph: the font row address
-GVA     = $B165                 ;: 2 bglyph: the framebuffer cell address
-CCX     = $B167                 ;: 1 cursor column
-CCY     = $B168                 ;: 1 cursor row
-CTOP    = $B169                 ;: 1 which map row is displayed row 0
-CCOLS   = $B16A                 ;: 1 visible columns: 80, 40 or 32
-CROWS   = $B16B                 ;: 1 visible rows: 30 or 24
-CRPL    = $B16C                 ;: 1 rows a full logical line spans
-CKIND   = $B16D                 ;: 1 0 text, 1 tiles, 2 bitmap
+CROWA   = $AD37                 ;: 2 the address of row CCY, cached
+CONT    = $AD39                 ;: 32 per map row: is it a continuation
+CMIR    = $AD59                 ;: 2 the mirror for this mode, a vector
+CFONT   = $AD5B                 ;: 2 font base for the current cell height
+CBASE   = $AD5D                 ;: 2 bitmap display base, tracked
+CGS8    = $AD5F                 ;: 2 bitmap stride * 8: one cell row down
+CSTR    = $AD61                 ;: 2 bitmap stride: one raster row
+GFA     = $AD63                 ;: 2 bglyph: the font row address
+GVA     = $AD65                 ;: 2 bglyph: the framebuffer cell address
+CCX     = $AD67                 ;: 1 cursor column
+CCY     = $AD68                 ;: 1 cursor row
+CTOP    = $AD69                 ;: 1 which map row is displayed row 0
+CCOLS   = $AD6A                 ;: 1 visible columns: 80, 40 or 32
+CROWS   = $AD6B                 ;: 1 visible rows: 30 or 24
+CRPL    = $AD6C                 ;: 1 rows a full logical line spans
+CKIND   = $AD6D                 ;: 1 0 text, 1 tiles, 2 bitmap
 ; Four bytes the hardware cursor gave back -- CPHASE and GINV here, BLB
 ; in sw/input.asm -- kept as named claims rather than as holes, because
 ; `tools/memmap.py --check` refuses a gap and closing one properly means
 ; shifting every claim below it. Take them for the next thing that needs
 ; storage in this region; repack when something does.
-LDEPTH  = $B16E                 ;: 1 variables saved across all calls
-GSPARE  = $B172                 ;: 1 free: was GINV
-CFROW   = $B16F                 ;: 1 font rows per glyph, 8 or 16
-CBPC    = $B170                 ;: 1 bytes per cell row, which is the bpp
-CLIM    = $B171                 ;: 1 base high byte that forces a repaint
+LDEPTH  = $AD6E                 ;: 1 variables saved across all calls
+FROPEN  = $AD72                 ;: 1 a read stream is open ([D82]).
+                                ;    This was GSPARE, kept as a named
+                                ;    claim for "the next thing that
+                                ;    needs storage in this region" --
+                                ;    and the region is now packed to
+                                ;    the byte, so it was the last one
+CFROW   = $AD6F                 ;: 1 font rows per glyph, 8 or 16
+CBPC    = $AD70                 ;: 1 bytes per cell row, which is the bpp
+CLIM    = $AD71                 ;: 1 base high byte that forces a repaint
 
 ; **Page-aligned, and it has to be.** con_row adds only `>CSCRN` to the
 ; row offset's high byte and puts its low byte straight into XL -- every

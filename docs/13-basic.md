@@ -1423,9 +1423,11 @@ user variable now has a seventh significant character too.
 
 ### Real gaps that would cost real bytes
 
-**Data files are the big one.** There is a filesystem — `SAVE`, `LOAD`,
-`DIR`, `ERA`, `COMPACT`, `DRIVE` — and a program cannot read or write a
-file with it. The C64 does this with `OPEN`/`CLOSE`/`INPUT#`/`PRINT#`,
+**Data files: reading landed in [D82]**, `OPENIN`/`BGET`/`EOF`/`CLOSE`,
+for 172 bytes. Writing is `SAVE name AT addr, len`, which was always
+there — the filesystem is append-only, so a streaming `BPUT` would fight
+it. What is still missing is a line-oriented read; `BGET` gives bytes and
+a program builds strings from them. The C64 does this with `OPEN`/`CLOSE`/`INPUT#`/`PRINT#`,
 the BBC with `OPENIN`/`OPENOUT`/`BGET`/`BPUT`/`EOF`/`PTR`. It is the
 only *capability* on this page rather than a convenience: `DATA`/`READ`
 is the whole of persistent data today, and it is compiled in.

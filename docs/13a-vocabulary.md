@@ -45,8 +45,8 @@ Names come from `TOKTAB` and `btab`, the bytes the matcher compares against. Ret
 | `$BC` | `RENUM` |  |
 | `$BD` | `DELETE from:int[, to:int]` |  |
 | `$BE` | `CLS` |  |
-| `$BF` | `SAVE name:string [AT addr:int]` |  |
-| `$C0` | `LOAD name:string [AT addr:int]` |  |
+| `$BF` | `SAVE name:string [AT addr:int, len:int]` | no AT saves the program; AT saves len bytes of memory, and the length is not optional |
+| `$C0` | `LOAD name:string [AT addr:int \| , line:int]` | no AT loads a program and chains into it; AT loads raw bytes, the file's own length; a comma merges from that line up |
 | `$C1` | `DIR` |  |
 | `$C2` | `ERA name:string` |  |
 | `$C3` | `COMPACT` |  |
@@ -57,6 +57,8 @@ Names come from `TOKTAB` and `btab`, the bytes the matcher compares against. Ret
 | `$CB` | `PAUSE frames:int` | wait, still answering the break key `!intonly` |
 | `$CC` | `CONT` | resume a program the break key stopped |
 | `$CE` | `STOP` | stops with ?BREAK, and CONT resumes; the break key's own tail |
+| `$CF` | `OPENIN name:string` | positions a read stream at the file's first byte; one at a time |
+| `$D0` | `CLOSE` | abandons the read stream; harmless if none is open |
 
 ## Tokenised, but not statements
 
@@ -114,6 +116,8 @@ Matched by name, not tokenised — they have no token byte.
 | `KEY(code:int) -> int` | is that key held down `!intonly` |
 | `RND(n:int) -> int` | 0..n-1; RND(0) is the raw word `!intonly` |
 | `TIMER -> int` | frames since boot |
+| `BGET -> int` | the next byte of the open stream, or -1 past the end |
+| `EOF -> int` | -1 when the stream has no more bytes, or none is open |
 | `POS -> int` | the cursor's column, 0 at the left margin |
 | `VPOS -> int` | the cursor's row, 0 at the top |
 | `TRUE -> int` | -1, which is what a comparison answers ([D47]) |
