@@ -1162,6 +1162,37 @@ ibget:  CALL frdone
                                 ;   what frshut is for
         JMP  itrue
 
+; GET$ -- one line of the open stream, without its terminator.
+;
+; **A loop around BGET, and that is the whole routine.** BGET already
+; fetches the next byte, counts it down, answers -1 past the end and
+; shuts the stream on the last one -- so a line reader has nothing left
+; to do but decide where a line stops. Slow, one call per character, and
+; that is the trade: this is the shortest thing that works and reading a
+; file is not a hot path.
+;
+; It **appends**, like `CHR$` and every other string builtin, because the
+; accumulator may already hold the left of a concatenation. `stmt`
+; empties it once per statement and nothing below may reset it.
+;
+; A line ends at CR, which is what this machine writes and what `in_get`
+; answers for Return. **LF is skipped rather than ending a line**, so a
+; file with CRLF reads correctly and one with bare LF arrives as a
+; single long line -- a foreign format, and six bytes is the right price
+; for the one that is not.
+igets:  CALL ibget              ; the next byte, or -1 past the end
+        TST  R1                 ; -1 is $FFFF, so the high byte says it
+        BNE  .end
+        CMP  R0,#$0D
+        BEQ  .end
+        CMP  R0,#$0A
+        BEQ  igets              ; skip, do not end on it
+        CALL sputc
+        BRA  igets
+.end:   MOV  R0,#1
+        ST   [STYPE],R0
+        RET
+
 ; EOF -- **`frdone` in the language's own truth values**, and that is
 ; the whole routine. -1 when there is nothing more, which is TRUE
 ; ([D47]); a stream that was never opened is at its end, which is the

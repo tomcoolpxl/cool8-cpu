@@ -146,6 +146,36 @@ def stream(code, syms):
           "...and CLOSE on nothing is not an error",
           " | ".join(rows(M))[-60:])
 
+    # ---- GET$: a loop around BGET, and nothing else.
+    line = ('POKE $3000,72', 'POKE $3001,73', 'POKE $3002,13',
+            'POKE $3003,79', 'POKE $3004,75', 'SAVE "L" AT $3000, 5')
+    M = typed(*line, 'OPENIN "L"', 'PRINT GET$', 'PRINT GET$')
+    r = rows(M)
+    check("HI" in r and "OK" in r, "GET$ reads a line, without its CR",
+          " | ".join(r)[-50:])
+
+    # CR ends a line and LF is skipped rather than ending one, so CRLF
+    # reads as two lines and not as four with empties between.
+    crlf = ('POKE $3000,72', 'POKE $3001,73', 'POKE $3002,13',
+            'POKE $3003,10', 'POKE $3004,79', 'POKE $3005,75',
+            'SAVE "C" AT $3000, 6')
+    M = typed(*crlf, 'OPENIN "C"', 'PRINT GET$', 'PRINT GET$')
+    r = rows(M)
+    check("HI" in r and "OK" in r, "...and CRLF is two lines, not four",
+          " | ".join(r)[-50:])
+
+    # It appends, like every string builtin, because the accumulator may
+    # already hold the left of a concatenation.
+    M = typed(*line, 'OPENIN "L"', 'PRINT "<" + GET$ + ">"')
+    check(any(x == "<HI>" for x in rows(M)),
+          "...and it appends, so it composes",
+          " | ".join(rows(M))[-40:])
+
+    M = typed(*line, 'OPENIN "L"', 'PRINT GET$', 'PRINT GET$',
+              'PRINT LEN(GET$)')
+    check(rows(M)[-1] == "0", "...past the end it is the empty string",
+          " | ".join(rows(M))[-40:])
+
     M = typed('OPENIN "NOPE"')
     check(any("NO FILE" in r for r in rows(M)),
           "OPENIN of a missing file says so",

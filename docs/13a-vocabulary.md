@@ -118,6 +118,7 @@ Matched by name, not tokenised — they have no token byte.
 | `TIMER -> int` | frames since boot |
 | `BGET -> int` | the next byte of the open stream, or -1 past the end |
 | `EOF -> int` | -1 when the stream has no more bytes, or none is open |
+| `GET$ -> string` | one line of the open stream, without its CR; empty at the end |
 | `POS -> int` | the cursor's column, 0 at the left margin |
 | `VPOS -> int` | the cursor's row, 0 at the top |
 | `TRUE -> int` | -1, which is what a comparison answers ([D47]) |

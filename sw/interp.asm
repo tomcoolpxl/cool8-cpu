@@ -4134,6 +4134,9 @@ btab:
         .byte 3,"E","O","F"
         .word ieof
                                 ;: EOF -> int  -1 when the stream has no more bytes, or none is open
+        .byte 4,"G","E","T","$"
+        .word igets
+                                ;: GET$ -> string  one line of the open stream, without its CR; empty at the end
         .byte 3,"P","O","S"
         .word ipos
                                 ;: POS -> int  the cursor's column, 0 at the left margin

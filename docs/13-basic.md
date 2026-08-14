@@ -1429,11 +1429,17 @@ Reading is [D82]'s `OPENIN`/`BGET`/`EOF`/`CLOSE`, 172 bytes; writing is
 append-only, so a streaming `BPUT` would fight it rather than use it —
 the asymmetry is the format's.
 
-**What is left of it is a line-oriented read.** `BGET` gives bytes, so a
-program builds a line with `A$ = A$ + CHR$(BGET)` until it meets a
-carriage return — and that recopies the accumulator every character, so
-reading an 80-column line is 3,200 byte moves. Fine for a few lines,
-wrong for a big file. BBC's `GET$#` is the shape; it costs real bytes.
+**And the line-oriented read landed too** — `GET$`, 32 bytes, which is
+a loop around `BGET` and nothing else. It appends like every string
+builtin, so `"<" + GET$ + ">"` composes; a line ends at CR and **LF is
+skipped rather than ending one**, so a CRLF file reads as two lines
+instead of four with empties between. Past the end it is the empty
+string.
+
+It calls `BGET` once per character, which is slow and is the trade:
+`A$ = A$ + CHR$(BGET)` written in BASIC recopies the accumulator every
+character — 3,200 byte moves for an 80-column line — where this appends
+in place.
 
 **Error trapping.** `ON ERROR`, `ERR`, `ERL`, `REPORT` — BBC has all
 four, the C64 none. It needs a saved line number and a handler vector,

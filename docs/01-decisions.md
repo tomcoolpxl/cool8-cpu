@@ -2541,6 +2541,30 @@ against. `fs_load` calls it now and so does OPENIN, and it ends in a
 `ifalse` cannot be built on them either; their shared-tail form is
 already the shortest thing that also sets `STYPE`.
 
+### GET$, and why it is thirty-two bytes
+
+A line-oriented read was the last of data files, and it is **a loop
+around `BGET`**: fetch, stop at CR, append, repeat. `BGET` already
+counts the byte down, answers -1 past the end and shuts the stream on
+the last one, so the line reader has nothing left to decide but where a
+line stops.
+
+One call per character, which is slow and is the point. The alternative
+a program has without it is `A$ = A$ + CHR$(BGET)`, and that recopies
+the whole accumulator every character — 3,200 byte moves for an
+80-column line — where this appends in place. Slower than a block read,
+far faster than the BASIC it replaces, and short enough to be obviously
+right.
+
+**LF is skipped rather than ending a line.** CR is what this machine
+writes and what `in_get` answers for Return, so a CRLF file reads as two
+lines instead of four with empties between; a bare-LF file arrives as
+one long line, which is a foreign format and the right one to lose.
+
+It appends, like `CHR$` and every other string builtin, because the
+accumulator may already hold the left of a concatenation — `stmt` empties
+it once per statement and nothing below may reset it.
+
 ### The edges
 
 `BGET` past the end is **-1**, a value no byte can be, so a program may
