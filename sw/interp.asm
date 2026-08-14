@@ -712,18 +712,37 @@ stmt:
 .open:  CALL openline
         JMP  stmt
 .more:
-        ; An apostrophe comment is stored as itself -- it is
-        ; punctuation, so it gets no token -- and everything below $80
-        ; is an assignment as far as the dispatch below is concerned.
-        ; Sending it to h_rem here is what keeps `' like this` from
-        ; being parsed as a variable named `'`.
+        ; **The $80 split first, because every statement needs it.** A
+        ; token dispatches; anything below is a name, a separator or a
+        ; comment. This used to test the apostrophe -- the rarest of the
+        ; three -- ahead of the split that decides all of them, so every
+        ; token-led statement paid for a case it could not be.
+        ;
+        ; Putting the split first is what makes `:` free on that path
+        ; rather than a third test in front of it.
+        CMP  R2,#$80
+        BCS  .tok
+        ; **`:` is a separator, and it is all it is.** This loop already
+        ; ran statement after statement to the end of a line -- a handler
+        ; ends in `JMP stmt` and only a zero byte sends it to the next
+        ; record -- so `A=5 PRINT A` has always worked and nobody could
+        ; have guessed it. What did not work was the colon every BASIC
+        ; programmer types, because it is below $80 and fell through to
+        ; `h_let`, which read it as a variable name.
+        ;
+        ; Punctuation, not a token: stored as itself, costing no slot in
+        ; TOKTAB, and LIST gives it back for nothing.
+        CMP  R2,#$3A            ; ':'
+        BEQ  .sep
+        ; An apostrophe comment is stored as itself -- it is punctuation,
+        ; so it gets no token. Sending it to h_rem is what keeps
+        ; `' like this` from being parsed as a variable named `'`.
         CMP  R2,#$27
-        BNE  .nc
-        JMP  h_rem
-.nc:
-        CMP  R2,#$80            ; below $80 it is a name: an assignment
-        BCS  .tok               ; (the fifth time this branch has gone
-        JMP  h_let              ;  out of range: a JMP, once and for all)
+        BEQ  .rem
+        JMP  h_let              ; a name: an assignment
+.sep:   INCW Y
+        BRA  stmt
+.rem:   JMP  h_rem
 .tok:   INCW Y
         MOV  R0,R2
         SUB  R0,#$80

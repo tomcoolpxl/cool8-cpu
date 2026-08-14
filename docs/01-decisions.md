@@ -2328,6 +2328,69 @@ implementation nobody is checking, which is how `test_lib` came to
 measure two programs against a third, private model of the I/O page
 and report 1.00x for a year.
 
+## D86 -- The colon is seven bytes, because the loop was always there
+
+`A=5:PRINT A` works. So does `A=5 PRINT A`, and **it always did** --
+which is the finding, not the feature.
+
+`stmt` is a loop over *statements*, not over lines. A handler ends in
+`JMP stmt`; `stmt` skips spaces, and **only a zero byte** sends it to
+the next record. Several statements on one line have run since the
+statement loop existed. What did not work was the colon every BASIC
+programmer types: `:` is below `$80`, so it fell through the token test
+into `h_let`, which read it as a variable name and said `?SYNTAX`.
+
+So this is not a redesign. It is six bytes to spell a thing the machine
+already did, and one byte of table nowhere: `:` is **punctuation, not a
+token**, stored as itself, costing no slot in `TOKTAB`, and `LIST` gives
+it back for nothing -- `10 A=1:PRINT A:REM HI` round-trips exactly.
+
+### The semantics were already right, which is why nothing else moved
+
+**The `THEN` arm is the rest of the line.** A false `IF` walks to an
+`ELSE` or to the terminator, and `h_else` does the same when the true
+arm finishes -- so `IF c THEN A=7:PRINT 9` runs both when true and skips
+both when false. That is MS BASIC's rule, and it was true here before
+there was a colon to make it visible.
+
+`FOR I=1 TO 3:PRINT I:NEXT` and `DO:A=A+1:LOOP UNTIL A=3` work because
+`FOR` and `DO` already store a body *pointer* beside the line, not a
+line alone. A colon inside a string literal never reaches the
+dispatcher, because `PRINT` consumes the literal whole.
+
+### And the dispatch got faster than before the feature
+
+The test could not go in front of the hot path without costing every
+statement two instructions. It did not have to: the *existing* order
+tested for an apostrophe comment -- the rarest of the three things below
+`$80` -- **ahead of the `$80` split that decides all of them**, so every
+token-led statement already paid for a case it could not be.
+
+Splitting on `$80` first and sorting punctuation underneath makes the
+token path one test shorter than it was, and `:` free on it. Same seven
+bytes, better order:
+
+```
+CMP R2,#$80 / BCS .tok      ; a token: the common case, first
+CMP R2,#$3A / BEQ .sep      ; ':'
+CMP R2,#$27 / BEQ .rem      ; apostrophe
+JMP h_let                   ; a name
+```
+
+### What it does not change
+
+**A line is still at most 80 characters** -- the editor's logical line,
+one screen row at 80 columns and two at 40 ([console.asm](../sw/console.asm)),
+with `LBUF` and `TBUF` at 128. So a colon buys three or four short
+statements on a line, not a paragraph.
+
+**And `ERL` would be less precise if it existed.** One line was one
+statement before this; now it need not be, which is exactly the reason
+`ERL` on a C64 tells you so little. That is an argument against adding
+it, not against the colon.
+
+---
+
 ## D85 -- Error trapping is cheap because the interpreter already unwinds
 
 `ON ERROR GOTO n` and `ERR`. **134 bytes**, image 19,453 to 19,587, and

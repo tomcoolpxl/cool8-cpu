@@ -1239,6 +1239,40 @@ def newwords(code, syms):
     check(shows(M, "11"), "seven significant characters, not six",
           " | ".join(r.strip() for r in M.screen() if r.strip())[-40:])
 
+    # ---- `:` between statements ([D86]).
+    #
+    # The loop was always there: a handler ends in `JMP stmt` and only a
+    # zero byte sends it to the next record, so several statements on a
+    # line have always run. What did not work was the colon.
+    M = say("A=5:PRINT A")
+    check(shows(M, "5"), "a colon separates two statements on a line",
+          " | ".join(r.strip() for r in M.screen() if r.strip())[-40:])
+
+    M = say("A=1:A=A+1:PRINT A")
+    check(shows(M, "2"), "...and three, left to right",
+          " | ".join(r.strip() for r in M.screen() if r.strip())[-40:])
+
+    # Space still separates, which is what the loop did before there was
+    # a colon and what these tests would pass without the change.
+    M = say("A=6 PRINT A")
+    check(shows(M, "6"), "...a space separates them too, as it always did",
+          " | ".join(r.strip() for r in M.screen() if r.strip())[-40:])
+
+    # **The THEN arm is the rest of the line**, because a false IF walks
+    # to ELSE or to the terminator -- MS BASIC's rule, and already true
+    # before the colon existed. Both statements go with the condition.
+    M = say("IF 1=1 THEN A=7:PRINT A")
+    check(shows(M, "7"), "...the THEN arm takes both statements",
+          " | ".join(r.strip() for r in M.screen() if r.strip())[-40:])
+
+    M = say("A=3", "IF 1=2 THEN A=7:PRINT 9", "PRINT A")
+    check(shows(M, "3"), "...and a false IF skips both, not just the first",
+          " | ".join(r.strip() for r in M.screen() if r.strip())[-40:])
+
+    M = say("PRINT 4:")
+    check(shows(M, "4"), "...a trailing colon is harmless",
+          " | ".join(r.strip() for r in M.screen() if r.strip())[-40:])
+
     # ---- ON ERROR GOTO / ERR ([D85]).
     #
     # The handler is entered from `main_err`, after the interpreter has

@@ -3,7 +3,7 @@
 The interpreter runs the editor's stored form directly: what you typed
 is what executes, tokenised. Values are **16-bit signed integers**, with
 resident floating point beside them — see §8. One statement per line;
-there is no `:` separator. The implementation is
+`:` separates statements on a line ([D86]). The implementation is
 [`sw/interp.asm`](../sw/interp.asm), and the register-level truth for
 everything the graphics and sound commands touch is
 [04-system.md](04-system.md).
