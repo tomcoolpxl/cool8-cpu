@@ -68,26 +68,33 @@ and `RND` picks between them.
 
 ![10 PRINT](img/demo-10print.png)
 
-**Mode 1: text, forty columns.** Mode 0's 80×30 cells are 8 wide by 16
-high, so a diagonal drawn in one is not at 45° and the maze comes out
-sheared. Mode 1 halves the columns and a cell becomes 16×16 — square,
-and the diagonals meet.
+**Forty columns, because the cell has to be square.** Mode 0's 80×30
+cells are 8 wide by 16 high, so a diagonal drawn in one is not at 45°
+and the maze comes out sheared. Forty columns makes the cell 16×16.
 
-**Our font is CP437** ([`tools/mkfont.py`](../tools/mkfont.py)), which
-has no `╱` and `╲` where PETSCII has 205 and 206. It has `/` and `\` at
-47 and 92, and `47 + 45*RND(2)` picks between them exactly as the
-original's `205.5 + RND(1)` did.
+**It is tile mode, and that is not a preference.** The text version was
+written first, in mode 1, drawing CP437's `/` and `\` at 47 and 92 with
+`47 + 45*RND(2)` standing in for `205.5 + RND(1)`. It was wrong on the
+screen: **those glyphs have side bearing.** They stop short of the cell
+edge, so every join in the maze is broken and the picture is a field of
+dashes. The text font is 4 KB of EBR read by the hardware — ROM, not
+redefinable — so there is no fixing it in mode 1. Mode 2 is the same
+40×30 geometry with the pattern in RAM, which is the whole difference.
+
+**The tile is C64 screen code 77, pixel for pixel.** Transcribed from
+the character ROM rather than drawn by hand, and drawing it by hand got
+it wrong twice: the real glyph is two and three pixels wide, not one,
+and it reaches both corners. Code 78 is its exact horizontal mirror —
+checked, not assumed — so **attribute bit 6 draws the other diagonal and
+one 32-byte tile serves both**, which is why the `DATA` is four lines
+and not eight.
 
 **The palette is the C64's, copied.** Bank 0 is overwritten entry for
 entry from a `DATA` table of RGB444 pairs, so 6 is `#0000AA` and 14 is
 `#0088FF` — the same numbers a C64 program means when it says 6 and 14
 ([`tools/palette.py`](../tools/palette.py) bank 10 is the same set, kept
-in the C64's own index order for the same reason). Attribute `$6E` is
-background 6, foreground 14: blue paper, light blue ink.
-
-It fills the map directly through `VID_BASE` rather than `PRINT`ing,
-because the console writes its own attribute and the attribute is where
-the colour lives.
+in the C64's own index order for the same reason). The tile is drawn in
+those two indices directly: paper 6, ink 14.
 
 ## 5. Adding one
 
