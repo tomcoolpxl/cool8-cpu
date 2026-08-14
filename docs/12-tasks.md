@@ -132,6 +132,7 @@ The other two:
 | | |
 |---|---|
 | `sim/test_asm.py` | `sw/asm.asm`, the assembler **on the machine**, gated on byte-identity with `tools/cool8asm.py` for the same source. Run it when either assembler changes |
+| `sim/timing.py` (`poe timing`) | measures every encoding's clocks from `rtl/core`. **Not a suite and not gated**, and it is the only thing that keeps `rtl/core`, `tools/opcodes.py:cycles()` and the emulator's accounting in step — cosim cannot, because the two models are not expected to agree on a cycle. Run it whenever the control FSM changes, then update the other two ([02-isa.md §8](02-isa.md)) |
 | `sim/test_load.py` | the host loader against the real RTL and against itself — the wire format of [07-loader.md](07-loader.md). Needs the toolchain, which is why it is not in the `sw` group |
 
 ### `rtl` — `poe test-rtl`

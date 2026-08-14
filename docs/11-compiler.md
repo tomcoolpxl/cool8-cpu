@@ -2,12 +2,17 @@
 
 There are two, and they are not the same program.
 
-**`tools/cool8bas.py`** is the cross-compiler. It runs on a PC, compiles
-COOL8 BASIC to COOL8 machine code, and is how everything on this machine
-gets built — `sw/basic.bas`, `sw/lib.bas`, the demos, and the compiler
-below. **It is not going away.** An earlier plan had it freeze once the
-machine could compile its own system; that plan is dropped (§4), so this
-stays the toolchain.
+**`tools/cool8bas.py`** is the cross-compiler. It runs on a PC and
+compiles COOL8 BASIC to COOL8 machine code.
+
+**It no longer builds the system.** This said it built "`sw/basic.bas`,
+`sw/lib.bas`, the demos, and the compiler below" — and `sw/basic.bas`
+has not existed since [D68](01-decisions.md) rewrote the editor,
+interpreter and console as assembly. What it still builds is
+`sw/lib.bas`, `sw/io.bas`, `sw/chars.bas`, `sw/demo.bas` and the
+on-machine compiler's own sources, which is a real job and a smaller
+one than this paragraph claimed. An earlier plan had it freeze once the
+machine could compile its own system; that plan is dropped (§4).
 
 **`sw/comp.bas` and friends** are the on-machine compiler: the same
 language, compiled to bytes, running on the machine itself. It works and

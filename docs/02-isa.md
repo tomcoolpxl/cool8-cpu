@@ -586,8 +586,17 @@ See [03-microarchitecture.md §2.2](03-microarchitecture.md#22-bus-request-and-g
 **Measured** from `rtl/core` by [`sim/timing.py`](../sim/timing.py),
 which runs every one of the 511 encodings once at a known address and
 reads the cycle delta out of the testbench. The same numbers are in
-`tools/opcodes.py:cycles()` and in the emulator's accounting; all three
-are checked against each other.
+`tools/opcodes.py:cycles()` and in the emulator's accounting.
+
+**Those three agree only when someone runs `poe timing`.** This section
+used to say "all three are checked against each other", which reads as
+continuous and is not: `sim/timing.py` is not in the runner, and
+`sim/cosim.py` cannot stand in for it — the verification contract counts
+interrupt injection in *retired instructions* precisely because
+[the two models cannot agree on a cycle](../AGENTS.md). So a cycle count
+is the one number in this project with three copies and no gate, and the
+discipline in `AGENTS.md` — touch the control FSM, run `poe timing`,
+update the other two — is the whole of what keeps them together.
 
 Counts assume the FPGA configuration: one memory access per clock, no
 wait states.
