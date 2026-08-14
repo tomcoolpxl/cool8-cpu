@@ -16,10 +16,10 @@
 ; LBUF and the tokeniser, `prog` to store what was typed ([D68]).
 ; ---------------------------------------------------------------------
 
-EDNUM   = $A826                 ;: 2 the line number Return just read
-EDN     = $A828                 ;: 1 how many rows the line spans
-EDR0    = $A829                 ;: 1 the logical line's first row
-EDIP    = $A82A                 ;: 1 how far into LBUF the line scan is
+EDNUM   = $B026                 ;: 2 the line number Return just read
+EDN     = $B028                 ;: 1 how many rows the line spans
+EDR0    = $B029                 ;: 1 the logical line's first row
+EDIP    = $B02A                 ;: 1 how far into LBUF the line scan is
 
         .include "prog.asm"     ; which brings token, num, console, map
 

@@ -39,6 +39,13 @@ between sessions, it is worth a commit.
 4. **Investigate through the harness and the tooling — never a
    throwaway script.** The section below is not advice; it is how work
    is done here.
+5. **Never move the memory map without asking first.** Every byte the
+   text map moves down comes off `FREE` one for one — it is the user's
+   BASIC memory, and "the image needs room" is not authority to spend
+   it. When the image is short, the bytes come from dead reservations,
+   from the image itself, or from a decision the user makes. D80 took
+   5,120 bytes of `FREE` to buy growth room nobody had asked for, and
+   the only reason it was caught is that the user read the number.
 
 | Document | Owns, and is normative for |
 |---|---|

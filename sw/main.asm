@@ -28,7 +28,7 @@
 ; Three bytes, and the image has one door again.
         JMP  main
 
-MAINK   = $A800                 ;: 2 the key just read
+MAINK   = $B000                 ;: 2 the key just read
 
 ; ---------------------------------------------------------------------
 ; The stack, stated once, bottom first.

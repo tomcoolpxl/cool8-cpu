@@ -2381,7 +2381,7 @@ pressure that took it from five to six in [D45], one name later.
 one number in two places, agreeing until the day one of them moved,
 which is this project's most expensive shape and the day had arrived.
 
-### The map slid 2 KB, and it had to slide as one piece
+### Page 0 moved by a byte; the map did not move at all
 
 Page 0 was full to the byte, so `NBUF`'s seventh byte pushed the run
 above it up one and `SDIG` had to leave. It went to `$0074` and
@@ -2391,27 +2391,52 @@ and none of them can see the other two** -- the tool is the only thing
 that knows, which is the whole argument for [D67].
 
 Then the image outgrew its slack: 245 bytes between system storage and
-`ORG`, under the 256 the check insists on. Moving `SCREEN` alone opened
-a 2,048-byte hole nothing could reach, and the check said so in those
-words. **The text map and the system-storage claims are one block** --
-67 claims moved down `$800` with it, by script, the way [D74] moved 64.
+`ORG`, against the 256 the check insists on. **Eleven bytes short.**
 
-| | before | after |
-|---|---|---|
-| the user's region | 39,424 | **37,376** |
-| the text map | `$9C00` | **`$9400`** |
-| system storage | `$B000-$B389` | **`$A800-$AB89`** |
-| growth room | 245 | **2,293** |
+**The eleven came out of dead system storage, not out of the user's
+region.** `CSTKBUF` had been a 32-byte reservation since the call stack
+moved into user memory -- `zp.asm` said "dead" beside it in so many
+words -- and it was holding the string accumulator 32 bytes higher than
+it needed to sit. Deleting it drops `SACCBUF` and `FSPBUF` to `$B26A`
+and the gap becomes 277. Nothing else moves.
 
-2 KB of a 39 KB user region, for ten times the room to grow into. That
-is [D72]'s slider being what it was built to be.
+`FREE` answers **39,424** before this decision and 39,424 after it. The
+text map stays at `$9C00`, system storage stays at `$B000-$B389`, and
+the bitstream is byte-identical to [D79]'s at 5,121 cells.
 
-**`rust/` had to be rebuilt, and the drift check could not say so.** It
-compares `machine.rs`'s *source* against the map, so it passed the
-moment the file was edited while the binary the suites actually run
-still preset `$9C00`. Every string test failed with the accumulator
-reading as screen bytes. A generated-source check proves the source
-agrees; it cannot prove the artefact was rebuilt.
+### The map origin is not free, and $9C00 is the cheap one
+
+This was found the expensive way -- by moving the map first, which was
+the wrong instinct and is now [a standing rule](../AGENTS.md) against
+doing it again without asking. The measurement is worth keeping anyway,
+because the next time the map genuinely has to move, the obvious choice
+is the wrong one.
+
+One full build each. The cell count comes out of synthesis and does not
+depend on the placer's seed -- a four-seed sweep moves `pclk` and `sclk`
+and leaves `ICESTORM_LC` exactly where it was:
+
+| origin | cells | image growth room | `FREE` |
+|---|---|---|---|
+| **`$9C00`** -- where it is | **5,121** | 277 | **39,424** |
+| `$9800` | 5,201 | 1,269 | 38,400 |
+| `$9400` | 5,172 | 2,293 | 37,376 |
+| `$9000` | 5,168 | 3,317 | 36,352 |
+| `$8C00` | 5,164 | 4,341 | 35,328 |
+| `$8800` | 5,157 | 5,365 | 34,304 |
+
+The origin reaches the hardware as four constants in `cool8_vregs.v` --
+two mode presets and two register resets -- and nothing else in the
+design changes with it. Reverting only those four turned 5,172 back into
+5,121, so the whole of the difference is constant folding in the video
+address adder.
+
+**`$9C00` is 36 cells cheaper than the best alternative and gives the
+most memory**, which makes it the right place on both counts and a
+coincidence nobody planned. `$9400` -- the arithmetically obvious "2 KB
+down" -- is the *worst* of the five. So if the map ever must move: build
+the candidates, do not subtract a round number. And ask first, because
+every byte it moves comes off `FREE` one for one.
 
 ### What INPUT does now, and what it deliberately does not
 

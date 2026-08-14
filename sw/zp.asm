@@ -274,20 +274,20 @@ FLTY    = $00FE                 ;: 1 the left's type, across fpair
 ; ---- the keyboard, and the break key. sw/basic.bas's ASM block
 ; ---- declared these; the ROM's monitor has its own copies at MVARS
 ; ---- because the two are never resident together.
-irring  = $A973                 ;: 16 the decoded-key ring the ISR fills
-irhead  = $A983                 ;: 1 where the editor reads it
-irtail  = $A984                 ;: 1 where the ISR writes it
-kshift  = $A985                 ;: 1 either shift is down
-kbrk    = $A986                 ;: 1 the next code is a release
-kext    = $A987                 ;: 1 the next code had an $E0 before it
-kdown   = $A988                 ;: 16 the key-down bitmap KEY() reads
-ibreak  = $A998                 ;: 1 the break flag; ipoll reads it
+irring  = $B173                 ;: 16 the decoded-key ring the ISR fills
+irhead  = $B183                 ;: 1 where the editor reads it
+irtail  = $B184                 ;: 1 where the ISR writes it
+kshift  = $B185                 ;: 1 either shift is down
+kbrk    = $B186                 ;: 1 the next code is a release
+kext    = $B187                 ;: 1 the next code had an $E0 before it
+kdown   = $B188                 ;: 16 the key-down bitmap KEY() reads
+ibreak  = $B198                 ;: 1 the break flag; ipoll reads it
 
 ; ---- the interpreter's own workspace.
-frames  = $A999                 ;: 2 the frame counter TIMER reads
-rseed   = $A99B                 ;: 2 the xorshift seed, 1 after init
-garg    = $A99D                 ;: 10 up to five parsed arguments
-lwk     = $A9A7                 ;: 10 dx, dy, err, sx, sy -- all words
+frames  = $B199                 ;: 2 the frame counter TIMER reads
+rseed   = $B19B                 ;: 2 the xorshift seed, 1 after init
+garg    = $B19D                 ;: 10 up to five parsed arguments
+lwk     = $B1A7                 ;: 10 dx, dy, err, sx, sy -- all words
 
 ; DIM's working set, overlaid on `lwk`.
 ;
@@ -306,9 +306,9 @@ DTYPE   = lwk                   ; 0 integer, 1 float, 2 string
 DRANK   = lwk+1                 ; dimensions seen so far
 DTOT    = lwk+2                 ; the running product, in elements
 DCNT    = lwk+4                 ; up to three counts, two bytes each
-FORSTK  = $A9B1                 ;: 72 MAXFOR frames of FORFR
-irst    = $A9F9                 ;: 1 the NMI handler's restart flag
-DIRBUF  = $A9FA                 ;: 112 the staged direct line: a whole
+FORSTK  = $B1B1                 ;: 72 MAXFOR frames of FORFR
+irst    = $B1F9                 ;: 1 the NMI handler's restart flag
+DIRBUF  = $B1FA                 ;: 112 the staged direct line: a whole
                                 ;    record -- $FFFF, len, tokens, 0 --
                                 ;    built fresh by dodirect each time
 
@@ -348,8 +348,14 @@ DIRBUF  = $A9FA                 ;: 112 the staged direct line: a whole
 ; the name table, because 32 frames and 256 bytes of saves do not fit
 ; here ([D72]). Kept as a name so the region it holds open stays
 ; accounted for until something wants it.
-CSTKBUF = $AA6A                 ; free: the CALL stack moved to user space
-SACCBUF = $AA8A                 ; the string accumulator, SMAX + 1
+; **CSTKBUF is gone, and its 32 bytes are the ones D80 needed.** It had
+; been dead since the call stack moved into the user's memory, and it
+; was holding the string accumulator 32 bytes higher than it had to sit
+; -- which is 32 bytes off the gap between system storage and the image,
+; the only number that was short. Reclaiming dead system storage is
+; where those bytes come from. **Not from the user's region**: the text
+; map does not move for this, and `FREE` still answers 39,424.
+SACCBUF = $B26A                 ; the string accumulator, SMAX + 1
 
 ; ---- error codes. The interpreter's caller reads ERR; 255 is a clean
 ; ---- stop and everything else is a fault.

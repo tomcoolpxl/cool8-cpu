@@ -96,18 +96,27 @@ it is the map that matters when reading `sw/`, so:
 |---|---|---|
 | `$0000–$00FF` | 256 | free. Formerly "page 0", special to nothing now |
 | `$0100–$01FF` | 256 | the CPU stack, growing down from `$0200` |
-| `$0200–$93FF` | **37,376** | **the user's**: program up, heap down, and the name table, call stack and save stack above the program ([D73]) |
-| `$9400–$A7FF` | 5,120 | the text map — 80×32 cells, stride 160 |
-| `$A800–$AB89` | 906 | system storage and the string accumulator |
-| `$AB8A–$B47E` | 2,293 | slack: the image's room to grow |
+| `$0200–$9BFF` | **39,424** | **the user's**: program up, heap down, and the name table, call stack and save stack above the program ([D73]) |
+| `$9C00–$AFFF` | 5,120 | the text map — 80×32 cells, stride 160 |
+| `$B000–$B369` | 874 | system storage and the string accumulator |
+| `$B36A–$B47E` | 277 | slack: the image's room to grow |
 | `$B47F–$FEFF` | 19,073 | the system image — BASIC, editor, floats |
 
-**The map and system storage are one block and slide together** ([D80]).
-Moving the map alone opens a hole nothing can reach — the user's region
-ends at the map and the image stops at the claims — which is what
-`memmap.check()` said, in those words, when it was tried. It went down
-2 KB in D80 to buy the image ten times its remaining growth room, out of
-a user region that had 39 KB to spare.
+**Do not move the map to make room. Ask first** — it is a
+[standing rule](../AGENTS.md), because every byte the map moves down
+comes off `FREE` one for one and that is the user's memory. D80 needed
+eleven bytes and took them out of a dead 32-byte reservation instead.
+
+Two things to know if it ever genuinely has to move. **The map and
+system storage are one block and slide together**: moving the map alone
+opens a hole nothing can reach — the user's region ends at the map and
+the image stops at the claims — which is what `memmap.check()` says, in
+those words. **And the origin is not free.** It reaches the hardware as
+four constants in `cool8_vregs.v`, and folding them through the video
+address adder costs a different number of logic cells for each value:
+`$9C00` is 5,121, while `$9400` — the arithmetically obvious 2 KB down —
+is 5,172, the worst of five candidates measured. D80 has the table.
+Pick an origin by building it, not by subtracting.
 
 Every boundary in it is derived rather than written down: the image's
 origin is `$FF00 − size`, system storage's floor is its lowest `;:`
@@ -855,7 +864,7 @@ cell.
 | Tile | 8×8, 4 bpp | `[7:6]` V/H flip, `[5:4]` pattern bank, `[3:0]` palette bank |
 
 **The canonical text map is 80×32 cells with 80×30 displayed**, stride
-160, 5,120 bytes, at `$9400`. The two spare rows off the bottom are what
+160, 5,120 bytes, at `$9C00`. The two spare rows off the bottom are what
 the circular scroll rotates through, so a scroll is one register write
 and moves no memory.
 
