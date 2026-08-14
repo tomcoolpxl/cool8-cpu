@@ -62,6 +62,7 @@ between sessions, it is worth a commit.
 | [11-compiler.md](docs/11-compiler.md) | The shelved self-hosted compiler, and the size arithmetic that shelved it |
 | [12-tasks.md](docs/12-tasks.md) | **Every command, and the runner that names them.** What each job proves, the gates, and how to add one |
 | [13-basic.md](docs/13-basic.md) | **COOL8 BASIC, the language reference** — every statement, function, operator, the graphics/sound set, floating point, and the size ceiling |
+| [14-demos.md](docs/14-demos.md) | The demo disc — which drive it is, what a demo may assume, and why `mkdemos.py` types the sources at the machine rather than tokenising them on the host |
 
 `README.md` is a summary derived from those. Keep it in step, but do not
 put anything in it that is not already recorded properly somewhere else.

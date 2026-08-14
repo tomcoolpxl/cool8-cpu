@@ -1,0 +1,101 @@
+# 14. The demo disc
+
+A COOL8 ships with sixteen volumes. This document owns what is on them,
+what a demo is allowed to assume, and how to add one.
+
+```bash
+python tools/mkdemos.py --png
+```
+
+## 1. The drives
+
+Sixteen volumes, numbered **0 to 15**, 448 KB each, in one 8 MB flash
+image ([`tools/cool8disk.py`](../tools/cool8disk.py)). `DRIVE n` selects
+one and everything after it — `DIR`, `SAVE`, `LOAD`, `ERA` — works on
+that volume until the next `DRIVE`.
+
+| drive | label | holds |
+|---|---|---|
+| 0–12 | `COOL8` | the user's, formatted and empty |
+| **13** | **`DEMOS`** | **the demo disc — what this document is about** |
+| 14, 15 | `COOL8` | the system discs |
+
+13 rather than 0 so that a machine out of the box still has drive 0 for
+the person using it, and so that a demo disc is somewhere a user will not
+overwrite by accident on the first afternoon.
+
+## 2. The sources are the truth, the disc is derived
+
+`demos/*.bas` is what gets reviewed. `tools/mkdemos.py` formats the
+volumes, **types each source at the machine**, and lets `SAVE` write it.
+
+**It types rather than tokenises, and that is the whole design.** A
+program on disc is tokenised, and the only thing that knows the token
+table is `sw/token.asm`. A host-side tokeniser would be a second
+implementation of it and would drift the first time a keyword was added —
+which is the trap [AGENTS.md](../AGENTS.md) names first and this project
+has paid for a dozen times. Typing costs a few seconds a demo and cannot
+be wrong.
+
+So a demo is edited as text, rebuilt, and never patched as a binary.
+
+## 3. What a demo may assume
+
+**Nothing that needs the toolchain.** Demos are built and run on the VM
+(`python tools/mkdemos.py --png` renders a frame), because a question
+about software is a question for the fast machine — the RTL is for
+questions about the hardware.
+
+**BASIC only.** A demo that needs machine code should ship it as a PRG
+and reach it with `SYS "NAME.BIN"` ([D87]), so the BASIC stays readable.
+
+**The palette is in the bitstream** ([D77], [D79]) — sixteen banks of
+sixteen, published palettes, live from reset. A demo does not seed a
+palette and must not assume it may scribble on one without saying so.
+
+## 4. The demos
+
+### `10PRINT` — after the C64 one-liner
+
+```
+10 PRINT CHR$(205.5+RND(1)); : GOTO 10
+```
+
+is the most famous BASIC program written, and has a
+[book](https://mitpress.mit.edu/9780262526746/10-print-chr205-5rnd1-goto-10/)
+about it. It works because PETSCII 205 and 206 are the two diagonals,
+and `RND` picks between them.
+
+![10 PRINT](img/demo-10print.png)
+
+**Two things had to change and both made it better.**
+
+Our font is **CP437** ([`tools/mkfont.py`](../tools/mkfont.py)), which
+has no diagonals — so the maze is drawn in **tile mode** instead, where a
+cell is 8×8 at 4 bpp. That is **sixteen colours a cell** against the
+C64's two, and the C64's own multicolour character mode managed four at
+half the horizontal resolution.
+
+And the tile attribute's low nibble picks **which of the sixteen palette
+banks** the cell uses ([D79]), so the maze walks through PICO-8,
+DawnBringer 16, Sweetie 16 and the rest as it draws. The bands in the
+picture are the palettes, one per row.
+
+**One tile serves both diagonals.** Attribute bit 6 flips it
+horizontally, so 32 bytes of pattern draws `╱` and `╲` both — which is
+why the DATA statement is four lines rather than eight.
+
+The version here fills the map directly through the VRAM port rather
+than `PRINT`ing, because the console writes a fixed attribute and the
+attribute is where the colour lives.
+
+## 5. Adding one
+
+1. Write `demos/name.bas`. Keep it BASIC, keep it under 80 characters a
+   line (the editor's logical line), and say in a `REM` what it is and
+   where it came from.
+2. `python tools/mkdemos.py --png` — it is typed in, saved, and the
+   first demo is run and shot.
+3. Look at the picture. `docs/img/demo-<name>.png`.
+4. Add a section here saying what it demonstrates about *this* machine,
+   not just what it draws.
