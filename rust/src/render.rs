@@ -356,7 +356,21 @@ impl Renderer {
                 // One divisor: every mode's console row is 16 display
                 // lines, so there is nothing to choose. cool8_pixel.v
                 // makes the same unconditional computation.
-                trow_of = vrel >> 4;
+                //
+                // **Off `vsrc`, not `vrel`.** The RTL feeds `d1_trow`
+                // from `vsrc`, which in text mode carries the fine
+                // vertical scroll — so the cursor cell moves with the
+                // text it sits in rather than staying put while the
+                // characters slide under it. Simplifying this to `vrel`
+                // put the cursor five display lines out at `scrl_y = 5`
+                // and nothing noticed, because until this commit
+                // `test_vm` rendered no cursor at all.
+                let vsrc_row = if vv.engine == 0 {
+                    vrel + (v.scrl_y as u32 & 15)
+                } else {
+                    vrel
+                };
+                trow_of = vsrc_row >> 4;
                 match vv.engine {
                     0 => {
                         // ---- text

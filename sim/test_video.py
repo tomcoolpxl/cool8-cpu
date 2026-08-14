@@ -57,11 +57,16 @@ H_VIS, V_VIS = 640, 480
 
 # cool8_video_tb's phases, and the three that also dump a frame.
 #
-# Phase 13 is dumped for sim/test_vm.py rather than for a picture: it is
-# the only frame with sprites in it, and without it the emulator's sprite
-# path would be the one part of the video model nothing checked.
+# Phases 3 and 13 are dumped for sim/test_vm.py rather than for a
+# picture. 13 is the only frame with sprites in it; **3 is the only one
+# with a cursor**, and without it the emulator's cursor path was the one
+# part of the video model nothing checked -- which is exactly where
+# [D81] found both models wrong in the same way, agreeing with each
+# other and with nothing else. A gate cannot catch a shared assumption
+# about a thing it never renders.
 N_PHASES = 16
-FRAME_DUMPS = {0: "text.hex", 11: "tiles.hex", 13: "sprites.hex"}
+FRAME_DUMPS = {0: "text.hex", 3: "cursor.hex", 11: "tiles.hex",
+               13: "sprites.hex"}
 
 
 def write_png(path, width, height, rgb):

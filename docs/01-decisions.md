@@ -2328,6 +2328,57 @@ implementation nobody is checking, which is how `test_lib` came to
 measure two programs against a third, private model of the I/O page
 and report 1.00x for a year.
 
+## D84 -- The pixel gate had no cursor in it, and found a bug the hour it did
+
+`AGENTS.md` calls `sim/test_vm.py` normative: **`rust/` and `rtl/` are
+checked against each other pixel by pixel.** It rendered a text screen,
+a tile screen, sprites over a bitmap and the sound engine. **It never
+rendered a cursor.**
+
+That is the hole [D81] fell through. `d1_trow` chose its divisor on the
+line doubler, `render.rs` made the identical choice, and the two models
+agreed all the way to the screen while both were wrong. Cosim compares
+retired instructions and cannot see a pixel; this compares pixels and
+was never shown the cell. **A gate cannot catch a shared assumption
+about a thing it does not draw.**
+
+`cool8_video_tb.v` has rendered a cursor frame all along -- phase 3,
+"text, cursor mid-screen" -- and `FRAME_DUMPS` simply did not name it.
+One table entry and a matching `setup_cursor` in the emulator, and the
+frame is gated. Rate 3, the solid cursor, because a frame comparison
+cannot predict a blink counter.
+
+### It failed immediately, and the bug was mine
+
+80 pixels wrong, first at (320,187). The cursor is at cell 40, which is
+x = 320, so the column was right and the row was five display lines out
+-- and `scrl_y` in that phase is **5**.
+
+The RTL feeds `d1_trow` from `vsrc`, which in text mode carries the fine
+vertical scroll:
+
+```verilog
+wire [9:0] vsrc = (c_eng == E_TEXT) ? (vrel + {6'd0, c_scry[3:0]}) : vrel;
+d1_trow <= vsrc[8:4];
+```
+
+so the cursor cell **moves with the text it sits in** rather than
+standing still while the characters slide under it. [D81] simplified the
+emulator's copy to `vrel >> 4` and dropped the scroll. Nothing noticed,
+because the only frame that could have shown it was the one nobody
+rendered.
+
+### What this says about the two-model gate
+
+The models are gated against each other *precisely so* a software test
+can trust the fast one. That guarantee is exactly as wide as the set of
+frames the gate renders, and it was three. The lesson is not "add a
+cursor test" -- it is that **a new thing in the pixel path needs a frame
+in `FRAME_DUMPS`, or the pixel gate does not cover it** however green it
+reports.
+
+---
+
 ## D83 -- The small fixes, and one that was not a gap at all
 
 Three items off [13-basic.md](13-basic.md) section 12's short list.

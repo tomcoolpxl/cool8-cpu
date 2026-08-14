@@ -289,6 +289,30 @@ def setup_text(m, v):
     load_text_map(m, build_screen())
 
 
+def setup_cursor(m, v):
+    """Phase 3 of cool8_video_tb: the text screen, scrolled, with the
+    hardware cursor mid-screen.
+
+    **The cursor was the one part of the pixel path this gate never
+    rendered**, so when [D81] found `d1_trow` choosing its divisor on the
+    line doubler, `render.rs` was making the identical mistake and the
+    two models agreed all the way to the screen. Cosim compares
+    instructions and this compares pixels; neither could see a cell
+    nothing drew.
+
+    Rate 3 is the solid cursor, which is the only one a frame comparison
+    can predict without modelling the blink counter.
+    """
+    put_pal(m)
+    no_sprites(m)
+    set_mode(m, 0)
+    load_text_map(m, build_screen())
+    set_scroll(m, 0, 5)
+    m.io_write(0x22, 40)                    # CUR_X
+    m.io_write(0x23, 12)                    # CUR_Y
+    m.io_write(0x24, 0b11001)               # CUR_CTRL: rate 3, on
+
+
 def put_spr(m, i, en, big, hf, vf, bh, x, y, pat, bank):
     m.io_write(0x2A, i << 3)
     m.io_write(0x2B, y & 0xFF)
@@ -442,6 +466,8 @@ def main():
                     "tiles.hex", setup_tiles),
         frame_check("11 sprites over a bitmap",
                     "sprites.hex", setup_sprites),
+        frame_check("text with the hardware cursor",
+                    "cursor.hex", setup_cursor),
         sound_check(),
     ]
 
