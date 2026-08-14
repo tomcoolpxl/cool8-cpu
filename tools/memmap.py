@@ -111,13 +111,13 @@ VECTORS = {"RESET": 0xFFF8, "NMI": 0xFFFA, "IRQ": 0xFFFC, "BRK": 0xFFFE}
 # `sw/basic.bas`'s own CONST copies of them will become EXTERNs.
 # ---------------------------------------------------------------------
 PROG = 0x0200               # stored program up, heap down: one region
-CSTK = 0xB26A               # the CALL stack, 8 frames of 4
-SACC = 0xB28A               # the string accumulator, 256 bytes
+CSTK = 0xAA6A               # the CALL stack, 8 frames of 4
+SACC = 0xAA8A               # the string accumulator, 256 bytes
 
 # The system storage region ends where the CALL stack begins; its floor
 # is computed from the claims below, not chosen (D67).
 SYSEND = CSTK - 1
-SCREEN = 0x9C00             # the text map: 80 cells a row, 32 rows
+SCREEN = 0x9400             # the text map: 80 cells a row, 32 rows
 CSTRIDE = 160               # ...at this pitch, which sw/console.asm and
                             #    the mode presets in cool8_vregs.v agree
                             #    on. It was 256 with 48 cells a row never

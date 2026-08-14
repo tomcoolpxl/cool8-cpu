@@ -30,7 +30,8 @@ the language does at its edges, measured on the machine.
 | `CLEAR` | every variable away, the program kept — BBC's name, beside `CLS` and `CLG` |
 | `PRINT a; b$; c` | `;` butts items together, `,` inserts one space, a trailing separator holds the newline. Negative numbers print signed |
 | `PRINT TAB(col)` / `PRINT SPC(n)` | layout inside `PRINT` only: `TAB` spaces out to a column and does nothing if already past it, `SPC` emits `n` spaces. Neither is a function and neither means anything outside a `PRINT` |
-| `INPUT v` | a line of text, echoed as typed, ended by Return. **The variable's suffix decides what it was**: `A$` takes the text, `A#` a fraction, `A` an integer — §8 |
+| `INPUT ["prompt";] v [, v]...` | prints the prompt if given, then `? `, then reads a line per variable — a comma is another prompt on another line, **not one line split on commas** ([D80]). **The variable's suffix decides what it was**: `A$` takes the text, `A#` a fraction, `A` an integer — §8 |
+| `STOP` | stops with `?BREAK IN n`, and `CONT` resumes. It is the break key's own tail under another name ([D80]) |
 | `DATA n, n, …` / `READ v, v` / `RESTORE` | numbers only (with `-`), scalar targets only; reading past the end is `?OUT OF DATA` |
 | `POKE a, b` / `PEEK(a)` | main RAM and the I/O page |
 | `DIM v(n[,n[,n]])` | arrays on the heap, **up to three dimensions**. The name's suffix picks the element: none integer, `#` float, `$` string — `DIM A(9)`, `DIM A#(9)`, `DIM A$(4,4)`. Dimensioning one twice is `?REDIM` |
@@ -133,6 +134,10 @@ one accumulator, four-byte descriptors, no garbage collection.
 | | |
 |---|---|
 | `POS` | the cursor's column, 0 at the left margin. No parentheses |
+| `VPOS` | the cursor's row, 0 at the top. No parentheses |
+| `TRUE` / `FALSE` | -1 and 0 — what a comparison answers, which is [D47] written down |
+| `PI` | 3.1416, a constant rather than `4*ATN(1)`, and a unit in the last place more accurate than it. No `#`: the suffix is a *variable's* type and no builtin carries one |
+| `STRING$(n,s)` | `s` repeated `n` times; 0 gives the empty string, and past `SMAX` it is `?STR LEN` |
 | `NOT n` | the bitwise complement, `-1 - n`. Binds looser than a comparison and tighter than `AND` — `NOT A = 1` is `NOT (A = 1)` |
 | `RND(n)` | 0..n-1 from a 16-bit xorshift; `RND(0)` is the raw word |
 | `TIMER` | frames since power-on, 60 per second, wraps at 65536 (~18 min). No parentheses |
@@ -1388,15 +1393,21 @@ The point of the exercise is not to reach parity. It is to know which
 absences are decisions and which are just gaps, because those read
 identically from inside.
 
-### Missing, small, and the language looks unfinished without them
+### Done: the five that were small, and the language looked unfinished
 
-| | why it stands out |
-|---|---|
-| **`STOP`** | [D78] gave us `CONT`, and nothing in the language can stop a program for it to resume — only the break key can. Both references have `STOP`, and `ipoll` already does the whole job: `CALL icsv`, set `E_STOP`, return. Perhaps 15 bytes with its token, unmeasured |
-| **`INPUT` with a prompt, and more than one variable** | `INPUT "NAME? "; A$` and `INPUT A, B` are the first line of half the programs ever typed into either reference. Ours takes one variable and prints nothing. This is the largest everyday gap in the language |
-| **`VPOS`** | `POS` landed in [D78] and its twin did not. A cursor column with no cursor row is an odd shape to leave behind |
-| **`PI`, `TRUE`, `FALSE`** | Three constants. `TRUE` especially: [D47] made TRUE = −1 a load-bearing fact of this language and there is no way to write it |
-| **`STRING$(n, s)`** | Repeat. Every text UI wants a rule of dashes, and `FOR`/`PRINT ;` is the workaround everyone writes once |
+All five landed in [D80] for **212 bytes**, and each turned out to be a
+shape the code already had rather than a feature:
+
+| | is | why it stood out |
+|---|---|---|
+| `STOP` | `ipoll`'s own tail, given a label — **1 byte** | [D78] gave us `CONT` and left only the break key able to reach it |
+| `INPUT "p"; a, b` | the prompt is new; the list is `h_read`'s walk | ours took one variable and printed nothing |
+| `VPOS` | `POS` with the other byte, sharing its tail | a cursor column with no cursor row |
+| `TRUE` / `FALSE` / `PI` | two constants with one tail, and one beside `KPI2` | [D47] made TRUE = −1 load-bearing with no way to write it |
+| `STRING$(n,s)` | `sappend` in a loop | every text UI wants a rule of dashes |
+
+`STRING$` is seven characters, which is why `NSIG` is seven and why a
+user variable now has a seventh significant character too.
 
 ### Real gaps that would cost real bytes
 

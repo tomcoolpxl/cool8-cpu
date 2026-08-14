@@ -13,11 +13,12 @@
 ;   $0000-$0011   DO/LOOP's own stack
 ;   $0014-$0022   the interpreter
 ;   $0023-$0026   multiply scratch
-;   $0027-$0032   long names: the table, the heap floor, the scan buffer
+;   $0027-$0033   long names: the table, the heap floor, the scan buffer
 ;   $0040-$0073   VARS, A-Z, two bytes each
 ;   $0074-$00A1   sw/fs.asm's FSVARS, 46 bytes
 ;   $00A2-$00A3   FDEPTH and EDEPTH
-;   $00A4-$00D9   free, 54 bytes -- **the editor's, until it stopped
+;   $00A4         SDIG, moved here when NBUF took its seventh byte
+;   $00A5-$00D9   free, 53 bytes -- **the editor's, until it stopped
 ;                 being compiled BASIC**. `cols`, `rows`, `gkind`,
 ;                 `curph`, `rpl`, `bpc`, `gbase`, `gs8`, `glim`, `cont`,
 ;                 `blb`, `bfa`, `bva`, `binv`, `grow` and `bstr` were
@@ -121,8 +122,19 @@ MTMP    = $0023                 ;: 4 multiply scratch
 ; significant characters rather than five, because the assembler's
 ; labels are now BASIC variables ([D45](docs/01-decisions.md)) and
 ; `.done1`/`.done2` have to stay apart.
-NSIG    = 6                     ; significant characters
-NENT    = 12                    ; type, length, NSIG name bytes, value, aux
+;
+; **Seven now, and a builtin's name is why.** `isbuilt` matches an entry
+; by comparing NLEN against its length and then that many bytes out of
+; NBUF, so the longest name in `btab` sets the buffer -- and `STRING$`
+; is seven characters. At six, its seventh compare read NLEN itself and
+; the entry could never match, deterministically and silently. The same
+; pressure that took this from five to six, one name later.
+;
+; NENT is derived rather than written down. It was the literal 12 while
+; NSIG was 6, which is this project's most expensive shape: one number
+; in two places, agreeing until the day one of them moves.
+NSIG    = 7                     ; significant characters
+NENT    = NSIG + 6              ; type, length, NSIG name bytes, value, aux
 MAXNAME = 32
 
 ; A string variable's four bytes are BBC BASIC's descriptor exactly:
@@ -134,8 +146,8 @@ MAXNAME = 32
 NTAB    = $0027                 ;: 2 the table's base, fixed at RUN
 NNAME   = $0029                 ;: 1 how many names are defined
 HEAP    = $002A                 ;: 2 the heap floor; arrays grow down
-NBUF    = $002C                 ;: 6 the identifier just scanned, folded
-NLEN    = $0032                 ;: 1 how long it really was
+NBUF    = $002C                 ;: 7 the identifier just scanned, folded
+NLEN    = $0033                 ;: 1 how long it really was
 
 ; ---- strings.
 ;
@@ -145,16 +157,16 @@ NLEN    = $0032                 ;: 1 how long it really was
 ; appends where the first stopped, and no intermediate ever reaches the
 ; heap.
 SMAX    = 255                   ; as much as one byte of length allows
-SACC    = $0033                 ;: 2 where the accumulator lives
-SLEN    = $0035                 ;: 1 how much of it is in use
-STYPE   = $0036                 ;: 1 1 when the last value was a string
+SACC    = $0034                 ;: 2 where the accumulator lives
+SLEN    = $0036                 ;: 1 how much of it is in use
+STYPE   = $0037                 ;: 1 1 when the last value was a string
 
 ; ---- division. One restoring pass gives the quotient and the
 ; remainder both, so MOD costs a dispatch entry and nothing else.
-DVSR    = $0037                 ;: 2 the divisor, out of the way of the
+DVSR    = $0038                 ;: 2 the divisor, out of the way of the
                                 ;    four registers the loop needs
-DREM    = $0039                 ;: 2 what was left over
-DSGN    = $003B                 ;: 1 bit 0 negates the quotient, bit 1
+DREM    = $003A                 ;: 2 what was left over
+DSGN    = $003C                 ;: 1 bit 0 negates the quotient, bit 1
                                 ;    the remainder
 
 ; ---- CALL/RETURN. A stack of its own again, and out in the user area
@@ -173,8 +185,8 @@ MAXCALL = 32                    ; nesting, which parameters make useful
 LSTKSZ  = 256                   ; the save stack, 51 saved variables
 CSAVESZ = 10                    ; CONT's record: where, and how deep
 LSAVE   = 5                     ; a handle and the four bytes it hid
-CSTK    = $003C                 ;: 2 where that stack lives
-CDEPTH  = $003E                 ;: 1 calls active, 0 = none
+CSTK    = $003D                 ;: 2 where that stack lives
+CDEPTH  = $003F                 ;: 1 calls active, 0 = none
 ; LDEPTH is in sw/console.asm, on one of the two bytes the hardware
 ; cursor gave back -- page 0 is full to the byte and that block was
 ; kept named rather than as a hole for exactly this.
@@ -185,7 +197,16 @@ CDEPTH  = $003E                 ;: 1 calls active, 0 = none
 ; a stored pointer would have meant moving the map, which [D72] costs
 ; at forty claims. The call site during argument passing goes on the
 ; CPU stack for the same reason.
-SDIG    = $003F                 ;: 1 digits STR$ has stacked, or
+; SDIG sat at $003F until NBUF grew its seventh byte and pushed the run
+; below it up by one. It is a scalar with no neighbours that care, which
+; is what makes it the one to move rather than anything around it.
+;
+; **It went to $0074 first, and `memmap.check()` said no**: that byte is
+; FSVARS, which lives in `fs.asm` and is invisible from here. The free
+; run in page 0 is $00A4..$00D9, between EDEPTH and the float stack, and
+; the tool is the only thing that knows -- three files claim this page
+; and none of them can see the other two.
+SDIG    = $00A4                 ;: 1 digits STR$ has stacked, or
                                 ;    characters VAL has left
 
 VARS    = $0040                 ;: 52 A-Z, two bytes each
@@ -253,20 +274,20 @@ FLTY    = $00FE                 ;: 1 the left's type, across fpair
 ; ---- the keyboard, and the break key. sw/basic.bas's ASM block
 ; ---- declared these; the ROM's monitor has its own copies at MVARS
 ; ---- because the two are never resident together.
-irring  = $B173                 ;: 16 the decoded-key ring the ISR fills
-irhead  = $B183                 ;: 1 where the editor reads it
-irtail  = $B184                 ;: 1 where the ISR writes it
-kshift  = $B185                 ;: 1 either shift is down
-kbrk    = $B186                 ;: 1 the next code is a release
-kext    = $B187                 ;: 1 the next code had an $E0 before it
-kdown   = $B188                 ;: 16 the key-down bitmap KEY() reads
-ibreak  = $B198                 ;: 1 the break flag; ipoll reads it
+irring  = $A973                 ;: 16 the decoded-key ring the ISR fills
+irhead  = $A983                 ;: 1 where the editor reads it
+irtail  = $A984                 ;: 1 where the ISR writes it
+kshift  = $A985                 ;: 1 either shift is down
+kbrk    = $A986                 ;: 1 the next code is a release
+kext    = $A987                 ;: 1 the next code had an $E0 before it
+kdown   = $A988                 ;: 16 the key-down bitmap KEY() reads
+ibreak  = $A998                 ;: 1 the break flag; ipoll reads it
 
 ; ---- the interpreter's own workspace.
-frames  = $B199                 ;: 2 the frame counter TIMER reads
-rseed   = $B19B                 ;: 2 the xorshift seed, 1 after init
-garg    = $B19D                 ;: 10 up to five parsed arguments
-lwk     = $B1A7                 ;: 10 dx, dy, err, sx, sy -- all words
+frames  = $A999                 ;: 2 the frame counter TIMER reads
+rseed   = $A99B                 ;: 2 the xorshift seed, 1 after init
+garg    = $A99D                 ;: 10 up to five parsed arguments
+lwk     = $A9A7                 ;: 10 dx, dy, err, sx, sy -- all words
 
 ; DIM's working set, overlaid on `lwk`.
 ;
@@ -285,9 +306,9 @@ DTYPE   = lwk                   ; 0 integer, 1 float, 2 string
 DRANK   = lwk+1                 ; dimensions seen so far
 DTOT    = lwk+2                 ; the running product, in elements
 DCNT    = lwk+4                 ; up to three counts, two bytes each
-FORSTK  = $B1B1                 ;: 72 MAXFOR frames of FORFR
-irst    = $B1F9                 ;: 1 the NMI handler's restart flag
-DIRBUF  = $B1FA                 ;: 112 the staged direct line: a whole
+FORSTK  = $A9B1                 ;: 72 MAXFOR frames of FORFR
+irst    = $A9F9                 ;: 1 the NMI handler's restart flag
+DIRBUF  = $A9FA                 ;: 112 the staged direct line: a whole
                                 ;    record -- $FFFF, len, tokens, 0 --
                                 ;    built fresh by dodirect each time
 
@@ -327,8 +348,8 @@ DIRBUF  = $B1FA                 ;: 112 the staged direct line: a whole
 ; the name table, because 32 frames and 256 bytes of saves do not fit
 ; here ([D72]). Kept as a name so the region it holds open stays
 ; accounted for until something wants it.
-CSTKBUF = $B26A                 ; free: the CALL stack moved to user space
-SACCBUF = $B28A                 ; the string accumulator, SMAX + 1
+CSTKBUF = $AA6A                 ; free: the CALL stack moved to user space
+SACCBUF = $AA8A                 ; the string accumulator, SMAX + 1
 
 ; ---- error codes. The interpreter's caller reads ERR; 255 is a clean
 ; ---- stop and everything else is a fault.

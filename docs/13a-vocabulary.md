@@ -56,6 +56,7 @@ Names come from `TOKTAB` and `btab`, the bytes the matcher compares against. Ret
 | `$C8` | `LOCAL name[,name]` | inside a SUB: the caller's values come back on RETURN |
 | `$CB` | `PAUSE frames:int` | wait, still answering the break key `!intonly` |
 | `$CC` | `CONT` | resume a program the break key stopped |
+| `$CE` | `STOP` | stops with ?BREAK, and CONT resumes; the break key's own tail |
 
 ## Tokenised, but not statements
 
@@ -114,7 +115,12 @@ Matched by name, not tokenised — they have no token byte.
 | `RND(n:int) -> int` | 0..n-1; RND(0) is the raw word `!intonly` |
 | `TIMER -> int` | frames since boot |
 | `POS -> int` | the cursor's column, 0 at the left margin |
+| `VPOS -> int` | the cursor's row, 0 at the top |
+| `TRUE -> int` | -1, which is what a comparison answers ([D47]) |
+| `FALSE -> int` | 0 |
+| `STRING$(n:int, s:string) -> string` | s repeated n times; 0 gives the empty string |
 | `VPEEK(addr:int) -> int` | `!intonly` |
+| `PI -> float` | 3.1416, from the table fatan folds against |
 | `SIN(x:float) -> float` | radians |
 | `COS(x:float) -> float` | radians |
 | `TAN(x:float) -> float` | radians; unchecked at a pole |

@@ -1132,6 +1132,34 @@ h_poke:
 ; nothing left to do ([D68]).
 emitc:  JMP  con_emit
 
+; sacout -- the accumulator to the screen, and then spent.
+;
+; PRINT's string item and INPUT's prompt are the same act, so they are
+; one routine: put SLEN characters from SACC, then empty the accumulator
+; because the next thing along may be a string too and a number after a
+; string must not take the string path. INPUT wants that reset just as
+; much -- its read loop appends where the prompt stopped otherwise.
+;
+; con_putsn(p AS CARD, n AS INT) and **an INT is two bytes**, so the
+; count needs a high byte of its own: pushing one left the callee
+; reading a length out of the saved Y and looping until the machine
+; stopped answering.
+sacout: PUSHW Y
+        CLR  R2
+        PUSH R2                 ; n, high byte
+        LD   R0,[SACC]          ; X = the accumulator, R0 = how much
+        MOV  XL,R0
+        LD   R0,[SACC+1]
+        MOV  XH,R0
+        LD   R0,[SLEN]
+        CALL con_putsn
+        POP  R0
+        POPW Y
+        CLR  R2
+        ST   [SLEN],R2
+        ST   [STYPE],R2
+        RET
+
 ; ---------------------------------------------------------------------
 ; PRINT <expr> -- one number, then a newline. The editor's own screen
 ; routines do the work; there is no second console.
@@ -1182,22 +1210,7 @@ h_print:
         ; and **an INT is two bytes**, so the count needs a high byte of
         ; its own -- pushing one left the callee reading a length out of
         ; the saved Y and looping until the machine stopped answering.
-.str:   PUSHW Y
-        CLR  R2
-        PUSH R2                 ; n, high byte
-        LD   R0,[SACC]          ; X = the accumulator, R0 = how much
-        MOV  XL,R0
-        LD   R0,[SACC+1]
-        MOV  XH,R0
-        LD   R0,[SLEN]
-        CALL con_putsn
-        POP  R0
-        POPW Y
-        ; spent: the next item may be a string too, and a number after
-        ; a string must not take the string path
-        CLR  R2
-        ST   [SLEN],R2
-        ST   [STYPE],R2
+.str:   CALL sacout
 .sep:   SKIPSP
         CMP  R2,#$3B            ; ';'
         BEQ  .semi
@@ -3687,6 +3700,69 @@ sright: CALL sopen
         SUB  R3,R0              ; so the offset is the rest of it
         JMP  strim
 
+; STRING$(n, s) -- s repeated n times, and it needs no buffer.
+;
+; **The pattern is already the tail of the accumulator** by the time the
+; arguments are read, and the accumulator is a fixed buffer that never
+; moves -- so every further copy reads from where the first one landed
+; and appends past it. `sappend` is exactly "R2 characters from R0:R1
+; onto the accumulator", which is the whole loop body, and `sputc`
+; inside it raises ?STRING at SMAX. So this is the argument parse, an
+; address, and a counted call: no second copier, and no temporary.
+;
+; BBC BASIC's argument order, count first. The C64 has no STRING$.
+sstring:
+        CALL sopen              ; '('
+        CALL eval               ; how many
+        ; **The count is sixteen bits and the loop runs on eight.**
+        ; Taking R0 alone made STRING$(256,"x") the empty string and
+        ; STRING$(300,"yz") eighty-eight characters -- silently, while
+        ; STRING$(200,"yz") correctly said ?STR LEN. Anything past 255
+        ; cannot fit SMAX for a pattern of any length, so it is clamped
+        ; to 255 and reaches that same error by that same route rather
+        ; than by a second check that could disagree with it.
+        TST  R1
+        BEQ  .lo
+        MOV  R0,#$FF
+.lo:    PUSH R0
+        CALL sopen              ; ','
+        LD   R2,[SLEN]
+        PUSH R2                 ; where the pattern starts
+        CALL eval               ; the pattern, appended where R2 said
+        CALL sopen              ; ')'
+        POP  R2                 ; ...start
+        POP  R3                 ; ...and count, in the order pushed
+        MOV  R0,#1
+        ST   [STYPE],R0         ; a string either way, empty included
+        LD   R0,[SLEN]
+        SUB  R0,R2              ; the pattern's own length
+        BEQ  .out               ; nothing to repeat
+        TST  R3
+        BNE  .some
+        ST   [SLEN],R2          ; STRING$(0,s) is the empty string
+        BRA  .out
+.some:  SUB  R3,#1              ; the first copy is already in place
+        BEQ  .out
+        PUSH R0                 ; the length, while the address is built
+        LD   R0,[SACC]
+        ADD  R0,R2
+        LD   R1,[SACC+1]
+        MOV  R2,#0
+        ADC  R1,R2
+        POP  R2                 ; the length, where sappend wants it
+.rep:   PUSH R0
+        PUSH R1
+        PUSH R2
+        PUSH R3
+        CALL sappend
+        POP  R3
+        POP  R2
+        POP  R1
+        POP  R0
+        SUB  R3,#1
+        BNE  .rep
+.out:   RET
+
 smid:   CALL sopen
         LD   R2,[SLEN]
         PUSH R2
@@ -3921,6 +3997,22 @@ btab:
         .byte 3,"P","O","S"
         .word ipos
                                 ;: POS -> int  the cursor's column, 0 at the left margin
+        .byte 4,"V","P","O","S"
+        .word ivpos
+                                ;: VPOS -> int  the cursor's row, 0 at the top
+        .byte 4,"T","R","U","E"
+        .word itrue
+                                ;: TRUE -> int  -1, which is what a comparison answers ([D47])
+        .byte 5,"F","A","L","S","E"
+        .word ifalse
+                                ;: FALSE -> int  0
+        ; Seven characters, and NSIG is seven because of it: `isbuilt`
+        ; compares NLEN against the entry length and then that many
+        ; bytes out of NBUF, so at six this entry's last compare read
+        ; NLEN itself and never matched.
+        .byte 7,"S","T","R","I","N","G","$"
+        .word sstring
+                                ;: STRING$(n:int, s:string) -> string  s repeated n times; 0 gives the empty string
         .byte 5,"V","P","E","E","K"
         .word ivpeek
                                 ;: VPEEK(addr:int) -> int !intonly
@@ -3930,6 +4022,9 @@ btab:
         ; ---- floating point ([D63]). Six bytes an entry, and six more
         ; ---- for the handler in sw/fpbas.asm, because fp.asm already
         ; ---- holds the arithmetic.
+        .byte 2,"P","I"
+        .word i_pi
+                                ;: PI -> float  3.1416, from the table fatan folds against
         .byte 3,"S","I","N"
         .word i_sin
                                 ;: SIN(x:float) -> float  radians
@@ -4936,13 +5031,26 @@ sinstr: CALL sopen
 ; only places a program can spin: NEXT going round, LOOP going round,
 ; GOTO, and RETURN. A straight-line program cannot fail to end.
 ipoll:  LD   R2,[ibreak]
-        BEQ  .none
-        CLR  R2
+        BNE  .brk
+        RET
+.brk:   CLR  R2
         ST   [ibreak],R2
-        CALL icsv               ; where to come back to, for CONT
+        ; **STOP is this, and nothing else.** The break key and the
+        ; keyword are the same event -- stop here, remember here, let
+        ; CONT come back -- so the statement is ipoll's own tail with a
+        ; label on it, and the test above is inverted so it falls in.
+        ; One byte for the whole statement. Writing it separately would
+        ; have been a second answer to "what does stopping mean", and
+        ; the two would have drifted the first time CONT changed.
+        ;
+        ; A STOP typed in direct mode records a record outside
+        ; $0200..PROGEND, which is exactly what `h_cont` rejects as
+        ; stale -- so it stops, and there is nothing to resume. That
+        ; falls out; it is not a check anybody wrote.
+h_stop: CALL icsv               ; where to come back to, for CONT
         MOV  R2,#E_STOP
         ST   [ERR],R2
-.none:  RET
+        RET
 
 
 ; =====================================================================
@@ -5282,11 +5390,27 @@ itimer: LD   R0,[frames]
         LD   R1,[frames+1]
         JMP  retnum
 
-; POS -- where the cursor is, which TAB already knew and nothing could
-; ask. The console's own CCX, so it is right after anything that moved
-; the cursor rather than after anything that printed.
+; POS and VPOS -- where the cursor is, which TAB already knew and
+; nothing could ask. The console's own CCX and CCY, so they are right
+; after anything that *moved* the cursor rather than after anything that
+; printed. One tail, because a column and a row differ only in which
+; byte they read: VPOS branches over POS's load and both fall into the
+; widening and the return.
+ivpos:  LD   R0,[CCY]
+        BRA  posr
 ipos:   LD   R0,[CCX]
-        CLR  R1
+posr:   CLR  R1
+        JMP  retnum
+
+; TRUE and FALSE -- -1 and 0, and they share a tail because [D47] made
+; them one thing: TRUE is all bits set precisely so AND/OR/XOR serve
+; logic and bits with one implementation. Two constants that differ only
+; in the byte they start from is what that decision looks like from
+; here, and writing them apart would have hidden it.
+itrue:  MOV  R0,#$FF
+        BRA  tfr
+ifalse: CLR  R0
+tfr:    MOV  R1,R0
         JMP  retnum
 
 ; VPEEK(a) -- the port's prefetch is armed by the address write and the
@@ -5335,11 +5459,38 @@ dneed:  .byte 1                 ; ...or 1: dptr is a record to scan from
 ; length allows. Text that is not a number reads as zero, exactly as
 ; VAL("ABC") does, because it is the same routine saying so.
 h_input:
+        ; **A prompt is a leading string literal, and that is one byte to
+        ; detect.** The C64's rule exactly: a quote starts one, a ';'
+        ; ends it. Testing for '"' rather than "is this a string
+        ; expression" is what keeps `INPUT A$` and `INPUT "X"; A$`
+        ; apart without a lookahead -- and `eval` from the quote takes
+        ; a concatenation too, which costs nothing to allow.
         SKIPSP
+        CMP  R2,#$22            ; '"'
+        BNE  .var
+        CALL eval               ; the prompt, into the accumulator
+        CALL sacout             ; ...out, and the accumulator emptied
+        SKIPSP
+        CMP  R2,#$3B            ; ';'
+        BNE  .var
+        INCW Y
+.var:   SKIPSP
         CALL varidx             ; R0 the handle, X the slot, Y past it
         PUSH R0
         PUSHW X
         PUSHW Y                 ; the editor's routines use Y freely
+        ; The '? ' both references print, and it goes after the prompt
+        ; rather than before it, because `NAME? ` is what a C64 shows.
+        ; A bare INPUT printed nothing at all before this, which is a
+        ; program that looks hung. The space is the C64's too and it is
+        ; the whole difference between `NAME? SAM` and `NAME?SAM`.
+        ; After PUSHW Y, because emitc walks it.
+        MOV  R0,#$3F
+        CLR  R1
+        CALL emitc
+        MOV  R0,#$20
+        CLR  R1
+        CALL emitc
 .k:     CALL in_get
         TST  R1
         BNE  .k                 ; a named key is not text
@@ -5370,7 +5521,7 @@ h_input:
         MOV  R2,#1              ; the text is already where sstore wants
         ST   [STYPE],R2
         CALL sstore
-        JMP  stmt
+        BRA  .more
         ; A# takes whatever was typed, promoting a whole number the way
         ; `A# = 1` does.
 .fvar:  CALL .parse
@@ -5379,7 +5530,7 @@ h_input:
         BEQ  .fst
         CALL ffromi
 .fst:   CALL fstore             ; three bytes; X only, no Y
-        JMP  stmt
+        BRA  .more
         ; An integer variable floors a typed fraction rather than
         ; storing the stale registers a float would leave -- three
         ; bytes to keep one silent wrong answer out of the language.
@@ -5393,7 +5544,24 @@ h_input:
 .ist:   ST   [X],R0
         INCW X
         ST   [X],R1
-        JMP  stmt
+        ; A comma is another variable, and that means another prompt on
+        ; another line -- **not one line split on commas**.
+        ;
+        ; Splitting is the C64's rule and it drags ?REDO FROM START in
+        ; with it: too few items on the line has to re-ask, too many has
+        ; to complain, and both need the accumulator cut into pieces
+        ; while `snum` reads it whole. The note above is still the
+        ; policy -- safeguards are the C64's or fewer -- and a prompt per
+        ; item needs no policy at all, because a line that ends is one
+        ; answer by construction. It is READ's walk, character for
+        ; character, which is the other statement that takes a list of
+        ; scalar targets.
+.more:  SKIPSP
+        CMP  R2,#$2C            ; ','
+        BNE  .fin
+        INCW Y
+        BRA  .var
+.fin:   JMP  stmt
         ; The whole accumulator is the number, and it is spent either
         ; way: snum takes the text at Y for SDIG characters.
 .parse: PUSHW X

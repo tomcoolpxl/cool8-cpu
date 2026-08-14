@@ -89,3 +89,4 @@ TOKFLG:
         .byte 0                ; $CB PAUSE
         .byte 0                ; $CC CONT
         .byte 0                ; $CD NOT
+        .byte 0                ; $CE STOP

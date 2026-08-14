@@ -2328,6 +2328,129 @@ implementation nobody is checking, which is how `test_lib` came to
 measure two programs against a third, private model of the I/O page
 and report 1.00x for a year.
 
+## D80 -- Five keywords, and the seventh significant character
+
+**212 bytes for all five**, and the image went 18,861 to 19,073. [D79]'s
+sixteen palettes cost nothing; these cost something, and [D72] is why
+that is a sentence rather than a problem -- the ceiling is a slider and
+it was slid.
+
+[13-basic.md](13-basic.md) section 12 asked which absences were
+decisions and which were gaps. These were the five gaps small enough
+that the language looked unfinished without them.
+
+### Each one is a shape the code already had
+
+Not five features -- three existing shapes and one new parser branch.
+The exercise was to find which:
+
+| | is | cost |
+|---|---|---|
+| `STOP` | `ipoll`'s own tail, given a label | **1 byte** |
+| `VPOS` | `POS` with the other byte, sharing its tail | 5 |
+| `TRUE` / `FALSE` | one tail, two starting bytes | 10 |
+| `PI` | a constant beside `KPI2`, loaded and returned | 12 |
+| `STRING$` | `sappend` in a loop | ~60 |
+| `INPUT` prompt, `? `, and a list | the prompt is new; the list is `h_read`'s walk | ~90 |
+
+**`STOP` is the one worth reading twice.** The break key already had to
+stop, remember where, and let `CONT` resume -- that is `ipoll`'s three
+instructions after the flag test. `STOP` is the same event by another
+name, so it is a label on that tail and the flag test above it inverted
+to fall in. Writing it separately would have been a second answer to
+"what does stopping mean", and the two would have drifted the first time
+`CONT` changed.
+
+**A `STOP` in direct mode stops with nothing to resume**, and no check
+says so: `icsv` records a record outside `$0200..PROGEND`, which is
+exactly what `h_cont` already rejects as stale.
+
+### NSIG is seven, because a builtin's name is seven
+
+`STRING$` did not fit. `isbuilt` matches an entry by comparing `NLEN`
+against its length and then reading that many bytes out of `NBUF` -- so
+at `NSIG = 6` the seventh compare read `NLEN` itself, found 7 against
+`'$'`, and the entry could never match. Deterministically, silently, and
+only for names of exactly the wrong length.
+
+So the buffer grew, and with it the significant characters in a *user*
+variable: `ABCDEFG` and `ABCDEFH` are two names now. That is the same
+pressure that took it from five to six in [D45], one name later.
+
+**`NENT` is derived now.** It was the literal 12 while `NSIG` was 6 --
+one number in two places, agreeing until the day one of them moved,
+which is this project's most expensive shape and the day had arrived.
+
+### The map slid 2 KB, and it had to slide as one piece
+
+Page 0 was full to the byte, so `NBUF`'s seventh byte pushed the run
+above it up one and `SDIG` had to leave. It went to `$0074` and
+`memmap.check()` refused: that byte is `FSVARS`, in `fs.asm`, invisible
+from `zp.asm`. The free run is `$00A4..$00D9`. **Three files claim page 0
+and none of them can see the other two** -- the tool is the only thing
+that knows, which is the whole argument for [D67].
+
+Then the image outgrew its slack: 245 bytes between system storage and
+`ORG`, under the 256 the check insists on. Moving `SCREEN` alone opened
+a 2,048-byte hole nothing could reach, and the check said so in those
+words. **The text map and the system-storage claims are one block** --
+67 claims moved down `$800` with it, by script, the way [D74] moved 64.
+
+| | before | after |
+|---|---|---|
+| the user's region | 39,424 | **37,376** |
+| the text map | `$9C00` | **`$9400`** |
+| system storage | `$B000-$B389` | **`$A800-$AB89`** |
+| growth room | 245 | **2,293** |
+
+2 KB of a 39 KB user region, for ten times the room to grow into. That
+is [D72]'s slider being what it was built to be.
+
+**`rust/` had to be rebuilt, and the drift check could not say so.** It
+compares `machine.rs`'s *source* against the map, so it passed the
+moment the file was edited while the binary the suites actually run
+still preset `$9C00`. Every string test failed with the accumulator
+reading as screen bytes. A generated-source check proves the source
+agrees; it cannot prove the artefact was rebuilt.
+
+### What INPUT does now, and what it deliberately does not
+
+`INPUT ["prompt";] var [, var]...`, and it prints `? ` where it printed
+nothing at all before -- a program that blocks with no mark on screen
+looks hung. A leading `"` is the prompt, which is the C64's rule and one
+byte to test, so `INPUT A$` and `INPUT "X"; A$` stay apart with no
+lookahead.
+
+**A comma is another prompt on another line, not one line split on
+commas.** Splitting is the C64's rule and drags `?REDO FROM START` in
+with it -- too few items has to re-ask, too many has to complain, and
+both need the accumulator cut up while `snum` reads it whole. A prompt
+per item needs no policy at all, because a line that ends is one answer
+by construction. It is `h_read`'s walk character for character, which is
+the other statement taking a list of scalar targets.
+
+### Two faults the obvious test would have passed
+
+**`PI` printed 3.141 and ate the rest of the expression.** `fload`
+writes through Y, so every float builtin brackets its call and leaves
+through `frtn`; going straight to `fretf` skipped the restore. `PRINT
+PI` was right, and `PRINT PI*2` printed 3.141, and `PRINT PI-4*ATN(1)`
+printed 3.141 -- three ways of not noticing. The test that finds it is
+`PI` with *something after it*.
+
+**`STRING$`'s count is sixteen bits and its loop ran on eight.**
+`STRING$(200,"yz")` correctly said `?STR LEN` while `STRING$(300,"yz")`
+quietly returned 88 characters and `STRING$(256,"x")` the empty string.
+The high byte is folded in now by clamping to 255, so an impossible
+count reaches that same error by that same route rather than by a second
+check that could disagree with it.
+
+`PI - 4*ATN(1)` is **-6.1e-05**, one unit in the last place: the
+constant is the more accurate of the two, which is the other reason it
+is a constant.
+
+---
+
 ## D79 — Sixteen banks of sixteen, and they are published palettes
 
 **Done, and free.** [D77] put the palette in the bitstream and left

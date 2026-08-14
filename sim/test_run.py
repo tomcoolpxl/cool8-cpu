@@ -1131,7 +1131,138 @@ def inputs(code, syms):
     check(shows(M, "0"), "text typed at a number is zero, not a re-prompt",
           " | ".join(r.strip() for r in M.screen() if r.strip())[:110])
 
+
+    M = typed(['10 INPUT "NAME"; A$', '20 PRINT "HI " + A$', "30 END"],
+              "SAM")
+    check(shows(M, "NAME? SAM") and shows(M, "HI SAM"),
+          "INPUT prints a prompt, and the '? ' after it",
+          " | ".join(r.strip() for r in M.screen() if r.strip())[:110])
+
+    # Two variables is two prompts and two lines -- deliberately not one
+    # line split on commas, which is the C64's rule and drags ?REDO FROM
+    # START in with it. A line that ends is one answer by construction.
+    M = B.Machine(code, syms)
+    M.settle()
+    for ln in ["10 INPUT A, B", "20 PRINT A + B", "30 END"]:
+        M.cmd(reg(ln))
+    M.m.type("RUN\r")
+    M.m.run(cycles=3_000_000)
+    M.m.type("3\r")
+    M.m.run(cycles=3_000_000)
+    M.m.type("4\r")
+    M.m.run(cycles=8_000_000)
+    check(shows(M, "7"), "INPUT takes a list, one prompt and one line each",
+          " | ".join(r.strip() for r in M.screen() if r.strip())[:110])
+
+    # The list is typed, so the types may differ down it: this is READ's
+    # walk, and each target's own suffix still decides.
+    M = B.Machine(code, syms)
+    M.settle()
+    for ln in ['10 INPUT "X"; P, Q$', '20 PRINT Q$; P', "30 END"]:
+        M.cmd(reg(ln))
+    M.m.type("RUN\r")
+    M.m.run(cycles=3_000_000)
+    M.m.type("7\r")
+    M.m.run(cycles=3_000_000)
+    M.m.type("OK\r")
+    M.m.run(cycles=8_000_000)
+    check(shows(M, "OK7"), "...and a mixed list keeps each suffix's meaning",
+          " | ".join(r.strip() for r in M.screen() if r.strip())[:110])
+
+    print()
+    newwords(code, syms)
+
+
+def newwords(code, syms):
+    """STOP, VPOS, PI, TRUE/FALSE and STRING$ -- the five [D80] added.
+
+    Direct mode is enough for all but STOP, because none of them needs a
+    stored program to mean anything. STOP does: it is CONT's other half
+    and there has to be a program to come back to.
+    """
+    def say(*lines):
+        M = B.Machine(code, syms)
+        M.settle()
+        M.cmd("CLS")
+        for l in lines:
+            M.cmd(reg(l))
+        return M
+
+    M = say("PRINT PI")
+    check(shows(M, "3.141"), "PI is a constant, not four times ATN(1)",
+          " | ".join(r.strip() for r in M.screen() if r.strip())[-40:])
+
+    # `fload` writes through Y. Going out through `fretf` rather than
+    # `frtn` left it clobbered, and PRINT PI *still passed* -- the value
+    # was right and the rest of the expression was gone. So the test that
+    # matters is PI with something after it.
+    M = say("PRINT PI*2")
+    check(shows(M, "6.282"), "...and the expression continues past it",
+          " | ".join(r.strip() for r in M.screen() if r.strip())[-40:])
+
+    M = say("PRINT TRUE")
+    check(shows(M, "-1"), "TRUE is -1, which is what [D47] made it",
+          " | ".join(r.strip() for r in M.screen() if r.strip())[-40:])
+
+    M = say("PRINT FALSE")
+    check(shows(M, "0"), "...and FALSE is 0",
+          " | ".join(r.strip() for r in M.screen() if r.strip())[-40:])
+
+    M = say("PRINT 1=1 AND TRUE")
+    check(shows(M, "-1"), "...so a comparison and TRUE are the same bits",
+          " | ".join(r.strip() for r in M.screen() if r.strip())[-40:])
+
+    M = say('PRINT STRING$(5,"-")')
+    check(shows(M, "-----"), "STRING$ repeats, building in the accumulator",
+          " | ".join(r.strip() for r in M.screen() if r.strip())[-40:])
+
+    M = say('PRINT LEN(STRING$(3,"ab"))')
+    check(shows(M, "6"), "...a multi-character pattern counts per copy",
+          " | ".join(r.strip() for r in M.screen() if r.strip())[-40:])
+
+    M = say('PRINT "["+STRING$(0,"x")+"]"')
+    check(shows(M, "[]"), "...and none of it is the empty string",
+          " | ".join(r.strip() for r in M.screen() if r.strip())[-40:])
+
+    # The count is sixteen bits and the loop runs on eight. Taking R0
+    # alone made this 88 characters, silently, while STRING$(200,"yz")
+    # correctly said ?STR LEN.
+    M = say('PRINT LEN(STRING$(300,"yz"))')
+    check(shows(M, "?STR LEN"),
+          "...a count past 255 errors rather than wrapping to 44",
+          " | ".join(r.strip() for r in M.screen() if r.strip())[-40:])
+
+    # Seven significant characters, which STRING$ is the reason for:
+    # `isbuilt` compares NLEN against the entry length and then that many
+    # bytes out of NBUF, so the longest builtin name sets the buffer.
+    M = say("ABCDEFG=11", "ABCDEFH=22", "PRINT ABCDEFG")
+    check(shows(M, "11"), "seven significant characters, not six",
+          " | ".join(r.strip() for r in M.screen() if r.strip())[-40:])
+
+    M = say("PRINT VPOS")
+    rows = [r.strip() for r in M.screen() if r.strip()]
+    check(bool(rows) and rows[-1].lstrip("-").isdigit(),
+          "VPOS answers a row, the way POS answers a column",
+          " | ".join(rows)[-40:])
+
+    # STOP is the break key's own tail, so what this really asks is
+    # whether CONT can resume from it -- the same machinery [D78] built.
+    M = B.Machine(code, syms)
+    M.settle()
+    for ln in ["10 A = 1", "20 STOP", "30 A = 2", "40 PRINT A", "50 END"]:
+        M.cmd(reg(ln))
+    M.m.type("RUN\r")
+    M.settle(20_000_000)
+    check(shows(M, "?BREAK IN 20"), "STOP stops, and names its line",
+          " | ".join(r.strip() for r in M.screen() if r.strip())[-40:])
+    M.m.type("CONT\r")
+    M.settle(20_000_000)
+    check(shows(M, "2"), "...and CONT carries on from the next statement",
+          " | ".join(r.strip() for r in M.screen() if r.strip())[-40:])
+
     return H.report()
+
+
 
 
 def fstack(code, syms):

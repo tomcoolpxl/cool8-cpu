@@ -1427,6 +1427,11 @@ K1_3:   .byte 126,$2A,$AA
 K1_5:   .byte 125,$4C,$CC
 K1_7:   .byte 125,$12,$49
 K1_9:   .byte 124,$63,$8E
+; **The three share a mantissa by construction**, because halving a
+; float here is the exponent alone: pi, pi/2 and pi/4 are $49,$0F at
+; 129, 128 and 127. If one is ever re-derived the other two move with
+; it, and a copy that disagrees is a bug rather than a rounding choice.
+KPI:    .byte 129,$49,$0F       ; pi, for BASIC's PI
 KPI2:   .byte 128,$49,$0F       ; pi/2
 KIPI2:  .byte 127,$22,$F9       ; 2/pi
 KPI4:   .byte 127,$49,$0F       ; pi/4

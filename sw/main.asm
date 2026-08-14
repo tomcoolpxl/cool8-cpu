@@ -28,7 +28,7 @@
 ; Three bytes, and the image has one door again.
         JMP  main
 
-MAINK   = $B000                 ;: 2 the key just read
+MAINK   = $A800                 ;: 2 the key just read
 
 ; ---------------------------------------------------------------------
 ; The stack, stated once, bottom first.
@@ -670,5 +670,7 @@ sttab:
                                 ;: CONT  resume a program the break key stopped
         .word bad               ; $CD NOT -- a prefix in an expression
                                 ;: NOT n:int  -1 - n, bitwise; binds looser than a comparison and tighter than AND !intonly
+        .word h_stop            ; $CE STOP
+                                ;: STOP  stops with ?BREAK, and CONT resumes; the break key's own tail
 
 

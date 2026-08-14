@@ -154,4 +154,8 @@ TOKTAB:
         .byte 5, "P","A","U","S","E"
         .byte 4, "C","O","N","T"
         .byte 3, "N","O","T"
+        ; $CE STOP -- appended for the same reason, and it is CONT's
+        ; other half: [D78] gave the language a way to resume and left
+        ; only the break key able to reach it.
+        .byte 4, "S","T","O","P"
         .byte 0

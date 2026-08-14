@@ -38,12 +38,12 @@
 ; the image and copied out of flash at boot purely to reserve RAM. As
 ; claims in the storage region they cost the image nothing, which is
 ; [D67]'s 324-byte eviction happening for the half this module owns.
-LBUF    = $B033                 ;: 128 the line being worked on, as text
-LLEN    = $B0B3                 ;: 1 how much of it there is
-TBUF    = $B0B4                 ;: 128 the same line, tokenised
-TLEN    = $B134                 ;: 1 and how long that came out
-TOKI    = $B135                 ;: 1 how far along the text the scan is
-TOKQ    = $B136                 ;: 1 inside a quoted string
+LBUF    = $A833                 ;: 128 the line being worked on, as text
+LLEN    = $A8B3                 ;: 1 how much of it there is
+TBUF    = $A8B4                 ;: 128 the same line, tokenised
+TLEN    = $A934                 ;: 1 and how long that came out
+TOKI    = $A935                 ;: 1 how far along the text the scan is
+TOKQ    = $A936                 ;: 1 inside a quoted string
 
         .include "zp.asm"
         .include "toktab.asm"

@@ -12,8 +12,8 @@
 ; contiguously to USERTOP and the heap comes down from the top
 ; of the same region the program grows up through.
 ;
-; Lowest system claim: MAINK at $B000, in main.asm.
-; System storage spans $B000-$B269, 618 bytes claimed.
+; Lowest system claim: MAINK at $A800, in main.asm.
+; System storage spans $A800-$AA69, 618 bytes claimed.
 ;
 ; The map's address and pitch are here for the same reason, and
 ; because they have to reach the boot ROM as well as BASIC. They
@@ -24,7 +24,7 @@
 ; gate reads the serial line, and the cosim compares two models
 ; that were both looking at the right address and seeing nothing.
 ; ---------------------------------------------------------------------
-SYSBOT  = $9C00                 ; the first byte not a program's
-USERTOP = $9BFF                 ; the last byte a program may use
-SCREEN  = $9C00                 ; the text map, 5120 bytes
+SYSBOT  = $9400                 ; the first byte not a program's
+USERTOP = $93FF                 ; the last byte a program may use
+SCREEN  = $9400                 ; the text map, 5120 bytes
 CSTRIDE = 160                   ; bytes per map row: 80 cells of char+attr

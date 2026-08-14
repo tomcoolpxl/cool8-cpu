@@ -34,6 +34,25 @@ fretf:  MOV  R0,#2
         ST   [STYPE],R0
         RET
 
+; ---- PI -- a constant, and the only builtin here that reads no
+; ---- argument at all. `4*ATN(1)` is the same number and costs a
+; ---- Gregory series to get it; three bytes in the table `fatan`
+; ---- already draws its folds from is the honest way to spell it.
+; ----
+; ---- No '#' on the name. The suffix is a *variable's* type in this
+; ---- language and every float-valued builtin here -- SIN, COS, SQR,
+; ---- FLT -- goes without one; PI# would have been the only exception
+; ---- and would have implied a type system that does not exist.
+; ---- `fload` writes through Y, so this saves it like every one of its
+; ---- neighbours and leaves through `frtn` rather than `fretf`. Going
+; ---- straight to fretf was wrong in the one way a test of `PRINT PI`
+; ---- alone cannot see: the value was right and the *rest of the
+; ---- expression* was gone, so PI-1 printed 3.141 and so did PI*2.
+i_pi:   PUSHW Y
+        LDW  X,#KPI
+        CALL fload
+        BRA  frtn
+
 ; ---- fargf: "( expression )" for a function that wants a float.
 ; ----
 ; ---- The argument may already be one -- `SIN(A#)` -- so the type is

@@ -84,6 +84,7 @@ K_SPC      = $CA
 K_PAUSE    = $CB
 K_CONT     = $CC
 K_NOT      = $CD
+K_STOP     = $CE
 
-NTOK    = 78                    ; keywords, $80-$CD
+NTOK    = 79                    ; keywords, $80-$CE
 T_LIT   = K_NUM                 ; the stored-number marker, as tokenise writes it
