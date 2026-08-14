@@ -62,19 +62,8 @@ def image(boot):
     img.save()
 
 
-def settle(m, syms, budget=40_000_000):
-    """Wait for the editor to go idle — m.settle, the machine's own
-    idle test (same conditions sim/test_basic.py names: both FIFOs
-    empty, the ring drained, the CPU at rawkey's idle branch)."""
-    return m.settle(syms["in_raw.rk0"], syms["irhead"], syms["irtail"],
-                    budget)
-
-
-def key(m, syms, text):
-    for ch in text:
-        m.key([ch])
-        if not settle(m, syms):
-            raise SystemExit("the machine never went idle after %r" % ch)
+settle = H.settle          # the shared pair, sim/harness.py
+key = H.key
 
 
 def modes(syms):

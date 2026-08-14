@@ -106,6 +106,38 @@ def session(render=False):
     return _vm.Machine(render=render) if render else _vm.Machine()
 
 
+def settle(m, syms, budget=40_000_000):
+    """Wait for the editor to go idle -- the machine's own idle test.
+
+    Both FIFOs empty, the input ring drained, and the CPU sitting at
+    `in_raw`'s "nothing waiting" branch. That is one question with one
+    answer, so it lives here rather than in each caller.
+    """
+    return m.settle(syms["in_raw.rk0"], syms["irhead"], syms["irtail"],
+                    budget)
+
+
+def key(m, syms, text, budget=40_000_000):
+    """Type `text` at the **keyboard**, a character at a time, waiting
+    for the editor after each.
+
+    `m.type()` is the serial console and `m.key()` is the keyboard --
+    different drivers and a different interrupt -- so a script that only
+    ever types at the cable proves nothing about the machine a person
+    holds.
+
+    **This had two copies before the demo builder wanted a third**, in
+    `sim/test_boot_basic.py` and in `tools/mkdemos.py`, which is the trap
+    at the top of AGENTS.md arriving in the tooling that exists to avoid
+    it. Raises rather than returning a flag: a dropped character is a
+    typo the caller cannot recover from.
+    """
+    for ch in text:
+        m.key([ch])
+        if not settle(m, syms, budget):
+            raise SystemExit("the machine never went idle after %r" % ch)
+
+
 _FONT = None
 
 

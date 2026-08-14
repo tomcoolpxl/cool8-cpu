@@ -129,10 +129,16 @@ BANKS = [
       "FF80A4", "FF2674", "94216A", "430067", "234975", "68AED4",
       "BFFF3C", "10D275", "007899", "002859"]),
 
-    ("Commodore 64", "Commodore", LOSPEC % "commodore64",
-     ["000000", "626262", "898989", "ADADAD", "FFFFFF", "9F4E44",
-      "CB7E75", "6D5412", "A1683C", "C9D487", "9AE29B", "5CAB5E",
-      "6ABFC6", "887ECB", "50459B", "A057A3"]),
+    # **In the C64's own index order, not lospec's.** lospec sorts its
+    # list by tone, so its entry 6 is a brown and its 14 a dark blue --
+    # correct colours, useless indices. On a C64 colour 6 *is* blue and
+    # 14 *is* light blue, and a program that says 6 means blue. A palette
+    # named after a machine has to answer to that machine's numbers or it
+    # is only a swatch. Values from c64-wiki, the VICE/CCS64 set.
+    ("Commodore 64", "Commodore", "https://www.c64-wiki.com/wiki/Color",
+     ["000000", "FFFFFF", "880000", "AAFFEE", "CC44CC", "00CC55",
+      "0000AA", "EEEE77", "DD8855", "664400", "FF7777", "333333",
+      "777777", "AAFF66", "0088FF", "BBBBBB"]),
 
     ("NA16", "Nauris", LOSPEC % "na16",
      ["8C8FAE", "584563", "3E2137", "9A6348", "D79B7D", "F5EDBA",

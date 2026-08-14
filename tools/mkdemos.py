@@ -1,18 +1,20 @@
 #!/usr/bin/env python3
 """Build the demo disc: every `demos/*.bas` onto drive 13.
 
-    python tools/mkdemos.py [--img PATH] [--png]
+    python tools/mkdemos.py [--img PATH] [--png NAME]
 
-**The programs are typed at the machine, not written by this script.**
-A BASIC program on disc is *tokenised*, and the only thing that knows the
-token table is the machine's own tokeniser -- so this boots the VM, types
-each source in, and lets `SAVE` write it. A host-side tokeniser would be
-a second implementation of `sw/token.asm` and would drift from it, which
-is the trap `AGENTS.md` names first.
+**The machine is booted, not poked.** `BOOT.BIN` goes on drive 0 and the
+ROM autoboots it, which is `poe emu` without a window -- because the boot
+stub is what uploads the fonts into VRAM and a text demo drawn on a
+machine that never booted is a blue screen with nothing on it. That is
+not a hypothetical: the first version of this script poked the image in
+and jumped to `main`, and the first text demo rendered blank.
 
-That also means the sources in `demos/` are the truth and the disc is
-derived, so a demo is reviewed as text and rebuilt rather than edited as
-a binary.
+**The programs are typed at the machine, not written by this script.** A
+program on disc is tokenised, and the only thing that knows the token
+table is `sw/token.asm`; a host-side tokeniser would be a second
+implementation of it and would drift the first time a keyword was added.
+So the sources in `demos/` are the truth and the disc is derived.
 
 Drive 13 is the demo disc; 14 and 15 are the system discs. See
 [docs/14-demos.md](../docs/14-demos.md).
@@ -30,11 +32,13 @@ sys.path.insert(0, HERE)
 
 import harness as H                                      # noqa: E402
 import cool8disk as disk                                 # noqa: E402
+import cool8rsvm as vm                                   # noqa: E402
+import memmap                                            # noqa: E402
+import mkboot                                            # noqa: E402
 import test_basic as B                                   # noqa: E402
 
 DEMOS = os.path.join(ROOT, "demos")
 DRIVE = 13
-LABEL = "DEMOS"
 
 
 def sources():
@@ -42,68 +46,71 @@ def sources():
 
 
 def discname(f):
-    """`10print.bas` -> `10PRINT`, which SAVE turns into 10PRINT.BAS."""
     return os.path.splitext(f)[0].upper()[:8]
 
 
-def build(imgpath, png=False):
+def volume(imgpath, code):
+    """Drive 0 bootable, drive 13 the demo disc, the rest the user's."""
     if os.path.exists(imgpath):
         os.remove(imgpath)
     img = disk.Image(imgpath, create=True)
     for d in range(16):
-        disk.Volume(img, d).format(LABEL if d == DRIVE else "COOL8")
+        disk.Volume(img, d).format("DEMOS" if d == DRIVE else "COOL8")
+    boot = mkboot.build(code, dest=memmap.ORG, build_dir=H.BUILD)
+    disk.Volume(img, 0).add(os.path.join(H.BUILD, "BOOT.BIN"), "BOOT.BIN")
     img.save()
-
-    code, syms = B.build()
-    M = B.Machine(code, syms, flash=imgpath, render=png)
-    M.settle()
-    M.cmd("CLS")
-    M.cmd("DRIVE %d" % DRIVE)
-
-    for f in sources():
-        M.cmd("NEW")
-        for line in io.open(os.path.join(DEMOS, f),
-                            encoding="utf-8").read().splitlines():
-            if line.strip():
-                M.cmd(line)
-        M.cmd('SAVE "%s"' % discname(f))
-        print("  typed and saved %-16s as %s" % (f, discname(f)))
-    M.m.flash.flush()
-
-    v = disk.Volume(disk.Image(imgpath), DRIVE)
-    on = [disk.show_name(e["name"]) for e in v.files()]
-    print("  drive %d holds: %s" % (DRIVE, ", ".join(on)))
-    return M, syms
-
-
-def shoot(M, name):
-    """One frame of the running program, as a PNG."""
-    import test_video as TV
-    M.m.run(cycles=250_000_000)
-    M.m.run_frame(2)
-    rgb = bytearray()
-    for v in M.m.fb():
-        rgb += bytes((((v >> 8) & 15) * 17, ((v >> 4) & 15) * 17,
-                      (v & 15) * 17))
-    out = os.path.join(ROOT, "docs", "img", "demo-%s.png" % name)
-    TV.write_png(out, 640, 480, rgb)
-    print("  wrote", os.path.relpath(out, ROOT))
+    return len(boot)
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--img", default=os.path.join(H.BUILD, "demos.img"))
-    ap.add_argument("--png", action="store_true",
-                    help="run the first demo and shoot a frame")
+    ap.add_argument("--png", metavar="NAME", nargs="?", const="",
+                    help="run this demo (default the first) and shoot it")
     args = ap.parse_args()
 
-    M, _ = build(args.img, png=args.png)
-    if args.png and sources():
-        first = discname(sources()[0])
-        M.cmd("NEW")
-        M.cmd('LOAD "%s"' % first)
-        M.m.type("RUN" + chr(13))
-        shoot(M, first.lower())
+    code, syms = B.build()
+    n = volume(args.img, code)
+    print("  16 volumes; drive 0 bootable (BOOT.BIN {:,}), drive {} is "
+          "DEMOS".format(n, DRIVE))
+
+    m = vm.boot(flash_path=args.img, render=True)
+    for _ in range(90):
+        m.run_frame()
+    H.settle(m, syms)
+    H.key(m, syms, "DRIVE %d\r" % DRIVE)
+
+    for f in sources():
+        H.key(m, syms, "NEW\r")
+        for line in io.open(os.path.join(DEMOS, f),
+                            encoding="utf-8").read().splitlines():
+            if line.strip():
+                H.key(m, syms, line + "\r")
+        H.key(m, syms, 'SAVE "%s"\r' % discname(f))
+        print("  typed and saved %-16s as %s" % (f, discname(f)))
+    m.flash.flush()
+
+    v = disk.Volume(disk.Image(args.img), DRIVE)
+    print("  drive %d holds: %s"
+          % (DRIVE, ", ".join(disk.show_name(e["name"]) for e in v.files())))
+
+    if args.png is not None and sources():
+        want = args.png or discname(sources()[0])
+        H.key(m, syms, "NEW\r")
+        H.key(m, syms, 'LOAD "%s"\r' % want)
+        H.key(m, syms, "RUN\r")
+        m.run(cycles=400_000_000)
+        m.run_frame(2)
+        import test_video as TV
+        rgb = bytearray()
+        for p in m.fb():
+            rgb += bytes((((p >> 8) & 15) * 17, ((p >> 4) & 15) * 17,
+                          (p & 15) * 17))
+        out = os.path.join(ROOT, "docs", "img",
+                           "demo-%s.png" % want.lower())
+        TV.write_png(out, 640, 480, rgb)
+        print("  %d colours on screen -> %s"
+              % (len(set(m.fb())), os.path.relpath(out, ROOT)))
     print("  %s" % os.path.relpath(args.img, ROOT))
 
 
