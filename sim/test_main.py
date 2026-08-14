@@ -208,8 +208,9 @@ def main():
         # GEOMTAB is read out of the image rather than copied here, so
         # this compares the console against its own table and cannot
         # drift when a mode is added.
-        ent = syms["geomtab"] + 6 * (mode if mode < 7 else 0)
-        want = list(M.m.bus.mem[ent:ent + 6])
+        w = syms["geomw"]
+        ent = syms["geomtab"] + w * (mode if mode < 7 else 0)
+        want = list(M.m.bus.mem[ent:ent + w])
         # The tile mode is the one entry the table does not finish:
         # `con_tilefont` sets the cell height and the stride itself,
         # because the blitter expands four bits per pixel into a pattern
@@ -219,9 +220,38 @@ def main():
         if want[2] == 1:
             want[3], want[4] = 4, 8
         got = [M.m.bus.mem[syms[n]] for n in
-               ("ccols", "crows", "ckind", "cbpc", "cfrow", "crpl")]
+               ("ccols", "crows", "ckind", "cbpc", "cfrow", "crpl",
+                "ccursh")]
         check(got == want, "...and the console followed: MODE %d geometry"
               % mode, "console %s, GEOMTAB says %s" % (got, want))
+
+        # **CCY is not CUR_Y.** The hardware counts a cursor row in 8
+        # display lines wherever the doubler is on and 16 where it is
+        # not, so the doubled modes need CCY doubled on the way out --
+        # without it the cursor sat at CCY*8 while the text was at
+        # CCY*16, half way up the screen with the text at the bottom.
+        #
+        # Read back through the register, which is the only thing that
+        # can see the other half of the fault: CUR_Y was five bits, and
+        # row 29 doubled is 58, which wrapped to 26. Both models
+        # truncated identically, so cosim and test_vm agreed with each
+        # other and were both wrong -- the shared assumption D74 says
+        # gating two models against each other cannot catch.
+        # `bus.read`, not `bus.mem` -- CUR_Y is a register in the video
+        # block and RAM at that address is not it. Reading the wrong one
+        # answers 0 in every mode, which looks like a broken cursor
+        # rather than a broken test.
+        # **Expected here, not read from CCURSH.** Checking CUR_Y against
+        # `CCY << CCURSH` compares the console with itself: a table of
+        # zeros -- which is what the bug was -- satisfies it in every
+        # mode. These are the doubled modes, measured off the rendered
+        # frame, and a wrong table now fails rather than agrees.
+        ccy = M.m.bus.mem[syms["ccy"]]
+        cury = M.m.bus.read(syms["cur_y"])
+        want_cury = ccy * (2 if mode in (2, 4, 5) else 1)
+        check(cury == want_cury,
+              "...and MODE %d puts the cursor on the text's row" % mode,
+              "CCY %d wants CUR_Y %d, reads %d" % (ccy, want_cury, cury))
 
     M = Machine(code, syms)
     M.settle()

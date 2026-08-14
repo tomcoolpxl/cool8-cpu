@@ -2328,6 +2328,77 @@ implementation nobody is checking, which is how `test_lib` came to
 measure two programs against a third, private model of the I/O page
 and report 1.00x for a year.
 
+## D81 -- CUR_Y is not CCY, and five bits could not say so
+
+**The cursor sat on the wrong line in modes 2, 4 and 5.** Reported from
+the machine, measured off the rendered frame: with `CCY` at 29 the text
+was at display rows 464-479 and the cursor was at 232-239 -- half way up
+a screen whose text was at the bottom.
+
+`con_cursor` wrote `CCY` into `CUR_Y` raw, and the two are not the same
+unit. The hardware counts a cursor row as **8 display lines wherever the
+line doubler is on and 16 where it is not**, while the console's own row
+is 16 display lines in every mode but 6. So in the doubled modes the
+cursor moved half a row for every row the text moved.
+
+| | cursor row | console row | needs |
+|---|---|---|---|
+| 0, 1, 3 | 16 lines | 16 | x1 |
+| **2, 4, 5** | **8 lines** | **16** | **x2** |
+| 6 | 8 lines | 8 | x1 |
+
+`GEOMTAB` gained a seventh column, `CCURSH`, holding that as a shift.
+
+### The five-bit ceiling, which is why this needed the RTL
+
+Doubling `CCY` is the fix and it does not fit: row 29 doubled is 58, and
+`cury_r` was `io_wdata[4:0]`. A doubled mode has sixty 8-line rows and
+the register could address thirty-two of them, so **the bottom half of
+the screen was unreachable** -- 58 wrapped to 26 and the cursor landed
+somewhere else again. `cury_r`, `cury_d`, `cur_y`, `c_cury`, `d1_trow`
+and `d2_trow` are six bits now.
+
+The `d1_trow` derivation moved with them, from
+`c_vdbl ? {1'b0, vsrc[7:3]} : vsrc[8:4]` to
+`c_vdbl ? vsrc[8:3] : {1'b0, vsrc[9:4]}` -- the same two divisors, no
+longer truncated at the top.
+
+### Both models were wrong, identically, and the gates agreed with them
+
+`rust/src/machine.rs` masked `cur_y & 0x1F` and `render.rs` computed
+`vrel >> 3`, which is exactly what the RTL did. So `sim/cosim.py` and
+`sim/test_vm.py` compared two models that shared the mistake and found
+nothing to report.
+
+**This is [D74]'s note arriving in person**: gating two implementations
+against each other catches a disagreement and cannot catch a shared
+assumption. What caught it was a person looking at the screen, and what
+localised it was `m.fb()` -- two frames a blink apart differ in exactly
+the cursor cell, which isolates it without knowing the invert rule.
+
+### The test asserts the answer, not the table
+
+`sim/test_main.py` already walked all seven modes checking the console
+against `GEOMTAB`. The obvious cursor check -- `CUR_Y == CCY << CCURSH`
+-- compares the console with itself and **a table of zeros passes it in
+every mode**, which is precisely the bug. The expectation is written out
+instead: modes 2, 4 and 5 double, the rest do not.
+
+It reads `CUR_Y` through `bus.read`, not `bus.mem`. The register lives
+in the video block and RAM at that address is not it; reading the wrong
+one answers 0 in every mode and looks like a broken cursor rather than a
+broken test.
+
+### Still open, and not this decision's
+
+**Mode 6 draws its text in the top half of the screen.** `CROWS` is 30
+and its rows are 8 display lines, so the text occupies 240 of 480 lines
+-- the "tiny characters in the upper half" this was first reported
+alongside. Its cursor agrees with its text, so it is not a cursor fault
+and the fix here does not touch it.
+
+---
+
 ## D80 -- Five keywords, and the seventh significant character
 
 **212 bytes for all five**, and the image went 18,861 to 19,073. [D79]'s

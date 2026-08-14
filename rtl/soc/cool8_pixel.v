@@ -114,7 +114,7 @@ module cool8_pixel #(
     input  wire [9:0]  scrl_x,
     input  wire [9:0]  scrl_y,
     input  wire [6:0]  cur_x,
-    input  wire [4:0]  cur_y,
+    input  wire [5:0]  cur_y,
     input  wire        cur_on
 );
 
@@ -131,7 +131,7 @@ module cool8_pixel #(
     reg [9:0]  c_vact, c_vstart;
     reg [9:0]  c_scrx, c_scry;
     reg [6:0]  c_curx;
-    reg [4:0]  c_cury;
+    reg [5:0]  c_cury;
     reg        c_curon;
     reg [3:0]  c_sbank;
 
@@ -284,7 +284,7 @@ module cool8_pixel #(
     reg        d1_steal;
     reg        d1_last, d2_last;
     reg [7:0]  d1_cell, d2_cell;
-    reg [4:0]  d1_trow, d2_trow;
+    reg [5:0]  d1_trow, d2_trow;
     reg [9:0]  sb_q, sb_d;
     reg [4:0]  d1_tag, d2_tag;
 
@@ -311,7 +311,7 @@ module cool8_pixel #(
             d1_steal  <= 1'b0;
             d1_last   <= 1'b0;  d2_last  <= 1'b0;
             d1_cell   <= 8'd0;  d2_cell  <= 8'd0;
-            d1_trow   <= 5'd0;  d2_trow  <= 5'd0;
+            d1_trow   <= 6'd0;  d2_trow  <= 6'd0;
             sb_q      <= 10'd0; sb_d     <= 10'd0;
             d1_tag    <= 5'd0;  d2_tag   <= 5'd0;
         end else begin
@@ -338,7 +338,7 @@ module cool8_pixel #(
             // modes the console gives CFROW 8. The cursor is the only
             // consumer, and with one divisor it landed on the wrong row
             // in every doubled mode.
-            d1_trow  <= c_vdbl ? {1'b0, vsrc[7:3]} : vsrc[8:4];
+            d1_trow  <= c_vdbl ? vsrc[8:3] : {1'b0, vsrc[9:4]};
             d2_trow <= d1_trow;
 
             // A stolen cycle carries a map entry, not a pattern: leaving

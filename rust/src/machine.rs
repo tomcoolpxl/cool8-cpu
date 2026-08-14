@@ -714,7 +714,7 @@ impl Video {
                 self.blink = 0;
             }
             0x23 => {
-                self.cur_y = v & 0x1F;
+                self.cur_y = v & 0x3F;
                 self.blink = 0;
             }
             0x24 => self.cur_ctrl = v & 0x1F,

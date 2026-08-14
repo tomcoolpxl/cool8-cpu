@@ -81,7 +81,7 @@ module cool8_vregs (
 
     // ---- the cursor
     output wire [6:0]  cur_x,
-    output wire [4:0]  cur_y,
+    output wire [5:0]  cur_y,
     output wire        cur_on,         // enabled, and lit this frame
 
     // ---- the palette write port
@@ -129,13 +129,13 @@ module cool8_vregs (
     reg [7:0]  pal_idx;
     reg        pal_hf;
     reg [6:0]  curx_r;
-    reg [4:0]  cury_r;
+    reg [5:0]  cury_r;
     reg [4:0]  curctl_r;
     reg [9:0]  vact_r;
     reg [9:0]  raster_r;
     reg [6:0]  blink_r;
     reg [6:0]  curx_d;              // the display's cursor, latched at
-    reg [4:0]  cury_d;              //   frame start like VID_BASE
+    reg [5:0]  cury_d;              //   frame start like VID_BASE
     reg        blrst;               // a move's blink restart, pending
 
     assign o_sel = (io_a[7:4] == 4'h1) ||
@@ -305,13 +305,13 @@ module cool8_vregs (
             pal_idx  <= 8'h00;
             pal_hf   <= 1'b0;
             curx_r   <= 7'd0;
-            cury_r   <= 5'd0;
+            cury_r   <= 6'd0;
             curctl_r <= 5'b00000;
             vact_r   <= 10'd480;
             raster_r <= 10'd0;
             blink_r  <= 7'd0;
             curx_d   <= 7'd0;
-            cury_d   <= 5'd0;
+            cury_d   <= 6'd0;
             blrst    <= 1'b0;
         end else begin
             if (line_start) raster_r <= line_y;
@@ -382,7 +382,7 @@ module cool8_vregs (
                     A_PATL:   pat_r[7:0]     <= io_wdata;
                     A_PATH:   pat_r[15:8]    <= io_wdata;
                     A_CURX:   curx_r         <= io_wdata[6:0];
-                    A_CURY:   cury_r         <= io_wdata[4:0];
+                    A_CURY:   cury_r         <= io_wdata[5:0];
                     A_CURCTL: curctl_r       <= io_wdata[4:0];
                     default: ;
                 endcase
@@ -412,7 +412,7 @@ module cool8_vregs (
             A_PATL:   o_rdata = pat_r[7:0];
             A_PATH:   o_rdata = pat_r[15:8];
             A_CURX:   o_rdata = {1'b0, curx_r};
-            A_CURY:   o_rdata = {3'b000, cury_r};
+            A_CURY:   o_rdata = {2'b00, cury_r};
             A_CURCTL: o_rdata = {3'b000, curctl_r};
             // PAL_DATA among them: the palette is write-only, and this
             // is the same $FF an address nobody claims reads.

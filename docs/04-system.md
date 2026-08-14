@@ -300,7 +300,7 @@ a straight run of stores with no address recomputation between them.
 | `$FF20` | `PAT_BASE_L` | R/W | Glyph/tile pattern base in VRAM. Repointing this swaps a whole tile set in one write |
 | `$FF21` | `PAT_BASE_H` | R/W | |
 | `$FF22` | `CUR_X` | R/W | Text cursor column. The displayed position is latched at the start of vertical blanking, as `VID_BASE` is, so a mid-frame move cannot split the block; reads return the written value at once |
-| `$FF23` | `CUR_Y` | R/W | Text cursor row, latched likewise |
+| `$FF23` | `CUR_Y` | R/W | Text cursor row, latched likewise. **Six bits, and it counts hardware cursor rows, not console rows** — a cursor row is 8 display lines wherever the line doubler is on and 16 where it is not, so modes 2, 4 and 5 want `CCY × 2` here and the value reaches 58. It was five bits until [D81], which put the bottom half of every doubled mode out of reach |
 | `$FF24` | `CUR_CTRL` | R/W | `0` enable, `4:3` blink rate, `2:1` unused. Writing `CUR_X` or `CUR_Y` resets the blink phase, effective at the same frame edge |
 
 **The style field is gone**, and with it `CUR_LINES`: the cursor inverts

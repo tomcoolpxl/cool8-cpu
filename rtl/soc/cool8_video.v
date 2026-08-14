@@ -152,7 +152,7 @@ module cool8_video #(
     wire [10:0] hactive, hstart;
     wire [7:0]  border, pal_entry;
     wire [6:0]  cur_x;
-    wire [4:0]  cur_y;
+    wire [5:0]  cur_y;
     wire        pal_we, pal_half;
     wire        vreg_sel;
     wire [7:0]  vreg_rdata;

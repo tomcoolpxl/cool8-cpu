@@ -71,7 +71,12 @@ CKIND   = $B16D                 ;: 1 0 text, 1 tiles, 2 bitmap
 ; shifting every claim below it. Take them for the next thing that needs
 ; storage in this region; repack when something does.
 LDEPTH  = $B16E                 ;: 1 variables saved across all calls
-GSPARE  = $B172                 ;: 1 free: was GINV
+CCURSH  = $B172                 ;: 1 cursor rows per console row, as a
+                                ;    shift: the hardware counts cursor
+                                ;    rows in 8 display lines where the
+                                ;    doubler is on and 16 where it is
+                                ;    not, and the console's row is 16
+                                ;    in every mode but 6
 CFROW   = $B16F                 ;: 1 font rows per glyph, 8 or 16
 CBPC    = $B170                 ;: 1 bytes per cell row, which is the bpp
 CLIM    = $B171                 ;: 1 base high byte that forces a repaint
@@ -534,8 +539,21 @@ con_paint:
 con_cursor:
         LD   R0,[CCX]
         ST   [CUR_X],R0
+        ; **CCY is not CUR_Y, and it was being written as if it were.**
+        ; The hardware counts a cursor row in 8 display lines wherever
+        ; the doubler is on -- modes 2, 4, 5 and 6 -- and the console's
+        ; row is 16 display lines in all of those but 6. So the cursor
+        ; sat at CCY*8 while the text was at CCY*16: half way up the
+        ; screen when the text was at the bottom. CCURSH is the shift
+        ; that reconciles them, and CUR_Y had to grow a sixth bit to
+        ; hold the answer -- row 29 doubled is 58, which five bits
+        ; wrapped to 26.
         LD   R0,[CCY]
-        ST   [CUR_Y],R0
+        LD   R1,[CCURSH]
+        TST  R1
+        BEQ  .set
+        ADD  R0,R0
+.set:   ST   [CUR_Y],R0
         RET
 
 ; **There is no software cursor.** con_blink lived here, with GINV and
@@ -777,15 +795,28 @@ con_scroll:
 ; which is 416 bytes for what is a lookup. The last field is the reason
 ; a logical line is always at most 80 characters however narrow the
 ; screen is: 1 row at 80 columns, 2 at 40, 3 at 32.
+; The last column is CCURSH, and it is the one measured rather than
+; derived: the hardware counts a cursor row as 8 display lines wherever
+; the line doubler is on and 16 where it is not, while the console's own
+; row is 16 display lines in every mode except 6. So the doubled modes
+; need CCY doubled on the way to CUR_Y, and the rest do not. Measured by
+; blinking the cursor and diffing two frames, mode by mode -- the cursor
+; sat at CCY*8 in modes 2, 4 and 5 while the text was at CCY*16.
 GEOMTAB:
-        .byte 80,30,0,0,0,1     ; 0  text, 80x30
-        .byte 40,30,0,0,0,2     ; 1  text, 40x30
-        .byte 40,30,1,0,0,2     ; 2  tiles, 40x30
-        .byte 80,30,2,1,16,1    ; 3  bitmap, 1 bpp, undoubled: 8x16 cells
-        .byte 40,30,2,4,8,2     ; 4  bitmap, 4 bpp
-        .byte 32,24,2,4,8,3     ; 5  bitmap, 4 bpp, 32x24
-        .byte 32,30,2,8,8,3     ; 6  bitmap, 8 bpp
+        .byte 80,30,0,0,0,1,0   ; 0  text, 80x30
+        .byte 40,30,0,0,0,2,0   ; 1  text, 40x30
+        .byte 40,30,1,0,0,2,1   ; 2  tiles, 40x30
+        .byte 80,30,2,1,16,1,0  ; 3  bitmap, 1 bpp, undoubled: 8x16 cells
+        .byte 40,30,2,4,8,2,1   ; 4  bitmap, 4 bpp
+        .byte 32,24,2,4,8,3,1   ; 5  bitmap, 4 bpp, 32x24
+        .byte 32,30,2,8,8,3,0   ; 6  bitmap, 8 bpp
 GEOMN   = 7
+; The entry width, named so a reader and `sim/test_main.py`
+; do not each carry their own copy of it. `con_geom` still
+; multiplies by shifts -- x8 minus x1 -- because the
+; assembler has no multiply, so this is the declaration and
+; that is the implementation of the same seven.
+GEOMW   = 7
 
 ; con_init -- the console from cold: origin at the top, cursor home,
 ; geometry read from the hardware, screen cleared.
@@ -829,10 +860,11 @@ con_geom:
         CMP  R0,#GEOMN
         BLO  .ok
         CLR  R0                 ; an undecoded mode reads as plain text
-.ok:    MOV  R1,R0              ; entry = table + mode * 6
+.ok:    MOV  R1,R0              ; entry = table + mode * 7
         ADD  R0,R0
-        ADD  R0,R1
         ADD  R0,R0
+        ADD  R0,R0
+        SUB  R0,R1
         LDW  X,#GEOMTAB
         ADDW X,R0
         LD   R0,[X]
@@ -852,6 +884,9 @@ con_geom:
         INCW X
         LD   R0,[X]
         ST   [CRPL],R0
+        INCW X
+        LD   R0,[X]
+        ST   [CCURSH],R0
 
         ; The mirror, once, so no character written afterwards has to
         ; ask what kind of screen this is.
