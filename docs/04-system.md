@@ -949,19 +949,34 @@ the line buffer already.
 - **Text.** The map is a circular buffer 32 rows tall with 30 displayed.
   Scrolling a terminal is: add the stride to `VID_BASE`, clear the newly
   exposed row, move the cursor. No bulk copy — the row pointer wraps
-  within `stride × 32` in hardware, and that wrap is a mask, so it is
-  correct only for a power-of-two stride. `VID_SCRL_Y` gives fine
-  vertical motion within a character cell.
+  within `stride × 32` in hardware, against a map origin of its own, so
+  **any stride works**; text's own 160 is not a power of two.
+  `VID_SCRL_Y` gives fine vertical motion within a character cell.
 
   > **Software must wrap `VID_BASE` itself**, and this is the part that
   > was missing for a milestone. The hardware wraps *its own row pointer*,
-  > inside `base & ~(stride × 32 − 1)` — so the base decides where the
-  > window is and the mask only decides how the pointer moves inside it.
-  > A base allowed to walk past the end of the map takes the whole window
-  > with it and the map appears to relocate. The idiom is
-  > `base = MAP | ((base + stride) & (stride×32 − 1))`, which is one extra
-  > `AND` per scroll, and `sw/monitor.asm`'s `scroll` is the worked
-  > example. `VID_BASE` must also stay a whole number of rows: it is not
+  > against the map's origin — `map_org` is a register of its own, loaded
+  > from `VID_BASE` on a mode change and never after — so the origin says
+  > where the map is and `VID_BASE` says which of its rows is displayed
+  > first. A base allowed to walk past the end of the map takes the whole
+  > window with it and the map appears to relocate. The idiom is a
+  > compare and subtract:
+  >
+  > ```
+  > base = base + stride
+  > if base >= map_org + stride × 32 then base = base − stride × 32
+  > ```
+  >
+  > **It is not a mask, and the map does not have to be aligned to its own
+  > size.** It was both, once: `VID_BASE` carried the address in its high
+  > bits and the scroll offset in its low ones, which is where the "8 KB
+  > map on an 8 KB boundary" rule and the power-of-two stride ([D30]) came
+  > from. Separating the origin ended both restrictions — **any stride,
+  > any address** — and mode 0's stride of **160** is the proof, since the
+  > mask could not have scrolled it at all.
+  >
+  > `sw/monitor.asm`'s `scroll` is the worked example.
+  > `VID_BASE` must also stay a whole number of rows: it is not
   > masked in hardware, and a base off a row boundary shifts every row on
   > the screen by the remainder.
   >

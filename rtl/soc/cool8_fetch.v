@@ -52,12 +52,12 @@
 //
 // ## The circular wrap
 //
-// **The mask does two jobs, and that is why a 160-byte row does not
-// work yet.** `(base & ~mask) | ((row_ptr + stride) & mask)` wraps the
-// pointer, and `base & ~mask` also *derives the map's origin*: VID_BASE
-// carries the scroll offset in its low bits and the map's address in
-// its high ones, and the mask separates them. Scrolling a terminal is
-// one add on VID_BASE precisely because of that second job.
+// **It was a mask doing two jobs, and it is not any more.**
+// `(base & ~mask) | ((row_ptr + stride) & mask)` wrapped the pointer,
+// and `base & ~mask` also *derived the map's origin*: VID_BASE carried
+// the scroll offset in its low bits and the map's address in its high
+// ones, and the mask separated them. That is where the 8 KB-aligned map
+// and the power-of-two stride came from.
 //
 // Replacing it with a compare and subtract was tried, measured (32
 // cells, and it fitted) and reverted. It wraps within [base, base+span)
@@ -67,16 +67,14 @@
 // passed throughout, because none of its goldens scroll; the editor
 // broke on the third line typed.
 //
-// A stride of 160 therefore needs an explicit map-origin register, not
-// just different arithmetic here -- VID_BASE would become "the first
-// displayed row" within a map whose base is stated separately. That is
-// a new register, a software change to match, and it is the real cost
-// of the 3072 bytes ([D30] chose 8192 to avoid all of it).
+// **`map_org` is that register, and it is built** -- loaded from
+// VID_BASE on a mode change and never after, so VID_BASE means "the
+// first displayed row" within a map whose base is stated separately.
+// Any stride, any address: text runs a stride of 160 and scrolls, which
+// the mask could not have done at all.
 //
-// The software half is already done and costs nothing either way:
 // sw/console.asm caches the row address in CROWA and computes it once a
-// line, so `r * 160` is no longer per-character work. Only the hardware
-// half is outstanding.
+// line, so `r * 160` is not per-character work either.
 //
 // Text and tile maps are 32 rows tall (D30), so the row pointer wraps
 // within `stride * 32` bytes and scrolling a terminal really is one add
