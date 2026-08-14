@@ -49,7 +49,7 @@
 //     Alt+Enter   fullscreen, SDL's own desktop mode
 //     right click paste the clipboard, typed through the keymap
 //
-// F9 and F10 send the chord's raw scancodes rather than doing the
+// F1 and F10 send the chord's raw scancodes rather than doing the
 // restart themselves, so what the machine sees is a keyboard and the
 // path under test is the real one.
 

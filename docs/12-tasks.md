@@ -227,6 +227,36 @@ is working perfectly. That needs eyes on the VGA output and a PS/2
 keyboard in the socket, and it is the one part of this that is not
 automatable.
 
+### The emulator window
+
+```
+poe disk                                    a flash image with BASIC on drive 0
+poe emu                                     boot it in a window
+python tools/cool8rsrun.py --flash IMG      boot some other image
+python tools/cool8rsrun.py --monitor        ROM only: no flash, no BASIC
+```
+
+`poe emu -- --flash IMG` does **not** work: poe passes the `--` through
+and argparse rejects it. Call the script.
+
+| key | |
+|---|---|
+| `F1` | warm restart — the machine's Ctrl+Esc |
+| `F10` | cold restart — Ctrl+Shift+Esc |
+| `F11`, `Ctrl+Pause` | break: an NMI, as the board's button is |
+| `F12` | the screen to a PNG in the current directory |
+| `Alt+Enter` | fullscreen |
+| right click | paste the clipboard, typed through the keymap |
+
+**`F1` and `F10` exist because Windows keeps the real chords.** The
+machine's own restarts are Ctrl+Esc and Ctrl+Shift+Esc ([D54](01-decisions.md)),
+decoded in `cool8_ps2` before software sees anything — right on a board
+where no operating system stands between the keyboard and the machine,
+and impossible on a host that claims both for the Start menu and the
+task manager. So the emulator injects the chord's raw scancodes: the
+machine receives the bytes a real keyboard would send and cannot tell
+the difference, and the hardware keeps a convention chosen for hardware.
+
 ### The demo disc
 
 ```
