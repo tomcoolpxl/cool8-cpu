@@ -89,6 +89,23 @@ checked, not assumed — so **attribute bit 6 draws the other diagonal and
 one 32-byte tile serves both**, which is why the `DATA` is four lines
 and not eight.
 
+**The scroll is the hardware's, and nothing moves in memory.** The tile
+map is a ring 32 rows tall with 30 shown (§5.5), so `VID_SCY` steps the
+eight pixels inside a tile and one stride onto `VID_BASE` steps the row
+— masked back into the ring with `AND W-1`, because software wraps the
+base and the hardware only wraps its own row pointer within it. The
+demo draws the row it is *about to need* and then scrolls onto it, so
+the first 31 draws fill the screen and the row below before anything
+moves, and no row is ever shown before it is drawn.
+
+`MODE 2` leaves `VID_BASE` at 0 and `VID_STRIDE` at 128 — asked, not
+assumed, and the demo reads the stride rather than writing 128 down.
+
+**It is paced by a delay loop and not by the raster.** `VID_RASTER` is
+bits 7:0 of a line count that runs past 255, so the same value comes
+round twice a frame and BASIC cannot tell which — there is no clean
+frame edge to wait on from up here.
+
 **The palette is the C64's, copied.** Bank 0 is overwritten entry for
 entry from a `DATA` table of RGB444 pairs, so 6 is `#0000AA` and 14 is
 `#0088FF` — the same numbers a C64 program means when it says 6 and 14
