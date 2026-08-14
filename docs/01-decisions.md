@@ -2407,16 +2407,38 @@ It reads `CUR_Y` through `bus.read`, not `bus.mem`: the register lives
 in the video block and RAM at that address answers 0 in every mode,
 which looks like a broken cursor rather than a broken test.
 
-### Two faults this did not touch
+### A measurement that could not see what it claimed to
 
-**Mode 6 draws 8-line glyphs**, so its text fills 240 of 480 lines and
-its cursor now overhangs it. 30 rows over 480 is 16 display lines, so
-the glyph height is what is wrong -- `bglyph` draws `CFROW` source rows
-and modes 4 and 6 both say 8, yet mode 4 comes out 16 display lines.
-The difference is in the bitmap row arithmetic, not confirmed here.
+An earlier draft of this recorded "mode 6 draws 8-line glyphs" as a
+known fault. **It is withdrawn, and the reason is worth more than the
+claim was.** The probe used `B.Machine`, which pokes the image in and
+jumps to `main` -- so the boot stub never runs, and the stub is what
+uploads the fonts into VRAM. There were no glyphs to see in any bitmap
+mode. What the probe read as "text" was the cursor, or nothing.
+
+Every mode looks right on the machine. The rule this breaks is the one
+in [10-debugging.md](10-debugging.md): a harness that cannot observe the
+thing it is asked about answers confidently about something else. The
+same shape as `.isdigit()` filtering out the negative `FREE`, and as the
+suite that compared two programs against a third model of the I/O page.
+
+**A glyph-height question needs `sim/test_boot_basic.py`'s machine**,
+which boots properly, or it needs the font uploaded by hand first.
+
+### Left over between modes, and deliberately so
+
+Modes 2-6 all read VRAM from base 0, so switching between them
+reinterprets the same bytes at a different stride and depth and the
+previous mode's drawing shows through. That is accepted: `CLG` clears
+it, and a bitmap that survived leaving its mode is what a C64 does too.
+
+Text is not affected either way -- [D28] puts the text map in main RAM
+and everything else in VRAM, so a round trip through a graphics mode
+returns to the text exactly as it was.
 
 **Mode 5 has 24 rows and the console does not clamp `CCY`** when the
 mode narrows, so a cursor left at row 29 is off its screen entirely.
+That one is real and measured.
 
 ---
 
