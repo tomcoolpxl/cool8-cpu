@@ -1100,20 +1100,28 @@ h_openin:
 ; CLOSE -- abandon the stream. Harmless if nothing is open, because a
 ; program that ends early should not have to ask whether it did.
 h_close:
-        LD   R0,[FROPEN]
-        BEQ  .shut
-        CALL fls_close
-        CLR  R0
-        ST   [FROPEN],R0
-.shut:  JMP  cnext
+        CALL frclose
+        JMP  cnext
 
-; frshut -- the last byte just went out, so drop the stream. Shared by
-; BGET's tail and by CLOSE, which is the whole of "closed" in one place.
+; frclose -- shut whatever is open, from anywhere, harmlessly.
+;
+; **RUN calls this through `main.asm`**, which is the only module allowed
+; to: `prog.asm` and `interp.asm` sit *below* this one and may not call
+; upward ([D68]), so the sequencing lives in the composition layer where
+; depending on everything is the job -- the same argument `sttab` makes
+; for itself. Without it a stream opened in direct mode survived a RUN,
+; and a program that opened one leaked the flash on every re-run.
+frclose:
+        LD   R0,[FROPEN]
+        BNE  frshut             ; a local label here would belong to
+        RET                     ;   frshut's scope, not this one
 frshut: CALL fls_close
         CLR  R0
         ST   [FROPEN],R0
         RET
 
+; frshut -- the last byte just went out, so drop the stream. Shared by
+; BGET's tail and by CLOSE, which is the whole of "closed" in one place.
 ; BGET -- the next byte, 0..255. Past the end, or with nothing open, it
 ; is -1: a value no byte can be, so a program may test it instead of
 ; calling EOF for every byte.
@@ -1129,11 +1137,23 @@ ibget:  LD   R0,[FROPEN]
         ST   [fslen],R0
         ST   [fslen+1],R1
         LD   R0,[FLS_DATA]
+        ; **The last byte shuts the stream, not the read after it.** This
+        ; was written as "shut on the next call", which left the flash
+        ; open on a program that read exactly its file and stopped -- and
+        ; the comment claiming otherwise was the only thing anyone would
+        ; have checked. Ten bytes to make it true.
+        PUSH R0
+        LD   R0,[fslen]
+        LD   R1,[fslen+1]
+        OR   R0,R1
+        BNE  .out
+        CALL frshut
+.out:   POP  R0
         CLR  R1
         JMP  retnum
-.last:  CALL frshut             ; spent: shut it here rather than at the
-.end:   MOV  R0,#$FF            ;   next call, so a file read to its end
-        MOV  R1,R0              ;   needs no CLOSE at all
+.last:  CALL frshut             ; already spent, and something asked again
+.end:   MOV  R0,#$FF
+        MOV  R1,R0
         JMP  retnum
 
 ; EOF -- -1 when there is nothing more, which is TRUE ([D47]). A stream

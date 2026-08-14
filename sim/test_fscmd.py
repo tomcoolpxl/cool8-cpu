@@ -151,6 +151,25 @@ def stream(code, syms):
           "OPENIN of a missing file says so",
           " | ".join(rows(M))[-60:])
 
+    # **RUN shuts the stream, and nothing below fscmd could do it.**
+    # A stream opened in direct mode survived a RUN, so a program
+    # inherited one it never opened and leaked the flash on every
+    # re-run. The close sits in main.asm because prog.asm and
+    # interp.asm are below this module and may not call upward ([D68]).
+    M = typed(*put, 'OPENIN "ABC"', '10 PRINT 9', '20 END', 'RUN',
+              'PRINT EOF')
+    check(rows(M)[-1] == "-1", "RUN shuts an open stream",
+          " | ".join(rows(M))[-60:])
+
+    # The last byte shuts it, not the read after. This was written the
+    # other way with a comment claiming otherwise, so a program that
+    # read exactly its file and stopped held the flash open -- and the
+    # comment was the only thing anyone would have checked.
+    M = typed(*put, 'OPENIN "ABC"', 'PRINT BGET; BGET; BGET')
+    check(M.m.bus.mem[syms["fropen"]] == 0,
+          "...and the last byte shuts it, not the read after",
+          "FROPEN reads %d" % M.m.bus.mem[syms["fropen"]])
+
 
 def main():
     print("  the disk commands, sw/fscmd.asm")

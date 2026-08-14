@@ -474,6 +474,14 @@ Easy to get wrong:
   are devices, so `con.asm` cannot be committed and cannot even be
   renamed onto. It is `sw/console.asm`; the `con_` symbol prefix is
   fine, because only the *filename* is reserved.
+- **A local label belongs to the global label above it, so two entry
+  points cannot share one.** Writing `frclose: … BEQ .none` above
+  `frshut: … .none: RET` asks for `frclose.none`, which does not exist,
+  and the assembler says so at the *branch* rather than at the label.
+  Hit twice in one session — `ipoll`/`h_stop` and `frclose`/`frshut`.
+  Invert the test and branch to the other **global** label instead;
+  falling through into a second entry point is fine, branching into one
+  is not.
 - **A conditional branch reaches ±127 bytes** and a dispatcher at the
   top of a large file does not. `sw/disasm.asm` defines `jlo`/`jhs`/`jeq`
   macros that invert the test and let a `JMP` carry the distance; the

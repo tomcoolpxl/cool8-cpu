@@ -107,6 +107,20 @@ ed_direct:
         CALL idrct
         JMP  main_err           ; ?WHAT IN nn, if it set ERR
 
+; run_pre -- RUN, with the read stream shut first ([D82]).
+;
+; **Here and not in `h_run`, because of the layering.** `interp.asm` is
+; below `fscmd.asm` and may not call upward ([D68]), so a statement
+; handler cannot close a file. `main.asm` is the composition layer and
+; may call anything -- the same argument `sttab` makes for living here.
+;
+; RUN and not `main_pre`: main_pre runs before every *direct* line too,
+; and `OPENIN "D"` followed by `PRINT BGET` is two direct lines. Closing
+; there would make the feature unusable from the keyboard.
+run_pre:
+        CALL frclose
+        JMP  h_run
+
 ; main_pre -- the preflight both RUN and a direct line need: where the
 ; program, the heap, the accumulator and the CALL stack are.
 main_pre:
@@ -532,7 +546,7 @@ sttab:
                                 ;: ! -- reserved  was FUNCTION, which only ever parsed as SUB
         .word h_dim             ; $83 DIM
                                 ;: DIM name(size:int[,size:int[,size:int]])  up to three dimensions; the name's suffix picks the element -- none integer, # float, $ string !intonly
-        .word h_run             ; $84 RUN, up from the tail when
+        .word run_pre           ; $84 RUN, up from the tail when
                                 ;: RUN
                                 ;   CONST left
         .word h_for             ; $85 FOR

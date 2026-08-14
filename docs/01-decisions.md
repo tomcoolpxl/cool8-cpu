@@ -2392,11 +2392,31 @@ the `;:` comments the vocabulary generates from.
 
 `BGET` past the end is **-1**, a value no byte can be, so a program may
 test the value instead of calling `EOF` for every byte. `EOF` is -1 when
-spent, which is TRUE ([D47]). The stream **shuts itself on the last
-byte**, so a file read to its end needs no `CLOSE`; `CLOSE` is for
-abandoning one early and is harmless on a stream already shut. A stream
-never opened is at its end, which is the honest answer and costs no
-error.
+spent, which is TRUE ([D47]). A stream never opened is at its end, which
+is the honest answer and costs no error.
+
+### Two faults found by reviewing this, not by running it
+
+**The stream did not shut on the last byte, and the comment said it
+did.** It shut on the first read *past* the end, so a program that read
+exactly its file and stopped held the flash open — and the comment
+claiming otherwise was the only thing anyone would have checked. Ten
+bytes to make the sentence true.
+
+**And nothing shut it on `RUN`.** A stream opened in direct mode
+survived into the program, so a program inherited one it never opened
+and leaked the flash on every re-run.
+
+The fix is in `main.asm`, not in `h_run`, and the layering is why:
+`interp.asm` and `prog.asm` sit **below** `fscmd.asm` and may not call
+upward ([D68]), so no statement handler can close a file. `main.asm` is
+the composition layer — the same argument `sttab` makes for living
+there — so RUN's table entry points at a three-instruction shim that
+closes the stream and jumps on.
+
+**Not `main_pre`**, which runs before every *direct* line too: `OPENIN
+"D"` followed by `PRINT BGET` is two direct lines, and closing there
+would make the feature unusable from the keyboard. 19 bytes for both.
 
 ---
 
