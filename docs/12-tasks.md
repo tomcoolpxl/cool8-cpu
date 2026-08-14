@@ -115,13 +115,24 @@ above.
 | `fp` | the loadable float package of [D62](01-decisions.md#d62--floating-point-ships-as-a-loadable-library-not-as-part-of-the-system) — arithmetic, decimal text, trig. **It also prints its own size and timing table**, which is what the decision entries quote rather than a hand-typed copy. `--trace <op> <x> <y> <label> <n>` breakpoints a routine and decodes forward; that is how `fdiv16` was caught answering the wrong question |
 | `names` | global name collisions across the system image |
 
+**Five suites are on disk and not in the runner**, and this is all of
+them — the list was three for a while, which is the failure mode a
+"deliberately excluded" list has: the two it forgot looked identical
+from outside to a suite nobody had written.
+
 The shelved on-machine compiler's gates — `sim/test_comp.py`,
-`sim/test_emit.py`, `sim/test_lex.py` — are **not in the runner**: they
-cost minutes to gate code that ships nowhere
-([11-compiler.md](11-compiler.md)). Run them deliberately before
-touching `sw/comp.bas`, `sw/emit.bas` or `sw/lex.bas`, and before any
-change to the token table or the stored-program format, which both
+`sim/test_emit.py`, `sim/test_lex.py` — cost minutes to gate code that
+ships nowhere ([11-compiler.md](11-compiler.md)). Run them deliberately
+before touching `sw/comp.bas`, `sw/emit.bas` or `sw/lex.bas`, and before
+any change to the token table or the stored-program format, which both
 sides of those diffs share.
+
+The other two:
+
+| | |
+|---|---|
+| `sim/test_asm.py` | `sw/asm.asm`, the assembler **on the machine**, gated on byte-identity with `tools/cool8asm.py` for the same source. Run it when either assembler changes |
+| `sim/test_load.py` | the host loader against the real RTL and against itself — the wire format of [07-loader.md](07-loader.md). Needs the toolchain, which is why it is not in the `sw` group |
 
 ### `rtl` — `poe test-rtl`
 

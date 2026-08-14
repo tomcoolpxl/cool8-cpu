@@ -947,20 +947,25 @@ every register.
 
 ## 10. Sizes and the ceiling
 
-### Where the 17,217 bytes are — measured, 2026-08-13
+### Where the 19,073 bytes are — measured, 2026-08-14
 
-The image is **flat**. 470 top-level labels, and the twenty largest
-spans are 4,740 bytes — **28 %** of it. There is no hog to remove and no
+The image is **flat**. 371 routines with a measured span, and the twenty
+largest are 4,859 bytes — **25 %** of it. There is no hog to remove and no
 single decision to reverse; a diet means giving something up.
 
 The largest spans:
 
 ```
-   375  fstr            363  TOKTAB          347  tok_line
-   315  erel            296  fatan           266  h_line
-   251  fsc_rewritedir  249  flog            241  prim
-   227  con_geom        221  fsc_compact     207  main_loop
+   385  h_dim           375  fstr            347  tok_line
+   297  erel            296  fatan           273  prim
+   266  h_line          251  fsc_rewritedir  249  flog
+   221  fsc_compact     209  con_geom        209  argpass
+   207  main_loop
 ```
+
+`python tools/cool8asm.py sw/main.asm --pressure` prints this, sorted by
+bytes. `h_dim` leads it since [D71] gave arrays three dimensions and
+three element types; `prim` and `argpass` grew with [D73]'s parameters.
 
 **Feature-sized chunks**, for anyone weighing a cut:
 
@@ -1032,19 +1037,22 @@ logic cells, the map became 5,120 bytes at any address, and
 did the repack:
 
 ```
-65,536 - 512 (page 0, stack) - 5,120 (map) - 906 (system storage,
-         CALL stack, string accumulator) - 1,039 (slack) - 17,255
-         (image) - 256 (I/O, vectors)  =  40,448 in one region
+65,536 - 512 (page 0, stack) - 5,120 (map) - 874 (system storage and
+         the string accumulator) - 277 (slack) - 19,073 (image)
+         - 256 (I/O, vectors)  =  39,424 in one region
 ```
 
-**That was before [D74] moved the map down a kilobyte** to make room for
-the image. It is 39,424 now, in the same one region, and the difference
-went to BASIC rather than anywhere else — [D72] on why that is a slider
-and not a loss.
+**That is [D74]'s map position**, a kilobyte below where [D70] left it.
+[D80] briefly moved it 5 KB further to buy the image growth room and
+**took 5,120 bytes off `FREE` to do it** — reverted, and now a
+[standing rule](../AGENTS.md): the map does not move without asking,
+because every byte it moves is the user's. The eleven bytes D80 actually
+needed came out of `CSTKBUF`, a dead 32-byte reservation, which is where
+that kind of byte comes from.
 
 So the size of BASIC is no longer a question about the user's memory.
-The image grows downward into the 1,039 bytes of slack, and until that
-runs out **`FREE` does not move at all** — where under the old layout
+The image grows downward into the slack — 277 bytes of it today — and
+until that runs out **`FREE` does not move at all** — where under the old layout
 every byte added to BASIC came straight out of the heap. When the slack
 is gone `poe check` fails the build; it warns from 256 bytes out.
 
@@ -1058,11 +1066,15 @@ machine should be able to do**, not about where anything lives.
 count rather than leaving it to arithmetic:
 
 ```
-  basic.bin   17,255 bytes  $BB99-$FEFF
-  BOOT.BIN    20,034 bytes  (2779 of relocating stub)
-  room         1,039 bytes  to grow down into, before system storage at $B789
-  the user's  40,448 bytes  $0200-$9FFF, one region
+  basic.bin   19,073 bytes  $B47F-$FEFF
+  BOOT.BIN    21,769 bytes  (2696 of relocating stub)
+  room           277 bytes  to grow down into, before system storage at $B369
+  the user's  39,424 bytes  $0200-$9BFF, one region
 ```
+
+**Run it rather than reading these**, which is the point of quoting the
+tool: the four numbers move whenever BASIC does, and three of the four
+were stale in this document until D81 went looking.
 
 That is after [D68] and [D70]. It read 23,528 bytes with a compiled
 editor in it; the editor is assembly now, which is **6,273 bytes saved**.

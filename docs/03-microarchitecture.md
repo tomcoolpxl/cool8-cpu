@@ -643,9 +643,18 @@ a second timing model.
 loader, keyboard, flash and the video subsystem — and decodes
 `$FE00-$FEFF` on the **bus**, ahead of `cool8_mem` and whoever the
 master is. **3754 LUT4 and 1577 flip-flops** for the whole SoC, with 28
-EBR, 4 SPRAM and one DSP block — **5164 logic cells of the 5280 the part
-has**, `sclk` Fmax 11.91 MHz mean across six placer seeds
-(`python tools/mkbit.py --seeds 6`). It was 1636 LUT4 and 8 EBR before
+EBR, 4 SPRAM and **no DSP** — see 00-goals.md, the design intends one — **5183 logic cells of the 5280 the part has, 98 %**,
+`sclk` Fmax **11.07 MHz mean across six placer seeds**, 10.77 to 11.23
+(`python tools/mkbit.py --seeds 6`, re-measured 2026-08-14).
+
+**Both numbers moved and neither was noticed until the documents were
+audited**: 5164 and 11.91 were the figures here for long enough to
+cover D77 through D81. The cell count is the honest cost of features;
+the Fmax fall of 0.84 MHz is the one to watch, because
+[D59](01-decisions.md#d59--cpi-is-259-and-pipelining-the-fetch-is-a-bet-rather-than-an-optimisation)
+needs 12.5625 MHz for pipelining the fetch to pay and the gap is now
+1.34 MHz rather than 0.5. It still closes comfortably at the 8.375 MHz
+`sclk` actually runs at. It was 1636 LUT4 and 8 EBR before
 M5.
 
 That is with the hardware loader out

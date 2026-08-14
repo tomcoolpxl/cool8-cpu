@@ -100,12 +100,12 @@ blitter and three megahertz doing it — see
 | Resource | Available | Used |
 |---|---|---|
 | LUT4 | — | CPU **695**, video **1972**, flash **277**, keyboard **162**, UART **141**, sound **141**, the rest **249** |
-| Logic cells | 5280 | **5164 — 97 %** |
+| Logic cells | 5280 | **5183 — 98 %** (2026-08-14) |
 | EBR (block RAM) | 30 × 4 Kbit | Boot ROM 8, font 8, sprite line buffer 5, background line buffer 2, palette 1, sprite descriptors 1, sound voices 1, UART FIFO 1, keyboard FIFO 1 → **28** |
 | SPRAM | 4 × 32 KB = 128 KB | 2 blocks = 64 KB CPU RAM; **2 blocks = 64 KB video RAM** ([D28](01-decisions.md)) — **4 of 4** |
-| DSP | 8 | **1** — `y × stride` for the pixel port |
+| DSP | 8 | **0 — and the design asks for one.** `cool8_pixport.v` computes `y × stride` around an `SB_MAC16` and says so in its comments, `mkbit.py` passes `synth_ice40 -dsp`, and the placed report lists no DSP at all. Either it stopped being inferred or it never was; this table said 1 while the same block said 5022 logic cells, and the design is 5183. **Unresolved** — worth cells and possibly the 0.84 MHz of `sclk` that also went missing |
 | PLL | 1 | **1** — 25.125 MHz for the raster, ÷3 for everything else ([D32](01-decisions.md)) |
-| Timing | — | closes at 8.375 MHz; `sclk` Fmax **11.91 mean**, 11.71–12.15 across six placer seeds (`tools/mkbit.py --seeds 6`) |
+| Timing | — | closes at 8.375 MHz; `sclk` Fmax **11.07 mean**, 10.77–11.23 across six placer seeds (`tools/mkbit.py --seeds 6`, 2026-08-14) |
 
 The CPU is 695 LUT4 *in context*; on its own it is **902**, which is the
 number [03-microarchitecture.md §5.7](03-microarchitecture.md) quotes and

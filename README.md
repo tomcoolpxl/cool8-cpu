@@ -121,11 +121,15 @@ and [docs/01-decisions.md](docs/01-decisions.md).
 What the part holds, placed and routed:
 
 ```
-ICESTORM_LC      5022 / 5280   95 %
+ICESTORM_LC      5183 / 5280   98 %
 ICESTORM_RAM       28 / 30     93 %
 ICESTORM_SPRAM      4 / 4     100 %
-ICESTORM_DSP        1 / 8      12 %
+SB_IO              30 / 39     76 %
 ```
+
+`sclk` Fmax 11.07 MHz mean across six placer seeds, 10.77–11.23; it runs
+at 8.375. Measured 2026-08-14 — this block said 5022 cells and one DSP
+block for long enough that neither was true any more.
 
 ## Putting it on a board
 

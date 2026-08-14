@@ -69,7 +69,11 @@ CPI is 2.59, so registering the opcode costs 39 % more cycles and pays
 only if the result closes at 12.5625 MHz — the sole rung above 8.375,
 because [D32](01-decisions.md) makes `sclk` a division of the pixel
 clock. Above that line it is +8 %; below it the machine is **28 %
-slower**. Today's design closes at 11.91 mean, 12.15 best.
+slower**. Today's design closes at **11.07 mean, 11.23 best** across six
+seeds — it was 11.91/12.15 when D59 was written, so the bet has got
+*worse*, not better: the gap to 12.5625 is 1.34 MHz now. The experiment
+below still costs one afternoon and still answers the question, but
+expect it to say no.
 
 **Do not start with the rewrite.** Register the opcode in `S_FETCH` and
 change nothing else — no cycle counts, no emulator, no timing table. It
@@ -90,6 +94,22 @@ path: measured, both variants, six seeds each, and the baseline won —
 [D60](01-decisions.md#d60--narrowing-the-spram-read-path-earlier-and-replicating-its-select-bought-nothing-and-was-reverted).
 At 97 % occupancy the placer's freedom is the constraint, so only
 removing logic will move Fmax.
+
+## Found by the 2026-08-14 documentation audit, not yet chased
+
+**The pixel port's multiply is not in a DSP, and the design asks for
+one.** `cool8_pixport.v` builds `y × stride` around an `SB_MAC16` and
+argues for it in its comments; `tools/mkbit.py` passes `synth_ice40
+-dsp`; the placed report lists no DSP block at all. 00-goals.md and
+README both claimed one, alongside a cell count of 5022 — so the claim
+and the measurement were written together and only the measurement
+moved.
+
+Worth chasing because it is the right shape to explain both numbers that
+drifted: a 16×16 multiply in LUT4s costs cells, and it sits on the pixel
+port's address path where it could cost `sclk`. The next step is cheap —
+`yosys -p 'synth_ice40 -dsp' ...` on `cool8_pixport.v` alone and read
+whether the `$mul` maps or is left as logic.
 
 ## Shelved: TinyTapeout
 
