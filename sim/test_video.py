@@ -65,8 +65,16 @@ H_VIS, V_VIS = 640, 480
 # other and with nothing else. A gate cannot catch a shared assumption
 # about a thing it never renders.
 N_PHASES = 16
-FRAME_DUMPS = {0: "text.hex", 3: "cursor.hex", 11: "tiles.hex",
-               13: "sprites.hex"}
+FRAME_DUMPS = {0: "text.hex", 3: "cursor.hex", 5: "text40.hex",
+               6: "bmp1.hex", 7: "bmp4.hex", 8: "bmp4b.hex",
+               9: "bmp8.hex", 11: "tiles.hex", 13: "sprites.hex"}
+
+# **Every engine the hardware has, dumped.** It was three -- mode 0, mode
+# 2 and the sprite frame -- so the "pixel by pixel" guarantee `AGENTS.md`
+# makes for the two models covered two of the seven modes, and [D84]
+# showed what lives in that gap: adding one frame found a real
+# divergence within the hour. A mode with no entry here is a mode the
+# pixel gate does not check, however green it reports.
 
 
 def write_png(path, width, height, rgb):

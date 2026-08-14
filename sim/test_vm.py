@@ -313,6 +313,32 @@ def setup_cursor(m, v):
     m.io_write(0x24, 0b11001)               # CUR_CTRL: rate 3, on
 
 
+def setup_text40(m, v):
+    """Phase 5: mode 1, the same screen at 40x30 through the doubler."""
+    put_pal(m)
+    no_sprites(m)
+    m.io_write(0x24, 0x00)                  # the cursor is off by phase 5
+    set_mode(m, 1)
+    load_text_map(m, build_screen())
+
+
+def setup_bitmap(mode):
+    """Phases 6-9: the same VRAM fill read at four depths.
+
+    One filled buffer and four modes over it, which is the point --
+    what varies is `bpp_log` and the doubler, so a divergence in any of
+    them shows against a background the other three agree about.
+    """
+    def setup(m, v):
+        put_pal(m)
+        no_sprites(m)
+        m.io_write(0x24, 0x00)
+        fill_vram_bitmap(m, v)
+        m.io_write(0x1A, 0x2B)              # border, as the testbench sets
+        set_mode(m, mode)
+    return setup
+
+
 def put_spr(m, i, en, big, hf, vf, bh, x, y, pat, bank):
     m.io_write(0x2A, i << 3)
     m.io_write(0x2B, y & 0xFF)
@@ -468,6 +494,16 @@ def main():
                     "sprites.hex", setup_sprites),
         frame_check("text with the hardware cursor",
                     "cursor.hex", setup_cursor),
+        frame_check("mode 1 text, 40x30",
+                    "text40.hex", setup_text40),
+        frame_check("mode 3 bitmap, 1 bpp",
+                    "bmp1.hex", setup_bitmap(3)),
+        frame_check("mode 4 bitmap, 4 bpp",
+                    "bmp4.hex", setup_bitmap(4)),
+        frame_check("mode 5 bitmap, 4 bpp bordered",
+                    "bmp4b.hex", setup_bitmap(5)),
+        frame_check("mode 6 bitmap, 8 bpp",
+                    "bmp8.hex", setup_bitmap(6)),
         sound_check(),
     ]
 
