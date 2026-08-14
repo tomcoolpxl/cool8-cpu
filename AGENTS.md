@@ -483,6 +483,16 @@ Easy to get wrong:
   Invert the test and branch to the other **global** label instead;
   falling through into a second entry point is fine, branching into one
   is not.
+- **`mkboot.build()` returns the image and writes no file.** Only
+  `tools/flash.py` writes `sim/build/BOOT.BIN`. A probe that calls
+  `mkboot.build(code, …)` and then adds *the path* `BOOT.BIN` to volume 0
+  throws away the bytes it just built and boots whatever the last
+  `poe disk` left there — which is silent, and looks exactly like a
+  source change having no effect. A whole round went into "the editor
+  ignores my fix" while the machine ran three-hour-old firmware; the fix
+  was correct from the first edit. Write the returned bytes, then add
+  them. `flash.py` says so in its own comment: a stale `BOOT.BIN` is the
+  most expensive kind of wrong answer.
 - **A conditional branch reaches ±127 bytes** and a dispatcher at the
   top of a large file does not. `sw/disasm.asm` defines `jlo`/`jhs`/`jeq`
   macros that invert the test and let a `JMP` carry the distance; the

@@ -70,6 +70,7 @@ timing = "python sim/timing.py"
 mutate = "python sim/mutate.py"
 
 disk = "python tools/flash.py disk"
+demos = "python tools/mkdemos.py --png"
 flash = "python tools/flash.py all"
 flash-fpga = "python tools/flash.py fpga"
 flash-system = "python tools/flash.py system"

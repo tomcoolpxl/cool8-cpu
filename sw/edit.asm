@@ -103,8 +103,8 @@ ed_read:
         ADDW X,R2
         ST   [X],R0
         POPW X
-        CMP  R0,#$20            ; a blank does not extend the line
-        BEQ  .nb
+        CMP  R0,#$21            ; a blank does not extend the line, and
+        BLO  .nb                ; nor does an unpainted cell, which is $00
         PUSH R0
         MOV  R0,R2
         ADD  R0,#1

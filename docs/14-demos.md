@@ -68,26 +68,26 @@ and `RND` picks between them.
 
 ![10 PRINT](img/demo-10print.png)
 
-**Two things had to change and both made it better.**
+**Mode 1: text, forty columns.** Mode 0's 80×30 cells are 8 wide by 16
+high, so a diagonal drawn in one is not at 45° and the maze comes out
+sheared. Mode 1 halves the columns and a cell becomes 16×16 — square,
+and the diagonals meet.
 
-Our font is **CP437** ([`tools/mkfont.py`](../tools/mkfont.py)), which
-has no diagonals — so the maze is drawn in **tile mode** instead, where a
-cell is 8×8 at 4 bpp. That is **sixteen colours a cell** against the
-C64's two, and the C64's own multicolour character mode managed four at
-half the horizontal resolution.
+**Our font is CP437** ([`tools/mkfont.py`](../tools/mkfont.py)), which
+has no `╱` and `╲` where PETSCII has 205 and 206. It has `/` and `\` at
+47 and 92, and `47 + 45*RND(2)` picks between them exactly as the
+original's `205.5 + RND(1)` did.
 
-And the tile attribute's low nibble picks **which of the sixteen palette
-banks** the cell uses ([D79]), so the maze walks through PICO-8,
-DawnBringer 16, Sweetie 16 and the rest as it draws. The bands in the
-picture are the palettes, one per row.
+**The palette is the C64's, copied.** Bank 0 is overwritten entry for
+entry from a `DATA` table of RGB444 pairs, so 6 is `#0000AA` and 14 is
+`#0088FF` — the same numbers a C64 program means when it says 6 and 14
+([`tools/palette.py`](../tools/palette.py) bank 10 is the same set, kept
+in the C64's own index order for the same reason). Attribute `$6E` is
+background 6, foreground 14: blue paper, light blue ink.
 
-**One tile serves both diagonals.** Attribute bit 6 flips it
-horizontally, so 32 bytes of pattern draws `╱` and `╲` both — which is
-why the DATA statement is four lines rather than eight.
-
-The version here fills the map directly through the VRAM port rather
-than `PRINT`ing, because the console writes a fixed attribute and the
-attribute is where the colour lives.
+It fills the map directly through `VID_BASE` rather than `PRINT`ing,
+because the console writes its own attribute and the attribute is where
+the colour lives.
 
 ## 5. Adding one
 

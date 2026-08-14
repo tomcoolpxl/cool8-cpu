@@ -292,6 +292,34 @@ def main():
           "...and that number is the one the claims say",
           "machine %s, tools/mkboot.py %d" % (sorted(nums, key=str), mkboot.FREE))
 
+    # **A program long enough to scroll the screen.** `ed_read` rebuilds
+    # the logical line by reading back the cells the console painted, and
+    # a cell the console has never touched holds $00, not $20. It trimmed
+    # trailing blanks by testing for $20 alone, so the first line typed
+    # onto a row with unpainted cells took the whole 80-column row into
+    # the record -- 74 bytes for `PRINT 1` instead of 5. Nothing showed:
+    # LIST was right, RUN was right, and only READ failed, because the
+    # padding sits inside the record's own length and `dnext` lands in
+    # it. It reached the disc through SAVE, so a typed-in program was
+    # silently damaged for good. Forty identical lines is the smallest
+    # case that scrolls; every record must be 9 bytes.
+    settle(m, syms)
+    key(m, syms, "NEW\r")
+    for i in range(1, 41):
+        key(m, syms, "%d PRINT 1\r" % (i * 10))
+    end = m.bus.mem[syms["progend"]] | (m.bus.mem[syms["progend"] + 1] << 8)
+    bad, p = [], 0x0200
+    while p < end - 3:
+        n = m.bus.mem[p + 2]
+        if n != 5:
+            bad.append((m.bus.mem[p] | (m.bus.mem[p + 1] << 8), n))
+        if n == 0:
+            break
+        p += 4 + n
+    check(end - 0x0200 == 40 * 9 and not bad,
+          "forty typed lines store forty records, none padded by the screen",
+          "%d bytes, wanted %d; padded %s" % (end - 0x0200, 40 * 9, bad[:4]))
+
     print()
     modes(syms)
 

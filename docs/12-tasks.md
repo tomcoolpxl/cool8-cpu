@@ -227,6 +227,20 @@ is working perfectly. That needs eyes on the VGA output and a PS/2
 keyboard in the socket, and it is the one part of this that is not
 automatable.
 
+### The demo disc
+
+```
+poe demos           build sim/build/demos.img and shoot the first demo
+```
+
+Formats sixteen volumes, boots the machine, **types** every
+`demos/*.bas` at drive 13 and lets `SAVE` write it, then loads the first
+one and renders a frame to `docs/img/`. No toolchain and no board: it is
+the VM, which is what [14-demos.md](14-demos.md) means by a demo being a
+question about software. It writes the `BOOT.BIN` it just built rather
+than the one in `sim/build` — see the trap in
+[AGENTS.md](../AGENTS.md), which cost a session.
+
 ### The board
 
 ```

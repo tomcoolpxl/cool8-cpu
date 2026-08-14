@@ -56,8 +56,18 @@ def volume(imgpath, code):
     img = disk.Image(imgpath, create=True)
     for d in range(16):
         disk.Volume(img, d).format("DEMOS" if d == DRIVE else "COOL8")
+    # **Write what `build` returned, do not add the BOOT.BIN lying in the
+    # build directory.** `mkboot.build` returns the bytes and writes no
+    # file; only tools/flash.py writes BOOT.BIN. Adding that path instead
+    # boots whatever the last `poe disk` left there, so a source change
+    # is typed at hours-old firmware and the machine looks buggy rather
+    # than stale -- which is the trap flash.py names in its own comment,
+    # and it cost a session here before this line existed.
     boot = mkboot.build(code, dest=memmap.ORG, build_dir=H.BUILD)
-    disk.Volume(img, 0).add(os.path.join(H.BUILD, "BOOT.BIN"), "BOOT.BIN")
+    bootpath = os.path.join(H.BUILD, "BOOT.BIN")
+    with open(bootpath, "wb") as fh:
+        fh.write(boot)
+    disk.Volume(img, 0).add(bootpath, "BOOT.BIN")
     img.save()
     return len(boot)
 
@@ -98,7 +108,12 @@ def main():
         want = args.png or discname(sources()[0])
         H.key(m, syms, "NEW\r")
         H.key(m, syms, 'LOAD "%s"\r' % want)
-        H.key(m, syms, "RUN\r")
+        # **`H.key` settles after every keystroke, and a demo does not
+        # settle** -- 10 PRINT ends in `GOTO`, so the Return that starts
+        # it never returns to the prompt. Type RUN, then press Return
+        # without waiting for idle and give it a fixed slice instead.
+        H.key(m, syms, "RUN")
+        m.key(["\r"])
         m.run(cycles=400_000_000)
         m.run_frame(2)
         import test_video as TV
