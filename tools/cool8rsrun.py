@@ -101,6 +101,20 @@ def main():
                 f.write("%d\t%s\t%s\n" % (drive, label, name))
         cmd.append(f"+discs={cat_p}")
 
+    # **The idle symbols, so the window can wait on the machine.** The
+    # play button restarts and then types, and it must not type into a
+    # machine that is still uploading fonts. `Machine::is_idle` is the
+    # same predicate `settle` uses for the suites; these are the three
+    # addresses it asks about, derived from the image being run rather
+    # than written down anywhere.
+    try:
+        import test_basic as B
+        _, syms = B.build()
+        cmd.append("+idle=%d,%d,%d" % (syms["in_raw.rk0"], syms["irhead"],
+                                       syms["irtail"]))
+    except Exception as e:                  # a monitor-only run has none
+        print("  no idle symbols (%s); the demo menu will not launch" % e)
+
     env = dict(os.environ)
     # SDL2's cmake_minimum_required predates what cmake 4 will still
     # speak to; this is cmake's own documented floor for exactly that.

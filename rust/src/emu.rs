@@ -371,7 +371,20 @@ pub fn run(args: &Args) {
         .map(|p| crate::bar::load_catalogue(p))
         .unwrap_or_default();
     let mut disc_sel: usize = 0;
-    let mut launch: Option<(u64, crate::bar::Entry)> = None;
+    // **Waiting on the machine, not on a stopwatch.** `+idle=` carries
+    // the three symbols `Machine::is_idle` wants -- the keyboard wait's
+    // address and the input ring's head and tail -- so the launcher can
+    // be told a demo the instant BASIC is listening, rather than after
+    // a guessed number of frames that is either wrong or slow. Same
+    // predicate the `settle` command uses for the suites.
+    let idle: Option<(u16, usize, usize)> = args.idle.as_ref()
+        .and_then(|s| {
+            let n: Vec<usize> = s.split(',')
+                .filter_map(|f| f.trim().parse().ok()).collect();
+            (n.len() == 3).then(|| (n[0] as u16, n[1], n[2]))
+        });
+    let mut launch: Option<crate::bar::Entry> = None;
+    let mut booted = false;
 
     let queue: Arc<Mutex<VecDeque<u8>>> = Arc::default();
     let audio = sdl.audio().ok();
@@ -574,6 +587,17 @@ pub fn run(args: &Args) {
             let target = m.frames + 1;
             while m.frames < target {
                 m.tick();
+                // The PC only rests at the idle label; sampling once a
+                // frame would miss it, so the test rides the tick loop
+                // exactly as `settle` does. It costs one compare, and
+                // only while a launch is actually pending.
+                if launch.is_some() && !booted {
+                    if let Some((pc, h, t)) = idle {
+                        if m.is_idle(pc, h, t) {
+                            booted = true;
+                        }
+                    }
+                }
             }
             machine_frames += 1;
         }
@@ -596,17 +620,16 @@ pub fn run(args: &Args) {
         // is the clock that actually governs it. Then it goes through
         // the same queue a paste does, so the machine is typed at and
         // knows nothing about any of this.
-        if let Some((due_at, e)) = launch.take() {
-            if machine_frames >= due_at {
+        if booted {
+            if let Some(e) = launch.take() {
                 for ch in format!("DRIVE {}\rLOAD \"{}\"\rRUN\r",
                                   e.drive, crate::bar::stem(&e.name))
                     .bytes()
                 {
                     typed.push_back(ch);
                 }
-            } else {
-                launch = Some((due_at, e));
             }
+            booted = false;
         }
 
         let fb = &m.renderer.as_ref().unwrap().fb;
@@ -655,7 +678,16 @@ pub fn run(args: &Args) {
             crate::bar::Act::Launch(e) => {
                 crate::bar::cold(&mut m);
                 typed.clear();
-                launch = Some((machine_frames + 200, e));
+                booted = false;
+                // Without the symbols there is nothing to wait for, so
+                // say so rather than typing into a booting machine and
+                // leaving the user to wonder where the keystrokes went.
+                if idle.is_some() {
+                    launch = Some(e);
+                } else {
+                    eprintln!("no +idle= symbols: cannot tell when the \
+                               machine is ready, so not launching");
+                }
             }
             crate::bar::Act::None => {}
         }

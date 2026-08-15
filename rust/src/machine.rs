@@ -864,6 +864,27 @@ pub struct Machine {
 }
 
 impl Machine {
+    /// Idle: nothing left to read anywhere, and the CPU sitting in its
+    /// keyboard wait.
+    ///
+    /// **One definition of "ready", asked by everything that needs it.**
+    /// The `settle` command uses it for the suites and the window's demo
+    /// launcher uses it to know a restart has finished booting — so
+    /// "booted" cannot come to mean two different things in two places.
+    /// The addresses are the machine's own symbols, handed in by whoever
+    /// built the image; nothing here writes one down.
+    ///
+    /// It is not the cursor. The boot ROM enables the hardware cursor
+    /// for its own loading screen (`sw/boot.asm`), so a blinking cursor
+    /// means the ROM is alive, not that BASIC is listening.
+    pub fn is_idle(&self, idle_pc: u16, irhead: usize, irtail: usize)
+                   -> bool {
+        self.bus.uart.rx.is_empty()
+            && self.bus.kbd.q.is_empty()
+            && self.bus.mem[irhead] == self.bus.mem[irtail]
+            && self.cpu.pc == idle_pc
+    }
+
     pub fn new(rom: [u8; 4096], flash_image: Option<Vec<u8>>) -> Machine {
         let mut m = Machine {
             cpu: Cpu::new(),

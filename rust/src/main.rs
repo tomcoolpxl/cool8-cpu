@@ -59,6 +59,10 @@ pub struct Args {
     /// The disc catalogue, read by tools/cool8disk.py. The window
     /// never parses a machine format itself.
     pub discs: Option<String>,
+    /// `idle_pc,irhead,irtail` — the machine's own symbols, so the
+    /// window can tell when a restart has finished booting. Derived by
+    /// the launcher from the image it built; never written down here.
+    pub idle: Option<String>,
     fbdump: Option<String>,
     textdump: Option<String>,
     pub keys: Option<String>,
@@ -119,6 +123,8 @@ fn parse_args() -> Args {
             a.keymap = Some(v.to_string());
         } else if let Some(v) = arg.strip_prefix("+discs=") {
             a.discs = Some(v.to_string());
+        } else if let Some(v) = arg.strip_prefix("+idle=") {
+            a.idle = Some(v.to_string());
         } else if let Some(v) = arg.strip_prefix("+fbdump=") {
             a.fbdump = Some(v.to_string());
         } else if let Some(v) = arg.strip_prefix("+textdump=") {
@@ -906,10 +912,9 @@ fn run_serve() {
                 let (irh, irt) = (num(f[2]) as usize, num(f[3]) as usize);
                 let mut reason = "budget";
                 for _ in 0..num(f[4]) {
-                    if s.m.bus.uart.rx.is_empty()
-                        && s.m.bus.kbd.q.is_empty()
-                        && s.m.bus.mem[irh] == s.m.bus.mem[irt]
-                        && s.m.cpu.pc == idle {
+                    // The predicate is Machine::is_idle, shared with the
+                    // window's demo launcher so both mean the same thing.
+                    if s.m.is_idle(idle, irh, irt) {
                         reason = "settled";
                         break;
                     }
