@@ -167,17 +167,25 @@ were written for. **The listings inside the timing are unchanged** — the
 repeat loop is outside them, and `IF K<1000 THEN GOTO 500` is the one
 edit, which this BASIC requires.
 
-**Two rows for this machine, and the second is the honest one.** COOL8
-runs at 8.375 MHz and most of the table is 1–2 MHz, so the second row is
-every time multiplied by 8.375: what it would score clocked like a 6502.
-It beats a C64 on the arithmetic loops and **loses badly on BM5–BM7**,
-which is where `GOSUB` and arrays are — a real result, and where to look
-if the interpreter is ever worth optimising.
+**Three rows for this machine, and the measured one is the least
+interesting.** COOL8 runs at 8.375 MHz against a table of 1–2 MHz
+machines, so the other two scale it to 2 MHz and 1 MHz — what it would
+score clocked like a BBC Micro and like a 6502. At 1 MHz it beats a C64
+on the arithmetic loops (BM3 9.3 against 17.6) and then **loses on
+BM5–BM7**, which is exactly where `GOSUB` and arrays are. A real result,
+and where to look if the interpreter is ever worth optimising.
 
-**Every figure comes from one table**, so they are comparable with each
-other. IBM PC, MSX, Amstrad/Schneider CPC and TRS-80 are not in it and
-are left out rather than filled in from somewhere with a different
-tester, BASIC and stopwatch.
+**`4.1875` does not survive the parser** — five significant digits
+against a float that carries about four, and the whole row came out
+negative. The 2 MHz row is `8.375/2`, which is the clock the machine
+actually runs at and four digits.
+
+**Ten of the figures come from one table** and are comparable with each
+other. The **IBM PC** (8088 at 4.77 MHz) is *MikroDatorn*'s 1982 run of
+the same benchmarks, noted on screen as a different source — its VIC-20
+row matches the other table exactly, which is the reason for trusting it
+beside them. MSX, Amstrad/Schneider CPC and TRS-80 are in neither and
+are left out rather than filled in from a third stopwatch.
 
 **What it took to write says more about the BASIC than the times do:**
 
