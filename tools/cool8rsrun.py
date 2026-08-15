@@ -85,6 +85,22 @@ def main():
     elif not args.monitor:
         cmd.append(f"+flash={basic_image()}")
 
+    # **The disc catalogue, read here and handed over as a file.** Same
+    # arrangement as the keymap above and for the same reason: the
+    # emulator is never taught a machine format. `tools/cool8disk.py`
+    # owns the directory layout, so a walk written again in Rust would
+    # be a second implementation of it and would drift the first time an
+    # entry gained a field.
+    flash_arg = next((c[7:] for c in cmd if c.startswith("+flash=")), None)
+    if flash_arg and os.path.exists(flash_arg):
+        import cool8disk as disk
+        rows = disk.catalogue(flash_arg)
+        cat_p = os.path.join(BUILD, "emu_discs.txt")
+        with open(cat_p, "w", newline="\n") as f:
+            for drive, label, name in rows:
+                f.write("%d\t%s\t%s\n" % (drive, label, name))
+        cmd.append(f"+discs={cat_p}")
+
     env = dict(os.environ)
     # SDL2's cmake_minimum_required predates what cmake 4 will still
     # speak to; this is cmake's own documented floor for exactly that.

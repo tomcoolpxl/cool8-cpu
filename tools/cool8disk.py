@@ -291,6 +291,31 @@ def make_image(path, bootbin=None):
     return img
 
 
+def catalogue(path):
+    """Every program on every volume of `path`, grouped by disc.
+
+    `[(drive, label, name), ...]`, drives in order, names sorted. This is
+    what the emulator's demo menu is built from — **the emulator is
+    never taught the disc format.** It already takes its keymap as a file
+    the launcher derives from `sw/keymap.asm`; a directory walk written a
+    second time in Rust would be the same mistake with a different
+    filename, and it would drift the first time an entry gained a field.
+    """
+    img = Image(path)
+    out = []
+    for n in range(N_VOLS):
+        v = Volume(img, n)
+        try:
+            files = v.files()
+        except Exception:               # an unformatted volume has no
+            continue                    #   directory to read
+        label = v.label()
+        for name in sorted(show_name(e["name"]) for e in files):
+            if name.upper() != "BOOT.BIN":      # the ROM's, not a demo
+                out.append((n, label, name))
+    return out
+
+
 def cmd_format(a):
     img = Image(a.image, create=True)
     Volume(img, a.drive).format(a.label)

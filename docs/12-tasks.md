@@ -239,6 +239,25 @@ python tools/cool8rsrun.py --monitor        ROM only: no flash, no BASIC
 `poe emu -- --flash IMG` does **not** work: poe passes the `--` through
 and argparse rejects it. Call the script.
 
+**There is a taskbar**, and every key below is also a button on it with
+the shortcut and a line of description under the pointer. It carries a
+menu of **every program on every disc**, and the play button beside it
+cold-restarts the machine and then types `DRIVE n`, `LOAD "…"`, `RUN` —
+the machine is typed at, exactly as a person would, and knows nothing
+about the menu. **Fullscreen has no bar**, which is what fullscreen is
+for.
+
+The bar is [Dear ImGui](https://github.com/ocornut/imgui) through
+`imgui-sdl2-support` and `imgui-glow-renderer`, and the icons are
+Phosphor merged into its font atlas ([`assets/icons/`](../assets/icons)).
+Nothing in [`rust/src/bar.rs`](../rust/src/bar.rs) draws a widget or
+packs a glyph; it decides what the bar holds and what each control does
+to the machine. **The window never reads the flash image**: the disc
+catalogue arrives as a file the launcher wrote with `tools/cool8disk.py`
+(`+discs=`), the same arrangement the keymap has, because a directory
+walk written again in Rust would be a second implementation of a format
+that already has an owner.
+
 | key | |
 |---|---|
 | `F1` | warm restart — the machine's Ctrl+Esc |

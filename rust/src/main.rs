@@ -14,6 +14,7 @@
 // cool8vm.Machine. `+trace=-` streams the state lines to stdout so the
 // Python side can compare in lockstep without a quarter-gigabyte file.
 
+mod bar;
 mod cpu;
 #[cfg(feature = "gui")]
 mod emu;
@@ -55,6 +56,9 @@ pub struct Args {
     budget: u64,
     pub font: Option<String>,
     pub keymap: Option<String>,
+    /// The disc catalogue, read by tools/cool8disk.py. The window
+    /// never parses a machine format itself.
+    pub discs: Option<String>,
     fbdump: Option<String>,
     textdump: Option<String>,
     pub keys: Option<String>,
@@ -113,6 +117,8 @@ fn parse_args() -> Args {
             a.font = Some(v.to_string());
         } else if let Some(v) = arg.strip_prefix("+keymap=") {
             a.keymap = Some(v.to_string());
+        } else if let Some(v) = arg.strip_prefix("+discs=") {
+            a.discs = Some(v.to_string());
         } else if let Some(v) = arg.strip_prefix("+fbdump=") {
             a.fbdump = Some(v.to_string());
         } else if let Some(v) = arg.strip_prefix("+textdump=") {

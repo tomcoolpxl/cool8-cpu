@@ -60,8 +60,8 @@ use sdl2::audio::{AudioCallback, AudioSpecDesired};
 use sdl2::event::Event;
 use sdl2::keyboard::{Keycode, Mod, Scancode};
 use sdl2::mouse::MouseButton;
-use sdl2::pixels::PixelFormatEnum;
-use sdl2::video::FullscreenType;
+use sdl2::video::{FullscreenType, GLProfile};
+use glow::HasContext;
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -73,6 +73,49 @@ const FRAME_HZ: f64 = 8_375_000.0 / (266.0 * 525.0);
 fn die(msg: String) -> ! {
     eprintln!("{}", msg);
     std::process::exit(1);
+}
+
+/// Phosphor's Private Use Area, which is where its icons live.
+static ICON_RANGE: [u32; 3] = [0xE000, 0xF8FF, 0];
+
+/// The text face and the icon face, merged into one atlas.
+///
+/// **Merging is the toolkit's job and it is done by asking**: two
+/// sources in one `add_font` call, and an icon is then simply a
+/// character in a string — no second draw path, no atlas packing here.
+/// Phosphor regular is MIT and vendored at `assets/icons/`.
+fn fonts(ctx: &mut imgui::Context) {
+    const ICONS: &[u8] =
+        include_bytes!("../../assets/icons/Phosphor.ttf");
+    ctx.fonts().add_font(&[
+        imgui::FontSource::DefaultFontData { config: None },
+        imgui::FontSource::TtfData {
+            data: ICONS,
+            size_pixels: 15.0,
+            config: Some(imgui::FontConfig {
+                glyph_ranges:
+                    imgui::FontGlyphRanges::from_slice(&ICON_RANGE),
+                // The icons sit a shade low against the text baseline.
+                glyph_offset: [0.0, 3.0],
+                ..Default::default()
+            }),
+        },
+    ]);
+}
+
+/// Where the machine's picture goes: centred above the bar, whole
+/// pixels, aspect kept.
+///
+/// This is what `set_logical_size` used to do. It is done here now
+/// because the bar owns the bottom of the window and SDL's scaler has
+/// no idea it exists.
+fn picture_rect(vp: [f32; 2], bar: f32) -> ([f32; 2], [f32; 2]) {
+    let avail_h = (vp[1] - bar).max(1.0);
+    let scale = (vp[0] / H_VIS as f32).min(avail_h / V_VIS as f32);
+    let (w, h) = (H_VIS as f32 * scale, V_VIS as f32 * scale);
+    let x = (vp[0] - w) * 0.5;
+    let y = (avail_h - h) * 0.5;
+    ([x, y], [x + w, y + h])
 }
 
 /// The machine's own layout, derived from sw/keymap.asm by the
@@ -261,26 +304,74 @@ pub fn run(args: &Args) {
     // ---- SDL: window, renderer, audio, events
     let sdl = sdl2::init().unwrap_or_else(|e| die(e));
     let video = sdl.video().unwrap_or_else(|e| die(e));
-    let window = video
-        .window("COOL8", (H_VIS * 2) as u32, (V_VIS * 2) as u32)
+    // **A GL context, because the taskbar is drawn by a toolkit.**
+    // SDL2 keeps every job it had -- window, speaker, clipboard,
+    // scancodes -- and makes the context itself; only the blit moves,
+    // from SDL_Renderer's scaler to a textured quad ImGui draws. The
+    // picture is letterboxed by hand now (`picture_rect`), which is
+    // what `set_logical_size` used to do.
+    {
+        let a = video.gl_attr();
+        a.set_context_profile(GLProfile::Core);
+        a.set_context_version(3, 3);
+    }
+    let mut window = video
+        .window("COOL8", (H_VIS * 2) as u32, (V_VIS * 2) as u32 + 68)
         .position_centered()
         .resizable()
+        .opengl()
         .build()
         .unwrap_or_else(|e| die(e.to_string()));
-    let mut canvas = window
-        .into_canvas()
-        .accelerated()
-        .present_vsync()
-        .build()
+    let _gl_ctx = window
+        .gl_create_context()
         .unwrap_or_else(|e| die(e.to_string()));
-    canvas
-        .set_logical_size(H_VIS as u32, V_VIS as u32)
-        .unwrap_or_else(|e| die(e.to_string()));
-    let creator = canvas.texture_creator();
-    let mut tex = creator
-        .create_texture_streaming(PixelFormatEnum::RGB24, H_VIS as u32,
-                                  V_VIS as u32)
-        .unwrap_or_else(|e| die(e.to_string()));
+    window.subsystem().gl_set_swap_interval(1).ok();
+    let gl = unsafe {
+        glow::Context::from_loader_function(|s| {
+            video.gl_get_proc_address(s) as *const _
+        })
+    };
+
+    let mut imgui = imgui::Context::create();
+    imgui.set_ini_filename(None);      // no stray .ini beside the binary
+    imgui.io_mut().config_flags |=
+        imgui::ConfigFlags::NAV_ENABLE_KEYBOARD;
+    fonts(&mut imgui);
+    let mut platform = imgui_sdl2_support::SdlPlatform::new(&mut imgui);
+    let mut ui_renderer =
+        imgui_glow_renderer::AutoRenderer::new(gl, &mut imgui)
+            .unwrap_or_else(|e| die(e.to_string()));
+
+    // The machine's picture, as one texture ImGui is handed each frame.
+    let screen = unsafe {
+        let g = ui_renderer.gl_context();
+        let t = g.create_texture().unwrap_or_else(|e| die(e));
+        g.bind_texture(glow::TEXTURE_2D, Some(t));
+        // NEAREST: this is a machine with square pixels and no opinion
+        // about how a filter would like them blended.
+        g.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MIN_FILTER,
+                            glow::NEAREST as i32);
+        g.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAG_FILTER,
+                            glow::NEAREST as i32);
+        g.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_S,
+                            glow::CLAMP_TO_EDGE as i32);
+        g.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_T,
+                            glow::CLAMP_TO_EDGE as i32);
+        g.tex_image_2d(glow::TEXTURE_2D, 0, glow::RGB8 as i32,
+                       H_VIS as i32, V_VIS as i32, 0, glow::RGB,
+                       glow::UNSIGNED_BYTE, None);
+        t
+    };
+    // `AutoRenderer` carries a `SimpleTextureMap`, where the id a draw
+    // list wants *is* the GL texture name -- there is nothing to
+    // register, which is why this is a cast and not a lookup.
+    let screen_id = imgui::TextureId::new(screen.0.get() as usize);
+
+    let discs = args.discs.as_ref()
+        .map(|p| crate::bar::load_catalogue(p))
+        .unwrap_or_default();
+    let mut disc_sel: usize = 0;
+    let mut launch: Option<(u64, crate::bar::Entry)> = None;
 
     let queue: Arc<Mutex<VecDeque<u8>>> = Arc::default();
     let audio = sdl.audio().ok();
@@ -325,10 +416,17 @@ pub fn run(args: &Args) {
 
     'main: loop {
         for ev in events.poll_iter() {
+            // **The toolkit sees every event, and may claim it.** A
+            // click on a button or a typed character in the combo box
+            // must not also reach the machine, or naming a disc types
+            // its name into BASIC.
+            platform.handle_event(&mut imgui, &ev);
+            let ui_keys = imgui.io().want_capture_keyboard;
             match ev {
                 Event::Quit { .. } => break 'main,
 
                 Event::KeyDown { keycode, scancode, keymod, repeat, .. } => {
+                    if ui_keys { continue; }
                     let alt = keymod
                         .intersects(Mod::LALTMOD | Mod::RALTMOD);
                     let ctrl = keymod
@@ -336,13 +434,13 @@ pub fn run(args: &Args) {
                     match (keycode, scancode) {
                         (Some(Keycode::Return), _) if alt => {
                             if !repeat {
-                                let fs = canvas.window().fullscreen_state();
+                                let fs = window.fullscreen_state();
                                 let to = if fs == FullscreenType::Off {
                                     FullscreenType::Desktop
                                 } else {
                                     FullscreenType::Off
                                 };
-                                canvas.window_mut().set_fullscreen(to).ok();
+                                window.set_fullscreen(to).ok();
                             }
                         }
                         (Some(Keycode::F11), _) if !repeat => {
@@ -401,6 +499,7 @@ pub fn run(args: &Args) {
                 }
 
                 Event::KeyUp { scancode: Some(sc), .. } => {
+                    if ui_keys { continue; }
                     if keys_mode != "raw" && is_char_key(sc) {
                         continue;
                     }
@@ -418,6 +517,7 @@ pub fn run(args: &Args) {
                 }
 
                 Event::TextInput { text, .. } => {
+                    if ui_keys { continue; }
                     for c in text.chars() {
                         if (c as u32) < 0x100 {
                             typed.push_back(c as u32 as u8);
@@ -490,18 +590,85 @@ pub fn run(args: &Args) {
             }
         }
 
+        // **The launch, once the restarted machine has a prompt.** A
+        // cold restart is the whole boot -- RAM wipe, fonts into VRAM,
+        // banner -- so the typing waits for it in machine frames, which
+        // is the clock that actually governs it. Then it goes through
+        // the same queue a paste does, so the machine is typed at and
+        // knows nothing about any of this.
+        if let Some((due_at, e)) = launch.take() {
+            if machine_frames >= due_at {
+                for ch in format!("DRIVE {}\rLOAD \"{}\"\rRUN\r",
+                                  e.drive, crate::bar::stem(&e.name))
+                    .bytes()
+                {
+                    typed.push_back(ch);
+                }
+            } else {
+                launch = Some((due_at, e));
+            }
+        }
+
         let fb = &m.renderer.as_ref().unwrap().fb;
         for (dst, &px) in rgb.chunks_exact_mut(3).zip(fb.iter()) {
             dst[0] = ((px >> 8) & 0xF) as u8 * 17;
             dst[1] = ((px >> 4) & 0xF) as u8 * 17;
             dst[2] = (px & 0xF) as u8 * 17;
         }
-        tex.update(None, &rgb, H_VIS * 3)
+        unsafe {
+            let g = ui_renderer.gl_context();
+            g.bind_texture(glow::TEXTURE_2D, Some(screen));
+            g.tex_sub_image_2d(glow::TEXTURE_2D, 0, 0, 0, H_VIS as i32,
+                               V_VIS as i32, glow::RGB,
+                               glow::UNSIGNED_BYTE,
+                               glow::PixelUnpackData::Slice(&rgb));
+        }
+
+        platform.prepare_frame(&mut imgui, &window, &events);
+        let full = window.fullscreen_state() != FullscreenType::Off;
+        let bar_h = if full { 0.0 } else { crate::bar::BAR_H };
+        let ui = imgui.new_frame();
+        let (p0, p1) = picture_rect(ui.io().display_size, bar_h);
+        // The picture is the backdrop, not a window: it sits under
+        // everything and cannot be dragged, focused or scrolled.
+        ui.get_background_draw_list()
+            .add_image(screen_id, p0, p1)
+            .build();
+        // **No bar in fullscreen**, which is what fullscreen is for.
+        let act = if full {
+            crate::bar::Act::None
+        } else {
+            crate::bar::draw(ui, &discs, &mut disc_sel, full)
+        };
+        match act {
+            crate::bar::Act::Warm => crate::bar::warm(&mut m),
+            crate::bar::Act::Cold => crate::bar::cold(&mut m),
+            crate::bar::Act::Break => m.cpu.pulse_nmi(),
+            crate::bar::Act::Shot => {
+                shot += 1;
+                let p = format!("cool8-shot-{}.png", shot);
+                save_png(&p, &m.renderer.as_ref().unwrap().fb);
+            }
+            crate::bar::Act::Fullscreen => {
+                window.set_fullscreen(FullscreenType::Desktop).ok();
+            }
+            crate::bar::Act::Launch(e) => {
+                crate::bar::cold(&mut m);
+                typed.clear();
+                launch = Some((machine_frames + 200, e));
+            }
+            crate::bar::Act::None => {}
+        }
+
+        let draw_data = imgui.render();
+        unsafe {
+            let g = ui_renderer.gl_context();
+            g.clear_color(0.0, 0.0, 0.0, 1.0);
+            g.clear(glow::COLOR_BUFFER_BIT);
+        }
+        ui_renderer.render(draw_data)
             .unwrap_or_else(|e| die(e.to_string()));
-        canvas.clear();
-        canvas.copy(&tex, None, None)
-            .unwrap_or_else(|e| die(e.to_string()));
-        canvas.present();
+        window.gl_swap_window();
     }
 
     // SAVE survives the window closing: a dirtied flash goes back to
