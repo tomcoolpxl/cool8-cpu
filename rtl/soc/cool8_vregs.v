@@ -116,7 +116,28 @@ module cool8_vregs (
                      A_PATH = 8'h21,           //: VID_PAT_H    pattern/tile base, high
                      A_CURX = 8'h22,           //: CUR_X        text cursor column
                      A_CURY = 8'h23,           //: CUR_Y        text cursor row
-                     A_CURCTL = 8'h24;         //: CUR_CTRL     cursor enable and blink
+                     A_CURCTL = 8'h24,         //: CUR_CTRL     cursor enable and blink
+                     // **The frame counter, and it is only a counter.**
+                     // Every machine of the period counted time by
+                     // counting the vertical blank -- the C64's TI, the
+                     // Spectrum's FRAMES, the Atari's RTCLOK -- but all
+                     // of them counted it in *software*, from an
+                     // interrupt, so time stopped whenever interrupts
+                     // did. Counting it here instead costs 24 flops and
+                     // cannot be missed: no handler to run, nothing to
+                     // disable, no drift under load.
+                     //
+                     // **Three plain bytes, and no latch.** This bus
+                     // has no read strobe, so latching on a read would
+                     // mean inventing one; and the tear it would guard
+                     // against is a frame boundary landing between two
+                     // reads a few microseconds apart. Software reads
+                     // high, low, high and retries if the high byte
+                     // moved -- which is what the machines that had this
+                     // problem did, and it costs nothing here.
+                     A_TMRL = 8'h2D,           //: TMR_L        frames since reset, low byte
+                     A_TMRM = 8'h2E,           //: TMR_M        ...middle byte
+                     A_TMRH = 8'h2F;           //: TMR_H        ...high byte
 
     reg [7:0]  mode_r;
     reg [5:0]  ctrl_r;
@@ -134,11 +155,14 @@ module cool8_vregs (
     reg [9:0]  vact_r;
     reg [9:0]  raster_r;
     reg [6:0]  blink_r;
+    reg [23:0] frames_r;            // free-running, one per frame
     reg [6:0]  curx_d;              // the display's cursor, latched at
     reg [4:0]  cury_d;              //   frame start like VID_BASE
     reg        blrst;               // a move's blink restart, pending
 
-    assign o_sel = (io_a[7:4] == 4'h1) ||
+    assign o_sel = (io_a == A_TMRL) || (io_a == A_TMRM) ||
+                   (io_a == A_TMRH) ||
+                   (io_a[7:4] == 4'h1) ||
                    (io_a[7:4] == 4'h2 && io_a[3:0] <= 4'h5);
 
     assign disp_en   = mode_r[7];
@@ -310,6 +334,7 @@ module cool8_vregs (
             vact_r   <= 10'd480;
             raster_r <= 10'd0;
             blink_r  <= 7'd0;
+            frames_r <= 24'd0;
             curx_d   <= 7'd0;
             cury_d   <= 5'd0;
             blrst    <= 1'b0;
@@ -335,6 +360,7 @@ module cool8_vregs (
             // cycle a handler clears the flag is not lost.
             if (raster_hit)  irq_fl[0] <= 1'b1;
             if (frame_start) irq_fl[1] <= 1'b1;
+            if (frame_start) frames_r <= frames_r + 1'b1;
 
             if (wr) begin
                 case (io_a)
@@ -414,6 +440,9 @@ module cool8_vregs (
             A_CURX:   o_rdata = {1'b0, curx_r};
             A_CURY:   o_rdata = {3'b000, cury_r};
             A_CURCTL: o_rdata = {3'b000, curctl_r};
+            A_TMRL:   o_rdata = frames_r[7:0];
+            A_TMRM:   o_rdata = frames_r[15:8];
+            A_TMRH:   o_rdata = frames_r[23:16];
             // PAL_DATA among them: the palette is write-only, and this
             // is the same $FF an address nobody claims reads.
             default:  o_rdata = 8'hFF;

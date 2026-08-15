@@ -442,6 +442,9 @@ pub struct Video {
     pub vactive: u16,
     pub raster: u32,
     pub blink: u32, // frames; the phase restarts on a move
+    /// Frames since reset, free-running, 24 bits — the machine's clock.
+    /// Counted here and not by a handler, so nothing can miss a tick.
+    pub tmr: u32,
 
     pal_idx: u8,
     pal_half: bool,
@@ -500,6 +503,7 @@ impl Video {
             vactive: 480,
             raster: 0,
             blink: 0,
+            tmr: 0,
             pal_idx: 0,
             pal_half: false,
             pal_red: 0,
@@ -642,6 +646,9 @@ impl Video {
             0x23 => self.cur_y,
             0x24 => self.cur_ctrl,
             0x25 => self.cur_lines,
+            0x2D => self.tmr as u8,
+            0x2E => (self.tmr >> 8) as u8,
+            0x2F => (self.tmr >> 16) as u8,
             0x26 => self.vaddr as u8,
             0x27 => (self.vaddr >> 8) as u8,
             0x28 => self.vstep,
@@ -931,6 +938,7 @@ impl Machine {
             // At the start of vertical blanking, as cool8_vga raises
             // frame_start — cool8vm.py's rule, corrected to the RTL's.
             self.bus.video.blink += 1;
+            self.bus.video.tmr = (self.bus.video.tmr + 1) & 0xFF_FFFF;
             self.bus.video.irq_fl |= 0x02; // vblank
         }
         self.bus.video.raster = self.line;

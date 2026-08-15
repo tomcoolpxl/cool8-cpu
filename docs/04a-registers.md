@@ -104,10 +104,13 @@ What the registers *do* at the bit level is [04-system.md](04-system.md), writte
 | `$FF22` | `CUR_X` | text cursor column |
 | `$FF23` | `CUR_Y` | text cursor row |
 | `$FF24` | `CUR_CTRL` | cursor enable and blink |
+| `$FF2D` | `TMR_L` | frames since reset, low byte |
+| `$FF2E` | `TMR_M` | ...middle byte |
+| `$FF2F` | `TMR_H` | ...high byte |
 
 ## Registers no software name reaches
 
-0 of 57. The hardware decodes them and nothing in `sw/` has an equate for one, so reaching them means a bare `POKE $FExx`. Not a fault — several are read-only status or set once by the boot ROM — but the list is generated so it is a decision rather than an oversight.
+0 of 60. The hardware decodes them and nothing in `sw/` has an equate for one, so reaching them means a bare `POKE $FExx`. Not a fault — several are read-only status or set once by the boot ROM — but the list is generated so it is a decision rather than an oversight.
 
 .
 

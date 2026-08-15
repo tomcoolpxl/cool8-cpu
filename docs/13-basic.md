@@ -218,6 +218,7 @@ cannot. Pixel coordinates are the **logical** grid of the current mode
 | `CLG c` | the whole surface to colour `c`, ~30 ms. Do it once, not per frame |
 | `MODE n` | one of the seven presets in §4 — loads base, stride and depth together, which is why it is a command and the rest are not |
 | `GTEXT x, y, s$, c` | 8×8-cell text in any bitmap mode: set pixels paint `c`, clear pixels paint 0 (opaque). The face is the editor's own Spleen, resampled to 8×8, ASCII 32-127, seeded by boot at VRAM `$FC00` — 8 bytes a glyph, so `$FC00 + (ASC(ch)-32)*8` |
+| `TIME` | there isn't one — read the frame counter: `T=PEEK($FF2D)+PEEK($FF2E)*256`, 59.97 a second, and `$FF2F` is the third byte if you want more than 18 minutes |
 | `VSYNC` | hold until the next frame starts — **the pacing primitive**. A loop doing `VSYNC` once per pass runs at exactly 60 Hz |
 
 ### The five that are `POKE`s now

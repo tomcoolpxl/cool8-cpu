@@ -14,6 +14,7 @@
 // cool8vm.Machine. `+trace=-` streams the state lines to stdout so the
 // Python side can compare in lockstep without a quarter-gigabyte file.
 
+#[cfg(feature = "gui")]
 mod bar;
 mod cpu;
 #[cfg(feature = "gui")]

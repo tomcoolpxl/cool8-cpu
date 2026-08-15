@@ -1030,6 +1030,30 @@ latches an address that was never meant to exist: going from `$0980` to
 Write both immediately after seeing the vblank flag, where a whole frame
 of margin stands between them and the next latch.
 
+### 5.5a The frame counter
+
+**`TMR_L`/`TMR_M`/`TMR_H` are 24 bits of frames since reset**, free
+running, incremented on the same `frame_start` the vblank flag and the
+cursor blink already use. At 59.97 Hz it wraps in **77 hours**.
+
+**Every machine of the period counted time by counting the vertical
+blank, and every one of them counted it in software** — the C64's `TI`,
+the Spectrum's `FRAMES`, the Atari's `RTCLOK`, all incremented by an
+interrupt handler. That is why `TI` stops on a C64 during tape and disk
+work: no interrupt, no time. (The C64 also carried a real time-of-day
+clock in the CIA, in BCD, with an alarm — the expensive answer.)
+
+Counting it in hardware costs 24 flip-flops and **cannot be missed**:
+there is no handler to run, nothing to disable, and no drift under load.
+It is not a programmable timer — no reload, no compare, no interrupt of
+its own. `VID_RCMP` already does raster interrupts and `VID_IRQ` bit 1
+already does the frame tick, so a timer's usual jobs have owners.
+
+**Three plain bytes and no latch**, because this bus has no read strobe
+and the tear it would guard is a frame boundary landing between two
+reads microseconds apart. Read high, low, high again and retry if the
+high byte moved — the idiom the machines with the same problem used.
+
 ### 5.6 Sprites
 
 Independent of the background mode — a separate line buffer merged at

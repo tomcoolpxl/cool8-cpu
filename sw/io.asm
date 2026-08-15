@@ -84,4 +84,7 @@ VID_PAT_H   = IOBASE + $21       ; pattern/tile base, high
 CUR_X       = IOBASE + $22       ; text cursor column
 CUR_Y       = IOBASE + $23       ; text cursor row
 CUR_CTRL    = IOBASE + $24       ; cursor enable and blink
+TMR_L       = IOBASE + $2D       ; frames since reset, low byte
+TMR_M       = IOBASE + $2E       ; ...middle byte
+TMR_H       = IOBASE + $2F       ; ...high byte
 
