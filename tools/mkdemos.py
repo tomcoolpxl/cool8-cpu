@@ -119,7 +119,8 @@ def main():
         # Return without waiting for idle and give it a fixed slice.
         H.key(m, syms, "RUN")
         m.key(["\r"])
-        m.run(cycles=400_000_000)
+        m.run(cycles=900_000_000)   # bench.bas runs for ~50 s of
+        #   machine time before it has a report to show
         m.run_frame(2)
         import test_video as TV
         rgb = bytearray()

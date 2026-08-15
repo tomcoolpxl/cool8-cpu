@@ -157,6 +157,44 @@ written before it went, and porting it was the whole of the change:
 which is what the `DATA` pairs are. Everything else it uses — `CLG`,
 `LINE`, `VSYNC`, `DO`/`LOOP`, `DIM` and arrays — still works unchanged.
 
+### `BENCH` — the Rugg/Feldman benchmarks
+
+![BENCH](img/demo-bench.png)
+
+BM1–BM8 as published (Kilobaud, June 1977; BM8 is John Coll's, *Personal
+Computer World*, February 1978), then a table against the machines they
+were written for. **The listings inside the timing are unchanged** — the
+repeat loop is outside them, and `IF K<1000 THEN GOTO 500` is the one
+edit, which this BASIC requires.
+
+**Two rows for this machine, and the second is the honest one.** COOL8
+runs at 8.375 MHz and most of the table is 1–2 MHz, so the second row is
+every time multiplied by 8.375: what it would score clocked like a 6502.
+It beats a C64 on the arithmetic loops and **loses badly on BM5–BM7**,
+which is where `GOSUB` and arrays are — a real result, and where to look
+if the interpreter is ever worth optimising.
+
+**Every figure comes from one table**, so they are comparable with each
+other. IBM PC, MSX, Amstrad/Schneider CPC and TRS-80 are not in it and
+are left out rather than filled in from somewhere with a different
+tester, BASIC and stopwatch.
+
+**What it took to write says more about the BASIC than the times do:**
+
+- **Variable names are one letter.** `SL` and `SM` are both `S`; `RP` is
+  `R`, which was the repeat count, so the loop overwrote its own bound.
+- **The suffix picks the type and none means integer** (§`DIM`). `DIM
+  T(8)` truncated every measurement to whole seconds; it is `T#(8)`.
+  `V/10` is integer division for the same reason — `V*0.1` is not.
+- **`READ` will not take a float from `DATA`**, so the published figures
+  are stored as tenths.
+- **A 24-bit frame count does not fit the float** — four significant
+  digits — so the timer differences the two low bytes, each exact, which
+  still spans eighteen minutes.
+- **BM1 finishes in under one frame.** A thousand `FOR` iterations is
+  ~12 ms against a 16.7 ms tick, so each benchmark runs three times and
+  is averaged.
+
 ## 5. Adding one
 
 1. Write `demos/name.bas`. Keep it BASIC, keep it under 80 characters a
