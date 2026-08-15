@@ -11,12 +11,36 @@ description = "The COOL8 machine. Held to the RTL by sim/cosim.py per retired in
 # SDL2 is the window, the speaker, the clipboard and the scaler — the
 # same library the Python front end uses through pygame. Bundled, so
 # the build owns its copy instead of hunting the system for one.
-gui = ["dep:sdl2", "dep:png", "dep:hound"]
+gui = ["dep:sdl2", "dep:png", "dep:hound",
+       "dep:imgui", "dep:imgui-sdl2-support", "dep:imgui-glow-renderer",
+       "dep:glow"]
 
 [dependencies]
 sdl2 = { version = "0.37", optional = true, features = ["bundled", "static-link"] }
 png = { version = "0.17", optional = true }
 hound = { version = "3", optional = true }
+
+# **The taskbar, and it is pinned exactly.** `=` and not `^`: a caret
+# lets a fresh `cargo update` walk the UI onto a version nobody here
+# built against, and the whole point of a locked toolchain is that the
+# machine you debug is the machine that shipped. Cargo.lock is committed
+# for the same reason.
+#
+# **Dear ImGui rather than egui, because this set actually composes.**
+# egui is 0.36, but `egui_sdl2_gl` pins egui ~0.33 and `egui-phosphor`
+# wants ^0.35 -- a three-way conflict only resolvable by pinning egui
+# backwards, which is the opposite of running current. These three ship
+# together from the imgui-rs org and `imgui-sdl2-support` asks for
+# sdl2 ^0.37, which is the version this crate already had. Nothing is
+# held back and SDL2 is untouched: it stays the window, the speaker, the
+# clipboard and the keyboard.
+#
+# Buttons, tooltips, the combo box and a font atlas that takes a TTF at
+# runtime are all Dear ImGui's own -- none of them are written here.
+imgui = { version = "=0.12.0", optional = true }
+imgui-sdl2-support = { version = "=0.13.0", optional = true }
+imgui-glow-renderer = { version = "=0.13.0", optional = true }
+glow = { version = "=0.14.2", optional = true }
 
 [profile.release]
 lto = true
