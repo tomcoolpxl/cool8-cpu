@@ -167,13 +167,18 @@ were written for. **The listings inside the timing are unchanged** — the
 repeat loop is outside them, and `IF K<1000 THEN GOTO 500` is the one
 edit, which this BASIC requires.
 
-**Three rows for this machine, and the measured one is the least
-interesting.** COOL8 runs at 8.375 MHz against a table of 1–2 MHz
-machines, so the other two scale it to 2 MHz and 1 MHz — what it would
-score clocked like a BBC Micro and like a 6502. At 1 MHz it beats a C64
-on the arithmetic loops (BM3 9.3 against 17.6) and then **loses on
-BM5–BM7**, which is exactly where `GOSUB` and arrays are. A real result,
-and where to look if the interpreter is ever worth optimising.
+**It reports an index, not seconds: COOL8 at 1 MHz is 100**, and lower
+is faster. Seconds invite a comparison the clocks do not support — this
+machine runs at 8.375 MHz against a table of 1–2 MHz ones — so the
+baseline is COOL8 scaled to 1 MHz and every column is a ratio against
+it, in whole numbers. `CPU` and `MHZ` are their own columns, because the
+clock is most of the answer and burying it in the name hides that.
+
+**The result is not flattering and that is the point.** Against a C64 at
+the same clock, COOL8 is far ahead on the arithmetic loops (BM3 168 to
+its 185, BM1 310 to its 100) and then **loses BM5–BM7 outright** — 54,
+72, 92 against 100. That is `GOSUB` and arrays, and it is where to look
+if the interpreter is ever worth optimising.
 
 **`4.1875` does not survive the parser** — five significant digits
 against a float that carries about four, and the whole row came out
@@ -202,6 +207,14 @@ are left out rather than filled in from a third stopwatch.
 - **BM1 finishes in under one frame.** A thousand `FOR` iterations is
   ~12 ms against a 16.7 ms tick, so each benchmark runs three times and
   is averaged.
+- **A source line over 80 characters is not a stored line.** The header
+  row was 87 with `1040 PRINT "` on the front, so the editor never kept
+  it and the table printed with no column names — silently, because a
+  line that does not store cannot fail at run time. Both header rows are
+  split now.
+- **`4.1875` does not survive the parser** — five significant digits
+  against about four — and the row it scaled came out *negative*. The
+  2 MHz row is `8.375/2`.
 
 ## 5. Adding one
 
