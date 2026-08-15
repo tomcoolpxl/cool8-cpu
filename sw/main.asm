@@ -659,7 +659,8 @@ sttab:
                                 ;: (removed)  was SCROLL dx, dy -- POKE VID_SCX/VID_SCY, see 04a-registers.md
         .word h_color     ; $A8 COLOR
                                 ;: COLOR fg:int[, bg:int]  the pen every PRINT, CLS and scroll writes. 0-15 each; with no bg the paper stays as it was
-        .word bad          ; $A9 SPRITE
+        .word h_cursor     ; $A9 CURSOR
+                                ;: CURSOR on:int[, rate:int]  0 off, 1 on. Rate 0-3 is 8, 16, 32 frames a phase and 3 is solid; the blink is the hardware's
                                 ;: (removed)  was SPRITE n, x, y, pattern, attr -- POKE SPR_IDX = n*8, eight bytes to SPR_DATA, then SPR_CTRL
         .word bad           ; $AA VPOKE
                                 ;: (removed)  was VPOKE addr, value -- POKE VRAM_ADDR_L/H, VRAM_STEP, then VRAM_DATA, which auto-steps

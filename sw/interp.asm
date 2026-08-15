@@ -560,6 +560,38 @@ h_cls:  CALL con_cls
 ;
 ; con_fill reads the same byte, so CLS and a scroll paint in the current
 ; paper rather than reverting to grey.
+; CURSOR on[, rate] -- CUR_CTRL: bit 0 enables, bits 4:3 pick the
+; blink.
+;
+; **Nothing here blinks anything.** `blink_r` counts frames in
+; cool8_vregs.v and the rate selects which of its bits to test, so
+; rate 0 is 8 frames a phase, 1 is 16, 2 is 32 and 3 short-circuits
+; to solid. The phase also restarts whenever the cursor moves, which
+; is what keeps it visible while a key is held -- none of which
+; software could do as well per frame.
+;
+; A warm restart puts it back: `con_geom` writes $11 whatever a
+; program left, so a demo cannot strand a machine with no cursor.
+h_cursor:
+        CALL eval               ; 0 off, 1 on
+        AND  R0,#$01
+        PUSH R0
+        LD   R2,[Y]             ; a rate as well?
+        CMP  R2,#$2C
+        BEQ  .rate
+        MOV  R0,#2              ; no: 32 frames a phase, the machine's
+        BRA  .set
+.rate:  INCW Y
+        CALL eval
+        AND  R0,#$03
+.set:   ADD  R0,R0              ; the rate lives in bits 4:3
+        ADD  R0,R0
+        ADD  R0,R0
+        POP  R2
+        OR   R0,R2
+        ST   [CUR_CTRL],R0
+        JMP  stmt
+
 h_color:
         CALL eval               ; the ink
         AND  R0,#$0F
@@ -5307,7 +5339,16 @@ ipoll:  LD   R2,[ibreak]
 h_stop: CALL icsv               ; where to come back to, for CONT
         MOV  R2,#E_STOP
         ST   [ERR],R2
-        RET
+        ; **The editor is about to have the screen back, so it takes its
+        ; cursor with it.** A program may have turned it off (`CURSOR 0`)
+        ; and a break is not a warm restart -- nothing else on this path
+        ; puts it back, and a machine that returns to a prompt you cannot
+        ; see is one you have to power-cycle to recover.
+        ;
+        ; Here and not in `main_err`, which a *direct* line also passes
+        ; through: doing it there made a typed `CURSOR 0` switch itself
+        ; back on before the next keystroke.
+        JMP  con_geom           ; ...and its RET is this routine's
 
 
 ; =====================================================================

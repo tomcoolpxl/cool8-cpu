@@ -375,6 +375,49 @@ def main():
           "got $%02X, wanted $FF" % masked)
     key(m, syms, "COLOR 7,0\r")
 
+    # **CURSOR is one byte of CUR_CTRL: bit 0 enables, 4:3 pick the
+    # blink.** Nothing in software blinks anything -- `blink_r`
+    # counts frames in the RTL and the rate selects which bit of it
+    # to test, 3 being solid. It has SPRITE's token, dead since
+    # SPRITE was removed.
+    #
+    # The property worth gating is the last one: **a warm restart
+    # brings the cursor back**, so a program cannot leave a machine
+    # with no cursor and no way to see what you are typing.
+    curctl = ioregs.addr_of("CUR_CTRL")
+    settle(m, syms)
+    key(m, syms, "CURSOR 0\r")
+    off = m.bus.read(curctl)
+    key(m, syms, "CURSOR 1,3\r")
+    solid = m.bus.read(curctl)
+    check(off & 1 == 0, "CURSOR 0 turns the hardware cursor off",
+          "CUR_CTRL is $%02X" % off)
+    check(solid == 0x19, "CURSOR 1,3 is on and solid: rate in bits 4:3",
+          "CUR_CTRL is $%02X, wanted $19" % solid)
+
+    # **Its own machine, as `modes()` takes one, and a program that
+    # actually runs.** The break has to interrupt something: broken
+    # at the prompt there is nothing to stop and nothing puts the
+    # cursor back. Traced rather than guessed -- ipoll -> h_stop ->
+    # icsv -> csave -> con_geom, and CUR_CTRL is $11 at the end.
+    b = vm.boot(flash_path=IMG, render=False)
+    for _ in range(90):
+        b.run_frame()
+    settle(b, syms)
+    for ln in ("NEW", "10 CURSOR 0", "20 GOTO 20"):
+        key(b, syms, ln + "\r")
+    key(b, syms, "RUN")
+    b.key(["\r"])
+    b.run(cycles=40_000_000)
+    ran = b.bus.read(curctl)
+    b.press_break()
+    b.run(cycles=150_000_000)
+    back = b.bus.read(curctl)
+    check(ran & 1 == 0 and back & 1 == 1,
+          "...and a break brings it back, whatever a program left",
+          "CUR_CTRL $%02X while running, $%02X after the break"
+          % (ran, back))
+
     print()
     modes(syms)
 

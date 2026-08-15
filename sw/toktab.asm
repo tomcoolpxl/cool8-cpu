@@ -96,7 +96,10 @@ TOKTAB:
         ; the replacement is about colour too. No new token, and
         ; the table stays the length it was.
         .byte 5, "C","O","L","O","R"
-        .byte 6, "S","P","R","I","T","E"
+        ; **CURSOR has SPRITE's slot.** SPRITE was removed and
+        ; left a spelling the machine answered ?SYNTAX to; the
+        ; blink is hardware, so this is one byte to CUR_CTRL.
+        .byte 6, "C","U","R","S","O","R"
         .byte 5, "V","P","O","K","E"
         .byte 5, "S","O","U","N","D"
         .byte 5, "H","L","I","N","E"
