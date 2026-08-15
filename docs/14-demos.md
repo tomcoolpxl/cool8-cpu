@@ -216,6 +216,48 @@ are left out rather than filled in from a third stopwatch.
   against about four — and the row it scaled came out *negative*. The
   2 MHz row is `8.375/2`.
 
+### `MANDEL` — the set, in fixed point
+
+![MANDEL](img/demo-mandel.png)
+
+Mode 6, the only mode that sees all 256 palette entries at once, with a
+gradient built as four ramps and entry 0 forced black for the interior.
+
+**It is integer arithmetic, and that is the whole reason it finishes.**
+A float operation on this machine costs about five times an integer one
+(BM3 in `BENCH` is integer — that is easy to misread), so the iteration
+runs in **Q6 fixed point**: 64 units to 1.0, which is the largest scale
+whose products still fit a signed 16-bit word. `zx*zy` peaks at 16,384;
+at Q7 it would reach 65,536 and overflow.
+
+Two details that are not optional:
+
+- **`A*B/32`, not `2*A*B/64`.** Same value; the doubled form peaks at
+  32,768 and overflows a signed word by exactly one.
+- **The escape is tested *before* squaring.** A value that has just
+  escaped can be four times the bound, and squaring it overflows — so
+  the test is `|zx|>2 or |zy|>2` and the squares are skipped on the way
+  out. That is a square escape boundary rather than a circular one,
+  which is the standard fixed-point trade.
+
+**Mariani-Silver does the rest.** The set is connected, so a rectangle
+whose border is one colour is that colour throughout: fill it and
+compute nothing inside. Filling is one `POKE` a pixel against sixty-four
+iterations of arithmetic, so *not* computing a region is worth hundreds
+of times its area. The stack is four arrays and an index rather than
+recursion — no `CALL` frame per rectangle, no 32-deep limit — and the
+contour bands in the picture are those rectangles.
+
+**The symmetric pixel is written at the same time**, not in a second
+pass: the value is already in hand, so the mirror costs four more
+`POKE`s and saves reading 30,720 bytes back.
+
+**Why it is not 256 colours.** The distinct colour count is bounded by
+the iteration cap, not by the palette: 64 iterations can produce at most
+64 values. Raising the cap to 128 gained one — this view simply does not
+contain many high escape counts. More colour needs a zoom or continuous
+colouring, not a bigger number.
+
 ## 5. Adding one
 
 1. Write `demos/name.bas`. Keep it BASIC, keep it under 80 characters a

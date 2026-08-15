@@ -119,8 +119,13 @@ def main():
         # Return without waiting for idle and give it a fixed slice.
         H.key(m, syms, "RUN")
         m.key(["\r"])
-        m.run(cycles=900_000_000)   # bench.bas runs for ~50 s of
-        #   machine time before it has a report to show
+        # **Accumulated, not one big number.** `m.run(cycles=)` stops
+        # at its own budget, so a single huge request silently runs far
+        # less than asked -- which read as a demo that had stalled when
+        # it had simply been cut short. bench needs ~50 s of machine
+        # time before it has a report; mandel needs minutes.
+        for _ in range(12):
+            m.run(cycles=500_000_000)
         m.run_frame(2)
         import test_video as TV
         rgb = bytearray()
