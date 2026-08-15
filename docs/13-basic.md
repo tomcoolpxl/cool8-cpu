@@ -41,7 +41,7 @@ the language does at its edges, measured on the machine.
 | `PAUSE n` | wait `n` frames, sixty to the second — the same clock `TIMER` reports. The break key still works during one |
 | `CONT` | resume the program the break key stopped, at the statement that was about to run. `?CONT` if there is nothing to resume |
 
-Numbers are decimal or `$` hex (`$FE10`). Variables `A`–`Z` are
+Numbers are decimal or `$` hex (`$FF10`). Variables `A`–`Z` are
 resident and free to find; longer names cost a lookup. `A$`–`Z$` are
 strings.
 
@@ -231,22 +231,22 @@ five and not `MODE`.
 
 | was | is |
 |---|---|
-| `VPOKE a, b` | `POKE $FE26, a AND 255` · `POKE $FE27, a / 256` · `POKE $FE28, 1` · `POKE $FE29, b` |
-| `PALETTE i, v` | `POKE $FE1E, i` · `POKE $FE1F, v / 256` · `POKE $FE1F, v AND 255` — **high byte first** |
-| `SCROLL x, y` | `POKE $FE16, x` · `POKE $FE18, y` |
+| `VPOKE a, b` | `POKE $FF26, a AND 255` · `POKE $FF27, a / 256` · `POKE $FF28, 1` · `POKE $FF29, b` |
+| `PALETTE i, v` | `POKE $FF1E, i` · `POKE $FF1F, v / 256` · `POKE $FF1F, v AND 255` — **high byte first** |
+| `SCROLL x, y` | `POKE $FF16, x` · `POKE $FF18, y` |
 | `TILE x, y, t, a` | the map entry through the VRAM port: address `y * 128 + x * 2`, then `t` and `a` |
-| `SPRITE n, x, y, img, a` | `POKE $FE2A, n * 8`, then eight bytes to `$FE2B`, then `POKE $FE2C, 1` — laid out below |
+| `SPRITE n, x, y, img, a` | `POKE $FF2A, n * 8`, then eight bytes to `$FF2B`, then `POKE $FF2C, 1` — laid out below |
 
 **A VRAM run is now cheaper, not dearer.** `VPOKE` reset the address
 on every call; setting it once and letting the port's own step carry
 it is one `POKE` per byte:
 
 ```
-10 POKE $FE26, 0        ' VRAM_ADDR_L -- 64000 is $FA00
-20 POKE $FE27, $FA      ' VRAM_ADDR_H
-30 POKE $FE28, 1        ' VRAM_STEP, and it carries from here
+10 POKE $FF26, 0        ' VRAM_ADDR_L -- 64000 is $FA00
+20 POKE $FF27, $FA      ' VRAM_ADDR_H
+30 POKE $FF28, 1        ' VRAM_STEP, and it carries from here
 40 FOR J = 0 TO 31
-50 POKE $FE29, $EE      ' VRAM_DATA, auto-stepping
+50 POKE $FF29, $EE      ' VRAM_DATA, auto-stepping
 60 NEXT J
 ```
 
@@ -269,9 +269,9 @@ global gate at `SPR_CTRL` — **which the editor closes again when the
 program ends**, so a crash never leaves sprites over your listing.
 
 ```
-POKE $FE2A, n * 8       ' SPR_IDX, eight bytes per descriptor
-POKE $FE2B, <b0..b7>    ' SPR_DATA, auto-stepping
-POKE $FE2C, 1           ' SPR_CTRL, the global gate
+POKE $FF2A, n * 8       ' SPR_IDX, eight bytes per descriptor
+POKE $FF2B, <b0..b7>    ' SPR_DATA, auto-stepping
+POKE $FF2C, 1           ' SPR_CTRL, the global gate
 ```
 
 | byte | |
@@ -301,25 +301,25 @@ A complete floating sprite, pattern and all:
 ```
 10 MODE 4
 20 CLG 1
-30 POKE $FE26, 0
-40 POKE $FE27, $FA
-50 POKE $FE28, 1
+30 POKE $FF26, 0
+40 POKE $FF27, $FA
+50 POKE $FF28, 1
 60 FOR J = 0 TO 31
-70 POKE $FE29, $EE
+70 POKE $FF29, $EE
 80 NEXT J
 90 X = 0
 100 DO
 110 VSYNC
-120 POKE $FE2A, 0
-130 POKE $FE2B, 120
-140 POKE $FE2B, 64
-150 POKE $FE2B, X
-160 POKE $FE2B, 0
-170 POKE $FE2B, 208
-180 POKE $FE2B, 7
-190 POKE $FE2B, 0
-200 POKE $FE2B, 0
-210 POKE $FE2C, 1
+120 POKE $FF2A, 0
+130 POKE $FF2B, 120
+140 POKE $FF2B, 64
+150 POKE $FF2B, X
+160 POKE $FF2B, 0
+170 POKE $FF2B, 208
+180 POKE $FF2B, 7
+190 POKE $FF2B, 0
+200 POKE $FF2B, 0
+210 POKE $FF2C, 1
 220 X = X + 1
 230 IF X > 319 THEN X = 0
 240 LOOP
@@ -1066,7 +1066,7 @@ machine should be able to do**, not about where anything lives.
 count rather than leaving it to arithmetic:
 
 ```
-  basic.bin   19,683 bytes  $B21D-$FEFF
+  basic.bin   19,688 bytes  $B218-$FEFF
   BOOT.BIN    22,379 bytes  (2696 of relocating stub)
   room           691 bytes  to grow down into, before system storage at $AF69
   the user's  38,400 bytes  $0200-$97FF, one region

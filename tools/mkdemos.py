@@ -98,14 +98,25 @@ def main():
     print("  drive %d holds: %s"
           % (DRIVE, ", ".join(disk.show_name(e["name"]) for e in v.files())))
 
-    if args.png is not None and sources():
-        want = args.png or discname(sources()[0])
+    # **Every demo gets shot, not just the first.** A picture is the
+    # only review a demo really gets, and one that is never rendered is
+    # one nobody looks at until a user does.
+    for want in ([args.png] if args.png else
+                 [discname(f) for f in sources()]):
+        # **Stop whatever is still running.** A demo ends in `GOTO` or
+        # `LOOP` and never comes back, so the machine is not idle and
+        # `H.key` would wait for a prompt that is never coming. The
+        # break key is what a person would press.
+        m.press_break()
+        m.run(cycles=20_000_000)
+        H.settle(m, syms)
+        H.key(m, syms, "MODE 0\r")      # back to text to be typed at
         H.key(m, syms, "NEW\r")
         H.key(m, syms, 'LOAD "%s"\r' % want)
         # **`H.key` settles after every keystroke, and a demo does not
-        # settle** -- 10 PRINT ends in `GOTO`, so the Return that starts
-        # it never returns to the prompt. Type RUN, then press Return
-        # without waiting for idle and give it a fixed slice instead.
+        # settle** -- it ends in `GOTO` or `LOOP`, so the Return that
+        # starts it never returns to the prompt. Type RUN, then press
+        # Return without waiting for idle and give it a fixed slice.
         H.key(m, syms, "RUN")
         m.key(["\r"])
         m.run(cycles=400_000_000)

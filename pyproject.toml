@@ -306,7 +306,7 @@ about = "the memory map against the equates the assembler reads, and no two name
 id = "ioregs"
 run = "tools/ioregs.py"
 args = ["--check"]
-about = "every I/O register the RTL decodes is named, and no $FExx equate in sw/ points at an address no peripheral answers at"
+about = "every I/O register the RTL decodes is named, no equate in sw/ points at an address no peripheral answers at, and no POKE in docs/13-basic.md names a dead address -- a BASIC program has no symbolic names, so the reference is the one place a literal is unavoidable and drift is invisible"
 
 [[tool.cool8.jobs.check]]
 id = "palette"

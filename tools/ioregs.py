@@ -281,21 +281,22 @@ def check():
             off = int(m.group(2), 16)
             key = (os.path.basename(path), m.group(1))
             if off in seen and seen[off] != key:
-                bad.append("$FE%02X is claimed by %s %s and %s %s" %
-                           (off, seen[off][0], seen[off][1], key[0], key[1]))
+                bad.append("$%04X is claimed by %s %s and %s %s" %
+                           (IO_BASE + off, seen[off][0], seen[off][1], key[0], key[1]))
             seen[off] = key
 
     for off in sorted(regs):
         if not regs[off]["name"]:
-            bad.append("$FE%02X %-10s in %s has no //: name" %
-                       (off, regs[off]["param"], regs[off]["module"]))
+            bad.append("$%04X %-10s in %s has no //: name" %
+                       (IO_BASE + off, regs[off]["param"],
+                        regs[off]["module"]))
 
     # The one that matters: software naming an address nothing decodes.
     for off in sorted(sw):
         if off not in regs:
             who = sorted({f for v in sw[off].values() for f in v})
-            bad.append("$FE%02X is named by %s but no peripheral decodes "
-                       "it" % (off, ", ".join(sorted(sw[off])) +
+            bad.append("$%04X is named by %s but no peripheral decodes "
+                       "it" % (IO_BASE + off, ", ".join(sorted(sw[off])) +
                                " (" + ", ".join(who) + ")"))
 
     # One name, two addresses -- a real defect, unlike two names for one.
@@ -306,7 +307,32 @@ def check():
     for n, offs in sorted(where.items()):
         if len(offs) > 1:
             bad.append("%s is used for %s" %
-                       (n, " and ".join("$FE%02X" % o for o in sorted(offs))))
+                       (n, " and ".join("$%04X" % (IO_BASE + o) for o in sorted(offs))))
+
+    # **The documents write addresses down, so the documents get checked
+    # too.** A BASIC program has no symbolic names -- a user reading
+    # docs/13-basic.md types the number -- so those numbers are the one
+    # place a literal is unavoidable, and therefore the one place drift
+    # is invisible. It happened: [D67] moved the page to $FF00 and every
+    # `POKE $FE1E` in the BASIC reference stayed behind, pointing a user
+    # at a page nothing answers at. Fourteen of them.
+    for rel in ("docs/13-basic.md",):
+        path = os.path.join(ROOT, rel)
+        if not os.path.exists(path):
+            continue
+        text = io.open(path, encoding="utf-8").read()
+        live = {r["addr"] for r in regs.values()}
+        # **Keyed on `POKE`, not on the address range.** Ranged on the
+        # I/O page it would pass a stale address for free: the whole
+        # failure mode is a number left behind at the *old* page, which
+        # is below the new one and so never looked at. This caught
+        # nothing until it stopped asking where the address is and
+        # started asking what the document tells a user to do with it.
+        for m in re.finditer(r"POKE\s+\$(F[0-9A-F]{3})", text):
+            a = int(m.group(1), 16)
+            if a not in live:
+                bad.append("%s says POKE $%04X, and no peripheral decodes "
+                           "that" % (rel, a))
 
     if not bad:
         for path, want in ((DOC, markdown()), (ASM, assembly() + "\n"),

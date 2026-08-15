@@ -72,7 +72,7 @@ palette and must not assume it may scribble on one without saying so.
 
 ## 4. The demos
 
-### `10PRINT` — after the C64 one-liner
+### `MAZE` — after the C64 one-liner
 
 ```
 10 PRINT CHR$(205.5+RND(1)); : GOTO 10
@@ -83,7 +83,7 @@ is the most famous BASIC program written, and has a
 about it. It works because PETSCII 205 and 206 are the two diagonals,
 and `RND` picks between them.
 
-![10 PRINT](img/demo-10print.png)
+![MAZE](img/demo-maze.png)
 
 **Forty columns, because the cell has to be square.** Mode 0's 80×30
 cells are 8 wide by 16 high, so a diagonal drawn in one is not at 45°
@@ -109,19 +109,25 @@ and not eight.
 **The scroll is the hardware's, and nothing moves in memory.** The tile
 map is a ring 32 rows tall with 30 shown (§5.5), so `VID_SCY` steps the
 eight pixels inside a tile and one stride onto `VID_BASE` steps the row
-— masked back into the ring with `AND W-1`, because software wraps the
-base and the hardware only wraps its own row pointer within it. The
-demo draws the row it is *about to need* and then scrolls onto it, so
-the first 31 draws fill the screen and the row below before anything
-moves, and no row is ever shown before it is drawn.
+— wrapped back into the ring with a compare and subtract, because
+software wraps the base and the hardware only wraps its own row pointer
+within it. The demo draws the row it is *about to need* and then scrolls
+onto it. **A fine scroll makes the window touch 31 rows, not 30**, so of
+a 32-row ring exactly one row is off screen and only that one is safe to
+draw into: the fill is 32, and 31 would build every new row in the
+part-shown row along the bottom edge, in view.
 
 `MODE 2` leaves `VID_BASE` at 0 and `VID_STRIDE` at 128 — asked, not
 assumed, and the demo reads the stride rather than writing 128 down.
 
-**It is paced by a delay loop and not by the raster.** `VID_RASTER` is
-bits 7:0 of a line count that runs past 255, so the same value comes
-round twice a frame and BASIC cannot tell which — there is no clean
-frame edge to wait on from up here.
+**It is paced on `VID_IRQ`'s vblank flag** — write 1 to clear, then wait
+for it, which is one frame unambiguously. `VID_RASTER` cannot do this:
+it is bits 7:0 of a line count that runs past 255, so the same value
+comes round twice a frame and BASIC cannot tell which. **The coarse step
+goes with fine step 0**, because `VID_BASE` and the tile row offset are
+both sampled at frame start; pair the base with step 7 instead and one
+frame shows a row and seven pixels at once and the next comes back,
+which reads as a shudder.
 
 **The palette is the C64's, copied.** Bank 0 is overwritten entry for
 entry from a `DATA` table of RGB444 pairs, so 6 is `#0000AA` and 14 is
@@ -130,13 +136,33 @@ entry from a `DATA` table of RGB444 pairs, so 6 is `#0000AA` and 14 is
 in the C64's own index order for the same reason). The tile is drawn in
 those two indices directly: paper 6, ink 14.
 
+### `RAINBOW` — a bouncing line with a fifteen-line trail
+
+![RAINBOW](img/demo-rainbow.png)
+
+Two endpoints bounce independently around mode 4's 320×240, and a ring
+buffer of fifteen holds the older lines so the trail can be erased
+oldest-first. The colour is the ring slot, so the trail walks the whole
+palette as it goes.
+
+**It is a demonstration of `VSYNC` more than of `LINE`.** The loop draws
+one line, erases one line and waits for the frame — so it runs at
+exactly 60 Hz because the hardware says when, not because the work
+happens to take that long.
+
+**`PALETTE` was a statement once and is not any more**;
+[13-basic.md](13-basic.md) lists what went and what replaces it. This demo was
+written before it went, and porting it was the whole of the change:
+`PALETTE i, v` is `PAL_IDX` then `PAL_DATA` twice, **high byte first**,
+which is what the `DATA` pairs are. Everything else it uses — `CLG`,
+`LINE`, `VSYNC`, `DO`/`LOOP`, `DIM` and arrays — still works unchanged.
+
 ## 5. Adding one
 
 1. Write `demos/name.bas`. Keep it BASIC, keep it under 80 characters a
    line (the editor's logical line), and say in a `REM` what it is and
    where it came from.
-2. `python tools/mkdemos.py --png` — it is typed in, saved, and the
-   first demo is run and shot.
+2. `poe demos` — every demo is typed in, saved, run and shot.
 3. Look at the picture. `docs/img/demo-<name>.png`.
 4. Add a section here saying what it demonstrates about *this* machine,
    not just what it draws.
