@@ -150,14 +150,18 @@ class Machine:
             if self.m.kbd.overrun:
                 raise SystemExit("the keyboard FIFO overran")
 
-    def vol(self, n=0):
-        """Drive n as the PC-side tool sees it.
+    def vol(self, n=None):
+        """Drive n as the PC-side tool sees it, the user's by default.
+
+        Defaults to `disk.USER_VOL` and not 0, because that is the drive
+        BASIC comes up on -- volume 0 belongs to the ROM and BOOT.BIN.
 
         The flush matters: the emulator holds programmed bytes until
         asked, so reading the image file without it shows the volume as
         it was before the machine touched it."""
         self.m.flash.flush()
-        return disk.Volume(disk.Image(IMG), n)
+        return disk.Volume(disk.Image(IMG),
+                           disk.USER_VOL if n is None else n)
 
     def cmd(self, s):
         """Type a command on a blank row, the way a person would.
@@ -454,11 +458,17 @@ def main():
 
 
 def blank(code, syms, label="PROGRAMS"):
-    """A machine with a formatted drive 0 and nothing on it."""
-    if os.path.exists(IMG):
-        os.remove(IMG)
-    img = disk.Image(IMG, create=True)
-    disk.Volume(img, 0).format(label)
+    """A machine with every volume formatted and the user's drive empty.
+
+    **Every volume, and the user's drive is not 0.** BASIC comes up on
+    `disk.USER_VOL` (`fsc_init`), because volume 0 is where the ROM
+    looks for BOOT.BIN. A fixture that formats only 0 leaves the drive
+    the machine actually mounts unformatted, and every SAVE here fails
+    for a reason that has nothing to do with what is being tested.
+    """
+    disk.make_image(IMG)
+    img = disk.Image(IMG)
+    disk.Volume(img, disk.USER_VOL).format(label)
     img.save()
     M = Machine(code, syms, flash=IMG)
     M.syms_progend = syms["progend"]
@@ -548,7 +558,7 @@ def files(code, syms):
     if os.path.exists(IMG):
         os.remove(IMG)
     img = disk.Image(IMG, create=True)
-    vol = disk.Volume(img, 0)
+    vol = disk.Volume(img, disk.USER_VOL)
     vol.format("FULL")
     filler = os.path.join(BUILD, "filler.bin")
     i = 0
@@ -563,7 +573,8 @@ def files(code, syms):
         i += 1
     img.save()
     left = (disk.DATA_END
-            - disk.Volume(disk.Image(IMG), 0).free_offset()) // 256
+            - disk.Volume(disk.Image(IMG),
+                            disk.USER_VOL).free_offset()) // 256
     M = Machine(code, syms, flash=IMG)
     M.syms_progend = syms["progend"]
     M.settle()

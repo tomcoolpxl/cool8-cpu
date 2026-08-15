@@ -49,17 +49,17 @@ FAILS = H.FAILS
 
 
 def image(boot):
-    """A formatted volume 0 with BOOT.BIN on it, built by the PC tool."""
-    if os.path.exists(IMG):
-        os.remove(IMG)
-    img = disk.Image(IMG, create=True)
-    v = disk.Volume(img, 0)
-    v.format("SYSTEM")
+    """The shipping disk layout, built by the PC tool.
+
+    **`disk.make_image`, not a private layout here.** Which volume is
+    what is `tools/cool8disk.py`'s, shared with `tools/flash.py` and
+    `tools/mkdemos.py`; a copy in this file is a fourth answer to the
+    question and would not have caught volume 1 being unformatted.
+    """
     p = os.path.join(BUILD, "BOOT.BIN")
     with open(p, "wb") as fh:
         fh.write(boot)
-    v.add(p, "BOOT.BIN")
-    img.save()
+    disk.make_image(IMG, bootbin=p)
 
 
 settle = H.settle          # the shared pair, sim/harness.py
@@ -319,6 +319,38 @@ def main():
     check(end - 0x0200 == 40 * 9 and not bad,
           "forty typed lines store forty records, none padded by the screen",
           "%d bytes, wanted %d; padded %s" % (end - 0x0200, 40 * 9, bad[:4]))
+
+    # **A cold machine comes up on drive 1, and drive 1 is there.** The
+    # ROM walks volume 0 for BOOT.BIN and cannot be told otherwise, so
+    # coming up on 0 put every unqualified SAVE beside the file the
+    # machine boots from. FSDRV was never initialised at all -- it
+    # inherited the zero from the RAM wipe -- and `fsc_init` sets it now.
+    # The address is asked of the claims, never written down here.
+    fsdrv = next(c.addr for c in memmap.asm_claims() if c.name == "FSDRV")
+    check(m.bus.mem[fsdrv] == disk.USER_VOL,
+          "a cold machine comes up on drive %d, not the boot volume"
+          % disk.USER_VOL,
+          "FSDRV = %d" % m.bus.mem[fsdrv])
+
+    # ...and the disk it starts on is formatted. `poe disk` built volume
+    # 0 alone until the default moved, which boots to a machine whose
+    # every DIR and SAVE fails on a disk that looks fine.
+    v = disk.Volume(disk.Image(IMG), disk.USER_VOL)
+    ok = True
+    try:
+        v.files()
+    except Exception:
+        ok = False
+    check(ok, "...and that drive is formatted, so DIR and SAVE work")
+
+    settle(m, syms)
+    key(m, syms, 'SAVE "DEFDRV"\r')
+    m.flash.flush()            # the write is the machine's until it is asked
+    names = [disk.show_name(e["name"])
+             for e in disk.Volume(disk.Image(IMG), disk.USER_VOL).files()]
+    check(any(n.startswith("DEFDRV") for n in names),   # SAVE adds .BAS
+          "an unqualified SAVE lands on the user's drive, not the ROM's",
+          "drive %d holds %s" % (disk.USER_VOL, names))
 
     print()
     modes(syms)

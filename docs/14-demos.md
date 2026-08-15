@@ -16,13 +16,30 @@ that volume until the next `DRIVE`.
 
 | drive | label | holds |
 |---|---|---|
-| 0–12 | `COOL8` | the user's, formatted and empty |
+| **0** | `SYSTEM` | **the ROM's**: `BOOT.BIN`, and nothing a user should write |
+| **1** | `COOL8` | **where a cold machine comes up** — the user's, empty |
+| 2–12, 14, 15 | `COOL8` | the user's, formatted and empty |
 | **13** | **`DEMOS`** | **the demo disc — what this document is about** |
-| 14, 15 | `COOL8` | the system discs |
 
-13 rather than 0 so that a machine out of the box still has drive 0 for
-the person using it, and so that a demo disc is somewhere a user will not
-overwrite by accident on the first afternoon.
+**Volume 0 is not the user's, and that is the ROM's decision.**
+`sw/boot.asm` walks volume 0's directory for `BOOT.BIN`; it is the 4 KB
+part a board cannot reflash, so no software may move it. BASIC therefore
+comes up on **drive 1** (`fsc_init` in [`sw/fscmd.asm`](../sw/fscmd.asm)),
+and an unqualified `SAVE` can never land beside the file the machine
+boots from. `FSDRV` was never initialised at all before that — it
+inherited the zero the cold-start RAM wipe leaves, which is how volume 0
+became the default by accident.
+
+**The layout lives in [`tools/cool8disk.py`](../tools/cool8disk.py)** —
+`BOOT_VOL`, `USER_VOL`, `DEMO_VOL` and `make_image` — because three
+builders need it (`flash.py`, `mkdemos.py`, `sim/test_boot_basic.py`)
+and a layout copied into each is a layout that drifts. `poe disk`
+formatted volume 0 alone until the default moved, which would have
+booted to a machine whose every `DIR` and `SAVE` failed on a disk that
+looked fine.
+
+13 for the demos so a demo disc is somewhere a user will not overwrite
+by accident on the first afternoon.
 
 ## 2. The sources are the truth, the disc is derived
 

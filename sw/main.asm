@@ -549,7 +549,7 @@ main:
         EI
 
         CALL prg_new            ; which empties the variables too
-        CALL fsc_mount
+        CALL fsc_init           ; the drive a cold machine starts on
         CALL con_warm           ; **not con_init**, which ends in con_cls
         ; The screen already shows the boot banner -- the stub painted
         ; it, and it was just wiped from RAM. The cursor goes under it.

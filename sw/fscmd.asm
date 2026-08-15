@@ -56,6 +56,25 @@ VOLPGS  = 1776                  ; data pages; the rest is scratch
 ; The primitives, wrapped so a caller sees one flag
 ; =====================================================================
 
+; fsc_init -- the drive a cold machine comes up on, then mount it.
+;
+; **Volume 0 is the system's, so a user starts on 1.** The boot ROM
+; walks volume 0 for BOOT.BIN and cannot be told otherwise: it is the
+; 4 KB part a board cannot reflash, and it is the same on the bench and
+; on the board. Coming up on 0 would put every unqualified SAVE beside
+; the file the machine boots from.
+;
+; It belongs here and not in `main`, which only composes ([D68]), and it
+; cannot go in the ROM at all -- `main` wipes every byte of RAM after
+; the ROM hands over, so a value set there is gone before BASIC starts.
+; FSDRV was never initialised anywhere; it inherited the zero that wipe
+; leaves, which is how volume 0 became the default by accident.
+FSUSER  = 1                     ; where a cold machine points
+fsc_init:
+        MOV  R0,#FSUSER
+        ST   [FSDRV],R0
+        ; falls into fsc_mount
+
 ; fsc_mount -- mount the drive in FSDRV.
 fsc_mount:
         LD   R0,[FSDRV]

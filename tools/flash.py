@@ -165,13 +165,11 @@ def build_disk():
     with open(bootpath, "wb") as fh:
         fh.write(boot)
 
-    if os.path.exists(DISK):
-        os.remove(DISK)
-    img = disk.Image(DISK, create=True)
-    v = disk.Volume(img, 0)
-    v.format("SYSTEM")
-    v.add(bootpath, "BOOT.BIN")
-    img.save()
+    # **Every volume, not just volume 0.** BASIC comes up on drive 1
+    # (`fsc_init`), and an unformatted volume has no directory to mount —
+    # so a disk with only volume 0 on it boots to a machine whose DIR
+    # fails. The layout is cool8disk's, shared with tools/mkdemos.py.
+    disk.make_image(DISK, bootbin=bootpath)
 
     print("  basic.bin  %7d bytes" % len(code))
     print("  BOOT.BIN   %7d bytes  (%d of relocating stub)"

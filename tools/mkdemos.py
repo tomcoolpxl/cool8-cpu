@@ -38,7 +38,7 @@ import mkboot                                            # noqa: E402
 import test_basic as B                                   # noqa: E402
 
 DEMOS = os.path.join(ROOT, "demos")
-DRIVE = 13
+DRIVE = disk.DEMO_VOL     # the layout is cool8disk's, not written twice
 
 
 def sources():
@@ -51,11 +51,6 @@ def discname(f):
 
 def volume(imgpath, code):
     """Drive 0 bootable, drive 13 the demo disc, the rest the user's."""
-    if os.path.exists(imgpath):
-        os.remove(imgpath)
-    img = disk.Image(imgpath, create=True)
-    for d in range(16):
-        disk.Volume(img, d).format("DEMOS" if d == DRIVE else "COOL8")
     # **Write what `build` returned, do not add the BOOT.BIN lying in the
     # build directory.** `mkboot.build` returns the bytes and writes no
     # file; only tools/flash.py writes BOOT.BIN. Adding that path instead
@@ -67,8 +62,7 @@ def volume(imgpath, code):
     bootpath = os.path.join(H.BUILD, "BOOT.BIN")
     with open(bootpath, "wb") as fh:
         fh.write(boot)
-    disk.Volume(img, 0).add(bootpath, "BOOT.BIN")
-    img.save()
+    disk.make_image(imgpath, bootbin=bootpath)   # the layout is shared
     return len(boot)
 
 

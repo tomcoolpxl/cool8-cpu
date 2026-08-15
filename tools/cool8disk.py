@@ -248,6 +248,49 @@ class Volume:
         return len(live)
 
 
+# ---------------------------------------------------------------- layout
+#
+# **Which volume is what, in one place.** The boot ROM walks volume 0 for
+# BOOT.BIN and cannot be told otherwise, so 0 is the system's; BASIC
+# comes up on 1 (`fsc_init`) so an unqualified SAVE never lands beside
+# the file the machine boots from; 13 is the demo disc
+# ([docs/14-demos.md](../docs/14-demos.md)).
+#
+# It lives here because two builders need it -- `tools/flash.py` for the
+# board's disk and `tools/mkdemos.py` for the demo disc -- and a layout
+# copied into both is a layout that drifts. `poe disk` used to format
+# volume 0 alone, which was invisible until BASIC started on 1 and found
+# nothing there.
+
+BOOT_VOL = 0                    # the ROM's; BOOT.BIN lives here
+USER_VOL = 1                    # where a cold machine comes up
+DEMO_VOL = 13                   # the demo disc
+
+
+def labels():
+    """The label for every volume, by number."""
+    return {n: "SYSTEM" if n == BOOT_VOL else
+               "DEMOS" if n == DEMO_VOL else "COOL8"
+            for n in range(N_VOLS)}
+
+
+def make_image(path, bootbin=None):
+    """A fresh image with **every** volume formatted, BOOT.BIN on 0.
+
+    Every volume, because BASIC mounts USER_VOL at startup and an
+    unformatted one has no directory to read.
+    """
+    if os.path.exists(path):
+        os.remove(path)
+    img = Image(path, create=True)
+    for n, label in labels().items():
+        Volume(img, n).format(label)
+    if bootbin:
+        Volume(img, BOOT_VOL).add(bootbin, "BOOT.BIN")
+    img.save()
+    return img
+
+
 def cmd_format(a):
     img = Image(a.image, create=True)
     Volume(img, a.drive).format(a.label)
