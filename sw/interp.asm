@@ -1393,8 +1393,16 @@ h_print:
 .semi:  INCW Y
         SKIPSP
         TST  R2
+        BEQ  .last
+        ; **A `:` after the separator ends the list, it is not an item.**
+        ; `PRINT A;:GOSUB 100` is ordinary BASIC and this raised ?SYNTAX
+        ; on it: anything non-zero went back to `.item` and `eval` was
+        ; handed a statement separator. The zero test alone only covered
+        ; a separator at end of *line*, so the fault needed a second
+        ; statement on the same one to show at all.
+        CMP  R2,#$3A            ; ':'
         BNE  .item
-        JMP  stmt               ; a trailing separator: no newline
+.last:  JMP  stmt               ; a trailing separator: no newline
 
         ; TAB(col): out to that column. **Already past it does
         ; nothing** -- it does not wrap to the next line, because a

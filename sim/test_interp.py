@@ -638,6 +638,19 @@ CASES = [
              line(99, [K["END"]])),
      {0: 42, 1: 9}),
 
+    # ---- `PRINT A;:` -- a separator then the next statement.
+    #
+    # This raised ?SYNTAX: anything non-zero after the separator went
+    # back to the item loop and `eval` was handed a `:`. The zero test
+    # alone only covered a separator at end of *line*, so it took a
+    # second statement on the same line to show at all.
+    ("a separator before the next statement ends the PRINT list",
+     program(spaced(10, name("A"), "=", num(5)),
+             spaced(20, [K["PRINT"]], name("A"), ";", ":",
+                    name("B"), "=", num(6)),
+             line(30, [K["END"]])),
+     {0: 5, 1: 6}),
+
     # ---- GOSUB, which is CALL's frame and GOTO's jump.
     #
     # **`RETURN` is not changed to serve both.** The call frame's fifth
