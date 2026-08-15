@@ -244,7 +244,10 @@ FREE = memmap.usertop() - 0x0200 + 1
 VERSION = "1.2"
 
 BANNER = [
-    (1, 0x0D, "    COOL8"),   # entry 13, the purple
+    (1, 0x0B, "    COOL8"),   # entry 11, $7EE -- the cyan
+                                   #   docs/img/readme-editor.png
+                                   #   was shot with. Measured
+                                   #   against it, not guessed.
     (2, 0x0F, "    8-bit home computer"),
     (4, 0x08, "    CPU     COOL8 @ 8.375 MHz        RAM    64K main, 64K video"),
     (5, 0x08, "    VIDEO   640x480, 32 sprites      SOUND  8 voices, 1-bit DAC"),
