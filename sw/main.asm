@@ -745,5 +745,7 @@ sttab:
                                 ;: CLOSE  abandons the read stream; harmless if none is open
         .word bad               ; $D1 ERROR -- a clause after ON
                                 ;: ON ERROR GOTO line:int  arm a handler; GOTO 0 disarms. ERR says which fault fired
+        .word h_gosub           ; $D2 GOSUB
+                                ;: GOSUB line:int  call a line; RETURN comes back. Shares CALL's frame and its depth limit
 
 

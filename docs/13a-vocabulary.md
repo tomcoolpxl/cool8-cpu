@@ -59,6 +59,7 @@ Names come from `TOKTAB` and `btab`, the bytes the matcher compares against. Ret
 | `$CE` | `STOP` | stops with ?BREAK, and CONT resumes; the break key's own tail |
 | `$CF` | `OPENIN name:string` | positions a read stream at the file's first byte; one at a time |
 | `$D0` | `CLOSE` | abandons the read stream; harmless if none is open |
+| `$D2` | `GOSUB line:int` | call a line; RETURN comes back. Shares CALL's frame and its depth limit |
 
 ## Tokenised, but not statements
 

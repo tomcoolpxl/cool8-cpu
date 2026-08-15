@@ -167,4 +167,7 @@ TOKTAB:
         ; `bad`, so one on its own is ?SYNTAX rather than a
         ; statement that quietly does nothing.
         .byte 5, "E","R","R","O","R"
+        ; $D2 GOSUB -- CALL's frame and GOTO's jump. RETURN pops
+        ; either without caring which pushed it.
+        .byte 5, "G","O","S","U","B"
         .byte 0

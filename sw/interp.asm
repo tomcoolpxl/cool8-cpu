@@ -4518,6 +4518,50 @@ subscan:
         BCS  .each
         RET
 
+; cpush -- the return frame: where Y is, which record, and how many
+; saves to undo.
+;
+; **GOSUB and CALL push the same five bytes**, and `h_ret` pops them
+; without caring which put them there. A GOSUB frame records the save
+; depth *unchanged*, so the unwind on the way back does nothing -- which
+; is why RETURN needed no change at all to serve both.
+cpush:  CALL cfr
+        MOV  R0,YL
+        ST   [X],R0
+        INCW X
+        MOV  R0,YH
+        ST   [X],R0
+        INCW X
+        LD   R0,[LREC]
+        ST   [X],R0
+        INCW X
+        LD   R0,[LREC+1]
+        ST   [X],R0
+        INCW X
+        LD   R0,[LDEPTH]        ; how far to unwind on the way back
+        ST   [X],R0
+        LD   R0,[CDEPTH]
+        ADD  R0,#1
+        ST   [CDEPTH],R0
+        RET
+
+; GOSUB line -- CALL's frame, GOTO's jump.
+;
+; The frame is pushed *after* the line number is evaluated, so Y is
+; already past the expression and RETURN resumes at the next statement.
+h_gosub:
+        LD   R0,[CDEPTH]
+        CMP  R0,#MAXCALL
+        BCC  .room
+        JMP  e_call
+.room:  CALL eval               ; the line number, as GOTO evaluates it
+        PUSH R1
+        PUSH R0
+        CALL cpush
+        POP  R0
+        POP  R1
+        JMP  goton              ; and go, exactly where GOTO goes
+
 h_call: LD   R0,[CDEPTH]
         CMP  R0,#MAXCALL
         BCC  .room
@@ -4552,24 +4596,7 @@ h_call: LD   R0,[CDEPTH]
         LD   R1,[X]
         PUSH R1                 ; where we are going
         PUSH R0
-        CALL cfr                ; and where to come back to
-        MOV  R0,YL
-        ST   [X],R0
-        INCW X
-        MOV  R0,YH
-        ST   [X],R0
-        INCW X
-        LD   R0,[LREC]
-        ST   [X],R0
-        INCW X
-        LD   R0,[LREC+1]
-        ST   [X],R0
-        INCW X
-        LD   R0,[LDEPTH]        ; how far to unwind on the way back
-        ST   [X],R0
-        LD   R0,[CDEPTH]
-        ADD  R0,#1
-        ST   [CDEPTH],R0
+        CALL cpush              ; and where to come back to
         POP  R0
         POP  R1
         ST   [LREC],R0

@@ -93,3 +93,4 @@ TOKFLG:
         .byte 0                ; $CF OPENIN
         .byte 0                ; $D0 CLOSE
         .byte 0                ; $D1 ERROR
+        .byte 0                ; $D2 GOSUB

@@ -638,6 +638,26 @@ CASES = [
              line(99, [K["END"]])),
      {0: 42, 1: 9}),
 
+    # ---- GOSUB, which is CALL's frame and GOTO's jump.
+    #
+    # **`RETURN` is not changed to serve both.** The call frame's fifth
+    # byte is the save depth to unwind to, and a GOSUB frame records the
+    # current one — so its unwind does nothing and the same `h_ret` pops
+    # either. Nested, so a frame pushed inside a frame comes back in
+    # order rather than to the outermost caller.
+    ("GOSUB returns to the statement after it, and nests",
+     program(spaced(10, name("A"), "=", num(0)),
+             spaced(20, [K["GOSUB"]], num(60)),
+             spaced(30, name("B"), "=", num(7)),
+             spaced(40, [K["GOTO"]], num(99)),
+             spaced(60, name("A"), "=", name("A"), "+", num(1)),
+             spaced(70, [K["GOSUB"]], num(90)),
+             spaced(80, [K["RETURN"]]),
+             spaced(90, name("A"), "=", name("A"), "+", num(40)),
+             spaced(95, [K["RETURN"]]),
+             line(99, [K["END"]])),
+     {0: 41, 1: 7}),
+
     # A SUB defined *before* the code that calls it must be stepped over
     # rather than fallen into, and it spans records now.
     ("a SUB in the way is stepped over, not fallen into",
