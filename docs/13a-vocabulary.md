@@ -28,6 +28,7 @@ Names come from `TOKTAB` and `btab`, the bytes the matcher compares against. Ret
 | `$A2` | `GOTO line:int` |  |
 | `$A5` | `MODE n:int` | `!intonly` |
 | `$A6` | `VSYNC` | waits for the next frame |
+| `$A8` | `COLOR fg:int[, bg:int]` | the pen every PRINT, CLS and scroll writes. 0-15 each; with no bg the paper stays as it was |
 | `$AB` | `SOUND voice:int, pitch:int, volume:int, length:int` | `!intonly` |
 | `$AD` | `PLOT x:int, y:int, colour:int` | `!intonly` |
 | `$AE` | `LINE x1:int, y1:int, x2:int, y2:int, colour:int` | `!intonly` |
@@ -87,7 +88,6 @@ These hold a token but `sttab` sends them to `bad`, so meeting one where a state
 | `$A3` | `WEND` | |
 | `$A4` | `(reserved)` | K_NUM: a numeric literal with two binary bytes after it. The "?" entry in TOKTAB holds the slot open |
 | `$A7` | `(removed)` | was SCROLL dx, dy -- POKE VID_SCX/VID_SCY, see 04a-registers.md |
-| `$A8` | `(removed)` | was PALETTE slot, colour -- POKE PAL_IDX then PAL_DATA twice, high byte first |
 | `$A9` | `(removed)` | was SPRITE n, x, y, pattern, attr -- POKE SPR_IDX = n*8, eight bytes to SPR_DATA, then SPR_CTRL |
 | `$AA` | `(removed)` | was VPOKE addr, value -- POKE VRAM_ADDR_L/H, VRAM_STEP, then VRAM_DATA, which auto-steps |
 | `$AC` | `(removed)` | was HLINE x, y, n, colour -- set PIX_X/PIX_Y, then POKE PIX_DATA n times; the port steps X itself |

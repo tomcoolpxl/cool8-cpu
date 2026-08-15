@@ -352,6 +352,29 @@ def main():
           "an unqualified SAVE lands on the user's drive, not the ROM's",
           "drive %d holds %s" % (disk.USER_VOL, names))
 
+    # **COLOR is the pen, and it is one byte: bg high, fg low.** It
+    # has PALETTE's token, which had been `bad` since PALETTE was
+    # removed -- a spelling the machine only ever answered ?SYNTAX
+    # to. The paper is optional because changing ink is the common
+    # case, so `COLOR 1` must keep the nibble it was not asked about.
+    settle(m, syms)
+    cattr = syms["cattr"]
+    key(m, syms, "COLOR 14,6\r")
+    both = m.bus.mem[cattr]
+    key(m, syms, "COLOR 1\r")
+    inkonly = m.bus.mem[cattr]
+    key(m, syms, "COLOR 31,255\r")
+    masked = m.bus.mem[cattr]
+    check(both == 0x6E, "COLOR fg,bg is one byte, paper high ink low",
+          "got $%02X, wanted $6E" % both)
+    check(inkonly == 0x61, "...and COLOR fg alone keeps the paper",
+          "got $%02X, wanted $61" % inkonly)
+    # 31 AND 15 is 15, not 1 -- masking keeps the low nibble, it
+    # does not clamp. Both ends land on 15, so the byte is $FF.
+    check(masked == 0xFF, "...and both are masked to 0-15",
+          "got $%02X, wanted $FF" % masked)
+    key(m, syms, "COLOR 7,0\r")
+
     print()
     modes(syms)
 

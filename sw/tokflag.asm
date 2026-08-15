@@ -51,7 +51,7 @@ TOKFLG:
         .byte 0                ; $A5 MODE
         .byte 0                ; $A6 VSYNC
         .byte 0                ; $A7 SCROLL
-        .byte 0                ; $A8 PALETTE
+        .byte 0                ; $A8 COLOR
         .byte 0                ; $A9 SPRITE
         .byte 0                ; $AA VPOKE
         .byte 0                ; $AB SOUND

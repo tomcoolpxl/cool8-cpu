@@ -548,6 +548,48 @@ h_cont: CALL csave
 h_cls:  CALL con_cls
         JMP  stmt 
 
+; COLOR fg[, bg] -- the pen, which is CATTR: bg in the high nibble, fg
+; in the low.
+;
+; **The background is optional and that is the whole design.** Changing
+; ink is the common case by a wide margin, and a program that had to
+; name the paper every time would either repeat itself or keep its own
+; copy of it -- so `COLOR 14` reads the byte back and keeps the nibble
+; it is not being asked about. Both are masked to 0-15, so no value can
+; reach into the other's nibble.
+;
+; con_fill reads the same byte, so CLS and a scroll paint in the current
+; paper rather than reverting to grey.
+h_color:
+        CALL eval               ; the ink
+        AND  R0,#$0F
+        PUSH R0
+        ; **The comma is read straight off Y, as h_poke reads its
+        ; own.** `SKIPSP` here saw no comma at all and every paper
+        ; silently became 0; the two-argument idiom in this file is
+        ; `INCW Y` over a comma the evaluator left Y sitting on.
+        LD   R2,[Y]
+        CMP  R2,#$2C            ; ',' -- a paper as well?
+        BEQ  .paper
+        LD   R0,[CATTR]         ; no: keep the one already set
+        AND  R0,#$F0
+        BRA  .set
+.paper: INCW Y
+        CALL eval
+        AND  R0,#$0F
+        ; **Four adds, not MUL.** `MUL R0,R1` puts its product in
+        ; X and leaves both registers alone -- `nentry` says so in
+        ; its own comment -- so multiplying here left the paper
+        ; exactly where it started and every one came out 0.
+        ADD  R0,R0              ; into the high nibble
+        ADD  R0,R0
+        ADD  R0,R0
+        ADD  R0,R0
+.set:   POP  R2
+        OR   R0,R2
+        ST   [CATTR],R0
+        JMP  stmt
+
 h_run:  LD   R0,[LREC+1]        ; direct only: a program restarting
         CMP  R0,#>DIRBUF        ;   itself stacks a frame per restart
         BEQ  .ok

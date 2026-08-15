@@ -90,7 +90,12 @@ TOKTAB:
         .byte 4, "M","O","D","E"
         .byte 5, "V","S","Y","N","C"
         .byte 6, "S","C","R","O","L","L"
-        .byte 7, "P","A","L","E","T","T","E"
+        ; **COLOR has PALETTE's slot.** PALETTE was removed and
+        ; left a spelling the machine answered ?SYNTAX to; a dead
+        ; keyword occupying a token is worse than no keyword, and
+        ; the replacement is about colour too. No new token, and
+        ; the table stays the length it was.
+        .byte 5, "C","O","L","O","R"
         .byte 6, "S","P","R","I","T","E"
         .byte 5, "V","P","O","K","E"
         .byte 5, "S","O","U","N","D"

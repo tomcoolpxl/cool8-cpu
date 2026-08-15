@@ -97,7 +97,25 @@ CLIM    = $AD71                 ;: 1 base high byte that forces a repaint
 ; draw into user RAM for a whole commit.
         .include "sysbot.asm"
 CSCRN   = SCREEN                ; this module's name for it
-A_TEXT  = $07                   ; light grey on black
+A_TEXT  = $07                   ; light grey on black, the cold value
+
+; CATTR -- the attribute con_put writes: background in the high nibble,
+; foreground in the low. It was the constant A_TEXT in two places, so
+; nothing the machine printed could be any colour but light grey.
+;
+; **It lives in the image and not in the storage region, which is the
+; opposite of [D67]'s direction, and deliberately.** The region is
+; packed solid to $AE6A and its floor is computed from the claims, so a
+; new claim there comes out of the user's FREE -- and out of *two*
+; bytes, because a text cell is a char/attribute pair and an odd base
+; splits every one. Worse, `cool8_vregs.v` presets the text base to
+; $9800 for modes 0 and 1 and at reset, so moving the map means moving
+; the hardware to match: an RTL change and the full hardware gates, for
+; one byte of colour. D67 evicted 324 bytes of `.res` that were
+; reserving RAM in bulk; one byte for a feature, against moving the
+; memory map and the RTL, is the trade going the other way.
+CATTR:  .byte $07
+
 F8      = $FC00                 ; the 8x8 font, in VRAM
 F16     = $F600                 ; and the 8x16 set mode 3 uses
 
@@ -457,9 +475,9 @@ con_fill:
         CALL con_row
         LD   R3,[CCOLS]
         MOV  R2,#32
+        LD   R0,[CATTR]         ; hoisted: it cannot change inside a row
 .f:     ST   [X],R2
         INCW X
-        MOV  R0,#A_TEXT
         ST   [X],R0
         INCW X
         SUB  R3,#1
@@ -581,7 +599,7 @@ con_emit:
         LD   R0,[CCY]
         LD   R1,[CCX]
         POP  R2
-        MOV  R3,#A_TEXT
+        LD   R3,[CATTR]
         PUSH R2
         CALL con_put
         POP  R2
@@ -832,6 +850,13 @@ GEOMW   = 6
 ; the warm restart can use it too: a console that wakes up in whatever
 ; mode a program left is exactly what con_geom is for.
 con_warm:
+        ; **The colour PRINT writes, and it is a variable now.** It was
+        ; the constant A_TEXT in two places, so nothing could ever print
+        ; in anything but light grey. A program sets it with one POKE
+        ; and every PRINT after that is coloured; a cold start puts it
+        ; back, so nothing that never asks can notice.
+        MOV  R0,#A_TEXT
+        ST   [CATTR],R0
         CLR  R0
         ST   [CTOP],R0
         ST   [CCX],R0

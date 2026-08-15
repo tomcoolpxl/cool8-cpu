@@ -657,8 +657,8 @@ sttab:
                                 ;: VSYNC  waits for the next frame
         .word bad          ; $A7 SCROLL
                                 ;: (removed)  was SCROLL dx, dy -- POKE VID_SCX/VID_SCY, see 04a-registers.md
-        .word bad         ; $A8 PALETTE
-                                ;: (removed)  was PALETTE slot, colour -- POKE PAL_IDX then PAL_DATA twice, high byte first
+        .word h_color     ; $A8 COLOR
+                                ;: COLOR fg:int[, bg:int]  the pen every PRINT, CLS and scroll writes. 0-15 each; with no bg the paper stays as it was
         .word bad          ; $A9 SPRITE
                                 ;: (removed)  was SPRITE n, x, y, pattern, attr -- POKE SPR_IDX = n*8, eight bytes to SPR_DATA, then SPR_CTRL
         .word bad           ; $AA VPOKE
