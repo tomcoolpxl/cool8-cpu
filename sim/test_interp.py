@@ -986,7 +986,7 @@ def trace(pattern, n=400):
     print("  " + name_)
     print()
     m, syms, why = boot(prog)
-    err = m.bus.mem[0x0018]              # ERR, sw/zp.asm
+    err = m.bus.mem[0x0018]              # ERR, sw/lowram.asm
     print("  run:     %s" % why)
     print("  ERR:     $%02X%s" % (err, "  (E_DONE -- it finished)"
                                   if err == 0xFF else ""))

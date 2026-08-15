@@ -439,7 +439,7 @@ fprint: PUSHW Y                 ; fstr walks Y over its output
         ST   [SACC+1],R0
         RET
 
-; FSTK, FSP, FLTY and FSDEEP are in sw/zp.asm now, in the 38 bytes of
+; FSTK, FSP, FLTY and FSDEEP are in sw/lowram.asm now, in the 38 bytes of
 ; page 0 the assembler used to hold. They were four frames of image data
 ; here while this was being written, which was a size compromise; the
 ; cleanup pass paid it off and got three more frames for nothing.

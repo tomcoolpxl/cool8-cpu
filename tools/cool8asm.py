@@ -333,7 +333,7 @@ class Assembler:
         through a chain, is circular. The two used to be one check
         against a single growing set, which made the second, innocent
         include of a shared header report "circular include" -- and that
-        is not a hypothetical: `sw/io.asm` is wanted by `zp.asm` for the
+        is not a hypothetical: `sw/io.asm` is wanted by `lowram.asm` for the
         BASIC image and by `fs.asm`, which `sim/test_fs.py` assembles on
         its own, so the header cannot be reached by exactly one route.
         A C header has an include guard for this reason; here the

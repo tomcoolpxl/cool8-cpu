@@ -34,12 +34,12 @@ K_NAMED = 8                     ;   K_UP..K_INS, and are contiguous
 ; idempotent, so it costs nothing that main.asm asks for them too and
 ; that this file can be assembled on its own for a test.
 ;
-; `irring`, `irhead`, `irtail` and `frames` are claims in sw/zp.asm
+; `irring`, `irhead`, `irtail` and `frames` are claims in sw/lowram.asm
 ; today because that is where [D67] put the region. They are input's
 ; state and the interrupt's, and they move into this file when
 ; sw/basic.bas goes and there is no longer a second owner to collide
 ; with.
-        .include "zp.asm"
+        .include "lowram.asm"
         .include "console.asm"
 
 ; ---------------------------------------------------------------------

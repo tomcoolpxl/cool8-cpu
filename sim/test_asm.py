@@ -204,7 +204,7 @@ v_llen: .byte 0
 v_ip:   .byte 0
 v_fok:  .byte 0
 v_progend: .word 0
-        .include "zp.asm"
+        .include "lowram.asm"
         .include "interp.asm"
         .include "toktab.asm"
         .include "asm.asm"
@@ -363,7 +363,7 @@ v_llen: .byte 0
 v_ip:   .byte 0
 v_fok:  .byte 0
 v_progend: .word 0
-        .include "zp.asm"
+        .include "lowram.asm"
         .include "interp.asm"
         .include "toktab.asm"
         .include "asm.asm"

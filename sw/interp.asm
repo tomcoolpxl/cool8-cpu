@@ -71,7 +71,7 @@
 
 ; ---- state
 ;
-; The page 0 map and the error codes are in sw/zp.asm, which the
+; The page 0 map and the error codes are in sw/lowram.asm, which the
 ; including file supplies once. LVAR/LLIM/LBODY/LLINE are adjacent there
 ; on purpose: they are the innermost FOR's frame and fpush copies them
 ; as seven consecutive bytes.
@@ -5314,7 +5314,7 @@ sinstr: CALL sopen
 ;
 ; `sw/basic.bas` owns the interrupt that sets this. It lives here so
 ; that sim/test_interp.py, which has no editor, still links.
-; `ibreak` is in sw/zp.asm's system storage region ([D67]).
+; `ibreak` is in sw/lowram.asm's system storage region ([D67]).
 
 ; ipoll -- checked at the loop back-edges only, because those are the
 ; only places a program can spin: NEXT going round, LOOP going round,
@@ -5364,7 +5364,7 @@ h_stop: CALL icsv               ; where to come back to, for CONT
 ; =====================================================================
 
 ; The register addresses are `sw/io.asm`'s, which `tools/ioregs.py`
-; generates from the Verilog that decodes them and `zp.asm` includes.
+; generates from the Verilog that decodes them and `lowram.asm` includes.
 ; They used to be eighteen literals here under a private `G`-prefixed
 ; spelling -- `GVMODE` for `VID_MODE` -- which docs/04a-registers.md
 ; carried a section apologising for. One name per register now, and the
@@ -5377,7 +5377,7 @@ h_stop: CALL icsv               ; where to come back to, for CONT
 ; init seeds rseed to 1 after the page clear -- a zeroed xorshift stays
 ; zero forever.
 ; `frames`, `rseed`, `garg`, `lwk`, `FORSTK` and `DIRBUF` are in
-; sw/zp.asm's system storage region now. They were equates here, in the
+; sw/lowram.asm's system storage region now. They were equates here, in the
 ; $FF00 page, "because page 0 is spoken for and a .space would ship its
 ; zeros in the image" -- only the second half of which was ever
 ; architectural, and the I/O page has since moved on top of that page

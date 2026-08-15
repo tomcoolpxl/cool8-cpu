@@ -1379,7 +1379,7 @@ fatan:  LD   R0,[FACC+1]
 ; ---------------------------------------------------------------------
 ; The workspace, and why it is here rather than in page 0.
 ;
-; **Page 0 is fully allocated** -- sw/zp.asm hands out every byte of it:
+; **Page 0 is fully allocated** -- sw/lowram.asm hands out every byte of it:
 ; FSVARS to $00A1, FORSTK to $00D9, the assembler to the end. The first
 ; version of this package put FACC at $0090 and its temporaries at
 ; $00C0, which is the filesystem's workspace, the **FOR stack** and the

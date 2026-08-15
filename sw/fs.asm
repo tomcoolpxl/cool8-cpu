@@ -41,7 +41,7 @@
 ; ---------------------------------------------------------------------
 
 ; The flash registers, generated from the hardware that decodes them.
-; Include-once, because this file is reached two ways: through zp.asm
+; Include-once, because this file is reached two ways: through lowram.asm
 ; for the BASIC image, and directly by sim/test_fs.py, which assembles
 ; it against a driver of its own.
         .include "io.asm"

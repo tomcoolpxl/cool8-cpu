@@ -1,5 +1,12 @@
 ; ---------------------------------------------------------------------
-; zp.asm -- page 0, and who owns which byte of it.
+; lowram.asm -- the RAM below the CPU stack, and who owns
+; which byte of it.
+;
+; **It was zp.asm, and the name was the wrong idea.** "Zero
+; page" is a 6502 notion and COOL8 has no zero-page
+; addressing mode, so nothing here is faster for being here --
+; the reason is the paragraph below, and the old name kept
+; inviting the assumption it denies in its own first line.
 ;
 ; Page 0 is not faster than anywhere else: COOL8 has no zero-page
 ; addressing mode (D6), so $0040 costs exactly what $9040 costs. What
@@ -384,6 +391,14 @@ E_ARNG  = 14                    ; branch out of range
 E_DIV0  = 15                    ; ?DIVISION BY ZERO ERROR
 E_DOS   = 16                    ; ?TOO MANY DOS / ?LOOP WITHOUT DO
 E_CALL  = 17                    ; ?NO SUCH SUB / ?RETURN WITHOUT CALL
+; prg_find's memo: the line it resolved last and where it was.
+;
+; **Four bytes out of the fifty this region already had free** -- the
+; block the editor's compiled-BASIC variables left behind when [D68]
+; deleted them. Below PROGBOT, so it costs the user's FREE nothing.
+FMLIN   = $00A8                 ;: 2 the line prg_find resolved last
+FMADR   = $00AA                 ;: 2 ...and the record it was in
+
 E_STOP  = 18                    ; ?BREAK -- the user stopped it
 E_DATA  = 19                    ; ?OUT OF DATA -- READ past the last DATA
 ; The two disk failures. They were `errmsg(19)` and `errmsg(20)` in the

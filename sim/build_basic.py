@@ -242,7 +242,7 @@ def by_module(syms):
 
     **A hand-maintained burn-down is a table that drifts**, and this
     project has been bitten by every one it has written down -- the drop
-    table in 13-basic.md was five guesses, `zp.asm`'s free-space figure
+    table in 13-basic.md was five guesses, `lowram.asm`'s free-space figure
     was wrong three times running. So the plan states the *grouping*,
     which is a decision, and this measures the *bytes*, which are not.
 

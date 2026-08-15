@@ -359,7 +359,7 @@ What the switch-over cost that the plan did not predict, all of it in
   settled the layering the plan had backwards: `fscmd` is *above*
   `interp`, since its handlers use `eval`, `cnext` and `SKIPSP`.
 * **`USERTOP` was 313 bytes too high.** `SYSBOT = irring` was true while
-  `zp.asm` held every claim; `console.asm` and `main.asm` claimed below
+  `lowram.asm` held every claim; `console.asm` and `main.asm` claimed below
   it, so the heap was handed system storage and `DIM A(3)` wrote an
   array over the console's geometry. The floor is generated now
   (`sw/sysbot.asm`, from `tools/memmap.py`) and `poe check` refuses a
@@ -387,7 +387,7 @@ assembly stops being an `s_` symbol with a compiled body — so
 routine in neither the plan nor a module is reported by name.
 
 Every hand-maintained table this project has written down has drifted —
-the drop table in 13-basic.md was five guesses, `zp.asm`'s free-space
+the drop table in 13-basic.md was five guesses, `lowram.asm`'s free-space
 figure was wrong three times running, `memmap.py`'s page-0 map missed
 thirteen bytes. This one is measured for that reason.
 

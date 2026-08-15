@@ -3007,7 +3007,7 @@ which is this project's most expensive shape and the day had arrived.
 Page 0 was full to the byte, so `NBUF`'s seventh byte pushed the run
 above it up one and `SDIG` had to leave. It went to `$0074` and
 `memmap.check()` refused: that byte is `FSVARS`, in `fs.asm`, invisible
-from `zp.asm`. The free run is `$00A4..$00D9`. **Three files claim page 0
+from `lowram.asm`. The free run is `$00A4..$00D9`. **Three files claim page 0
 and none of them can see the other two** -- the tool is the only thing
 that knows, which is the whole argument for [D67].
 
@@ -3016,7 +3016,7 @@ Then the image outgrew its slack: 245 bytes between system storage and
 
 **The eleven came out of dead system storage, not out of the user's
 region.** `CSTKBUF` had been a 32-byte reservation since the call stack
-moved into user memory -- `zp.asm` said "dead" beside it in so many
+moved into user memory -- `lowram.asm` said "dead" beside it in so many
 words -- and it was holding the string accumulator 32 bytes higher than
 it needed to sit. Deleting it drops `SACCBUF` and `FSPBUF` to `$B26A`
 and the gap becomes 277. Nothing else moves.
@@ -4075,7 +4075,7 @@ So every written statement of the map was wrong, in the same direction:
 | said | actually |
 |---|---|
 | `memmap.py`: `$00A4-$00D9` free, 54 bytes | the editor owns most of it |
-| `zp.asm` and [D66]: `$00B1-$00CF` free, **31 bytes** | `DIM cont(31) AS BYTE AT $00B0` owns `$00B0-$00CF`; the 31 bytes do not exist |
+| `lowram.asm` and [D66]: `$00B1-$00CF` free, **31 bytes** | `DIM cont(31) AS BYTE AT $00B0` owns `$00B0-$00CF`; the 31 bytes do not exist |
 | `memmap.py`'s `PAGE0` | **no entry at all** for `$0033-$003F` — `SACC`, `SLEN`, `STYPE`, `DVSR`, `DREM`, `DSGN`, `CSTK`, `CDEPTH`, `SDIG` |
 | `memmap.py`'s `REGIONS` | omits `SACC`/`pbuf` at `$7F00-$7FFF` and the whole `$FF00` workspace page |
 
@@ -4093,7 +4093,7 @@ the fix that keeps working is the one where a claim cannot be silent.
 
 [D6] dropped the zero page *and* a direct-page register: every absolute
 access is three bytes and the same cycles wherever it points, and
-`sw/zp.asm`'s own header has said so all along — "$0040 costs exactly
+`sw/lowram.asm`'s own header has said so all along — "$0040 costs exactly
 what $9040 costs". The scarcity was self-inflicted, and it was expensive
 twice: it is why [D66] recorded "53 bytes, and that is the whole
 budget", and it is why `FORSTK`, `garg`, `lwk`, `frames`, `rseed`, the
@@ -4140,7 +4140,7 @@ Four rules carry it:
 
 - **One file is the map**, in the language the assembler reads, so it
   cannot drift from what is built. `tools/memmap.py` declares nothing
-  and derives everything; the prose maps in `zp.asm`, `basic.bas` and
+  and derives everything; the prose maps in `lowram.asm`, `basic.bas` and
   [04-system.md](04-system.md) §2 stop restating it. `sw/basic.bas`'s
   `CONST PROG/MEMTOP/USERTOP/SCREEN` become `EXTERN`s of the same
   names, so the numbers exist once.
@@ -4273,7 +4273,7 @@ to generate it rather than to be careful with it.
   growing `seen` set meant the second, innocent include of a shared
   header reported `circular include`. It is an ancestor-chain check
   plus include-once now, which is what lets `sw/io.asm` be reached both
-  through `zp.asm` and through `fs.asm` — and `sim/test_fs.py`
+  through `lowram.asm` and through `fs.asm` — and `sim/test_fs.py`
   assembles the latter on its own, so the header cannot be reached by
   exactly one route.
 - **`Assembler.split()` rstrips the comment**, which is right for
@@ -4287,7 +4287,7 @@ to generate it rather than to be careful with it.
 1. **Made observable.** The `;:` annotations, `memmap.py` deriving
    rather than declaring, and the collision check. No behaviour change,
    and the image stayed byte-identical at 23,541 across the annotation
-   of `zp.asm`, `fs.asm` and `interp.asm` — which is the check that the
+   of `lowram.asm`, `fs.asm` and `interp.asm` — which is the check that the
    step really was inert.
 2. **Fixed what the check found**: `SFRAC`/`cont`, on its first run.
 3. **Made the I/O addresses derivable** — generated `sw/io.asm` and
@@ -4574,7 +4574,7 @@ routine onto the shared parser is what made it reachable.
   page 0. Only the `AT` declarations are storage by construction.
 - `SFRAC` moved to `$00B1`. The real map is `$00A4-$00B0` editor,
   **`$00B1-$00CF` free (31 bytes)**, `$00D0-$00D8` editor again -- not
-  the "54 bytes free" `zp.asm`'s own header claimed, which is now
+  the "54 bytes free" `lowram.asm`'s own header claimed, which is now
   corrected.
 
 **The lesson for the remaining 87 routines**: a ported routine runs in
@@ -4985,7 +4985,7 @@ argument below evaporates.
 There are 21 bytes free, so *either* needs a cut. Nothing that works
 today is lost by removing it, because nothing works today.
 
-Page 0 is the sharper half. [zp.asm](../sw/zp.asm) hands out every byte;
+Page 0 is the sharper half. [lowram.asm](../sw/lowram.asm) hands out every byte;
 `$00DA-$00FF` is the assembler's. That 38 bytes is why `HIMEM` cannot
 exist ([D62](#d62--floating-point-ships-as-a-loadable-library-not-as-part-of-the-system)),
 and page 0 is the one resource with no slack anywhere.
@@ -5143,7 +5143,7 @@ unpack, normalise and int-conversion core from [D61](#d61--real-floating-point-c
 and **71 bytes of workspace that lives inside the package**.
 
 That workspace is worth its own note. It was first written at fixed
-page-0 addresses out of 6502 habit, and [zp.asm](../sw/zp.asm) hands out
+page-0 addresses out of 6502 habit, and [lowram.asm](../sw/lowram.asm) hands out
 every byte of page 0 — `FACC` landed in the filesystem's variables and
 the temporaries sat on top of **`FORSTK`**. An integral plot is a `FOR`
 loop calling these routines, so it would have corrupted itself on the

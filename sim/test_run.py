@@ -110,7 +110,7 @@ CASES = [
     # the only way a BASIC program executes an ASM block -- h_asm itself
     # just steps over one -- and it is what a loadable library is
     # reached through, so it is worth a case of its own. A stores at
-    # VARS, which sw/zp.asm puts at $0040.
+    # VARS, which sw/lowram.asm puts at $0040.
     # `ASM` is no longer a keyword ([D63]) -- $9E is SYS now -- so a
     # program that says ASM is assigning to a variable of that name.
     # Nothing errors, which is the right outcome for a word that never

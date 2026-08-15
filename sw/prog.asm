@@ -82,7 +82,43 @@ prg_end:
 prg_find:
         PUSH R0
         PUSH R1
-        LDW  X,#PROGBOT
+        ; **The memo, and it is verified rather than trusted.**
+        ;
+        ; A loop jumps to the same line every pass, so last time's answer
+        ; is usually this time's -- and without it every jump walks the
+        ; program from PROGBOT, which is why the cost of GOTO and GOSUB
+        ; grows with how far in the target sits.
+        ;
+        ; The record at the remembered address must still carry the
+        ; remembered number, checked here every time. That is what makes
+        ; it safe: an edit, a RENUM, a DELETE or a LOAD cannot leave a
+        ; stale pointer behind, because a moved line simply fails the
+        ; check and falls through to the search. The version that clears
+        ; the memo from every path that touches program text needs six
+        ; of them to be right; this one needs none.
+        LD   R2,[FMLIN]
+        CMP  R2,R0
+        BNE  .full
+        LD   R2,[FMLIN+1]
+        CMP  R2,R1
+        BNE  .full
+        LD   R2,[FMADR]
+        MOV  XL,R2
+        LD   R2,[FMADR+1]
+        MOV  XH,R2
+        PUSHW X
+        CALL prg_no
+        MOV  R2,R0
+        MOV  R3,R1
+        POPW X
+        LD   R1,[SP+0]
+        LD   R0,[SP+1]
+        SUB  R2,R0
+        SBC  R3,R1
+        MOV  R0,R2
+        OR   R0,R3
+        BEQ  .out               ; still the same line: use it
+.full:  LDW  X,#PROGBOT
 .l:     CALL prg_end
         BCC  .out
         PUSHW X
@@ -99,9 +135,23 @@ prg_find:
         LD   R0,[SP+1]          ; low, pushed first
         SUB  R2,R0              ; record - wanted
         SBC  R3,R1
-        BHS  .out               ; >= wanted: this is the one
+        BHS  .hit               ; >= wanted: this is the one
         CALL prg_next
         BRA  .l
+        ; Only an *exact* hit is worth remembering: prg_find answers
+        ; with the first record at or past the number, and remembering
+        ; a near miss would hand it back for a line that does not exist.
+.hit:   MOV  R0,R2
+        OR   R0,R3
+        BNE  .out
+        LD   R0,[SP+1]
+        ST   [FMLIN],R0
+        LD   R0,[SP+0]
+        ST   [FMLIN+1],R0
+        MOV  R0,XL
+        ST   [FMADR],R0
+        MOV  R0,XH
+        ST   [FMADR+1],R0
 .out:   POP  R1
         POP  R0
         RET

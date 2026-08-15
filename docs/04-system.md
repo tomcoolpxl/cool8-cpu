@@ -42,7 +42,7 @@ ASIC.
 follows it**, the same arrangement `tools/opcodes.py` has for the
 encoding: Python imports addresses from there rather than writing one
 down twice, and `poe check` fails on drift. The *software* allocation of
-page 0 belongs to [`sw/zp.asm`](../sw/zp.asm), which is what the
+page 0 belongs to [`sw/lowram.asm`](../sw/lowram.asm), which is what the
 assembler reads, and `memmap.py` verifies itself against those equates.
 
 | Range | Size | Contents |

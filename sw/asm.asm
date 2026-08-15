@@ -124,7 +124,7 @@ AX_REL  = 8                     ; one byte, AV0 relative to the next pc
 ; here: INCW/DECW/PUSHW/POPW ($38+), ADDW X|Y,#w (page 2 $2C), and
 ; ADDW/SUBW X|Y,Rn (page 2 $70/$78).
 
-; The page 0 map and the error codes are in sw/zp.asm, which the
+; The page 0 map and the error codes are in sw/lowram.asm, which the
 ; including file supplies once. There is no symbol table here and no
 ; state for one: labels are BASIC variables, in the name table
 ; sw/interp.asm owns.

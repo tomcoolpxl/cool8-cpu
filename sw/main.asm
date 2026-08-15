@@ -43,7 +43,7 @@ MAINK   = $AC00                 ;: 2 the key just read
 ; handlers made obvious: they use `eval`, `cnext` and the `SKIPSP` macro,
 ; so a `fscmd` assembled first does not even parse.
 ; ---------------------------------------------------------------------
-        .include "zp.asm"       ; the storage map, and the I/O page
+        .include "lowram.asm"       ; the storage map, and the I/O page
         .include "console.asm"  ; the screen, the cursor, characters out
         .include "num.asm"      ; numbers as text
         .include "input.asm"    ; keys in, from either wire

@@ -9,7 +9,7 @@
 Addresses were written down in eight places and none of them was in
 charge. `sim/test_interp.py` carried `VARS = 0x0040` as a private copy,
 `sim/build_basic.py` its own `ORG` and `TOP`, `sw/basic.bas` a prose map
-in a comment, `sw/zp.asm` another one -- and `zp.asm`'s had already gone
+in a comment, `sw/lowram.asm` another one -- and `lowram.asm`'s had already gone
 stale, still listing `FORSTK` in page 0 after it moved out.
 
 **The first cure was a hand-written table here, and it drifted too.**
@@ -410,7 +410,7 @@ def sysbot_asm(write=False):
     not knowable from inside any one of them, and changes.
 
     So it is derived here, where every claim is visible at once, and
-    written out as a literal for zp.asm to include. Same arrangement as
+    written out as a literal for lowram.asm to include. Same arrangement as
     the I/O page and the token numbering: the number exists once, a tool
     puts it there, and `--check` fails the build if the file on disk
     stops matching what the claims say ([D67]).
@@ -528,7 +528,7 @@ def check():
 
     # **SYSBOT has to be the lowest claim, and once was not.**
     #
-    # It read `SYSBOT = irring`, which was true while sw/zp.asm held
+    # It read `SYSBOT = irring`, which was true while sw/lowram.asm held
     # every claim in the region. sw/console.asm then claimed $7DAF-$7DE8
     # -- CONT, the mirror, the cursor, the whole geometry -- underneath
     # it, and USERTOP went on pointing 58 bytes too high. `DIM A(3)`

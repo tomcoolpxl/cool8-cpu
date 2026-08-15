@@ -45,7 +45,7 @@ TLEN    = $AD34                 ;: 1 and how long that came out
 TOKI    = $AD35                 ;: 1 how far along the text the scan is
 TOKQ    = $AD36                 ;: 1 inside a quoted string
 
-        .include "zp.asm"
+        .include "lowram.asm"
         .include "toktab.asm"
         .include "tokens.asm"
         .include "tokflag.asm"
