@@ -225,14 +225,19 @@ def assemble(path, name=None, lower=False, incdirs=(SW,), write=False):
         for e in a.errors:
             print(f"error: {e}", file=sys.stderr)
         raise SystemExit("assembly failed: " + os.path.basename(path))
-    # **A grown branch is three bytes nobody wrote**, and this project
-    # measures itself to the byte. Silence here would let relaxation
-    # quietly inflate every size figure the docs quote. Nothing relaxes
-    # today, so this stays quiet until something does.
-    if a.relaxed:
-        print("  %d branch%s relaxed in %s" %
-              (a.relaxed, "" if a.relaxed == 1 else "es",
-               os.path.basename(path)), file=sys.stderr)
+    # **The relaxation count belongs to the assembler's own command, not
+    # to every build.** A grown branch is three bytes nobody wrote and
+    # this project measures itself to the byte, which is why it is
+    # reported at all -- but it was reported *here*, on the library path,
+    # so every suite, every demo build and every emulator launch opened
+    # with "44 branches relaxed in main.asm" whether or not anything in
+    # the run was about size. The note above this said "nothing relaxes
+    # today, so this stays quiet until something does": forty-four do,
+    # and it has been shouting ever since.
+    #
+    # `python tools/cool8asm.py <file>` still prints it, which is the
+    # place someone is asking about an image rather than using one, and
+    # `--pressure` is the fuller question.
     _, img = a.image()
     code = bytes(img)
     if write:

@@ -48,6 +48,98 @@ def basic_image():
     return flash.DISK
 
 
+def version():
+    """`1.0.0 (f21d7c0)`, or just the version where git cannot answer."""
+    v = "?"
+    try:
+        with open(os.path.join(ROOT, "pyproject.toml"), encoding="utf-8") as f:
+            for line in f:
+                if line.startswith("version"):
+                    v = line.split("=")[1].strip().strip('"')
+                    break
+    except OSError:
+        pass
+    try:
+        sha = subprocess.run(["git", "describe", "--always", "--dirty"],
+                             cwd=ROOT, capture_output=True, text=True)
+        if sha.returncode == 0 and sha.stdout.strip():
+            return "%s (%s)" % (v, sha.stdout.strip())
+    except OSError:
+        pass
+    return v
+
+
+def banner(cmd, code, rom, font):
+    """What is about to run, and out of which files.
+
+    **This used to open with "44 branches relaxed in main.asm"** -- the
+    assembler's size note, printed by the library build path, which is
+    neither what this command is about nor something a person launching
+    a machine can act on. What they cannot see and do need is which
+    firmware is in the window and which disc it is holding: those come
+    from four different places (sw/, the ROM built here, the flash image
+    on disk, the catalogue read out of it) and any of them can be from a
+    different afternoon than the others.
+    """
+    import memmap
+    import cool8disk as disk
+
+    def arg(k):
+        return next((c[len(k) + 2:] for c in cmd if c.startswith("+%s=" % k)),
+                    None)
+
+    def rel(q):
+        return os.path.relpath(q, ROOT) if q else None
+
+    print("  COOL8 %s -- the Rust machine in a window, SDL2 and a "
+          "scanline renderer" % version())
+    print("    exe       %s" % rel(EXE))
+    print("    firmware  BASIC %s bytes at $%04X, assembled from sw/"
+          % (format(len(code), ","), memmap.ORG))
+    print("    boot ROM  %s, %s bytes -- uploads %s (%s) into VRAM"
+          % (rel(arg("rom")), format(len(rom), ","), rel(arg("font")),
+             format(len(font), ",")))
+
+    flash = arg("flash")
+    if not flash:
+        print("    disc      none: --monitor, so the ROM and no BASIC")
+        return
+    print("    disc      %s" % rel(flash))
+    if not os.path.exists(flash):
+        print("              MISSING -- run `poe disk`, or pass --flash")
+        return
+
+    # **Volume 0 first, and by hand.** `catalogue` answers what the demo
+    # menu needs, which is programs a person can LOAD, so it does not
+    # mention BOOT.BIN -- and printing "drive 0 empty" about the volume
+    # holding the firmware the ROM is about to jump into is worse than
+    # saying nothing. It is the one file on the image that decides what
+    # the machine *is*.
+    try:
+        boot = disk.Volume(disk.Image(flash), disk.BOOT_VOL).files()
+        if boot:
+            print("              drive %-2d %-6s %s, %s bytes -- what the "
+                  "ROM autoboots"
+                  % (disk.BOOT_VOL, "SYSTEM", disk.show_name(boot[0]["name"]),
+                     format(boot[0]["length"], ",")))
+    except Exception:
+        pass
+
+    rows = disk.catalogue(flash)
+    by = {}
+    for drive, label, name in rows:
+        by.setdefault((drive, label), []).append(name)
+    for (drive, label), names in sorted(by.items()):
+        print("              drive %-2d %-6s %s"
+              % (drive, label, ", ".join(names)))
+
+    used = {d for d, _ in by} | {disk.BOOT_VOL}
+    free = [d for d in range(disk.N_VOLS) if d not in used]
+    if free:
+        print("              %d more formatted and empty; DRIVE %d is where "
+              "a cold machine comes up" % (len(free), disk.USER_VOL))
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--monitor", action="store_true",
@@ -70,13 +162,16 @@ def main():
     with open(font_p, "wb") as f:
         f.write(font)
 
+    import test_basic as B
+    code, syms = B.build()
+
     # The machine's own layout for right-click paste, derived from
     # sw/keymap.asm through the machine's tables — never a second copy.
     chars, _ = cool8kbd.kbd_tables()
     km_p = os.path.join(BUILD, "emu_keymap.txt")
     with open(km_p, "w", newline="\n") as f:
-        for ch, (code, shifted) in sorted(chars.items()):
-            f.write("%02x %02x %d\n" % (ord(ch), code, 1 if shifted else 0))
+        for ch, (sc, shifted) in sorted(chars.items()):
+            f.write("%02x %02x %d\n" % (ord(ch), sc, 1 if shifted else 0))
 
     cmd = [EXE, "+emu", f"+rom={rom_p}", f"+font={font_p}",
            f"+keymap={km_p}"]
@@ -108,10 +203,41 @@ def main():
     # addresses it asks about, derived from the image being run rather
     # than written down anywhere.
     try:
-        import test_basic as B
-        _, syms = B.build()
-        cmd.append("+idle=%d,%d,%d" % (syms["in_raw.rk0"], syms["irhead"],
-                                       syms["irtail"]))
+        # **The symbols come from a fresh build; the machine runs the
+        # BOOT.BIN already on the image.** Those are two different
+        # firmwares the moment anything in sw/ changes, and the image is
+        # top-aligned, so a sixteen-byte change moves every symbol.
+        # `+idle` then names a PC this machine never sits at, `is_idle`
+        # is never true, and the play button waits forever for a machine
+        # that booted seconds ago -- which reads as "the demos do not
+        # work" and is nothing of the kind. Silent, and the second time
+        # this shape has cost a session (flash.py's own comment is about
+        # the first). Compared by length: a firmware change moves it, and
+        # reading the file back through the volume to compare bytes is
+        # more machinery than the question needs.
+        stale = None
+        if flash_arg and os.path.exists(flash_arg):
+            import cool8disk as disk
+            import mkboot
+            import memmap
+            fresh = len(mkboot.build(code, dest=memmap.ORG, build_dir=BUILD))
+            got = disk.Volume(disk.Image(flash_arg), disk.BOOT_VOL).files()
+            have = got[0]["length"] if got else 0
+            if have != fresh:
+                stale = (have, fresh)
+
+        if stale:
+            print("  **%s carries different firmware than sw/ builds now**"
+                  % os.path.basename(flash_arg))
+            print("     on the image %s bytes, built here %s bytes"
+                  % (format(stale[0], ","), format(stale[1], ",")))
+            print("     the machine will boot and can be typed at, but the")
+            print("     play button cannot: its idle test would name a")
+            print("     symbol from the wrong build. Rebuild the disc:")
+            print("       python -m poethepoet demos")
+        else:
+            cmd.append("+idle=%d,%d,%d" % (syms["in_raw.rk0"],
+                                           syms["irhead"], syms["irtail"]))
     except Exception as e:                  # a monitor-only run has none
         print("  no idle symbols (%s); the demo menu will not launch" % e)
 
@@ -128,6 +254,7 @@ def main():
     # at the flash image, at anything but a compile that had not
     # finished. The build stays captured (its output is noise when it
     # succeeds); only the fact of it is announced.
+    banner(cmd, code, rom, font)
     print("  building cool8rs --features gui "
           "(SDL2 is vendored; first build after a plain one takes "
           "minutes)...", flush=True)
