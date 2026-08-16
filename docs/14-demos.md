@@ -68,6 +68,20 @@ nearly all of it waiting.** One round trip a line instead: measured
 byte-for-byte identical, floats included — which is the gate
 `sim/test_run.py` keeps rather than a claim made here.
 
+**A host-side tokeniser was approved and then not written, and the
+reason is a number.** The case for one was that a disc could be built
+with no VM at all -- worth arguing about when typing five demos cost
+ninety seconds. `H.line` made that **2.5 seconds**, and the premise
+went with it. What it would still cost has not changed: `snum`'s number
+packing, the quoted-text and REM passthrough and the record layout,
+reimplemented, with two versions that must agree forever. The rules are
+not obvious ones -- a line over eighty characters does not store, `READ`
+takes scalar targets only, a five-digit float literal does not survive
+the parser, and [D88] floors on the way into an integer -- and every one
+is somewhere a second implementation drifts silently. **Reopen it only
+if the 2.5 s becomes the problem**, which is a different argument from
+the one that was approved.
+
 **The keyboard is still proven, deliberately.** Typing every character
 was the only thing exercising the real driver end to end — the PS/2
 ISR, `sw/keymap.asm`, the editor's per-key handling — and it did so as
