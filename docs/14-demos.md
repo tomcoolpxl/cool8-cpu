@@ -514,6 +514,46 @@ the demo's**: name lookup (`nentry`, `nlook.*`, `varidx`, `aelem`) is
 ~36 % of a frame, and a `nlook` memo in `prg_find`'s two-slot shape is
 the candidate.
 
+### `SYNTH` — the screen is the sequencer
+
+![SYNTH](img/demo-synth.png)
+
+**A port of [tomcoolpxl/c64-synth](https://tomcoolpxl.github.io/c64-synth/),
+its trick kept whole: the sequencer has no note array — it reads the
+characters on the screen.** The original PEEKs its virtual C64 display
+("what you see is literally what you hear"); COOL8 does it natively,
+because modes 0/1 are text in *main* RAM — the play loop `PEEK`s the
+very bytes `PRINT` painted, through the map at `VID_BASE`. Mode 1 is
+the 40-column screen; a char is a note by A=1..Z=26, anything else a
+rest, `:` a rest that draws the beat.
+
+**Melody, tuning and instruments are the original's.** The three
+DEFAULT_TRACKS ride verbatim in their `PRINT` statements (`DATA` is
+numbers-only here — the first cut tried `READ A$` and learned it at
+`?SYNTAX`); pitch is the synth's own SID arithmetic, f = 40 · 1.0595^
+(note+mask) · 985248/2²⁴ Hz with masks 82/70/46, its slightly-sharp
+1.0595 semitone reproduced deliberately, precomputed to `DATA` as
+COOL8's ~2·Hz register values. Tempo: the original's 160 ms step is
+9.6 frames at 60 Hz; **9 frames — 150 ms, slightly faster — by
+decision.**
+
+**Three voices onto square-and-noise, envelopes in software (D41).**
+The lead holds and releases one volume step a frame on rests; the
+arpeggio plucks and decays fast; and the bass keeps the original's
+best move — **on a rest the same voice becomes the snare**, one noise
+burst decayed by the frame loop, exactly the `bass_snare` oscillator
+flip. Five more voices sit drawn and empty, rows 4–8. The playhead is
+the attribute byte of the current column on the live rows, restored
+behind it.
+
+**Gate-enforced** (`synth_screen`): mode 1; rows 3–5, columns 7–38
+hold the c64-synth tracks byte for byte; exactly one lit column per
+frame; the playhead steps every 9 frames and walks the 32 columns in
+order — which is also the proof the whole loop runs, `SOUND`s
+included, since any BASIC error stops it. The gate reads through
+`VID_BASE`, having first been written with a computed screen address
+and caught by the scroll — the exact mistake the rule exists for.
+
 ## 5. Adding one
 
 1. Write `demos/name.bas`. Keep it BASIC, keep it under 80 characters a

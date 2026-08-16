@@ -1184,6 +1184,72 @@ def cobra_flips(code, syms):
           % (fa, la))
 
 
+SYNTH_TRACKS = [
+    "Q   :   :   R   Q   :   :   M O ",
+    "T VT:RQMO T XVTQ:M YXVTQ:M QRQO ",
+    "AM AMA MHT HTH TJV JVJ VFR FRF R",
+]
+
+
+def synth_screen(code, syms):
+    """SYNTH's contract: the screen is the sequencer's memory.
+
+    The port keeps the original's trick whole -- the play loop PEEKs
+    the note characters off the text screen -- so the gate checks the
+    same bytes: rows 3-5, columns 7-38 of the mode 1 map must hold the
+    c64-synth DEFAULT_TRACKS verbatim, and the playhead attribute must
+    sweep one column every nine frames, which is the chosen 150 ms
+    step. The playhead advancing is also the proof the whole loop runs
+    -- a BASIC error anywhere, SOUND included, stops it.
+    """
+    src = [l for l in open(os.path.join(ROOT, "demos", "synth.bas"),
+                           encoding="utf-8").read().splitlines()
+           if l.strip()]
+    M = B.Machine(code, syms, render=True)
+    M.settle()
+    for ln in src:
+        H.line(M.m, syms, ln)
+    M.m.type(RUNCMD)
+    M.m.run(until=syms["h_vsync.vw"], budget=400_000_000)
+    io = {v["name"]: v["addr"] for v in ioregs.registers().values()}
+    rd = M.m.bus.read
+    check(rd(io["VID_MODE"]) & 0x0F == 1, "the demo is in mode 1",
+          "VID_MODE reads %02X" % rd(io["VID_MODE"]))
+
+    # through the machine's own base -- never a computed screen
+    # address (the rule this gate first violated, like every harness
+    # before it)
+    base = rd(io["VID_BASE_L"]) | (rd(io["VID_BASE_H"]) << 8)
+    rows = []
+    for r in (3, 4, 5):
+        rows.append("".join(chr(M.m.bus.mem[base + r * 160 + (7 + i) * 2])
+                            for i in range(32)))
+    check(rows == SYNTH_TRACKS,
+          "the screen holds the c64-synth tracks, verbatim",
+          "row 3 reads %r" % rows[0])
+
+    # the playhead: the lit attribute column, sampled every frame
+    M.m.run_frame(30)
+    seen = []
+    for _ in range(46):
+        M.m.run_frame(1)
+        b = rd(io["VID_BASE_L"]) | (rd(io["VID_BASE_H"]) << 8)
+        lit = [i for i in range(32)
+               if M.m.bus.mem[b + 3 * 160 + (7 + i) * 2 + 1] == 145]
+        seen.append(lit[0] if len(lit) == 1 else -1)
+    check(-1 not in seen, "exactly one column is lit on every frame",
+          "samples: %s" % seen[:12])
+    moves = [i for i in range(1, len(seen)) if seen[i] != seen[i - 1]]
+    gaps = [b - a for a, b in zip(moves, moves[1:])]
+    check(gaps and all(g == 9 for g in gaps),
+          "the playhead steps every 9 frames -- 150 ms, the chosen tempo",
+          "gaps between moves: %s" % gaps[:8])
+    steps = [seen[i] for i in moves]
+    check(all((b - a) % 32 == 1 for a, b in zip(steps, steps[1:])),
+          "and it walks the 32 columns in order",
+          "columns visited: %s" % steps[:8])
+
+
 def wave_lockstep(code, syms):
     """WAVE's colour contract, measured off the framebuffer.
 
@@ -1423,6 +1489,9 @@ def main():
 
     print()
     cobra_flips(code, syms)
+
+    print()
+    synth_screen(code, syms)
 
     print()
     wave_lockstep(code, syms)
