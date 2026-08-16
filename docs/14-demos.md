@@ -252,6 +252,14 @@ contour bands in the picture are those rectangles.
 pass: the value is already in hand, so the mirror costs four more
 `POKE`s and saves reading 30,720 bytes back.
 
+**The step is 1.5 units, not 2, and that is the framing.** Two units
+over 128 columns forces a view exactly 4.0 wide; the set is 2.25 across,
+so a quarter of the picture sat outside it, escaping on the first
+iteration as one flat band of colour. `I*3/2` is still integer and steps
+1,2,1,2 — 1.5 on average — which gives 2.97 across by 2.81 down: the set
+and very little else. It also samples finer, so more escape counts occur
+and the colour count rose from 45 to 50.
+
 **Why it is not 256 colours.** The distinct colour count is bounded by
 the iteration cap, not by the palette: 64 iterations can produce at most
 64 values. Raising the cap to 128 gained one — this view simply does not
