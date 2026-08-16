@@ -213,17 +213,21 @@ cannot. Pixel coordinates are the **logical** grid of the current mode
 | | |
 |---|---|
 | `PLOT x, y, c` | one pixel. `c` is masked to the mode's depth (`AND 15` in mode 4) |
-| `HLINE x, y, n, c` | `n` pixels rightward from (x,y), one store each — the fast fill |
-| `LINE x0, y0, x1, y1, c` | Bresenham, any slope, endpoints included |
+| `LINE x0, y0, x1, y1, c` | Bresenham, any slope, endpoints included. **It is machine code, and that is the point** — a span drawn by a BASIC loop costs a statement a pixel, which is ~15× dearer than the same pixels through here (`WAVE` in [14-demos.md](14-demos.md)) |
 | `CLG c` | the whole surface to colour `c`, ~30 ms. Do it once, not per frame |
-| `MODE n` | one of the seven presets in §4 — loads base, stride and depth together, which is why it is a command and the rest are not |
+| `MODE n` | one of the seven presets in §4 — loads base, stride and depth together, which is why it is a command and the rest are not. **It turns the cursor back on**: `MODE` runs `con_geom`, which writes `$11` to `CUR_CTRL` because the cursor exists in every mode now, so `CURSOR 0` belongs *after* `MODE`, never before — the other order leaves a blinking cell in the corner of a bitmap screen |
 | `GTEXT x, y, s$, c` | 8×8-cell text in any bitmap mode: set pixels paint `c`, clear pixels paint 0 (opaque). The face is the editor's own Spleen, resampled to 8×8, ASCII 32-127, seeded by boot at VRAM `$FC00` — 8 bytes a glyph, so `$FC00 + (ASC(ch)-32)*8` |
 | `TIME` | there isn't one — read the frame counter: `T=PEEK($FF2D)+PEEK($FF2E)*256`, 59.97 a second, and `$FF2F` is the third byte if you want more than 18 minutes |
 | `VSYNC` | hold until the next frame starts — **the pacing primitive**. A loop doing `VSYNC` once per pass runs at exactly 60 Hz |
 
-### The five that are `POKE`s now
+### The six that are `POKE`s now
 
-`SCROLL`, `PALETTE`, `TILE`, `VPOKE` and `SPRITE` were removed. Each
+`SCROLL`, `PALETTE`, `TILE`, `VPOKE`, `SPRITE` and `HLINE` were
+removed — the same six §10 counts in `TOKTAB`. **This section said
+"five" and left `HLINE` in the table above as a live statement**,
+which is the worst shape a stale document takes: it advertised "the
+fast fill" to anyone asking how to draw a span quickly, and the token
+dispatches to `bad`. Each
 was a short sequence of writes to registers, and none of them did
 anything a program cannot do itself now that every register is
 documented in [04a-registers.md](04a-registers.md). It returned **234
@@ -237,6 +241,7 @@ five and not `MODE`.
 | `SCROLL x, y` | `POKE $FF16, x` · `POKE $FF18, y` |
 | `TILE x, y, t, a` | the map entry through the VRAM port: address `y * 128 + x * 2`, then `t` and `a` |
 | `SPRITE n, x, y, img, a` | `POKE $FF2A, n * 8`, then eight bytes to `$FF2B`, then `POKE $FF2C, 1` — laid out below |
+| `HLINE x, y, n, c` | `POKE $FF34, x AND 255` · `POKE $FF35, x / 256` · `POKE $FF36, y AND 255` · `POKE $FF37, y / 256`, then `POKE $FF38, c` `n` times — **`PIX_DATA` steps X itself**, so a horizontal run is one store a pixel and a vertical one is three. Measured: 27 frames against 88 for twenty 192-pixel spans. Reach for `LINE` first all the same |
 
 **A VRAM run is now cheaper, not dearer.** `VPOKE` reset the address
 on every call; setting it once and letting the port's own step carry

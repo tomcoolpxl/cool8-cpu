@@ -119,6 +119,18 @@ def main():
     # SDL2's cmake_minimum_required predates what cmake 4 will still
     # speak to; this is cmake's own documented floor for exactly that.
     env.setdefault("CMAKE_POLICY_VERSION_MINIMUM", "3.5")
+    # **Say that it is building.** `--features gui` drags in SDL2, and
+    # SDL2 is vendored, so coming from the default (parity) build this
+    # compiles C for minutes with `capture_output` swallowing every line
+    # cargo prints. A silent terminal for that long is indistinguishable
+    # from a hang, and it got reported as "the emulator window does not
+    # appear" -- which sends you looking at SDL, at the window manager,
+    # at the flash image, at anything but a compile that had not
+    # finished. The build stays captured (its output is noise when it
+    # succeeds); only the fact of it is announced.
+    print("  building cool8rs --features gui "
+          "(SDL2 is vendored; first build after a plain one takes "
+          "minutes)...", flush=True)
     r = subprocess.run(["cargo", "build", "--release", "--features", "gui"],
                        cwd=os.path.join(ROOT, "rust"),
                        capture_output=True, text=True, env=env)
@@ -126,6 +138,7 @@ def main():
         print(r.stdout, r.stderr)
         return 1
 
+    print("  window up: %s" % os.path.basename(EXE), flush=True)
     return subprocess.run(cmd).returncode
 
 

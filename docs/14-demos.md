@@ -266,6 +266,70 @@ the iteration cap, not by the palette: 64 iterations can produce at most
 contain many high escape counts. More colour needs a zoom or continuous
 colouring, not a bigger number.
 
+### `WAVE` — a sine sweep with a gradient trail
+
+![WAVE](img/demo-wave.png)
+
+A full-width horizontal line follows a sine down mode 6's 256×240 and
+leaves a sixty-four-line trail behind it: newest drawn white, the one
+before it aged into the gradient, the oldest erased. Sixty-four
+positions in a ring, which is `RAINBOW`'s trick at four times the
+length.
+
+**A horizontal span really is cheaper than a vertical one, and the
+reason is in the hardware.** `PIX_DATA` auto-increments X (§5.7), so a
+horizontal run is one store a pixel while a vertical one has to rewrite
+X and Y for every pixel — three. Measured from BASIC, twenty spans of
+192 pixels: **27 frames horizontal against 88 vertical, 3.3×**. `HLINE`
+was a keyword once and this is what replaced it.
+
+**And it does not matter, because hand-poking is the wrong primitive.**
+The first version drew its spans that way — 512 `POKE`s a frame — and
+ran at **four iterations a second**. The profile says why: `h_poke` was
+**3.9 %** of the clocks and `prim`/`stmt`/`erel`/`eval` were **64 %**.
+BASIC was not storing pixels, it was *parsing statements about* storing
+pixels, and the direction of the span is noise beside that. `LINE` is
+Bresenham in machine code, one statement for the whole span: the same
+512 pixels a frame, **60 Hz, `VSYNC`-paced**. The lesson generalises —
+in this BASIC the cost of a loop is the statements in it, so the win is
+never a cheaper store, it is a primitive that stores without being
+asked again.
+
+**Two counters stepping integers mod 256 are phase-locked, always.**
+The second oscillator stepped 3 against the first's 1, which makes
+`B = 3A` — not a second voice but a fixed harmonic, and its peaks
+cancelled the fundamental's. The wave reached **87 of 240 rows** and
+repeated exactly every 256 frames. The fix is a modulus, not a step:
+the amplitude's counter wraps at **251, coprime to 256**, so the pair
+repeats every `lcm(251, 256)` = 64,256 frames — eighteen minutes.
+Coverage then climbs 107 → 191 rows over the first minute and the
+picture never settles.
+
+**Palette entry 0 is the border.** Starting the ramp at 0 turned the
+whole overscan electric blue, which is not a bug in the demo so much as
+a fact about the video path worth writing down: entry 0 is the
+background *and* the frame around it. The ramp is entries 1–247, 0 is
+the dark ground, 255 is the leading line.
+
+**This demo overwrites all 256 palette entries**, which §3 says a demo
+may not do quietly. The ramp is built at run time rather than typed as
+`DATA`: `#10F` electric blue through violet to `#F6B` hot pink,
+mirrored at 124 so the cycle has no seam.
+
+**Twelve-bit colour bounds a gradient long before the palette does.**
+248 entries are available, but that hue path crosses about **fifteen**
+distinguishable steps — R runs 1 to 15 and the other channels trail
+it — so consecutive entries are frequently the same colour. Stepping
+the trail's index by one spanned seven of those steps and put **8
+colours** on screen; stepping by four spans the whole ramp and puts
+**22**. Mode 6's 256 entries buy a *smooth* gradient, not a long one.
+
+**The sine table is 65 `SIN` calls, not 256.** A quarter wave mirrored
+three ways fills all 256 entries — `S(128-i)`, `-S(128+i)`, `-S(256-i)`
+— which matters only because the last of those runs off the end of
+`DIM S(255)` at `i = 0`, so the mirror loop starts at 1 and the two
+axis points are stored by hand.
+
 ## 5. Adding one
 
 1. Write `demos/name.bas`. Keep it BASIC, keep it under 80 characters a

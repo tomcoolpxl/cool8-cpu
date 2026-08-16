@@ -307,7 +307,7 @@ RUN
 | the text screen | `m.text()`, `m.row(r)`, `m.shows("42")` |
 | what it just executed | `m.trace(n, syms)` then `print(m.trace_report(rows))` — both machines; `into=False` steps over `CALL`s |
 | who wrote to an address | `m.watch(lo, hi)` then read `m.hits` — `(pc, addr, value)` |
-| where the clocks went | `m.profile(syms, org, end)` then `m.profile_report()` |
+| where the clocks went | `dbg.Profile(syms, org, end)` then `.run(m)` and `.report()` — **not** `m.profile()`/`m.profile_report()`, which this table named for months and neither machine has ever had |
 
 **`m.type()` is the serial console; `m.key()` is the keyboard.** They are
 different drivers, a different interrupt and, until `sw/kbd.asm` existed,
@@ -336,7 +336,13 @@ about. `m.trace`/`m.trace_report` were described here and in
 [10-debugging.md](docs/10-debugging.md) while existing on neither
 machine, so the one suite that called them had a dead `--trace` mode.
 A documented tool that is not there is worse than none: it is the one
-you reach for.
+you reach for. **It happened again with the profiler**, in the table
+above, and the second failure was the interesting one: reaching for the
+absent `m.profile_report()` an agent wrote a replacement into
+`sim/harness.py` rather than looking for the one that existed — so a
+stale name in a pointer file very nearly bought a fourteenth copy of
+something. `sim/dbg.py` has owned routine-level attribution the whole
+time. Grep before you add.
 
 **Never loop on `cpu.step()`.** Only the machine advances the raster,
 the sound and the interrupt flags, so a bare stepping loop runs a
