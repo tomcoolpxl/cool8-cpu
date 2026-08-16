@@ -345,8 +345,16 @@ pub fn run(args: &Args) {
 
     let mut imgui = imgui::Context::create();
     imgui.set_ini_filename(None);      // no stray .ini beside the binary
-    imgui.io_mut().config_flags |=
-        imgui::ConfigFlags::NAV_ENABLE_KEYBOARD;
+    // **No keyboard navigation of the bar, deliberately.** With
+    // NAV_ENABLE_KEYBOARD, clicking Play or the disc combo left the
+    // widget holding ImGui's nav focus, `want_capture_keyboard` stayed
+    // true, and every key after that fed the bar instead of the
+    // machine -- SPACE, ImGui's activate key, most visibly: COBRA's
+    // mode switch simply never arrived, while the same press through
+    // the VM's keyboard queue worked, which is what localised it here.
+    // The bar is mouse-driven and its shortcuts (F1/F10/F11/F12,
+    // Alt+Enter) are the key handler's own; nav bought nothing and
+    // cost the machine its keyboard.
     fonts(&mut imgui);
     let mut platform = imgui_sdl2_support::SdlPlatform::new(&mut imgui);
     // **`output_srgb` is false, and that is the whole point.**
