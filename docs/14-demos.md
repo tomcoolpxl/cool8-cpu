@@ -383,6 +383,21 @@ reachable no matter what the palette holds, because a colour has to be
 rows 1-239, so no two rows share a colour: **239 measured on screen, at
 every sample, with zero background rows**.
 
+**Two different black gaps, and only one was a bug.** The mirror was
+`240-S`, so the table spanned rows 1-239 and **row 0 was never painted
+at all** -- a permanent black line along the top, by construction. It is
+`239-S` now and every row of 0-239 is covered.
+
+The other is not a bug and cannot be removed here: the head is drawn
+first and the rows behind it are filled one `LINE` at a time, so a row
+shows the background until its turn comes and the raster can scan the
+span mid-fill. That is what a single-buffered machine painting across a
+frame looks like. **The step is three rows a frame rather than six**,
+which takes the worst case from eight spans to five and roughly halves
+the window; the sweep is 4 s. Drawing the whole span inside vblank would
+end it outright and does not fit -- vblank is about 1.4 ms and five
+spans are 3.4.
+
 **Earlier ramps grouped rows in twos and threes, and the arithmetic
 says why.** A smooth ramp moves one channel by one at a time, so the
 distinct colours it can show equals the steps it takes through 12-bit
