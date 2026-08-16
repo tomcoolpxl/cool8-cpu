@@ -416,25 +416,33 @@ wave reveals rather than a gradient that drifts, because those two
 things are the same variable and cannot both be had at 240 rows and 240
 entries.
 
-**The dark lines spread evenly down the screen were the blues.** A hue
-circle at full saturation does not hold brightness: the eye weighs blue
-at 0.114 against green's 0.587, so `#007` and `#00C` carry a luminance
-of under 1.5 of 15 while the yellows carry 13. One blue-dominant entry
-per rotation, three rotations, and they read as dark grey rules at
-regular intervals -- not grey in fact, no entry has a channel spread
-under 4, just dark enough to lose their hue.
+**One rotation of the spectrum, and the arithmetic of where the slack
+goes.** 240 distinct colours a click apart is 240 clicks of movement,
+and **one turn of the hue circle supplies only 90** -- six edges of
+fifteen in 12-bit RGB. The other 150 have to come from somewhere that
+is not hue, and the whole design question is where they land.
 
-The ramp is held at constant *luminance* now rather than constant
-brightness. Each hue is mixed with exactly the white that lifts it to
-the target: `a` is the most saturation that reaches it without
-clipping, `t` the white underneath. Blue comes out periwinkle and
-yellow olive, and **the whole ramp sits between 6.4 and 9.1 instead of
-0.8 and 13.0**. The cost is saturation -- it is a muted rainbow, not a
-vivid one, and that is the trade the 4-bit channels impose.
+Spent as a brightness ripple they are bands: the best a ripple managed
+was 222 distinct at thirty visible pulses. Spent as three rotations
+they are three passes of the same colours, which is what the ramp did
+before, and its blue-dominant entries -- blue carries 0.114 of
+perceived luminance against green's 0.587 -- came out near-black three
+times over, reading as dark rules spread evenly down the screen.
 
-The brightness breath survives at 0.75, down from 3.5, only because at
-zero the three rotations land on each other and the count falls short
-of 240. Steps stay tight: 157 single-click, 62 two, 21 three.
+They are spent here as the smallest deviation from the ideal circle at
+each entry: walk the hue circle and take the nearest unused colour a
+click or two from the last. **Mean deviation 0.98 of a click, worst
+1.44**, so the slack is texture rather than banding. 240 distinct, 91
+single-click steps and 149 of two.
+
+The blue quarter is still the darkest part of the ramp, luminance 1.6
+against the yellows' 13.4. That is not an artefact to be removed -- it
+is what a saturated spectrum looks like, and holding luminance flat
+instead costs the saturation that makes it a rainbow at all.
+
+The ends need not meet. The colour is the row, not a cycling counter,
+so entry 0 and entry 239 are opposite edges of the screen and never
+touch.
 
 **Earlier ramps grouped rows in twos and threes, and the arithmetic
 says why.** A smooth ramp moves one channel by one at a time, so the
