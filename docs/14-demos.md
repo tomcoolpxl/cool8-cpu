@@ -552,9 +552,10 @@ checked against the source: its instant cut on rests matches the
 original's zeroed oscillator, the snare split off correctly, and the
 one thing out of reach is the sawtooth itself -- square is the only
 tone this chip has. What was off was balance, now the original's own
-ratios (lead .35 / bass .3 / arp .2 mapped to 10/9/7). The **drone**
-owns row 7 -- the bar roots it always played, visible and typable --
-and row 8 is the **horn**: brassy mid-register stabs of each bar
+ratios (lead .35 / bass .3 / arp .2 mapped to 10/9/7). The drone is
+gone -- awful, by verdict -- and row 7 is an empty, beat-marked
+scratch track on a clean mid square: type into it and it plays,
+staccato between the bar marks. Row 8 is the **horn**: brassy mid-register stabs of each bar
 root's fifth on the bar mid-beats, derived by lettering seven
 semitones up the bass line. **Space types the bar mark**: on a beat
 column (every fourth, the original's own convention) it writes `:`,

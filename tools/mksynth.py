@@ -104,9 +104,10 @@ BODY = """1 GOTO 100
 45 RETURN
 50 N=PEEK(C+800)-64:IF N>0 AND M(5)=1 THEN K=Z(N+77):U=6:SOUND 5,K,6,0
 51 N=PEEK(C+640)-64:IF N>0 AND M(4)=1 THEN SOUND 4,Z(N+25),4,0
-52 N=PEEK(C+960)-64:IF N>0 AND M(6)=1 THEN SOUND 6,Z(N+51)/2,3,0
-53 N=PEEK(C+1120)-64:IF N>0 AND M(7)=1 THEN SOUND 7,Z(N+25),8,0
-54 IF N<1 AND M(7)=1 THEN SOUND 7,100,0,0
+52 N=PEEK(C+960)-64:IF N>0 AND M(6)=1 THEN SOUND 6,Z(N+25),6,0
+53 IF N<1 AND M(6)=1 THEN SOUND 6,100,0,0
+54 N=PEEK(C+1120)-64:IF N>0 AND M(7)=1 THEN SOUND 7,Z(N+25),8,0
+55 IF N<1 AND M(7)=1 THEN SOUND 7,100,0,0
 56 N=PEEK(C+480)-64:IF N=19 AND M(3)=1 THEN Y=11:J=2500:O=1:SOUND 3,2500,11,1
 57 IF N=11 AND M(3)=1 THEN Y=11:J=120:O=0:SOUND 3,120,11,0
 58 IF N=8 AND M(3)=1 THEN Y=6:J=9000:O=1:SOUND 3,9000,6,1
@@ -150,7 +151,7 @@ BODY = """1 GOTO 100
 116 PRINT "4 DRUM %s"
 117 PRINT "5 PAD  %s"
 118 PRINT "6 FLUTE%s"
-119 PRINT "7 DRONE%s"
+119 PRINT "7      %s"
 120 PRINT "8 HORN %s"
 121 PRINT
 122 PRINT "       TYPE IN THE GRID - IT PLAYS IT"
@@ -179,10 +180,12 @@ def main():
     flute = "".join(FLUTE.get(i, " ") for i in range(32))
     lead = TRACKS[0]
     assert all(lead[i] in " :" for i in FLUTE), "flute clashes the lead"
-    # the drone's own row: the bar roots, sustained -- what it always
-    # played, now visible and editable. The horn stabs the root's fifth
-    # on each bar's mid-beat, seven semitones up the same letters.
-    drone = pad
+    # the drone is gone -- awful, by verdict. Row 7 is an empty,
+    # beat-marked scratch track on a clean mid square: type into it
+    # and it plays, staccato between the bar marks; empty, silence.
+    # The horn stabs the root's fifth on each bar's mid-beat, seven
+    # semitones up the same letters.
+    drone = " " * 32
     horn = "".join(chr((ord(TRACKS[2][i - 4]) - 65 + 7) % 26 + 65)
                    if i % 8 == 4 else " " for i in range(32))
 
