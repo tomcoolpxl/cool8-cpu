@@ -388,15 +388,33 @@ every sample, with zero background rows**.
 at all** -- a permanent black line along the top, by construction. It is
 `239-S` now and every row of 0-239 is covered.
 
-The other is not a bug and cannot be removed here: the head is drawn
-first and the rows behind it are filled one `LINE` at a time, so a row
-shows the background until its turn comes and the raster can scan the
-span mid-fill. That is what a single-buffered machine painting across a
-frame looks like. **The step is three rows a frame rather than six**,
-which takes the worst case from eight spans to five and roughly halves
-the window; the sweep is 4 s. Drawing the whole span inside vblank would
-end it outright and does not fit -- vblank is about 1.4 ms and five
-spans are 3.4.
+The other was the head being drawn first and the rows behind it filled
+one `LINE` at a time, so a row showed the background until its turn and
+the raster could scan the span mid-fill. Slowing the sweep only shrank
+that window, and **slowing it made the colours worse** -- 12 s a sweep
+measured 162 distinct where 4 s measured 224.
+
+**The colour comes from the row now, not from a counter, and that fixed
+both.** A counter cannot be made to work here. Each row is painted twice
+a period, once going down and once coming back, so the counter advances
+478 times across 240 entries; the last-paint values on screen span ~478
+and collapse into 240, and about a third of the rows collide at any
+speed. Row-locked, `LINE 0,I,255,I,I+1`, the map is a bijection by
+construction: **240 distinct, always**, measured every half second over
+30 s.
+
+The same change removed the gaps outright, which was the part worth
+having. Repainting a row to the colour it already holds is invisible, so
+a half-finished fill cannot be seen -- there is nothing to expose. Only
+two rows change per frame: the head, and the one it left. The old head
+is cleared **before** the new one is drawn, so the worst a torn frame
+shows is no white line for one frame, never two. Measured over 30 s: 0
+black rows inside the band, never more than one white row.
+
+What it costs is the cycling trail. The trail is a fixed rainbow the
+wave reveals rather than a gradient that drifts, because those two
+things are the same variable and cannot both be had at 240 rows and 240
+entries.
 
 **Earlier ramps grouped rows in twos and threes, and the arithmetic
 says why.** A smooth ramp moves one channel by one at a time, so the
