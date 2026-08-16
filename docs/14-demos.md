@@ -494,6 +494,43 @@ reads registers through `bus.read()` — `bus.mem[]` is the RAM *under*
 the I/O page, and reading a register there is the mistake
 `cool8_soc_tb`'s "the page wins" section exists to catch.
 
+**SPACE switches to the hidden-line ship, and the profile chose its
+optimisations.** `python sim/test_run.py --profile cobra` is a tool
+now (the scratch version was written twice in one session, which is
+AGENTS.md's own threshold), and it measured the wireframe's frame as
+**31.5 % `CLG`, ~15 % nested-subscript expression machinery, ~13 %
+actual line drawing**. Mode B pays off both hogs and removes hidden
+lines with the same instrument:
+
+- **Backface culling runs in the generator, not on the machine.** The
+  spin is 72 fixed frames, so which edges show is knowable offline: a
+  face when its rotated normal's view-z goes negative — the sign
+  pinned by the stern, visible at frame 0 — and an edge when either of
+  its faces does, out of the published face table. 14–32 edges a
+  frame, mean 23.6, against 38. The rear-panel details all live in
+  face 9's plane and appear with the stern as one unit, which is the
+  Elite look arrived at the Elite way.
+- **Flat per-slot endpoint arrays.** Startup unpacks each frame's
+  visible edges into four arrays; `LINE H(K),J(K),L(K),M(K),10` is
+  four single-subscript arguments, no `U(B+E(K))` nesting. 1,698
+  slots, 13.6 KB of user RAM — spent deliberately, the whole area was
+  opened for it.
+- **Erase replaces `CLG`.** A page holds the frame from two flips ago,
+  whose edge list is precomputed like every other; ~24 black lines
+  beat clearing 24,576 bytes. Two `CLG`s cover mode entry, when the
+  pages still hold the other mode's picture.
+
+**Measured, gate-enforced: mode A 5 flips per 30 display frames, mode
+B 7 — about 8.5 and 14 fps — with 493 lit bytes shown against 820**,
+hidden lines really gone, and the glass whole on every sampled frame
+in both modes. Profiled after, `CLG` is off mode B's table entirely
+and line walking is the honest top cost at ~22 %. **The next lever is
+the interpreter's, not the demo's**: name lookup (`nentry`, `nlook.*`,
+`varidx`, `aelem`) is ~36 % of a mode B frame — a `nlook` memo in the
+shape of `prg_find`'s two-slot one is the recorded candidate, and the
+flat-array trick would migrate to the see-through wireframe if wanted.
+
+
 ## 5. Adding one
 
 1. Write `demos/name.bas`. Keep it BASIC, keep it under 80 characters a

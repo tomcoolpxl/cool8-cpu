@@ -30,7 +30,9 @@ from harness import check                                # noqa: E402
 sys.path.insert(0, os.path.join(H.ROOT, "tools"))
 
 import test_basic as B                                     # noqa: E402
+import dbg                                                 # noqa: E402
 import ioregs                                              # noqa: E402
+import memmap                                              # noqa: E402
 
 ROOT = H.ROOT
 
@@ -1140,32 +1142,58 @@ def cobra_flips(code, syms):
     # and VID_BASE the drawing one; sampled every display frame, the
     # two must stay a page apart, the shown page must always hold a
     # full wireframe, and its content may change only when DBASE flips.
+    def watch(n):
+        """n display frames: flips seen, faults seen, mean lit bytes.
+
+        A fault is the drawing and display bases not a page apart, a
+        shown page under 150 lit bytes, or shown content changing
+        without a flip -- the black frame and the mid-draw exposure,
+        by their signatures."""
+        flips = faults = 0
+        lits = []
+        prev_d = prev_body = None
+        for _ in range(n):
+            M.m.run_frame(1)
+            d, w = rd(io["VID_DBASE_H"]), rd(io["VID_BASE_H"])
+            if (d ^ w) != 0x60:
+                faults += 1000
+            shown = bytes(M.m.video.vram[(d << 8):(d << 8) + 0x6000])
+            lit = sum(1 for x in shown if x)
+            lits.append(lit)
+            if lit < 150:
+                faults += 1
+            if prev_d is not None:
+                if d != prev_d:
+                    flips += 1
+                elif shown != prev_body:
+                    faults += 1
+            prev_d, prev_body = d, shown
+        return flips, faults, sum(lits) // len(lits)
+
     M.m.run_frame(20)      # past the start-up blank: the first page
                            # shown has nothing on it until the first
                            # drawn frame flips in
-    flips, low = [], 0
-    prev_d, prev_body = None, None
-    for _ in range(30):
-        M.m.run_frame(1)
-        d, w = rd(io["VID_DBASE_H"]), rd(io["VID_BASE_H"])
-        check_pair = (d ^ w) == 0x60
-        if not check_pair:
-            low += 1000              # a page-apart violation is fatal
-        shown = bytes(M.m.video.vram[(d << 8):(d << 8) + 0x6000])
-        lit = sum(1 for x in shown if x)
-        if lit < 200:
-            low += 1
-        if prev_d is not None and d != prev_d:
-            flips.append(1)
-        elif prev_d is not None and shown != prev_body:
-            low += 1                 # shown page changed without a flip
-        prev_d, prev_body = d, shown
-    check(low == 0,
+    fa, xa, la = watch(30)
+    check(xa == 0,
           "the shown page is always whole: never blank, never mid-draw",
-          "%d bad samples of 30" % low)
-    check(2 <= len(flips) <= 8, "the display flips as frames finish",
-          "%d flips in 30 frames" % len(flips))
-    print("      %d flips in 30 display frames -- one per drawn frame" % len(flips))
+          "%d bad samples of 30" % xa)
+    check(2 <= fa <= 8, "the display flips as frames finish",
+          "%d flips in 30 frames" % fa)
+
+    # ---- SPACE: mode B, the same ship with hidden lines removed and
+    # the profile's hogs paid off -- culling and erase lists computed
+    # by the generator, endpoints unpacked flat at startup. The keys
+    # go through the keyboard, because INKEY reads the keyboard.
+    M.m.key(" ")
+    M.m.run_frame(90)          # two CLG entries, then steady state
+    fb2, xb, lb = watch(30)
+    check(xb == 0, "hidden-line mode keeps the glass whole",
+          "%d bad samples of 30" % xb)
+    check(fb2 > fa, "and it is faster -- more flips in the same window",
+          "mode A %d flips, mode B %d" % (fa, fb2))
+    check(lb < la, "and lighter -- hidden lines are really gone",
+          "mode A %d lit bytes shown, mode B %d" % (la, lb))
+    print("      mode A %d flips/30 frames, %d lit; mode B %d flips, %d lit" % (fa, la, fb2, lb))
 
 
 def wave_lockstep(code, syms):
@@ -1339,9 +1367,48 @@ def asmdump():
     return 0
 
 
+def profile_demo(name, keys=None, insns=3_000_000):
+    """`python sim/test_run.py --profile <demo> [keys]` -- where a
+    running demo's clocks go, by routine.
+
+    Boots, injects demos/<demo>.bas, RUNs it to its first VSYNC wait
+    plus thirty frames of steady state, presses `keys` at the keyboard
+    if given (COBRA's hidden-line mode is `--profile cobra " "`), then
+    charges `insns` instructions to their routines with `dbg.Profile`.
+    The scratch version of this was written twice in one session, which
+    is the definition of belonging here (AGENTS.md, and the profiler
+    row of its tooling table).
+    """
+    code, syms = B.build()
+    M = B.Machine(code, syms, render=True)
+    M.settle()
+    src = [l for l in open(os.path.join(ROOT, "demos", name + ".bas"),
+                           encoding="utf-8").read().splitlines()
+           if l.strip()]
+    for ln in src:
+        H.line(M.m, syms, ln)
+    M.m.type(RUNCMD)
+    M.m.run(until=syms["h_vsync.vw"], budget=800_000_000)
+    M.m.run_frame(30)
+    if keys:
+        M.m.key(keys)
+        M.m.run_frame(60)              # let the mode change settle
+    p = dbg.Profile(syms, memmap.ORG, memmap.ORG + len(code))
+    p.run(M.m, limit=insns)
+    tot = sum(p.by.values())
+    print("  %s: %s cycles profiled" % (name.upper(), "{:,}".format(tot)))
+    for who, c in sorted(p.by.items(), key=lambda kv: -kv[1])[:14]:
+        print("    %-14s %9s  %4.1f%%"
+              % (who, "{:,}".format(c), 100.0 * c / tot))
+    return 0
+
+
 def main():
     if len(sys.argv) > 1 and sys.argv[1] == "--asmdump":
         return asmdump()
+    if len(sys.argv) > 2 and sys.argv[1] == "--profile":
+        return profile_demo(sys.argv[2].lower(),
+                            sys.argv[3] if len(sys.argv) > 3 else None)
 
     print("  I5 -- RUN, typed at the editor")
     print()
