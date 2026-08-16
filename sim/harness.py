@@ -138,6 +138,34 @@ def key(m, syms, text, budget=40_000_000):
             raise SystemExit("the machine never went idle after %r" % ch)
 
 
+def line(m, syms, text):
+    """One line of BASIC into the running editor, in **one** round trip.
+
+    `key()` is what a person does and stays the thing to test with; this
+    is what a *builder* wants. Typing costs a round trip a character --
+    the PS/2 queue is sixteen deep and a key is two scancodes, so a line
+    cannot be delivered in one go and `key` settles after every one.
+    Five demos onto a disc was ninety seconds, nearly all of it waiting.
+
+    **The machine still tokenises it.** The text goes where `ed_read`
+    would have left it and the machine enters `ed_inject`, which is
+    `ed_enter` minus the screen scrape, so `sw/token.asm` remains the
+    only thing that turns BASIC into tokens -- the design
+    [14-demos.md](../docs/14-demos.md) section 2 exists to protect.
+
+    Every address is derived from the symbol table: LBUF, LLEN and the
+    entry point. **Nothing is written into RAM to make the call** -- the
+    return address is pushed, so the machine comes back to the PC it was
+    already sitting on. An earlier version poked `CALL / HALT` into four
+    bytes of low RAM, which needed a byte nothing else owned, and
+    `sw/lowram.asm` says in its own header that its map "has been
+    wrong". The fourth argument is the vestige of that and is ignored.
+    """
+    r = m.inject(syms["lbuf"], syms["llen"], syms["ed_inject"], 0, text)
+    if r != "done":
+        raise SystemExit("inject refused %r: %s" % (text[:40], r))
+
+
 _FONT = None
 
 

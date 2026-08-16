@@ -102,6 +102,28 @@ CASES = [
     ("PRINT of an expression",
      ["10 PRINT 2 + 3 * 4", "20 END"], "14"),
 
+    # ---- **The keyboard path, named rather than assumed.** Every case
+    # here goes in through `m.key()`, which is the real driver: the PS/2
+    # ISR, `sw/keymap.asm`, the editor's per-key handling and the screen
+    # it reads back. `tools/mkdemos.py` used to be the only thing
+    # exercising it end to end, and it did so as a *side effect* of
+    # building a disc -- so when it switched to `H.line` (one round trip
+    # a line instead of one a character, ninety seconds to five) that
+    # coverage would have vanished with nobody noticing. A side effect
+    # that disappears silently is not coverage. This is the same path,
+    # asserted on purpose, with a line long enough to span the editor's
+    # own wrap and a float to reach `snum`.
+    ("a long line typed at the keyboard stores and runs",
+     ["10 A# = 1.5 : B = 7 : C# = A# * B : PRINT C#",
+      "20 END"], "10.5"),
+
+    # The same line into an *integer*, which [D88] floors on the way in.
+    # Both halves matter here: the keyboard delivered it, and the store
+    # converted it.
+    ("...and the same value floored into an integer",
+     ["10 A# = 1.5 : B = 7 : C = A# * B : PRINT C",
+      "20 END"], "10"),
+
     # ---- [D88]: a float crossing into an integer, which used to keep
     # raw bits. `PRINT` of the same expression was always right, so
     # these have to check the *stored* value, never the printed one --
@@ -927,6 +949,50 @@ def sprites(code, syms):
     return out
 
 
+def injected_matches_typed(code, syms):
+    """The gate for `H.line`: injecting a program must store the same
+    bytes as typing it.
+
+    **This lived in a scratch script and cost three rounds for it.** The
+    script read `PROGBOT` as if it were a pointer -- it is the constant
+    `$0200`, and `PROGEND` is the pointer -- so it compared six hundred
+    bytes of low RAM and CPU stack between two runs, reported a
+    difference that was the probe's own trampoline, and sent the
+    investigation after three hypotheses that were all explaining a
+    symptom that did not exist. A private idea of where the program
+    lives is the trap [AGENTS.md](../AGENTS.md) names, wearing a
+    different hat, and the answer is the one that file gives: put it in
+    the suite that already holds the machine.
+
+    Floats are in the program on purpose. A float literal is the only
+    thing that tokenises *longer* than its source text, so it is the
+    case where a wrong length would show, and it is what the scratch
+    script appeared to break.
+    """
+    prog = ["10 A = 1", "20 A# = 1.5", "30 B = A# * 2",
+            '40 PRINT "FOR EVER"', "50 REM A COMMENT WITH PRINT IN IT",
+            "60 END"]
+
+    def stored(M):
+        # PROGBOT is a constant and PROGEND is the pointer. Reading the
+        # first as a pointer is what went wrong before.
+        end = (M.m.bus.read(syms["progend"])
+               | (M.m.bus.read(syms["progend"] + 1) << 8))
+        return bytes(M.m.bus.read(a) for a in range(0x0200, end))
+
+    typed = B.Machine(code, syms)
+    typed.settle()
+    for ln in prog:
+        typed.cmd(ln)
+
+    injected = B.Machine(code, syms)
+    injected.settle()
+    for ln in prog:
+        H.line(injected.m, syms, ln)
+
+    return stored(typed), stored(injected)
+
+
 def syscall(code, syms):
     """`SYS addr` runs machine code, which is D63's whole replacement.
 
@@ -1022,6 +1088,12 @@ def main():
         check(shows(M, want), what,
               "screen:\n      " + "\n      ".join(
                   r for r in M.screen() if r.strip()))
+    print()
+    a, b = injected_matches_typed(code, syms)
+    check(a == b and len(a) > 40,
+          "an injected program stores the same bytes as a typed one",
+          "typed %d bytes, injected %d" % (len(a), len(b)))
+
     print()
     M = syscall(code, syms)
     check(shows(M, "7"), "SYS runs machine code at an address",

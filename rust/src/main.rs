@@ -928,6 +928,87 @@ fn run_serve() {
                 s.m.bus.uart.feed(&bytes_of(f[1]));
                 "ok".to_string()
             }
+            // **inject: one line of BASIC in one round trip.**
+            //
+            // Typing is a round trip a *character* -- the PS/2 queue is
+            // sixteen deep and a key costs two scancodes, so a line
+            // cannot be delivered in one go and the caller must settle
+            // after each. Ninety seconds to put five demos on a disc,
+            // nearly all of it waiting.
+            //
+            // This writes the text where `ed_read` would have left it
+            // and enters `ed_inject`, which is `ed_enter` minus the
+            // screen scrape. **The machine still tokenises**: sw/token.asm
+            // stays the only thing that turns BASIC into tokens, which is
+            // what docs/14-demos.md section 2 is about. Nothing here knows
+            // a keyword.
+            //
+            // The trampoline goes at `scratch`, which the caller derives
+            // from the symbol table rather than this file guessing at a
+            // safe address -- $0200 is PROG and would eat the program.
+            // PC and SP are put back afterwards, so the editor resumes
+            // its wait exactly where `settle` left it.
+            "inject" if f.len() == 7 => {
+                let (lbuf, llen) = (num(f[1]) as u16, num(f[2]) as u16);
+                let entry = num(f[3]) as u16;
+                let _ = num(f[4]);   // was the trampoline
+                let budget = num(f[5]);
+                let text = bytes_of(f[6]);
+                if text.len() > 127 {
+                    // LBUF is 128 bytes; refusing names the fault rather
+                    // than writing over whatever follows it.
+                    "err line longer than LBUF".to_string()
+                } else {
+                for (i, &b) in text.iter().enumerate() {
+                    s.m.bus.write(lbuf + i as u16, b);
+                }
+                // **Blank the rest of LBUF, because a scraped line is
+                // blank there and the tokeniser reads it.** `ed_read`
+                // fills LBUF from the screen and trims to the last
+                // non-blank, so everything past LLEN is spaces. `snum`
+                // looks one byte past a number to see whether it
+                // continues -- so an injected line that left the *tail
+                // of the previous line* behind could have its last
+                // number run on into it. `20 A#=1.5:B=A#*2` vanished
+                // exactly that way, one line in six, while the other
+                // five stored perfectly.
+                for i in text.len()..128 {
+                    s.m.bus.write(lbuf + i as u16, b' ');
+                }
+                s.m.bus.write(llen, text.len() as u8);
+
+                // **The return address is pushed, not poked.** The first
+                // version wrote `CALL entry / HALT` into four bytes of
+                // low RAM and jumped there -- and low RAM is contested:
+                // every line carrying a float literal came out corrupt
+                // and ran on into the next record, because the float
+                // path writes over that block while `ed_inject` is still
+                // running, taking the HALT with it. `sw/lowram.asm` says
+                // in its own header that this map "has been wrong"; a
+                // byte free by *comment* rather than by claim is not
+                // free. So nothing is written into memory at all now:
+                // push the PC the machine is already sitting on as the
+                // return address, and it returns there by itself.
+                let (pc, sp) = (s.m.cpu.pc, s.m.cpu.sp);
+                s.m.cpu.sp = s.m.cpu.sp.wrapping_sub(1);
+                s.m.bus.write(s.m.cpu.sp, (pc >> 8) as u8);  // high first
+                s.m.cpu.sp = s.m.cpu.sp.wrapping_sub(1);
+                s.m.bus.write(s.m.cpu.sp, pc as u8);
+                s.m.cpu.pc = entry;
+                // Back at the same PC *and* the same SP is the return:
+                // the PC alone could be an idle loop coming round again.
+                let mut why = "budget";
+                for _ in 0..budget {
+                    if s.m.cpu.pc == pc && s.m.cpu.sp == sp {
+                        why = "done";
+                        break;
+                    }
+                    s.tick();
+                }
+                format!("ok {} {} {}", why, Regs::of(&s.m).csv(),
+                        s.m.bus.romen as u8)
+                }
+            }
             "scan" if f.len() == 2 => {
                 s.m.bus.kbd.feed(&bytes_of(f[1]));
                 "ok".to_string()

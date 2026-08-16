@@ -337,6 +337,29 @@ ed_enter:
         CALL con_setrow
         CALL con_nl
 
+; =====================================================================
+; ed_inject -- ed_enter with LBUF and LLEN already filled in.
+;
+; **A second entry point, not a second tokeniser.** Everything below
+; here is what `ed_enter` does once `ed_read` has scraped the screen:
+; skip spaces, decide line-number-or-direct, tokenise, store. A caller
+; that already has the text writes it into LBUF, sets LLEN, and enters
+; here -- so `sw/token.asm` remains the only thing in the world that
+; turns COOL8 BASIC into tokens, which is the whole of
+; [14-demos.md](../docs/14-demos.md) section 2.
+;
+; It exists because typing is a round trip a *character*: the PS/2 queue
+; is sixteen deep and a key costs two scancodes, so a line cannot be
+; delivered in one go and the harness settles after every one. Ninety
+; seconds to put five demos on a disc, nearly all of it waiting.
+;
+; The cursor block above is deliberately *not* part of this: an injected
+; line has no screen rows behind it, so EDR0/EDN would be meaningless.
+; Nothing above branches forward past here, which is what makes a label
+; in the middle safe -- AGENTS.md's rule about local labels belonging to
+; the global above them.
+; =====================================================================
+ed_inject:
         CLR  R0
         ST   [EDIP],R0
         CALL ed_skipsp

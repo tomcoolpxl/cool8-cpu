@@ -46,13 +46,33 @@ by accident on the first afternoon.
 `demos/*.bas` is what gets reviewed. `tools/mkdemos.py` formats the
 volumes, **types each source at the machine**, and lets `SAVE` write it.
 
-**It types rather than tokenises, and that is the whole design.** A
-program on disc is tokenised, and the only thing that knows the token
-table is `sw/token.asm`. A host-side tokeniser would be a second
-implementation of it and would drift the first time a keyword was added —
-which is the trap [AGENTS.md](../AGENTS.md) names first and this project
-has paid for a dozen times. Typing costs a few seconds a demo and cannot
-be wrong.
+**The machine tokenises, and that is the whole design.** A program on
+disc is tokenised, and the only thing that knows the token table is
+`sw/token.asm`. A host-side tokeniser would be a second implementation
+of it and would drift the first time a keyword was added — which is the
+trap [AGENTS.md](../AGENTS.md) names first and this project has paid for
+a dozen times.
+
+**It no longer types, and that is not a retreat from the above.**
+`H.line` writes the text where `ed_read` would have left it and enters
+`ed_inject` — `ed_enter` without the screen scrape — so every keyword,
+number and quote is still turned into tokens by the machine's own
+tokeniser. Nothing on the host knows what `PRINT` is worth.
+
+What it skips is the *keyboard*, which was the cost: a round trip a
+character, because the PS/2 queue is sixteen deep and a key is two
+scancodes, so a line cannot be delivered in one go and the harness
+settles after each. **Ninety seconds to put five demos on a disc,
+nearly all of it waiting.** One round trip a line instead: measured
+**19.6× on a six-line program**, and the stored program came back
+byte-for-byte identical, floats included — which is the gate
+`sim/test_run.py` keeps rather than a claim made here.
+
+**The keyboard is still proven, deliberately.** Typing every character
+was the only thing exercising the real driver end to end — the PS/2
+ISR, `sw/keymap.asm`, the editor's per-key handling — and it did so as
+a *side effect* of building a disc. A side effect can vanish without
+anyone noticing, so it is a named case in `sim/test_run.py` now.
 
 So a demo is edited as text, rebuilt, and never patched as a binary.
 
@@ -344,25 +364,32 @@ mirrored at 124 so the cycle has no seam.
 
 **The colour count is the ramp's *path length*, not the palette's
 size** — the thing to know if a gradient ever looks thin here. A smooth
-ramp moves one channel by one at a time, so the number of distinct
-colours it can show equals the number of steps it takes through 12-bit
-RGB space. The first ramp ran R 1→15, G 0→6, B 15→11: an L1 path of
-**24 steps, and it put 23 colours on screen**, with the other 224
-palette entries duplicates of those 23. Mode 6's 256 entries were never
-the constraint.
+ramp moves one channel by one at a time, so the distinct colours it can
+show equals the steps it takes through 12-bit RGB space. The first ramp
+ran R 1→15, G 0→6, B 15→11: an L1 path of **24 steps, 23 colours on
+screen**, with the other 224 entries duplicates of those 23. Mode 6's
+256 entries were never the constraint.
 
-The ramp is three segments now — `#001` → `#00F` → `#F0F` → `#FCF`,
-which is 14 + 15 + 12 = **41 steps, measured at 39 on screen**. Same
-hue family, same cost: it is a table built once at setup and the
-drawing does not know the difference.
+**And it was mirrored, which halved it again.** The mirror existed so
+the cycle had no seam where `E` wraps — at the cost of only ever
+visiting half the path. A *closed loop* needs no mirror: the ramp now
+runs the perimeter of the G = 0 plane, `#002` → `#00F` → `#F0F` →
+`#F02` → `#002`, which returns to its own start. **56 distinct, every
+step exactly one channel-unit, no seam** — measured at 51 on screen.
 
-**256 distinct is reachable and was not taken.** With G held at 0 the
-blue/purple/magenta plane is 16×16 = 256 colours, every one on-brand —
-but visiting all of them means *snaking*: R climbs 0→15, B ticks up, R
-descends 15→0, sixteen times. Sixteen dark-to-bright reversals down the
-screen instead of one sweep. That is a different picture, not a better
-one, and the choice is smoothness against count rather than a limit
-anyone has to live with.
+**It is lifted off the black corner deliberately.** The first closed
+loop passed through `#000`, which is the background, so the darkest
+part of the trail read as a gap in a demo whose whole point is that it
+has none. The loop's floor is `#002` and the ground is `#000`, so no
+painted row can equal it.
+
+**256 is reachable and was not taken.** The G = 0 plane *is* 16×16 =
+256 on-brand colours and a Hamiltonian cycle visits all of them one
+unit at a time. The cost is not speed and not a seam: any path covering
+all 256 crosses each brightness level sixteen times, so brightness
+oscillates sixteen times down the screen. That is geometry rather than
+effort. Snaking on B (luminance weight 1) rather than R (weight 3)
+thirds the swing if it is ever wanted.
 
 **The table is `DATA`, computed when this file was written.** 181
 values for the first quarter, mirrored three ways at run time —

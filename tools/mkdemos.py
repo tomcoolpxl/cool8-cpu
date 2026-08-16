@@ -89,10 +89,21 @@ def main():
 
     for f in sources():
         H.key(m, syms, "NEW\r")
+        # **`H.line`, not `H.key`: a round trip a line, not a
+        # character.** The machine still tokenises every one of them --
+        # the text goes where `ed_read` would have left it and the
+        # machine enters `ed_inject`, so `sw/token.asm` is still the only
+        # thing that knows a keyword and section 2 above still holds. The
+        # disc came out byte-for-byte identical either way, floats
+        # included, which is the gate `sim/test_run.py` now keeps.
+        #
+        # Typing five demos was ninety seconds, nearly all of it waiting
+        # for the PS/2 queue: it is sixteen deep and a key is two
+        # scancodes, so a line cannot be delivered in one go.
         for line in io.open(os.path.join(DEMOS, f),
                             encoding="utf-8").read().splitlines():
             if line.strip():
-                H.key(m, syms, line + "\r")
+                H.line(m, syms, line)
         H.key(m, syms, 'SAVE "%s"\r' % discname(f))
         print("  typed and saved %-16s as %s" % (f, discname(f)))
     m.flash.flush()

@@ -241,6 +241,22 @@ python tools/cool8rsrun.py --monitor         ROM only: no flash, no BASIC
 `poe emu -- --flash IMG` does **not** work: poe passes the `--` through
 and argparse rejects it. Call the script, or use `poe demo`.
 
+**Putting BASIC into a running machine: `H.line`, not `H.key`.**
+`m.key()` is the keyboard and stays the thing to *test* with; `H.line`
+is what a builder wants. It sends one `inject` command -- the text, and
+the addresses of `LBUF`, `LLEN` and `ed_inject`, all out of the symbol
+table -- and the machine tokenises the line itself through
+`sw/token.asm`, exactly as if it had been typed. One round trip a line
+against one a character: **19.6x measured**, and the stored program is
+byte-for-byte identical, floats included.
+
+**Nothing is written into RAM to make the call.** The first version
+poked `CALL / HALT` into four bytes of low RAM and jumped there, which
+needed an address that was free -- and `sw/lowram.asm` says in its own
+header that its map "has been wrong". The return address is pushed
+instead, so the machine returns to the PC it was already sitting on and
+there is no byte to contest.
+
 **`--rebuild` is the one-command answer to a stale disc.** The launcher
 otherwise builds nothing, deliberately — `basic_image` in
 [cool8rsrun.py](../tools/cool8rsrun.py) says why: a launcher that

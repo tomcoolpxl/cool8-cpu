@@ -597,6 +597,20 @@ class SessionMachine(_Trace):
         import cool8kbd
         self.kbd.feed(cool8kbd.encode_keys(text))
 
+    def inject(self, lbuf, llen, entry, scratch, text, budget=40_000_000):
+        """One line of BASIC into the editor, in one round trip.
+
+        The machine still tokenises it -- this writes the text where
+        `ed_read` would have left it and enters `ed_inject`, which is
+        `ed_enter` without the screen scrape. Typing the same line costs
+        a round trip a character, because the PS/2 queue is sixteen deep
+        and a key is two scancodes.
+        """
+        out = self._cmd("inject	%d	%d	%d	%d	%d	%s"
+                        % (lbuf, llen, entry, scratch, budget,
+                           bytes(text, "ascii").hex() or "-"))
+        return out[0] if out else "ok"
+
     def scancode(self, codes):
         self.kbd.feed(bytes(codes))
 
