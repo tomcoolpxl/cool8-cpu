@@ -376,34 +376,28 @@ may not do quietly. The ramp is built at run time rather than typed as
 `DATA`: `#10F` electric blue through violet to `#F6B` hot pink,
 mirrored at 124 so the cycle has no seam.
 
-**The colour count is the ramp's *path length*, not the palette's
-size** — the thing to know if a gradient ever looks thin here. A smooth
-ramp moves one channel by one at a time, so the distinct colours it can
-show equals the steps it takes through 12-bit RGB space. The first ramp
-ran R 1→15, G 0→6, B 15→11: an L1 path of **24 steps, 23 colours on
-screen**, with the other 224 entries duplicates of those 23. Mode 6's
-256 entries were never the constraint.
+**One colour per row, which is the most the mode can show.** Mode 6 is
+240 rows, so 240 is the ceiling on colours visible at once -- 256 is not
+reachable no matter what the palette holds, because a colour has to be
+*on* a row to be seen. The ramp is 240 entries and the sweep covers
+rows 1-239, so no two rows share a colour: **239 measured on screen, at
+every sample, with zero background rows**.
 
-**And it was mirrored, which halved it again.** The mirror existed so
-the cycle had no seam where `E` wraps — at the cost of only ever
-visiting half the path. A *closed loop* needs no mirror: the ramp now
-runs the perimeter of the G = 0 plane, `#002` → `#00F` → `#F0F` →
-`#F02` → `#002`, which returns to its own start. **56 distinct, every
-step exactly one channel-unit, no seam** — measured at 51 on screen.
+**Earlier ramps grouped rows in twos and threes, and the arithmetic
+says why.** A smooth ramp moves one channel by one at a time, so the
+distinct colours it can show equals the steps it takes through 12-bit
+RGB. A hue circle at full saturation is six segments of fifteen: **90
+steps and no more**. Spread over 247 entries that is 2.7 entries a
+colour, and the eye sees bands of two and three rows. The first ramp
+here was worse -- an L1 path of 24, so 23 colours and 224 duplicates.
 
-**It is lifted off the black corner deliberately.** The first closed
-loop passed through `#000`, which is the background, so the darkest
-part of the trail read as a gap in a demo whose whole point is that it
-has none. The loop's floor is `#002` and the ground is `#000`, so no
-painted row can equal it.
-
-**256 is reachable and was not taken.** The G = 0 plane *is* 16×16 =
-256 on-brand colours and a Hamiltonian cycle visits all of them one
-unit at a time. The cost is not speed and not a seam: any path covering
-all 256 crosses each brightness level sixteen times, so brightness
-oscillates sixteen times down the screen. That is geometry rather than
-effort. Snaking on B (luminance weight 1) rather than R (weight 3)
-thirds the swing if it is ever wanted.
+**So the ramp is three hue rotations against one brightness breath**,
+which is long enough to visit 240 distinct colours. Two rotations, or a
+darker floor than `v = 8`, collapse different hues onto the same 4-bit
+RGB and the count falls short -- that is measured, not chosen. 172 of
+the 240 steps move a single channel by one; 54 move two and 14 move
+three, which is the price of insisting on 240 distinct in a 4096-colour
+space. The loop closes on a single step, so `E` wrapping shows no seam.
 
 **The table is `DATA`, computed when this file was written.** 181
 values for the first quarter, mirrored three ways at run time —
