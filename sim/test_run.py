@@ -1191,6 +1191,55 @@ SYNTH_TRACKS = [
 ]
 
 
+def plasma_still(code, syms):
+    """PLASMA's contract: the pixels never move, only the palette.
+
+    The VRAM byte at (x, y) must equal A(x)+G(y) -- both tables parsed
+    from the stored program's own DATA -- at every sampled point, and
+    must not change between frames; while the *rendered* colour of the
+    same pixel must change as the rotation walks, which proves the
+    animation is palette-only. The paint takes ~25 s of machine time,
+    so the run-in is the long pole of this case.
+    """
+    src = [l for l in open(os.path.join(ROOT, "demos", "plasma.bas"),
+                           encoding="utf-8").read().splitlines()
+           if l.strip()]
+    vals = {200: [], 300: [], 400: []}
+    for l in src:
+        n = int(l.split()[0])
+        for base_n in vals:
+            if base_n <= n < base_n + 40 and "DATA" in l:
+                vals[base_n] += [int(v)
+                                 for v in l.split("DATA", 1)[1].split(",")]
+    ax, gy = vals[200], vals[300]
+    check(len(ax) == 256 and len(gy) == 240,
+          "the stored tables are complete",
+          "%d x-values, %d y-values" % (len(ax), len(gy)))
+
+    M = B.Machine(code, syms, render=True)
+    M.settle()
+    for ln in src:
+        H.line(M.m, syms, ln)
+    M.m.type(RUNCMD)
+    M.m.run(until=syms["h_vsync.vw"], budget=900_000_000)
+
+    pts = [(3, 5), (100, 60), (255, 0), (0, 239), (200, 200), (128, 120)]
+    vr = M.m.video.vram
+    got = [vr[y * 256 + x] for (x, y) in pts]
+    want = [ax[x] + gy[y] for (x, y) in pts]
+    check(got == want, "VRAM holds A(x)+G(y), the stored DATA's own sum",
+          "got %s want %s" % (got, want))
+
+    fb0 = M.m.fb()[240 * 640 + 320]
+    v0 = vr[120 * 256 + 160]
+    M.m.run_frame(30)
+    fb1 = M.m.fb()[240 * 640 + 320]
+    v1 = vr[120 * 256 + 160]
+    check(v0 == v1, "the pixels never move", "%d -> %d" % (v0, v1))
+    check(fb0 != fb1, "but their colours do -- the palette is the "
+          "animation", "colour stayed %03X" % fb0)
+
+
 def synth_screen(code, syms):
     """SYNTH's contract: the screen is the sequencer's memory.
 
@@ -1525,6 +1574,9 @@ def main():
 
     print()
     cobra_flips(code, syms)
+
+    print()
+    plasma_still(code, syms)
 
     print()
     synth_screen(code, syms)
