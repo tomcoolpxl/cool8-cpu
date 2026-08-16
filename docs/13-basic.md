@@ -512,6 +512,23 @@ answer, and the wrong one:
 | `POKE a, X#` | store 65 | stores a stale register |
 | `FOR I = 1 TO X#` | three passes | limit reads as 1, body runs once |
 | `DIM A#(4)` | a float array | an ordinary integer array named `A#(` |
+| `A = 110 * SIN(x)` | truncate to 110 | stores **2** |
+| `A = 120 + 110 * SIN(x)` | truncate to 230 | stores **−6654** |
+| `A = 120 + F#` | truncate to 230 | stores **−6654** |
+
+**The last three are one fault, and it is the worst-shaped one here: a
+float assigned to an integer variable is not converted.** The
+expression is right up to the moment it is stored — `PRINT 110*SIN(x)`
+prints 110, `PRINT 120+110*SIN(x)` prints 230, `PRINT 120+F#` prints
+230 — and the store then keeps raw bits rather than a value. So the
+arithmetic can be checked at the prompt, agree with a calculator, and
+still put garbage in the variable. It bites hardest where it is least
+visible: a `DATA`-free lookup table built with `S(I) = …SIN(…)` fills
+with plausible-looking noise, which is how `demos/wave.bas` shipped a
+sine table that was never a sine. The workaround is to keep the value
+in a `#` variable, or to precompute the table and `READ` it — and note
+that `READ` takes **scalar targets only** (§`DATA`), so it is `READ V`
+then `S(I) = V`, never `READ S(I)`, which is `?INDEX`.
 
 `PLOT`, subscripts, line numbers and the other builtins that go through
 `earg` are the same shape: `earg` is `sopen / eval / sopen` and tests

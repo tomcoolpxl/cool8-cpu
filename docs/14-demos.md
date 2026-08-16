@@ -341,11 +341,35 @@ the trail's index by one spanned seven of those steps and put **8
 colours** on screen; stepping by four spans the whole ramp and puts
 **22**. Mode 6's 256 entries buy a *smooth* gradient, not a long one.
 
-**The sine table is 65 `SIN` calls, not 256.** A quarter wave mirrored
-three ways fills all 256 entries — `S(128-i)`, `-S(128+i)`, `-S(256-i)`
-— which matters only because the last of those runs off the end of
-`DIM S(255)` at `i = 0`, so the mirror loop starts at 1 and the two
-axis points are stored by hand.
+**The sine is sampled so its step is never more than one row, and that
+is what makes the picture solid.** Sampled uniformly in *phase* a sine
+crawls at the turning points and moves eleven rows a frame through the
+middle, so the trail came out as stripes with black between them. The
+fix is to let the sine supply the *timing* rather than the position:
+with amplitude 110 a one-row step needs a period of at least 2π·110 ≈
+691 frames, so the table is **720 entries** and the head visits every
+row of 10–230 without skipping one. Measured on the running demo: **0
+background rows inside the band**, at every sample from 2 s to 18 s.
+
+**Nothing is erased, because nothing needs to be.** The ring buffer
+that the striped version used to rub out its oldest line is gone: a
+head that visits every row repaints the whole screen every sweep, so
+the picture is one continuous gradient and the only cost is two `LINE`s
+a frame — the new row white, the one before it aged into the ramp.
+`E` stepping 1 lays 221 rows against a 247-entry ramp, which is
+one full blue-to-pink gradient down the screen, drifting as it goes.
+
+**The table is `DATA`, computed when this file was written.** 181
+values for the first quarter, mirrored three ways at run time —
+`S(360-i)`, `240-S(360+i)`, `240-S(720-i)` — which is integer work and
+therefore safe. It is `DATA` rather than a `SIN` loop because **a float
+assigned to an integer variable is not converted on this machine**
+([13-basic.md §8](13-basic.md)): `S(I) = 120 + 110*SIN(...)` stores
+−6654 where 230 belongs, silently, while `PRINT` of the same expression
+is correct. This demo shipped once with a sine table that was not a
+sine and looked plausible enough on screen that only counting the rows
+caught it. Note also that `READ` takes scalar targets only, so it is
+`READ V` then `S(I) = V`; `READ S(I)` is `?INDEX`.
 
 ## 5. Adding one
 
