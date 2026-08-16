@@ -447,6 +447,47 @@ on screen that only counting the rows caught it. Note also that `READ`
 takes scalar targets only, so it is `READ V` then `S(I) = V`;
 `READ S(I)` is `?INDEX`.
 
+### `COBRA` — Elite's ship on the double buffer
+
+![COBRA](img/demo-cobra.png)
+
+**The model is the published one.** 28 vertices and 38 edges of the
+Cobra Mk III, transcribed by `tools/mk3d.py` from the annotated BBC
+Elite source at
+[bbcelite.com](https://elite.bbcelite.com/6502sp/main/variable/ship_cobra_mk_3.html)
+— integer coordinates from an 8-bit machine, needing nothing but a
+scale. The generator asserts the counts against what the source states
+and emits `DATA`; the machine `READ`s it like any other table. No
+importer, no format, no conversion step to be scared of.
+
+**The tilt is baked, the spin is runtime, and the order is the trick.**
+The host rotates the ship 20° about X once. BASIC spins it about the
+*view's* vertical axis — `RotY` after the tilt, not before — and a Y
+rotation never touches y, so **each vertex's screen Y is one constant**
+and only screen X moves. The startup loop fills 72 frames × 28 vertices
+of screen X, about a second of integer arithmetic; the draw loop is 38
+`LINE`s and nothing else. Everything is integer: the scale is chosen so
+`|qx·cos + qz·sin|` peaks at 23,495 of a signed 16-bit's 32,767,
+asserted at generation rather than hoped.
+
+**This is the first user of mode 5's double buffer**, and of the split
+[D91](01-decisions.md) documented: the display latches `VID_BASE` once
+at frame start (`cool8_fetch.v`), the pixel port reads it live
+(`cool8_pixport.v`). After `VSYNC` the demo points the base at the page
+just hidden — one `POKE` of `VID_BASE_H`, because the pages sit at
+$0000 and $6000 and the low byte never changes — then `CLG`s and draws
+it while the finished page is on the glass. The viewer never sees a
+torn or half-drawn frame at any speed, which is the whole point of the
+mode.
+
+**Measured: a drawn frame takes 7 display frames — about 8.5 fps.**
+`sim/test_run.py`'s `cobra_flips` is the gate: mode 5 is on, the base
+alternates $0000/$6000 one flip per drawn frame, both pages hold a
+wireframe, and the pages differ because the ship rotated between them.
+The probe reads registers through `bus.read()` — `bus.mem[]` is the RAM
+*under* the I/O page, and reading a register there is the mistake
+`cool8_soc_tb`'s "the page wins" section exists to catch.
+
 ## 5. Adding one
 
 1. Write `demos/name.bas`. Keep it BASIC, keep it under 80 characters a

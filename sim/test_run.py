@@ -1095,6 +1095,70 @@ def line_exact(code, syms):
              got[bad[0]] if bad else 0, want[bad[0]] if bad else 0))
 
 
+def cobra_flips(code, syms):
+    """COBRA is the first user of mode 5's double buffer, and this is
+    the contract: the base alternates between $0000 and $6000, one POKE
+    of VID_BASE_H a frame; both pages hold a drawn wireframe; and the
+    two pages hold *different* frames, because the ship rotated between
+    them. Sampling is run(until=h_vsync.vw) -- parked in the VSYNC wait,
+    the previous iteration's clear and 38 LINEs are complete.
+
+    The demo leans on the split D91 documented: the display latches the
+    base once at frame start (cool8_fetch.v), the pixel port reads it
+    live (cool8_pixport.v), so drawing lands on the hidden page while
+    the shown one stays whole.
+    """
+    src = [l for l in open(os.path.join(ROOT, "demos", "cobra.bas"),
+                           encoding="utf-8").read().splitlines()
+           if l.strip()]
+    M = B.Machine(code, syms, render=True)
+    M.settle()
+    for ln in src:
+        H.line(M.m, syms, ln)
+    M.m.type(RUNCMD)
+    # past the READ loops and the 2,016-entry precompute, to the wait
+    M.m.run(until=syms["h_vsync.vw"], budget=400_000_000)
+
+    # register addresses by name, out of the Verilog that decodes them
+    # -- a literal here is the D67 trap reg()'s docstring names -- and
+    # read through bus.read(), which is the I/O decode. bus.mem[] is
+    # the RAM underneath the page, and reading a register there is the
+    # exact mistake cool8_soc_tb's "the page wins" section tests for.
+    io = {v["name"]: v["addr"] for v in ioregs.registers().values()}
+    rd = M.m.bus.read
+
+    check(rd(io["VID_MODE"]) & 0x0F == 5, "the demo is in mode 5",
+          "VID_MODE reads %02X" % rd(io["VID_MODE"]))
+    # sample on the flip itself: run frame by frame until VID_BASE_H
+    # changes, note what it became and how many display frames the
+    # drawn frame took. Sampling on arrival at the wait instead is
+    # ambiguous -- the machine may already be parked there.
+    bases, frames = [], []
+    for _ in range(6):
+        b0, took = rd(io["VID_BASE_H"]), 0
+        while rd(io["VID_BASE_H"]) == b0 and took < 40:
+            M.m.run_frame(1)
+            took += 1
+        bases.append(rd(io["VID_BASE_H"]))
+        frames.append(took)
+    check(set(bases) == {0x00, 0x60} and
+          all(a != b for a, b in zip(bases, bases[1:])),
+          "the base alternates $0000/$6000, a flip per drawn frame",
+          "VID_BASE_H sampled: %s" % bases)
+    M.m.run(until=syms["h_vsync.vw"], budget=200_000_000)
+    # the two pages, read through the machine's own base: the register
+    # names the page being drawn, and the other one is on the glass
+    drawn = (rd(io["VID_BASE_H"]) << 8) | rd(io["VID_BASE_L"])
+    shown = drawn ^ 0x6000
+    a = bytes(M.m.video.vram[drawn:drawn + 0x6000])
+    b = bytes(M.m.video.vram[shown:shown + 0x6000])
+    check(any(a) and any(b), "both pages hold a drawn frame",
+          "drawing page %d lit bytes, shown page %d"
+          % (sum(1 for x in a if x), sum(1 for x in b if x)))
+    check(a != b, "and the ship rotated between them", "pages identical")
+    print("      a drawn frame takes %s display frames" % frames)
+
+
 def wave_lockstep(code, syms):
     """WAVE's colour contract, measured off the framebuffer.
 
@@ -1292,6 +1356,9 @@ def main():
 
     print()
     line_exact(code, syms)
+
+    print()
+    cobra_flips(code, syms)
 
     print()
     wave_lockstep(code, syms)
