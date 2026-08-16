@@ -335,22 +335,24 @@ module cool8_video_tb;
                 (gy < g_vstart) || (vrel >= g_vact)) begin
                 idx = g_border;
             end else if (g_eng == 2'd0) begin
-                // ---- text: a cw is two bytes of main RAM
+                // ---- text: a cw is two bytes of main RAM. Fine-X is
+                // the low four bits (D93), matching cool8_pixel.v.
                 vsrc = vrel + (g_scry & 10'd15);
                 grow = vsrc[3:0];
                 ra   = row_addr(vsrc >> 4);
-                cw = {mram[ra + (rel >> 3) * 2 + 1],
-                        mram[ra + (rel >> 3) * 2]};
+                sx   = rel + (g_scrx & 11'd15);
+                cw = {mram[ra + (sx >> 3) * 2 + 1],
+                        mram[ra + (sx >> 3) * 2]};
                 at   = cw[15:8];
                 fb   = font[{cw[7:0], grow}];
-                lit  = fb[3'd7 - rel[2:0]];
+                lit  = fb[3'd7 - sx[2:0]];
                 // **One cursor, and it inverts the palette index.**
                 // The four styles and CUR_LINES are gone: the cursor is
                 // applied to the finished index in cool8_pixel.v, which
                 // is what let it cover the tile and bitmap modes as
                 // well, and a block that inverts its cell is the only
                 // style the editor ever asked for.
-                curhit = g_curon && ((rel >> 3) == {4'd0, g_curx}) &&
+                curhit = g_curon && ((sx >> 3) == {4'd0, g_curx}) &&
                          ((vsrc >> 4) == {5'd0, g_cury});
                 idx = lit ? {4'h0, at[3:0]} : {4'h0, at[7:4]};
                 if (curhit) idx = idx ^ 8'h0F;

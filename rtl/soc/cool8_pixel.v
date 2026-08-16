@@ -226,11 +226,16 @@ module cool8_pixel #(
     // Fine horizontal scroll only. The coarse part is a move of
     // VID_BASE, the same bargain the vertical direction makes, and a
     // bitmap gets the whole thing for nothing because its row is in the
-    // buffer entire.
+    // buffer entire. **Text takes the low four bits** -- section 5.5
+    // said so for a milestone while this mux passed text through
+    // untouched (D93): the documented-but-absent trap, caught when the
+    // scroller demo reached for it.
     wire [10:0] sx1 = (c_eng == E_TILE) ? rel1 + {8'd0, c_scrx[2:0]} :
-                      (c_eng == E_TEXT) ? rel1 : rel1 + {1'b0, c_scrx};
+                      (c_eng == E_TEXT) ? rel1 + {7'd0, c_scrx[3:0]} :
+                      rel1 + {1'b0, c_scrx};
     wire [10:0] sx2 = (c_eng == E_TILE) ? rel2 + {8'd0, c_scrx[2:0]} :
-                      (c_eng == E_TEXT) ? rel2 : rel2 + {1'b0, c_scrx};
+                      (c_eng == E_TEXT) ? rel2 + {7'd0, c_scrx[3:0]} :
+                      rel2 + {1'b0, c_scrx};
 
     wire [9:0]  vrel = ya - c_vstart;
     wire [9:0]  vsrc = (c_eng == E_TEXT) ? (vrel + {6'd0, c_scry[3:0]})

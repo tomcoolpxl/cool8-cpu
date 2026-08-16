@@ -71,6 +71,20 @@ def build():
                       lower=True, write=True)
 
 
+_FONT = []
+
+
+def _font():
+    """The real font, once. A rendering session created without one
+    draws every glyph from zeros -- text() reads RAM and answers, the
+    glass stays dark, and the difference cost a round of phantom
+    display bugs: the only lit pixels on such a screen are the cursor
+    block, so CURSOR 0 looks like a display kill."""
+    if not _FONT:
+        _FONT.append(vm.build_rom()[1])
+    return _FONT[0]
+
+
 class Machine:
     def __init__(self, code, syms, flash=None, render=False):
         # render=True attaches the scanline renderer, so m.fb() answers
@@ -78,7 +92,8 @@ class Machine:
         self.cstride = syms["cstride"]
         self.cscrn = syms["cscrn"]
         self.sym_ctop = syms["ctop"]
-        self.m = vm.Machine(flash_path=flash, render=render)
+        self.m = vm.Machine(flash_path=flash, render=render,
+                            font=_font() if render else None)
         self.m.bus.mem[ORG:ORG + len(code)] = code
         self.m.cpu.pc = syms["main"]
         # Where sw/boot.asm:339 leaves it, not somewhere roomier. The

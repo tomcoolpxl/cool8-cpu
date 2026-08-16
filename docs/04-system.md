@@ -947,7 +947,10 @@ byte-identical from the general engine.
 The engine changes where it reads from; nothing moves in memory.
 
 **`VID_SCRL_X` and `VID_SCRL_Y` are fine scroll**: the low four bits in
-text, the low three in tiles. The coarse part is a move of `VID_BASE` —
+text ([D93] -- documented here for a milestone while the pixel stage
+passed text through unscrolled), the low three in tiles. The units are
+logical pixels: under mode 1's doubling a text cell is 8 of them, so a
+smooth scroller is fine 0..7 plus a two-byte `VID_BASE` step per cell. The coarse part is a move of `VID_BASE` —
 one 16-bit add in software per row or per tile column — because doing it
 in hardware means multiplying the origin by the stride, and the
 alternatives were a DSP block the pixel port has a better claim on or an

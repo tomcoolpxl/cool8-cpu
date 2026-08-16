@@ -358,7 +358,14 @@ impl Renderer {
                 // is 16 source lines, or 8 where the doubler is
                 // stretching them, which is exactly the modes the
                 // console gives CFROW 8.
-                cell_of = rel >> 3;
+                // ...and from the *scrolled* x, as d1_cell takes
+                // sx1[10:3]: four bits of fine-X in text (D93), three
+                // in tiles, all ten in bitmaps.
+                cell_of = match vv.engine {
+                    0 => (rel + (v.scrl_x as u32 & 15)) >> 3,
+                    1 => (rel + (v.scrl_x as u32 & 7)) >> 3,
+                    _ => (rel + v.scrl_x as u32) >> 3,
+                };
                 // One divisor: every mode's console row is 16 display
                 // lines, so there is nothing to choose. cool8_pixel.v
                 // makes the same unconditional computation.
@@ -379,15 +386,18 @@ impl Renderer {
                 trow_of = vsrc_row >> 4;
                 match vv.engine {
                     0 => {
-                        // ---- text
+                        // ---- text. Fine-X is the low four bits (D93);
+                        // it was documented for a milestone while both
+                        // models passed text through unscrolled.
                         let vsrc = vrel + (v.scrl_y as u32 & 15);
                         let grow = vsrc & 15;
-                        let cell = rel >> 3;
+                        let sx = rel + (v.scrl_x as u32 & 15);
+                        let cell = sx >> 3;
                         let w = self.lb[self.read_bank][cell as usize];
                         let attr = (w >> 8) as u8;
                         let fb = self.font
                             [(((w & 0xFF) << 4) | grow as u16) as usize];
-                        let lit = fb & (1 << (7 - (rel & 7))) != 0;
+                        let lit = fb & (1 << (7 - (sx & 7))) != 0;
                         if lit { attr & 0x0F } else { attr >> 4 }
                     }
                     1 => {

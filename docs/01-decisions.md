@@ -5758,3 +5758,41 @@ flip-flops for boundaries no mode uses.
 (`rust/src/render.rs`), which the demo gate drives; a golden-frame RTL
 phase for the override in `cool8_video_tb` has not been written.
 
+## D93 -- text fine-X exists now, because the scroller reached for it
+
+**Decision:** the pixel stage's engine mux gives text the low four bits
+of `VID_SCRL_X`, as section 5.5 had documented all along. The RTL
+passed text through unscrolled -- `(c_eng == E_TEXT) ? rel1 : ...` --
+which is the documented-but-absent trap in silicon: the worst kind,
+because the doc is what everyone reaches for first. Caught when the
+INTRO demo reached for the scroll and nothing moved; fixed in
+`cool8_pixel.v`, mirrored in the machine's renderer, and in
+`cool8_video_tb`'s golden model, whose cursor-cell compare follows the
+scrolled x as the RTL's `d1_cell` does.
+
+**The units are logical pixels**: under mode 1's horizontal doubling a
+text cell is 8 logical px, so smooth motion is fine 0..7 plus a
+two-byte `VID_BASE` step per cell -- the INTRO's arithmetic, and the
+worked example. A 40-column window slides over the 80-column stored
+row; rows written 40-column periodic wrap seamlessly.
+
+**Found on the way, in the harness rather than the hardware**: a
+rendering session created by `sim/test_basic.py` carried **no font**,
+so text glyphs had never lit in `fb()` from suite machines -- the only
+lit pixels on such a screen are the cursor block, which made `CURSOR
+0` look like a display kill and cost a round of phantom bugs (a
+"blanking" cursor register, a "broken" SCY) that all evaporated when
+the font was passed. Every `render=True` machine loads the real font
+now.
+
+**Cost: +22 placed cells -- 5,220 to 5,242 of 5,280, 99.3 %, and it
+fits with 38 left**; Fmax `sclk` 11.57 MHz. (An earlier measurement
+said zero, taken from a build that -- a bisect's `git checkout`
+having eaten the uncommitted edits, later recovered from a forgotten
+stash -- did not contain the change. The number above is from a build
+verified to contain it.) The map's 38-cell headroom is now thin
+enough that the next RTL wish should expect to trade something out. Gates: the rtl group green but `rtl-boot`,
+which was found already failing before this session and is flagged as
+its own investigation; the suite's INTRO gate is the end-to-end proof,
+holding rendered glyphs actually sliding across frames.
+

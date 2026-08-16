@@ -1191,6 +1191,67 @@ SYNTH_TRACKS = [
 ]
 
 
+def intro_scrolls(code, syms):
+    """INTRO's contract: the hardware moves the picture.
+
+    The map's rows are 40-column periodic (both halves identical --
+    checked here byte for byte), the scroll counter walks SCX's four
+    text bits (D93) plus even VID_BASE_L cell steps, the whole screen
+    bobs on SCY, and the rendered frame actually changes -- which is
+    the end-to-end proof of D93 through RTL-mirroring renderer, since
+    before it a text screen could not fine-scroll at all. The music is
+    SYNTH's top three voices; the step cadence rides the same loop that
+    scrolls, so glyph motion is also the tune's liveness.
+    """
+    src = [l for l in open(os.path.join(ROOT, "demos", "intro.bas"),
+                           encoding="utf-8").read().splitlines()
+           if l.strip()]
+    M = B.Machine(code, syms, render=True)
+    M.settle()
+    for ln in src:
+        H.line(M.m, syms, ln)
+    M.m.type(RUNCMD)
+    M.m.run(until=syms["h_vsync.vw"], budget=400_000_000)
+    io = {v["name"]: v["addr"] for v in ioregs.registers().values()}
+    rd = M.m.bus.read
+    check(rd(io["VID_MODE"]) & 0x0F == 1, "the demo is in mode 1",
+          "VID_MODE reads %02X" % rd(io["VID_MODE"]))
+
+    base = 0x9800
+    per = []
+    for r in (4, 8, 12, 20):
+        a = base + r * 160
+        left = bytes(M.m.bus.mem[a + i] for i in range(80))
+        right = bytes(M.m.bus.mem[a + 80 + i] for i in range(80))
+        per.append(left == right)
+    check(all(per), "every banner row is 40-column periodic",
+          "rows 4/8/12/20 periodic: %s" % per)
+
+    scx, bl, scy = set(), set(), set()
+    shots = []
+    for _ in range(40):
+        M.m.run_frame(1)
+        scx.add(rd(io["VID_SCX_L"]))
+        bl.add(rd(io["VID_BASE_L"]))
+        scy.add(rd(io["VID_SCY_L"]))
+        fb = M.m.fb()
+        # the message row: text row 8 is scanlines 128-143, and
+        # sampling an empty row proved only that blank scrolls
+        # into blank
+        shots.append(tuple(fb[134 * 640 + x] for x in range(200)))
+    check(len(scx) == 8 and max(scx) <= 7,
+          "SCX walks the fine positions of an 8-px logical cell",
+          "values seen: %s" % sorted(scx))
+    check(all(b % 2 == 0 for b in bl) and len(bl) >= 2,
+          "the coarse step slides whole cells through VID_BASE",
+          "VID_BASE_L seen: %s" % sorted(bl)[:8])
+    check(len(scy) > 4, "the screen bobs on SCY",
+          "values seen: %s" % sorted(scy))
+    check(len(set(shots)) > 5,
+          "and the rendered glyphs actually slide -- D93 end to end",
+          "%d distinct scanline snapshots of 40" % len(set(shots)))
+
+
 def plasma_still(code, syms):
     """PLASMA's contract: the pixels never move, only the palette.
 
@@ -1574,6 +1635,9 @@ def main():
 
     print()
     cobra_flips(code, syms)
+
+    print()
+    intro_scrolls(code, syms)
 
     print()
     plasma_still(code, syms)
