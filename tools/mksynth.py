@@ -59,11 +59,14 @@ TRACKS = [
     "T VT:RQMO T XVTQ:M YXVTQ:M QRQO ",
     "AM AMA MHT HTH TJV JVJ VFR FRF R",
 ]
-MASKS = [82, 70, 46]         # per-track octave offsets, as shipped
+MASKS = [82, 70, 46, 94]     # the shipped three, plus the flute's
+                             # octave one above the lead
 # the percussion the bass row already implied, made visible: the
 # original snared on every bass rest, so the drum row IS those rests.
 # K and H decode too, for the editor to type.
 DRUMS = None                 # derived from TRACKS[2] in main()
+FLUTE = {5: "V", 6: "T", 13: "X", 14: "V", 21: "Y", 22: "V",
+         26: "Q", 27: "R"}   # step -> note, out of that bar's arp tones
 
 PAL_CLOCK = 985248           # the synth's PAL SID arithmetic
 SID_MAX = 16777216
@@ -86,10 +89,10 @@ BODY = """1 GOTO 100
 23 IF T>255 THEN GOSUB 80:GOTO 10
 24 IF T=32 THEN POKE R,32:GOTO 10
 25 IF T>64 AND T<91 THEN POKE R,T:GOTO 10
-26 IF T<>27 THEN GOTO 10
-27 FOR I=0 TO 7:SOUND I,100,0,0:NEXT I
-28 MODE 0
-29 CURSOR 1:END
+26 IF T>96 AND T<123 THEN POKE R,T-32:GOTO 10
+27 IF T<>27 THEN GOTO 10
+28 FOR I=0 TO 7:SOUND I,100,0,0:NEXT I
+29 MODE 0:CURSOR 1:END
 30 S=S+1:IF S>31 THEN S=0
 31 C=39406+S+S
 34 N=PEEK(C)-64:IF N>0 AND M(0)=1 THEN P=Z(N-1):V=10:D=0:SOUND 0,P,V,0
@@ -99,8 +102,7 @@ BODY = """1 GOTO 100
 38 N=PEEK(C+320)-64:IF N>0 AND M(2)=1 THEN SOUND 2,Z(N+51),10,0
 39 IF N<1 AND M(2)=1 THEN SOUND 2,100,0,0
 45 RETURN
-50 T=S-2:IF T<0 THEN T=T+32
-51 N=PEEK(39406+T+T)-64:IF N>0 AND M(5)=1 THEN K=Z(N-1):U=4:SOUND 5,K,4,0
+51 N=PEEK(C+800)-64:IF N>0 AND M(5)=1 THEN K=Z(N+77):U=6:SOUND 5,K,6,0
 52 N=PEEK(C+320)-64:IF N>0 AND M(6)=1 THEN SOUND 6,Z(N+51)/2,3,0
 53 N=PEEK(C+640)-64:IF N>0 AND M(4)=1 THEN SOUND 4,Z(N+25),4,0
 56 N=PEEK(C+480)-64:IF N=19 AND M(3)=1 THEN Y=11:J=2500:O=1:SOUND 3,2500,11,1
@@ -112,7 +114,8 @@ BODY = """1 GOTO 100
 70 N=39407+A+A:T=39407+S+S
 71 POKE N,110:POKE T,230:POKE N+160,110:POKE T+160,230
 72 POKE N+320,110:POKE T+320,230:POKE N+480,110:POKE T+480,230
-73 POKE N+640,110:POKE T+640,230:A=S:POKE R+1,22:RETURN
+73 POKE N+640,110:POKE T+640,230:POKE N+800,110:POKE T+800,230
+74 A=S:POKE R+1,22:RETURN
 80 POKE R+1,110
 81 B=(R-38912)/160:X=(R-38912-B*160)/2
 82 IF T=258 THEN X=X-1
@@ -122,13 +125,13 @@ BODY = """1 GOTO 100
 86 IF X<7 THEN X=7
 87 IF X>38 THEN X=38
 88 IF B<3 THEN B=3
-89 IF B>7 THEN B=7
+89 IF B>8 THEN B=8
 90 R=38912+B*160+X+X:POKE R+1,22:RETURN
 100 MODE 1
 101 CLS:CURSOR 0
 102 POKE $FF1A,14
-104 DIM Z(77):DIM M(7)
-105 FOR I=0 TO 77:READ N:Z(I)=N:NEXT I
+104 DIM Z(103):DIM M(7)
+105 FOR I=0 TO 103:READ N:Z(I)=N:NEXT I
 106 FOR I=0 TO 15
 107 READ N:POKE $FF1E,I:POKE $FF1F,N/256:POKE $FF1F,N-N/256*256
 108 NEXT I
@@ -140,7 +143,7 @@ BODY = """1 GOTO 100
 115 PRINT "3 BASS %s"
 116 PRINT "4 DRUM %s"
 117 PRINT "5 PAD  %s"
-118 PRINT "6 ECHO"
+118 PRINT "6 FLUTE%s"
 119 PRINT "7 DRONE"
 120 PRINT "8"
 121 PRINT
@@ -167,7 +170,10 @@ def main():
     # the pad holds each bar's root -- the bass line's own bar-start
     # notes, played soft in the arp's octave
     pad = "".join(TRACKS[2][i] if i % 8 == 0 else " " for i in range(32))
-    assert len(drums) == 32 and len(pad) == 32
+    flute = "".join(FLUTE.get(i, " ") for i in range(32))
+    lead = TRACKS[0]
+    assert all(lead[i] in " :" for i in FLUTE), "flute clashes the lead"
+    assert len(drums) == 32 and len(pad) == 32 and len(flute) == 32
     assert drums.count("S") == 8, "the bass rests moved: %r" % drums
     pitches = []
     for mask in MASKS:
@@ -197,7 +203,7 @@ def main():
     # DATA is numbers only on this machine, so the track strings ride
     # in their PRINT statements -- stated once, painted once, and from
     # then on the screen copy is the only one the player reads
-    src = (BODY % (("+---" * 8,) + tuple(TRACKS) + (drums, pad))
+    src = (BODY % (("+---" * 8,) + tuple(TRACKS) + (drums, pad, flute))
            + "\n".join(data(pitches, 200) + data(c64, 240)) + "\n")
     path = os.path.join(ROOT, "demos", "synth.bas")
     io.open(path, "w", encoding="utf-8", newline="\n").write(src)
@@ -206,8 +212,8 @@ def main():
     assert ns == sorted(ns), "line numbers not ascending"
     over = [n for n, l in zip(ns, lines) if len(l) > 79]
     assert not over, "lines over 79 chars: %s" % over
-    print("  synth.bas: %d lines; drums %r; pad %r"
-          % (len(lines), drums, pad))
+    print("  synth.bas: %d lines; drums %r; pad %r; flute %r"
+          % (len(lines), drums, pad, flute))
     print("  -> %s" % path)
 
 

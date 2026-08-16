@@ -1274,6 +1274,16 @@ def synth_screen(code, syms):
     check(M.m.bus.mem[cur] == 67,
           "typing C writes the note into the screen the player reads",
           "cell holds %02X" % M.m.bus.mem[cur])
+    # an unshifted key arrives lowercase, and the field report was
+    # "i cannot type letters" -- the editor upcases it now
+    M.m.key(["K_RIGHT"])
+    M.m.run_frame(6)
+    M.m.key("d")
+    M.m.run_frame(6)
+    cur2 = base + 3 * 160 + 9 * 2
+    check(M.m.bus.mem[cur2] == 68,
+          "a lowercase keypress lands as its uppercase note",
+          "cell holds %02X" % M.m.bus.mem[cur2])
 
 
 def wave_lockstep(code, syms):

@@ -547,7 +547,13 @@ percussion made visible**, derived by the generator from the bass
 track's own rests, one S per bar off-beat. K (kick) and H (hat) decode
 too, waiting to be typed. The pad, row 5, holds each bar's root —
 also derived, the bass line's own bar-start notes, soft and sustained.
-The lead echo and the bass drone fill voices 6 and 7; 8 is spare.
+Row 6 is the **flute** — fleeting high two-note sparkles placed in
+the lead's rest gaps, each drawn from that bar's own arpeggio tones,
+played an octave above the lead at low volume with a fast fade, which
+is what makes a square wave stop being a buzzer. The bass drone keeps
+voice 7; 8 is spare. Typing accepts lowercase and upcases it — the
+first field report was "i cannot type letters", because the gate had
+only ever typed a *shifted* C while a real keypress arrives unshifted.
 
 **The whole screen is C64 colours**: all sixteen of bank 0's slots
 repainted with the machine's own Commodore 64 palette, border light
