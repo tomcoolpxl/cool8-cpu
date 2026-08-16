@@ -642,10 +642,11 @@ a second timing model.
 `rtl/soc/cool8_soc.v` assembles the machine — core, memory, UART,
 loader, keyboard, flash and the video subsystem — and decodes
 `$FE00-$FEFF` on the **bus**, ahead of `cool8_mem` and whoever the
-master is. **4019 LUT4 and 1632 flip-flops** for the whole SoC, with 28
+master is. **4013 LUT4 and 1641 flip-flops** for the whole SoC, with 28
 EBR, 4 SPRAM and **no DSP** — see 00-goals.md, the design intends one —
-**5199 logic cells of the 5280 the part has, 98 %**, `sclk` Fmax
-**11.51 MHz** (one seed, 2026-08-16, after [D91]; the six-seed mean of
+**5220 logic cells of the 5280 the part has, 98.9 %**, `sclk` Fmax
+**11.15 MHz** (one seed, 2026-08-16, after [D91] and [D92], which
+placed at +21 cells over D91's 5199; the six-seed mean of
 2026-08-14 was 11.07, range 10.77-11.23, at 5183 cells). The LUT4
 figure had drifted again before D91 was measured — 3754 was recorded
 here while the same synthesis said 3972 — so D91's own cost is the

@@ -427,6 +427,8 @@ pub struct Video {
 
     pub mode: u8,
     pub ctrl: u8,
+    /// D92: the page on the glass while ctrl bit 6 splits it from base
+    pub dbase: u8,
     pub base: u16,
     /// Where the map starts, as opposed to which row is shown first.
     /// Latched from the mode preset; a scroll moves `base` and not this.
@@ -490,6 +492,7 @@ impl Video {
             pal: crate::pal::DEFAULT,   // the bitstream's, see tools/palette.py
             mode: 0,
             ctrl: 0,
+            dbase: 0,
             base: 0x9800,
             map_org: 0x9800,
             stride: 160,
@@ -627,6 +630,7 @@ impl Video {
         match a {
             0x10 => self.mode,
             0x11 => self.ctrl,
+            0x30 => self.dbase,
             0x12 => self.base as u8,
             0x13 => (self.base >> 8) as u8,
             0x14 => self.stride as u8,
@@ -684,7 +688,8 @@ impl Video {
                     self.vactive = p.3;
                 }
             }
-            0x11 => self.ctrl = v & 0x3F,
+            0x11 => self.ctrl = v & 0x7F,
+            0x30 => self.dbase = v,
             0x12 => self.base = (self.base & 0xFF00) | v as u16,
             0x13 => self.base = (self.base & 0x00FF) | (v as u16) << 8,
             0x14 => self.stride = (self.stride & 0xFF00) | v as u16,

@@ -108,10 +108,11 @@ What the registers *do* at the bit level is [04-system.md](04-system.md), writte
 | `$FF2D` | `TMR_L` | frames since reset, low byte |
 | `$FF2E` | `TMR_M` | ...middle byte |
 | `$FF2F` | `TMR_H` | ...high byte |
+| `$FF30` | `VID_DBASE_H` | display base override, high byte -- the fetch engine scans from {this,$00} while VID_CTRL bit 6 is set, so VID_BASE can point drawing at a hidden page (D92) |
 
 ## Registers no software name reaches
 
-0 of 61. The hardware decodes them and nothing in `sw/` has an equate for one, so reaching them means a bare `POKE $FExx`. Not a fault — several are read-only status or set once by the boot ROM — but the list is generated so it is a decision rather than an oversight.
+0 of 62. The hardware decodes them and nothing in `sw/` has an equate for one, so reaching them means a bare `POKE $FExx`. Not a fault — several are read-only status or set once by the boot ROM — but the list is generated so it is a decision rather than an oversight.
 
 .
 

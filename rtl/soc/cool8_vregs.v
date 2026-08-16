@@ -64,6 +64,7 @@ module cool8_vregs (
     output wire        hdouble,
     output wire        vdouble,
     output wire [15:0] base,
+    output wire [15:0] disp_base,
     output wire [15:0] stride,
     output wire [15:0] pat_base,
     // Where the text/tile map starts, as opposed to which row of it is
@@ -112,6 +113,7 @@ module cool8_vregs (
                      A_IRQ = 8'h1D,            //: VID_IRQ      interrupt enable and acknowledge
                      A_PALIDX = 8'h1E,         //: PAL_IDX      palette entry to address
                      A_PALDAT = 8'h1F,         //: PAL_DATA     that entry's colour
+                     A_DBASE = 8'h30,          //: VID_DBASE_H  display base override, high byte -- the fetch engine scans from {this,$00} while VID_CTRL bit 6 is set, so VID_BASE can point drawing at a hidden page (D92)
                      A_PATL = 8'h20,           //: VID_PAT_L    pattern/tile base, low
                      A_PATH = 8'h21,           //: VID_PAT_H    pattern/tile base, high
                      A_CURX = 8'h22,           //: CUR_X        text cursor column
@@ -140,7 +142,7 @@ module cool8_vregs (
                      A_TMRH = 8'h2F;           //: TMR_H        ...high byte
 
     reg [7:0]  mode_r;
-    reg [5:0]  ctrl_r;
+    reg [6:0]  ctrl_r;             // [6] is D92's display-base enable
     reg [15:0] base_r, stride_r, pat_r;
     reg [15:0] maporg_r;
     reg [9:0]  scx_r, scy_r;
@@ -151,6 +153,8 @@ module cool8_vregs (
     reg        pal_hf;
     reg [6:0]  curx_r;
     reg [4:0]  cury_r;
+    reg [7:0]  dbase_r;             // D92: the page on the glass, while
+                                    //   ctrl bit 6 splits it from base_r
     reg [4:0]  curctl_r;
     reg [9:0]  vact_r;
     reg [9:0]  raster_r;
@@ -161,7 +165,7 @@ module cool8_vregs (
     reg        blrst;               // a move's blink restart, pending
 
     assign o_sel = (io_a == A_TMRL) || (io_a == A_TMRM) ||
-                   (io_a == A_TMRH) ||
+                   (io_a == A_TMRH) || (io_a == A_DBASE) ||
                    (io_a[7:4] == 4'h1) ||
                    (io_a[7:4] == 4'h2 && io_a[3:0] <= 4'h5);
 
@@ -171,6 +175,13 @@ module cool8_vregs (
     assign hdouble   = ctrl_r[4];
     assign vdouble   = ctrl_r[5];
     assign base      = base_r;
+    // **The display's base and the drawing base part company here**
+    // (D92). With ctrl bit 6 clear this is base_r and the machine is
+    // exactly what it was; set, the fetch scans from {dbase_r, $00} --
+    // pages land on 256-byte boundaries, which every mode's buffer
+    // does -- while base_r keeps steering the pixel port and whatever
+    // software derives from VID_BASE, CLG included.
+    assign disp_base = ctrl_r[6] ? {dbase_r, 8'h00} : base_r;
     assign stride    = stride_r;
     assign pat_base  = pat_r;
     assign map_org   = maporg_r;
@@ -315,7 +326,8 @@ module cool8_vregs (
     always @(posedge clk) begin
         if (!rst_n) begin
             mode_r   <= 8'h00;
-            ctrl_r   <= 6'b00_00_00;
+            ctrl_r   <= 7'b0_00_00_00;
+            dbase_r  <= 8'h00;
             base_r   <= 16'h9800;
             maporg_r <= 16'h9800;
             stride_r <= 16'd160;
@@ -367,7 +379,9 @@ module cool8_vregs (
                     A_MODE: begin
                         mode_r <= io_wdata;
                         if (p_load) begin
-                            ctrl_r   <= p_ctrl;
+                            // a preset clears the display override:
+                            // MODE hands back one surface (D92)
+                            ctrl_r   <= {1'b0, p_ctrl};
                             base_r   <= p_base;
                             // **The map's address, latched here and
                             // nowhere else.** VID_BASE says which row is
@@ -382,7 +396,7 @@ module cool8_vregs (
                             vact_r   <= p_vact;
                         end
                     end
-                    A_CTRL:   ctrl_r         <= io_wdata[5:0];
+                    A_CTRL:   ctrl_r         <= io_wdata[6:0];
                     A_BASEL:  base_r[7:0]    <= io_wdata;
                     A_BASEH:  base_r[15:8]   <= io_wdata;
                     A_STRDL:  stride_r[7:0]  <= io_wdata;
@@ -392,6 +406,7 @@ module cool8_vregs (
                     A_SCYL:   scy_r[7:0]     <= io_wdata;
                     A_SCYH:   scy_r[9:8]     <= io_wdata[1:0];
                     A_BORDER: border_r       <= io_wdata;
+                    A_DBASE: dbase_r         <= io_wdata;
                     A_RCMP:   rcmp_r         <= io_wdata;
                     A_IRQ: begin
                         irq_en <= io_wdata[5:4];
@@ -421,7 +436,7 @@ module cool8_vregs (
     always @* begin
         case (io_a)
             A_MODE:   o_rdata = mode_r;
-            A_CTRL:   o_rdata = {2'b00, ctrl_r};
+            A_CTRL:   o_rdata = {1'b0, ctrl_r};
             A_BASEL:  o_rdata = base_r[7:0];
             A_BASEH:  o_rdata = base_r[15:8];
             A_STRDL:  o_rdata = stride_r[7:0];
@@ -431,6 +446,7 @@ module cool8_vregs (
             A_SCYL:   o_rdata = scy_r[7:0];
             A_SCYH:   o_rdata = {6'b000000, scy_r[9:8]};
             A_BORDER: o_rdata = border_r;
+            A_DBASE: o_rdata = dbase_r;
             A_RASTER: o_rdata = raster_r[7:0];
             A_RCMP:   o_rdata = rcmp_r;
             A_IRQ:    o_rdata = {2'b00, irq_en, 2'b00, irq_fl};

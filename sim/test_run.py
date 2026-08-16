@@ -1129,34 +1129,43 @@ def cobra_flips(code, syms):
 
     check(rd(io["VID_MODE"]) & 0x0F == 5, "the demo is in mode 5",
           "VID_MODE reads %02X" % rd(io["VID_MODE"]))
-    # sample on the flip itself: run frame by frame until VID_BASE_H
-    # changes, note what it became and how many display frames the
-    # drawn frame took. Sampling on arrival at the wait instead is
-    # ambiguous -- the machine may already be parked there.
-    bases, frames = [], []
-    for _ in range(6):
-        b0, took = rd(io["VID_BASE_H"]), 0
-        while rd(io["VID_BASE_H"]) == b0 and took < 40:
-            M.m.run_frame(1)
-            took += 1
-        bases.append(rd(io["VID_BASE_H"]))
-        frames.append(took)
-    check(set(bases) == {0x00, 0x60} and
-          all(a != b for a, b in zip(bases, bases[1:])),
-          "the base alternates $0000/$6000, a flip per drawn frame",
-          "VID_BASE_H sampled: %s" % bases)
-    M.m.run(until=syms["h_vsync.vw"], budget=200_000_000)
-    # the two pages, read through the machine's own base: the register
-    # names the page being drawn, and the other one is on the glass
-    drawn = (rd(io["VID_BASE_H"]) << 8) | rd(io["VID_BASE_L"])
-    shown = drawn ^ 0x6000
-    a = bytes(M.m.video.vram[drawn:drawn + 0x6000])
-    b = bytes(M.m.video.vram[shown:shown + 0x6000])
-    check(any(a) and any(b), "both pages hold a drawn frame",
-          "drawing page %d lit bytes, shown page %d"
-          % (sum(1 for x in a if x), sum(1 for x in b if x)))
-    check(a != b, "and the ship rotated between them", "pages identical")
-    print("      a drawn frame takes %s display frames" % frames)
+    check(rd(io["VID_CTRL"]) & 0x40 != 0,
+          "the display-base override is on (D92)",
+          "VID_CTRL reads %02X" % rd(io["VID_CTRL"]))
+
+    # **The glass is never blank and never under construction** -- the
+    # regression this demo shipped with: one base register meant the
+    # display followed the page being cleared and drawn, and the CLG
+    # was a visible black frame. Now VID_DBASE_H names the shown page
+    # and VID_BASE the drawing one; sampled every display frame, the
+    # two must stay a page apart, the shown page must always hold a
+    # full wireframe, and its content may change only when DBASE flips.
+    M.m.run_frame(20)      # past the start-up blank: the first page
+                           # shown has nothing on it until the first
+                           # drawn frame flips in
+    flips, low = [], 0
+    prev_d, prev_body = None, None
+    for _ in range(30):
+        M.m.run_frame(1)
+        d, w = rd(io["VID_DBASE_H"]), rd(io["VID_BASE_H"])
+        check_pair = (d ^ w) == 0x60
+        if not check_pair:
+            low += 1000              # a page-apart violation is fatal
+        shown = bytes(M.m.video.vram[(d << 8):(d << 8) + 0x6000])
+        lit = sum(1 for x in shown if x)
+        if lit < 200:
+            low += 1
+        if prev_d is not None and d != prev_d:
+            flips.append(1)
+        elif prev_d is not None and shown != prev_body:
+            low += 1                 # shown page changed without a flip
+        prev_d, prev_body = d, shown
+    check(low == 0,
+          "the shown page is always whole: never blank, never mid-draw",
+          "%d bad samples of 30" % low)
+    check(2 <= len(flips) <= 8, "the display flips as frames finish",
+          "%d flips in 30 frames" % len(flips))
+    print("      %d flips in 30 display frames -- one per drawn frame" % len(flips))
 
 
 def wave_lockstep(code, syms):

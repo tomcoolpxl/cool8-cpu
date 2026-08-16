@@ -850,6 +850,15 @@ double-buffers** — two buffers is 49,152 bytes, leaving 16 KB. Mode 4
 cannot double-buffer; 76,800 bytes does not fit in 64 KB, and the answer
 to wanting it is usually mode 2.
 
+Double-buffering is `VID_DBASE_H` plus `VID_CTRL` bit 6 ([D92]): the
+display scans from `{VID_DBASE_H, $00}` while `VID_BASE` steers the
+drawing — the pixel port and `CLG` both follow it. Flipping is two
+`POKE`s after `VSYNC`: `DBASE` to the page just finished, `BASE` to
+the other. Flipping `VID_BASE` alone does not double-buffer: the fetch
+re-latches it every frame start, so with a multi-frame draw the viewer
+follows the page under construction — the failure D92 exists for. A
+mode preset clears bit 6.
+
 **Mode 2 is what a game should use.** A tile map needs no double
 buffering because nothing is redrawn: scrolling is a register write and
 only the edges of the map are touched. Map 4 KB + 256 tiles 8 KB +

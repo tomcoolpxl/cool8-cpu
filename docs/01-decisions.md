@@ -5716,3 +5716,45 @@ or wrap. D89's note wishing for `VRAM_STEP16` is superseded for this
 purpose: the VRAM port cannot mask sub-byte pixels at 4 bpp, and the
 pixel port already does.
 
+## D92 -- VID_DBASE_H: the glass and the pencil part company
+
+**Decision:** an 8-bit register at `$FF30`, `VID_DBASE_H`, and the
+previously unused `VID_CTRL` bit 6 as its enable. While the bit is set
+the fetch engine scans the frame from `{VID_DBASE_H, $00}`; `VID_BASE`
+goes on steering everything that *draws* -- the pixel port, and
+whatever software derives from the register, `CLG` included. A mode
+preset clears the bit, so `MODE` hands back a single-surface machine.
+
+**Why it exists:** the Cobra demo shipped double-buffered on one base
+register and the user saw a black frame between ships. The mechanism,
+verified in the RTL rather than argued: the fetch re-latches `VID_BASE`
+at *every* frame start, and a drawn frame takes seven of them -- so the
+display followed the page under construction the whole time, the `CLG`
+was a visible black frame, and the finished page was never on the
+glass. One register cannot serve a display that samples per frame and a
+drawing that spans frames; the honest fix is a second register, and the
+high byte is enough because every buffer sits on a 256-byte boundary.
+
+**The flip is two POKEs after `VSYNC`:** `DBASE` to the page just
+finished, `BASE` to the other. `sim/test_run.py`'s gate samples thirty
+consecutive display frames: the two registers stay a page apart, the
+shown page always holds a complete wireframe, and its content changes
+only when `DBASE` flips.
+
+**Measured cost: +21 placed cells** -- 5,199 to **5,220 of 5,280, 98.9
+%, and it fits with 60 left**; Fmax `sclk` 11.15 MHz against the 8.375
+the machine runs at. Gates: `test_soc` (decode, readback, and the
+preset clearing the override), `synth.py`, `cosim all`, and the VM
+gate above. What is left for whoever needs it next: `$FF31-$FF33`, and
+`VID_CTRL` bit 7.
+
+**Rejected:** latching the base once per flip instead of per frame --
+it breaks the terminal's scroll, which writes `VID_BASE` and expects
+the next frame to use it. And a full 16-bit `VID_DBASE` -- eight more
+flip-flops for boundaries no mode uses.
+
+**Coverage note, honestly:** the RTL's fetch-side mux is exercised by
+`test_soc`'s register semantics and mirrored in the machine
+(`rust/src/render.rs`), which the demo gate drives; a golden-frame RTL
+phase for the override in `cool8_video_tb` has not been written.
+

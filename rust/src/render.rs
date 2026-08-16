@@ -152,7 +152,13 @@ impl Renderer {
             self.cur_lit = v.cur_ctrl & 1 != 0
                 && (rate == 3 || v.blink & (1 << (3 + rate)) == 0);
             if vv.disp_en {
-                self.row_ptr = bus.video.base;
+                // D92: the display scans from the override page when
+                // ctrl bit 6 is set; VID_BASE stays the drawing surface
+                self.row_ptr = if bus.video.ctrl & 0x40 != 0 {
+                    (bus.video.dbase as u16) << 8
+                } else {
+                    bus.video.base
+                };
                 self.trow = (bus.video.scrl_y & 7) as u8;
                 self.read_bank = 0;
                 self.fill_row(0, &vv, bus);

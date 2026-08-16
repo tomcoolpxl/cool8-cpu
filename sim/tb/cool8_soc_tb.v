@@ -567,6 +567,18 @@ module cool8_soc_tb;
         // port is the last address the page decodes.
         chk_read("...and the last one aliases too", IOB + 16'h00F7, 8'h7D);
 
+        // ---- D92: the display-base override decodes and reads back;
+        // the fetch-side mux is the VM gate's to prove, but the SoC
+        // must reach the register and VID_CTRL must hold bit 6.
+        chk_read("VID_DBASE_H out of reset",    IOB + 16'h0030, 8'h00);
+        bus_write("VID_DBASE_H := $60",         IOB + 16'h0030, 8'h60);
+        chk_read("...reads back",               IOB + 16'h0030, 8'h60);
+        bus_write("VID_CTRL := $7A, bit 6 set", IOB + 16'h0011, 8'h7A);
+        chk_read("...bit 6 held",               IOB + 16'h0011, 8'h7A);
+        bus_write("VID_MODE := 4 again",        IOB + 16'h0010, 8'h84);
+        chk_read("a preset clears the override", IOB + 16'h0011, 8'h3A);
+        bus_write("VID_DBASE_H := 0 again",     IOB + 16'h0030, 8'h00);
+
         // ---- the pixel port, $FE34-$FE39, through the same bus.
         //
         // Mode 4 is still loaded from above: base 0, stride 160, 4 bpp.

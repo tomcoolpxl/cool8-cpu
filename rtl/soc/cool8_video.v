@@ -152,6 +152,7 @@ module cool8_video #(
     wire [10:0] hactive, hstart;
     wire [7:0]  border, pal_entry;
     wire [6:0]  cur_x;
+    wire [15:0] disp_base;
     wire [4:0]  cur_y;
     wire        pal_we, pal_half;
     wire        vreg_sel;
@@ -163,7 +164,8 @@ module cool8_video #(
         .o_sel(vreg_sel), .o_rdata(vreg_rdata),
         .disp_en(disp_en), .engine(engine), .bpp_log(bpp_log),
         .hdouble(hdouble), .vdouble(vdouble),
-        .base(base), .stride(stride), .pat_base(pat_base),
+        .base(base), .disp_base(disp_base),
+        .stride(stride), .pat_base(pat_base),
         .map_org(map_org),
         .scrl_x(scrl_x), .scrl_y(scrl_y), .border(border),
         .hactive(hactive), .hstart(hstart),
@@ -271,7 +273,9 @@ module cool8_video #(
         .frame_start(frame_start),
         .disp_en(disp_en), .engine(engine),
         .hdouble(hdouble), .vdouble(vdouble),
-        .base(base), .stride(stride), .pat_base(pat_base),
+        // the display's base, not the drawing one: D92 splits them so
+        // a hidden page can be drawn while a finished one is scanned
+        .base(disp_base), .stride(stride), .pat_base(pat_base),
         .map_org(map_org),
         .scrl_y(scrl_y), .vactive(vactive), .vstart(vstart),
         .ram_req(ram_req), .ram_addr(ram_addr), .ram_gnt(ram_gnt),

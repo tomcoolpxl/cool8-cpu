@@ -20,12 +20,16 @@ else. Everything is integer: coordinates are scaled so the largest
 below rather than hoped.
 
 **Mode 5 is the double-buffer mode** (04-system.md section 5.4) and the
-demo is the first user of it: pages at $0000 and $6000, and because
-$6000's low byte is zero the whole flip is one POKE of VID_BASE_H. The
-display latches the base at frame start (cool8_fetch.v samples once);
-the pixel port reads it live (D91's neighbour, cool8_pixport.v) -- so
-after VSYNC the demo points the base at the page just hidden, clears
-and draws it, and the viewer only ever sees finished frames.
+demo is the first user of it -- and of D92, which exists because the
+first cut of this demo was wrong in a way worth remembering. With one
+base register, the display re-latches it at *every* frame start, and a
+drawn frame takes seven of them: the viewer followed the page under
+construction -- the CLG was a visible black frame -- and the finished
+page was never on the glass at all. D92 splits the two: VID_DBASE_H
+(with VID_CTRL bit 6 set) names the page the fetch engine scans, and
+VID_BASE steers only the drawing -- the pixel port and everything
+software derives from it, CLG included. The flip is one POKE of each
+after VSYNC: DBASE to the page just finished, BASE to the other.
 """
 import io
 import math
@@ -89,15 +93,14 @@ def main():
     body = """1 GOTO 100
 10 A=A+1:IF A>71 THEN A=0
 11 VSYNC
-12 P=96-P:POKE $FF13,P
+12 POKE $FF30,P:P=96-P:POKE $FF13,P
 13 CLG 0
 14 B=A*28
 15 FOR K=0 TO 37:LINE U(B+E(K)),W(E(K)),U(B+G(K)),W(G(K)),10:NEXT K
 16 IF INKEY=0 THEN GOTO 10
-17 POKE $FF13,0
-18 MODE 0
-19 CURSOR 1
-20 END
+17 MODE 0
+18 CURSOR 1
+19 END
 100 PRINT "COBRA MK III"
 101 PRINT "COMPUTING 72 FRAMES..."
 102 DIM U(2015):DIM W(27):DIM E(37):DIM G(37):DIM S(71)
@@ -122,8 +125,9 @@ def main():
 140 MODE 5
 141 CURSOR 0
 142 CLG 0
-143 A=71:P=0
-144 GOTO 10
+143 POKE $FF30,0:POKE $FF11,$7A
+144 A=71:P=0
+145 GOTO 10
 """
 
     def data(vals, start):

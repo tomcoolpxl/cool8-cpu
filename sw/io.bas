@@ -42,6 +42,7 @@ CONST SPR_CTRL     = $FF2C       ' per-sprite enable bits
 CONST TMR_L        = $FF2D       ' frames since reset, low byte
 CONST TMR_M        = $FF2E       ' ...middle byte
 CONST TMR_H        = $FF2F       ' ...high byte
+CONST VID_DBASE_H  = $FF30       ' display base override, high byte -- the fetch engine scans from {this,$00} while VID_CTRL bit 6 is set, so VID_BASE can point drawing at a hidden page (D92)
 CONST PIX_X_L      = $FF34       ' plot X, low
 CONST PIX_X_H      = $FF35       ' plot X, high
 CONST PIX_Y_L      = $FF36       ' plot Y, low

@@ -470,22 +470,28 @@ of screen X, about a second of integer arithmetic; the draw loop is 38
 `|qx·cos + qz·sin|` peaks at 23,495 of a signed 16-bit's 32,767,
 asserted at generation rather than hoped.
 
-**This is the first user of mode 5's double buffer**, and of the split
-[D91](01-decisions.md) documented: the display latches `VID_BASE` once
-at frame start (`cool8_fetch.v`), the pixel port reads it live
-(`cool8_pixport.v`). After `VSYNC` the demo points the base at the page
-just hidden — one `POKE` of `VID_BASE_H`, because the pages sit at
-$0000 and $6000 and the low byte never changes — then `CLG`s and draws
-it while the finished page is on the glass. The viewer never sees a
-torn or half-drawn frame at any speed, which is the whole point of the
-mode.
+**This is the first user of mode 5's double buffer, and it shipped
+wrong first** — worth recording because the claim sounded right. The
+first cut flipped `VID_BASE` alone, and the doc said the viewer never
+sees a half-drawn frame. False: the fetch re-latches the base at
+*every* frame start and a drawn frame takes seven of them, so the
+display followed the page under construction — the `CLG` was a visible
+black frame between ships, and the finished page was never shown at
+all. The gate of the day verified flips and page contents, not what
+was on the glass when; the user's eyes caught what it missed.
 
-**Measured: a drawn frame takes 7 display frames — about 8.5 fps.**
-`sim/test_run.py`'s `cobra_flips` is the gate: mode 5 is on, the base
-alternates $0000/$6000 one flip per drawn frame, both pages hold a
-wireframe, and the pages differ because the ship rotated between them.
-The probe reads registers through `bus.read()` — `bus.mem[]` is the RAM
-*under* the I/O page, and reading a register there is the mistake
+[D92](01-decisions.md) is the fix: `VID_DBASE_H` names the page the
+display scans, `VID_BASE` steers only the drawing, and the flip is two
+`POKE`s after `VSYNC` — `DBASE` to the page just finished, `BASE` to
+the other, high bytes only because the pages sit at $0000 and $6000.
+
+**Measured: a drawn frame takes ~6-7 display frames — about 8.5 fps —
+and the glass is never blank.** `sim/test_run.py`'s `cobra_flips` now
+checks the thing the eye sees: over thirty consecutive display frames
+the shown page always holds a complete wireframe, changes only when
+`DBASE` flips, and the two registers stay a page apart. The probe
+reads registers through `bus.read()` — `bus.mem[]` is the RAM *under*
+the I/O page, and reading a register there is the mistake
 `cool8_soc_tb`'s "the page wins" section exists to catch.
 
 ## 5. Adding one
