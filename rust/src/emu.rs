@@ -338,13 +338,21 @@ pub fn run(args: &Args) {
         imgui::ConfigFlags::NAV_ENABLE_KEYBOARD;
     fonts(&mut imgui);
     let mut platform = imgui_sdl2_support::SdlPlatform::new(&mut imgui);
-    let mut ui_renderer =
-        imgui_glow_renderer::AutoRenderer::new(gl, &mut imgui)
-            .unwrap_or_else(|e| die(e.to_string()));
+    // **`output_srgb` is false, and that is the whole point.**
+    // `AutoRenderer` passes true, whose shader applies a linear->sRGB
+    // curve on the way out. SDL's framebuffer does no conversion of its
+    // own, so the curve lands once too often and every colour is
+    // lighter than the machine made it -- which is exactly how this
+    // window differed from a frame grabbed out of memory. Holding the
+    // texture map ourselves is the price of being able to say false.
+    let mut tex_map = imgui_glow_renderer::SimpleTextureMap::default();
+    let mut ui_renderer = imgui_glow_renderer::Renderer::new(
+        &gl, &mut imgui, &mut tex_map, false)
+        .unwrap_or_else(|e| die(e.to_string()));
 
     // The machine's picture, as one texture ImGui is handed each frame.
     let screen = unsafe {
-        let g = ui_renderer.gl_context();
+        let g = &gl;
         let t = g.create_texture().unwrap_or_else(|e| die(e));
         g.bind_texture(glow::TEXTURE_2D, Some(t));
         // NEAREST: this is a machine with square pixels and no opinion
@@ -639,7 +647,7 @@ pub fn run(args: &Args) {
             dst[2] = (px & 0xF) as u8 * 17;
         }
         unsafe {
-            let g = ui_renderer.gl_context();
+            let g = &gl;
             g.bind_texture(glow::TEXTURE_2D, Some(screen));
             g.tex_sub_image_2d(glow::TEXTURE_2D, 0, 0, 0, H_VIS as i32,
                                V_VIS as i32, glow::RGB,
@@ -694,11 +702,10 @@ pub fn run(args: &Args) {
 
         let draw_data = imgui.render();
         unsafe {
-            let g = ui_renderer.gl_context();
-            g.clear_color(0.0, 0.0, 0.0, 1.0);
-            g.clear(glow::COLOR_BUFFER_BIT);
+            gl.clear_color(0.0, 0.0, 0.0, 1.0);
+            gl.clear(glow::COLOR_BUFFER_BIT);
         }
-        ui_renderer.render(draw_data)
+        ui_renderer.render(&gl, &tex_map, draw_data)
             .unwrap_or_else(|e| die(e.to_string()));
         window.gl_swap_window();
     }
