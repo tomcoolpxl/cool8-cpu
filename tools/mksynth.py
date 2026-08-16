@@ -71,14 +71,16 @@ def main():
     #   - one step every 9 VSYNCs; the playhead is the attribute byte
     #     of the current column on the three live rows ($19 normal,
     #     $91 lit -- bg/fg swapped)
-    #   - lead v0: note holds at 12, rest releases 1/frame
+    #   - lead v0: note holds at 10, rest releases one step every
+    #     four frames -- the original's ~0.3 s time-constant tail,
+    #     and softer than the arp's pluck the way a triangle is
     #   - arp  v1: note plucks at 9, rest decays 3/frame
     #   - bass v2: note squares at 10; **a rest is the snare** -- the
     #     voice flips to noise at 13 and the frame loop decays it
     body = """1 GOTO 100
 10 VSYNC
 11 F=F+1:IF F=9 THEN F=0:GOSUB 30
-12 IF D=1 AND V>0 THEN V=V-1:SOUND 0,P,V,0
+12 IF D=1 AND V>0 THEN G=G+1:IF G>3 THEN G=0:V=V-1:SOUND 0,P,V,0
 13 IF E=1 AND W>0 THEN W=W-3:IF W<0 THEN W=0
 14 IF E=1 AND W>0 THEN SOUND 1,Q,W,0
 15 IF E=1 AND W=0 THEN SOUND 1,Q,0,0:E=0
@@ -94,7 +96,7 @@ def main():
 31 S=S+1:IF S>31 THEN S=0
 32 T=39407+S+S:POKE T,145:POKE T+160,145:POKE T+320,145
 33 C=39406+S+S
-34 N=PEEK(C)-64:IF N>0 AND N<27 THEN P=Z(N-1):V=12:D=0:SOUND 0,P,12,0
+34 N=PEEK(C)-64:IF N>0 AND N<27 THEN P=Z(N-1):V=10:D=0:G=0:SOUND 0,P,10,0
 35 IF N<1 OR N>26 THEN D=1
 36 N=PEEK(C+160)-64:IF N>0 AND N<27 THEN Q=Z(N+25):W=9:E=0:SOUND 1,Q,9,0
 37 IF N<1 OR N>26 THEN E=1:W=9
