@@ -429,11 +429,25 @@ before, and its blue-dominant entries -- blue carries 0.114 of
 perceived luminance against green's 0.587 -- came out near-black three
 times over, reading as dark rules spread evenly down the screen.
 
-They are spent here as the smallest deviation from the ideal circle at
-each entry: walk the hue circle and take the nearest unused colour a
-click or two from the last. **Mean deviation 0.98 of a click, worst
-1.44**, so the slack is texture rather than banding. 240 distinct, 91
-single-click steps and 149 of two.
+They are spent here as a deviation from the ideal circle at each entry:
+walk the hue circle and take the best unused colour a click or two from
+the last. **What "best" means is the whole fix.** Nearest-by-distance
+took inward neighbours as readily as outward, and a red dropped 15->14
+costs 0.299 of perceived luminance where a green costs 0.587 -- so 40
+rows sat visibly darker than the two beside them, spaced at the 240/90
+beat. Those were the shadow bands.
+
+Ranking by luminance alone is worse the other way: it wanders 2.71
+clicks off the circle and the ramp desaturates. The cost is
+`4*luminance_error + hue_error`, and 4 is the measured knee -- **0 rows
+darker than their neighbours, mean deviation 1.18 of a click, no step
+above two**, checked on the machine's own scanout and not on a
+screenshot.
+
+What cannot be fixed: **116 of the 239 neighbouring pairs differ by a
+single click**, which is distinct in the palette and identical to the
+eye. 240 rows over a circle with 90 colours in it leaves no other
+outcome.
 
 The blue quarter is still the darkest part of the ramp, luminance 1.6
 against the yellows' 13.4. That is not an artefact to be removed -- it

@@ -109,9 +109,20 @@ fn fonts(ctx: &mut imgui::Context) {
 /// This is what `set_logical_size` used to do. It is done here now
 /// because the bar owns the bottom of the window and SDL's scaler has
 /// no idea it exists.
+///
+/// **The scale is a whole number, and that is not cosmetic.** The
+/// texture is sampled `NEAREST` -- no filter, nothing blended -- so a
+/// fractional scale does not soften anything, it duplicates rows
+/// unevenly: at 2.5x, 240 of the 480 source rows cover two window
+/// pixels and 240 cover three. On a smooth vertical ramp that beat
+/// reads as banding, and on a one-pixel line it reads as the line
+/// changing thickness. Rounding down costs picture size and is the only
+/// way to make one machine pixel the same size as its neighbour. Below
+/// 1x there is nothing to round to, so it stays fractional.
 fn picture_rect(vp: [f32; 2], bar: f32) -> ([f32; 2], [f32; 2]) {
     let avail_h = (vp[1] - bar).max(1.0);
-    let scale = (vp[0] / H_VIS as f32).min(avail_h / V_VIS as f32);
+    let fit = (vp[0] / H_VIS as f32).min(avail_h / V_VIS as f32);
+    let scale = if fit >= 1.0 { fit.floor() } else { fit };
     let (w, h) = (H_VIS as f32 * scale, V_VIS as f32 * scale);
     let x = (vp[0] - w) * 0.5;
     let y = (avail_h - h) * 0.5;

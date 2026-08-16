@@ -5634,3 +5634,29 @@ Vertical spans still walk Bresenham, and the port cannot help them --
 `VRAM_STEP` is one byte, and mode 6's stride is 256, so a vertical run
 cannot be expressed as a constant step. A `VRAM_STEP16` would fix that
 in RTL; nothing has asked for it yet.
+
+## D90 -- The window scales by a whole number or not at all
+
+`picture_rect` took the largest scale that fit and used it as a float.
+The texture is sampled `NEAREST` -- there is no filter anywhere in the
+path, `output_srgb` is false and nothing is blended -- so a fractional
+scale did not soften the picture, it **duplicated rows unevenly**. At
+2.5x, which is what a maximised window on a 1440p screen lands on, 240
+of the 480 source rows covered two window pixels and 240 covered three.
+
+On a smooth vertical ramp that beat reads as banding, and on a one-pixel
+line it reads as the line changing thickness. It was reported as both:
+"shadow bands between each colour" and "some of the lines don't look
+100% straight". Neither was in the framebuffer -- a slice of the
+machine's own scanout through the harness showed the palette exactly,
+240 distinct colours and no dip.
+
+The scale is `floor`ed at 1x and above now. **It costs picture size**:
+where 2.5x fit, the window shows 2x and letterboxes the rest. That is
+the whole price, and there is no way around it -- one machine pixel the
+same size as its neighbour requires a whole number of window pixels.
+Below 1x there is nothing to round to, so it stays fractional.
+
+A screenshot of the window is scaled a second time by whatever captured
+it, so it is not evidence about the machine either way. Measure the
+framebuffer.
