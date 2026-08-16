@@ -671,6 +671,26 @@ CASES = [
              line(99, [K["END"]])),
      {0: 41, 1: 7}),
 
+    # **Two `prg_find` targets alternating, which is what the memo's
+    # second slot exists for.** `GOSUB 60` and `GOTO 20` resolve at
+    # opposite ends of the program, and with one slot they evicted each
+    # other on every pass -- correct but walking from `PROGBOT` each
+    # time, which is most of what BM5-BM7 were measuring. A *wrong*
+    # second slot would be worse than slow: it would hand back a stale
+    # address and this sum would not be 15. Five passes, so both slots
+    # are live and both are being hit rather than filled.
+    ("GOSUB and GOTO alternating both stay resolved",
+     program(spaced(10, name("A"), "=", num(0)),
+             spaced(20, name("A"), "=", name("A"), "+", num(1)),
+             spaced(30, [K["GOSUB"]], num(60)),
+             spaced(40, [K["IF"]], name("A"), "<", num(5), [K["THEN"]],
+                    [K["GOTO"]], num(20)),
+             spaced(50, [K["GOTO"]], num(99)),
+             spaced(60, name("B"), "=", name("B"), "+", name("A")),
+             spaced(70, [K["RETURN"]]),
+             line(99, [K["END"]])),
+     {0: 5, 1: 15}),
+
     # A SUB defined *before* the code that calls it must be stepped over
     # rather than fallen into, and it spans records now.
     ("a SUB in the way is stepped over, not fallen into",

@@ -174,11 +174,28 @@ baseline is COOL8 scaled to 1 MHz and every column is a ratio against
 it, in whole numbers. `CPU` and `MHZ` are their own columns, because the
 clock is most of the answer and burying it in the name hides that.
 
-**The result is not flattering and that is the point.** Against a C64 at
-the same clock, COOL8 is far ahead on the arithmetic loops (BM3 168 to
-its 185, BM1 310 to its 100) and then **loses BM5–BM7 outright** — 54,
-72, 92 against 100. That is `GOSUB` and arrays, and it is where to look
-if the interpreter is ever worth optimising.
+**BM5–BM7 used to be the weak columns, and the benchmark is what found
+out why.** Against a C64 they sat at 141, 149 and 164 while the pure
+arithmetic loops were at 360 and 436 — the three that call a subroutine
+scoring worst is not a coincidence, it is a signature. The cause was
+`prg_find`'s memo having one slot: the inner loop is `GOSUB 2` then
+`GOTO <head>`, two targets at opposite ends of the program, so they
+evicted each other every pass and every jump walked from `PROGBOT`
+again. A second slot ([`sw/prog.asm`](../sw/prog.asm)) cost 48 bytes and
+bought **2.6× on BM5, 2.3× on BM6, 1.8× on BM7**; the C64 columns are
+now 360, 346 and 299, in line with the rest. **BM1–BM4 came back
+byte-identical**, which is the control that says nothing else moved.
+
+**One significant figure on these, because the demo is timed in
+frames.** Three runs are averaged against a 16.7 ms tick, and two
+consecutive builds of the same binary gave BM5 as 360 and 386 — about
+7 % apart. The isolated measurement below is the tighter one, and the
+`poe bench` table in [13-basic.md](13-basic.md) is tighter still because
+it counts cycles rather than frames.
+
+Isolated, the loop is 104 frames against 31 for the same loop with the
+`GOSUB` removed; after the second slot it is 39. The call itself was
+never expensive — 8 frames — and the other 65 were the eviction.
 
 **`4.1875` does not survive the parser** — five significant digits
 against a float that carries about four, and the whole row came out

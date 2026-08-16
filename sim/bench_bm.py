@@ -22,11 +22,22 @@ system clock.
 
 ## The adaptations, and why each one is fair
 
-**GOSUB/RETURN becomes CALL/SUB.** COOL8 has no GOSUB; a SUB is found
-once at RUN rather than searched for per call, which is BBC BASIC's
-arrangement and faster than Microsoft's line-number scan. BM5 exists
-to price a subroutine call, and it still does -- but against a machine
-that resolves the target earlier than the ones in the table.
+**GOSUB/RETURN becomes CALL/SUB.** A SUB is found once at RUN rather
+than searched for per call, which is BBC BASIC's arrangement and faster
+than Microsoft's line-number scan. BM5 exists to price a subroutine
+call, and it still does -- but against a machine that resolves the
+target earlier than the ones in the table.
+
+**This said "COOL8 has no GOSUB", and that stopped being true.** GOSUB
+exists now and resolves its target through `prg_find` exactly as the
+Microsoft BASICs in the table do, so the adaptation is a *choice* now
+rather than a necessity, and the table above prices the CALL path only.
+`demos/bench.bas` is the other side of it: it uses real GOSUB, and the
+two-slot memo that bought 2.74x there moved nothing here, because
+nothing here goes through `prg_find` per call. Kept as CALL so the
+published table stays comparable with its own history; switching it
+would be a fair change, but it is a different measurement, not a
+correction to this one.
 
 **LET is gone**, so `510 LET A=...` is `510 A=...`. No semantic change:
 LET was always optional and costs a token nobody needs.

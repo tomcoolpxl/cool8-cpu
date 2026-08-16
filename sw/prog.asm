@@ -96,17 +96,34 @@ prg_find:
         ; check and falls through to the search. The version that clears
         ; the memo from every path that touches program text needs six
         ; of them to be right; this one needs none.
+        ; **Two slots, and only the cheap half is duplicated.** A loop
+        ; with a GOSUB in it alternates two targets -- `GOSUB 2` and
+        ; `GOTO <head>` in BM5-BM7 -- so one slot is wrong on every
+        ; pass. What is repeated here is the two-byte number compare;
+        ; the verification below, which costs a `prg_no`, is shared by
+        ; both slots because at most one of them can match a number.
         LD   R2,[FMLIN]
         CMP  R2,R0
-        BNE  .full
+        BNE  .s1
         LD   R2,[FMLIN+1]
         CMP  R2,R1
-        BNE  .full
+        BNE  .s1
         LD   R2,[FMADR]
         MOV  XL,R2
         LD   R2,[FMADR+1]
         MOV  XH,R2
-        PUSHW X
+        BRA  .ver
+.s1:    LD   R2,[FMLIN2]
+        CMP  R2,R0
+        BNE  .full
+        LD   R2,[FMLIN2+1]
+        CMP  R2,R1
+        BNE  .full
+        LD   R2,[FMADR2]
+        MOV  XL,R2
+        LD   R2,[FMADR2+1]
+        MOV  XH,R2
+.ver:   PUSHW X
         CALL prg_no
         MOV  R2,R0
         MOV  R3,R1
@@ -141,9 +158,23 @@ prg_find:
         ; Only an *exact* hit is worth remembering: prg_find answers
         ; with the first record at or past the number, and remembering
         ; a near miss would hand it back for a line that does not exist.
+        ; Move-to-front: slot 0 ages into slot 1 and the answer just
+        ; walked to becomes slot 0. Two targets alternating therefore
+        ; settle one in each slot and stay there -- which is the whole
+        ; point, and why no replacement counter is needed. Reached only
+        ; after a walk; a memo that hit left at `.out` without
+        ; disturbing either slot.
 .hit:   MOV  R0,R2
         OR   R0,R3
         BNE  .out
+        LD   R0,[FMLIN]
+        ST   [FMLIN2],R0
+        LD   R0,[FMLIN+1]
+        ST   [FMLIN2+1],R0
+        LD   R0,[FMADR]
+        ST   [FMADR2],R0
+        LD   R0,[FMADR+1]
+        ST   [FMADR2+1],R0
         LD   R0,[SP+1]
         ST   [FMLIN],R0
         LD   R0,[SP+0]

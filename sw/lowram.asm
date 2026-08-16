@@ -391,13 +391,24 @@ E_ARNG  = 14                    ; branch out of range
 E_DIV0  = 15                    ; ?DIVISION BY ZERO ERROR
 E_DOS   = 16                    ; ?TOO MANY DOS / ?LOOP WITHOUT DO
 E_CALL  = 17                    ; ?NO SUCH SUB / ?RETURN WITHOUT CALL
-; prg_find's memo: the line it resolved last and where it was.
+; prg_find's memo: the two lines it resolved last and where they were.
 ;
-; **Four bytes out of the fifty this region already had free** -- the
+; **Eight bytes out of the fifty this region already had free** -- the
 ; block the editor's compiled-BASIC variables left behind when [D68]
 ; deleted them. Below PROGBOT, so it costs the user's FREE nothing.
+;
+; **Two slots, because one is exactly wrong for a loop with a GOSUB in
+; it.** The inner loop of BM5-BM7 is `GOSUB 2` then `GOTO <head>`, two
+; targets at opposite ends of the program, and they evict each other on
+; every single pass -- so a one-slot memo does not merely fail to help,
+; it pays for a check that never hits and then walks anyway. Measured
+; on that loop: 104 frames against 31 for the same loop with no GOSUB.
+; Two is the number the shape needs; there is no third target in sight,
+; and a bigger table would cost a search where this costs a compare.
 FMLIN   = $00A8                 ;: 2 the line prg_find resolved last
 FMADR   = $00AA                 ;: 2 ...and the record it was in
+FMLIN2  = $00AC                 ;: 2 the one before that
+FMADR2  = $00AE                 ;: 2 ...and its record
 
 E_STOP  = 18                    ; ?BREAK -- the user stopped it
 E_DATA  = 19                    ; ?OUT OF DATA -- READ past the last DATA
