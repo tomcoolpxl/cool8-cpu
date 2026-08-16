@@ -416,6 +416,26 @@ wave reveals rather than a gradient that drifts, because those two
 things are the same variable and cannot both be had at 240 rows and 240
 entries.
 
+**The dark lines spread evenly down the screen were the blues.** A hue
+circle at full saturation does not hold brightness: the eye weighs blue
+at 0.114 against green's 0.587, so `#007` and `#00C` carry a luminance
+of under 1.5 of 15 while the yellows carry 13. One blue-dominant entry
+per rotation, three rotations, and they read as dark grey rules at
+regular intervals -- not grey in fact, no entry has a channel spread
+under 4, just dark enough to lose their hue.
+
+The ramp is held at constant *luminance* now rather than constant
+brightness. Each hue is mixed with exactly the white that lifts it to
+the target: `a` is the most saturation that reaches it without
+clipping, `t` the white underneath. Blue comes out periwinkle and
+yellow olive, and **the whole ramp sits between 6.4 and 9.1 instead of
+0.8 and 13.0**. The cost is saturation -- it is a muted rainbow, not a
+vivid one, and that is the trade the 4-bit channels impose.
+
+The brightness breath survives at 0.75, down from 3.5, only because at
+zero the three rotations land on each other and the count falls short
+of 240. Steps stay tight: 157 single-click, 62 two, 21 three.
+
 **Earlier ramps grouped rows in twos and threes, and the arithmetic
 says why.** A smooth ramp moves one channel by one at a time, so the
 distinct colours it can show equals the steps it takes through 12-bit
