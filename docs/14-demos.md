@@ -330,11 +330,82 @@ colouring, not a bigger number.
 
 ![WAVE](img/demo-wave.png)
 
-A full-width horizontal line follows a sine down mode 6's 256×240 and
-leaves a sixty-four-line trail behind it: newest drawn white, the one
-before it aged into the gradient, the oldest erased. Sixty-four
-positions in a ring, which is `RAINBOW`'s trick at four times the
-length.
+A full-width horizontal line sweeps a sine over mode 6's 256x240, 4 s
+a lap, and **every row it vacates takes the next of 253 palette
+entries, wrapping** -- lines and colours step in lockstep, nothing
+skipped. Entry 0 is the black border, 255 the white head, 254 parked
+at black so a stray index shows background, 1..253 the ramp. The trail
+is the whole screen, and it drifts: `python tools/mkwave.py`
+regenerates the program and the palette as one design, and
+`sim/test_run.py`'s `wave_lockstep` case is the gate on all of it.
+
+**Why 253 is the right modulus and not just what was left.** A sweep
+paints 478 lines -- 239 down, 239 up -- and gcd(478, 253) = 1, 11*23
+against 2*239. So the row-to-colour alignment precesses through every
+one of the 253 phases, every row shows every colour over about
+seventeen minutes, and nothing is structurally skipped. 254 would
+share a factor 2 with 478 and lock half the alignments out forever.
+
+**Not all 253 are on screen at an instant, and that is arithmetic, not
+a fault.** A row's colour is its *last* paint, and the last paints on
+screen span a 478-value window folded into 253: measured, **127 to
+~200 distinct at any moment**, every entry back within a sweep. The
+alternative was tried and is written down here: locking colour to row
+gives 240 distinct always -- and a picture in which nothing moves.
+Those are the same variable; the cycling was chosen with eyes open.
+
+**Draw order is the flicker fix, and vblank is the budget.** The head
+was once drawn last, after up to four fill spans (~2.7 ms), and vblank
+is ~1.4 ms: at the top of the screen the raster reached the head's row
+before the white was down, so the head flickered there and was steady
+at the bottom, where the raster arrives 13 ms later. The two spans
+that matter -- recolouring the vacated row, then the new head -- now
+go first and fit inside vblank; the fill rows follow while the raster
+scans. The residue is a one-frame mosaic near the head, and it is the
+next lesson.
+
+**`fb()` is the composed frame, not the VRAM.** The scanline renderer
+shows the frame as the raster scanned it, which is its whole point --
+and near the head the two disagree by design, because the fills land a
+few ms into the scan, after the raster has passed the top rows. The
+lockstep gate read `fb()` first and reported that mosaic as a sync
+break: three pairs in sixty samples, always within two rows of the
+head, stale values with no pattern. They were true of the display and
+false of the program. **The program's contract is checked in VRAM** --
+a mode-6 byte *is* the palette index -- where away from the head the
+screen must be two arithmetic chains, +1 per row below descent, -1
+under ascent; the head is checked on `fb()`, where there must be
+exactly one white row. Sampling is `run(until=h_vsync.vw)`, the
+interpreter parked in the VSYNC wait, where the iteration's painting
+is complete by definition -- a frame boundary catches the demo
+mid-redraw, and a fixed cycle offset is the same mistake with a magic
+number.
+
+**Two different black gaps, and only one was a bug.** The sine mirror
+was `240-S`, so the table spanned rows 1-239 and **row 0 was never
+painted at all** -- a permanent black line along the top, by
+construction. It is `239-S` now and 0-239 is covered. The other was
+fill exposure -- a vacated row showing background until its turn --
+and it died when the vacate moved inside vblank: the gate measures 0
+black rows inside the picture and one white head on every sample.
+
+**The ramp is one turn of the hue circle, and it must close.** The
+counter wraps, so entry 253 is entry 1's neighbour in time and on
+screen; the loop closes at 2 clicks. 253 distinct colours a click or
+two apart is more movement than a hue circle supplies -- **six edges
+of fifteen, 90 clicks** -- and the rest is spent as deviation from the
+ideal circle. Which deviation was the shadow-band lesson:
+nearest-by-distance takes inward neighbours as readily as outward, and
+a red dropped 15->14 costs 0.299 of perceived luminance where a green
+costs 0.587, so rows came out darker than their neighbours at the
+253/90 beat, reading as grey rules down the screen. Charging **4
+clicks of hue error per click of brightness error** -- the measured
+knee; luminance-only wanders 2.71 clicks off the circle and
+desaturates -- prices them out: mean deviation 1.23 of a click, max
+2.43, steps 112 single and 141 double with none above two, duplicates
+asserted at zero. The blue quarter stays the darkest part, luminance
+1.6 against the yellows' 13.4: that is what a saturated spectrum is,
+and flattening it costs the saturation that makes it a rainbow.
 
 **A horizontal span really is cheaper than a vertical one, and the
 reason is in the hardware.** `PIX_DATA` auto-increments X (§5.7), so a
@@ -355,136 +426,26 @@ in this BASIC the cost of a loop is the statements in it, so the win is
 never a cheaper store, it is a primitive that stores without being
 asked again.
 
-**Two counters stepping integers mod 256 are phase-locked, always.**
-The second oscillator stepped 3 against the first's 1, which makes
-`B = 3A` — not a second voice but a fixed harmonic, and its peaks
-cancelled the fundamental's. The wave reached **87 of 240 rows** and
-repeated exactly every 256 frames. The fix is a modulus, not a step:
-the amplitude's counter wraps at **251, coprime to 256**, so the pair
-repeats every `lcm(251, 256)` = 64,256 frames — eighteen minutes.
-Coverage then climbs 107 → 191 rows over the first minute and the
-picture never settles.
-
 **Palette entry 0 is the border.** Starting the ramp at 0 turned the
 whole overscan electric blue, which is not a bug in the demo so much as
 a fact about the video path worth writing down: entry 0 is the
-background *and* the frame around it. The ramp is entries 1–247, 0 is
-the dark ground, 255 is the leading line.
+background *and* the frame around it.
 
 **This demo overwrites all 256 palette entries**, which §3 says a demo
-may not do quietly. The ramp is built at run time rather than typed as
-`DATA`: `#10F` electric blue through violet to `#F6B` hot pink,
-mirrored at 124 so the cycle has no seam.
+may not do quietly.
 
-**One colour per row, which is the most the mode can show.** Mode 6 is
-240 rows, so 240 is the ceiling on colours visible at once -- 256 is not
-reachable no matter what the palette holds, because a colour has to be
-*on* a row to be seen. The ramp is 240 entries and the sweep covers
-rows 1-239, so no two rows share a colour: **239 measured on screen, at
-every sample, with zero background rows**.
-
-**Two different black gaps, and only one was a bug.** The mirror was
-`240-S`, so the table spanned rows 1-239 and **row 0 was never painted
-at all** -- a permanent black line along the top, by construction. It is
-`239-S` now and every row of 0-239 is covered.
-
-The other was the head being drawn first and the rows behind it filled
-one `LINE` at a time, so a row showed the background until its turn and
-the raster could scan the span mid-fill. Slowing the sweep only shrank
-that window, and **slowing it made the colours worse** -- 12 s a sweep
-measured 162 distinct where 4 s measured 224.
-
-**The colour comes from the row now, not from a counter, and that fixed
-both.** A counter cannot be made to work here. Each row is painted twice
-a period, once going down and once coming back, so the counter advances
-478 times across 240 entries; the last-paint values on screen span ~478
-and collapse into 240, and about a third of the rows collide at any
-speed. Row-locked, `LINE 0,I,255,I,I+1`, the map is a bijection by
-construction: **240 distinct, always**, measured every half second over
-30 s.
-
-The same change removed the gaps outright, which was the part worth
-having. Repainting a row to the colour it already holds is invisible, so
-a half-finished fill cannot be seen -- there is nothing to expose. Only
-two rows change per frame: the head, and the one it left. The old head
-is cleared **before** the new one is drawn, so the worst a torn frame
-shows is no white line for one frame, never two. Measured over 30 s: 0
-black rows inside the band, never more than one white row.
-
-What it costs is the cycling trail. The trail is a fixed rainbow the
-wave reveals rather than a gradient that drifts, because those two
-things are the same variable and cannot both be had at 240 rows and 240
-entries.
-
-**One rotation of the spectrum, and the arithmetic of where the slack
-goes.** 240 distinct colours a click apart is 240 clicks of movement,
-and **one turn of the hue circle supplies only 90** -- six edges of
-fifteen in 12-bit RGB. The other 150 have to come from somewhere that
-is not hue, and the whole design question is where they land.
-
-Spent as a brightness ripple they are bands: the best a ripple managed
-was 222 distinct at thirty visible pulses. Spent as three rotations
-they are three passes of the same colours, which is what the ramp did
-before, and its blue-dominant entries -- blue carries 0.114 of
-perceived luminance against green's 0.587 -- came out near-black three
-times over, reading as dark rules spread evenly down the screen.
-
-They are spent here as a deviation from the ideal circle at each entry:
-walk the hue circle and take the best unused colour a click or two from
-the last. **What "best" means is the whole fix.** Nearest-by-distance
-took inward neighbours as readily as outward, and a red dropped 15->14
-costs 0.299 of perceived luminance where a green costs 0.587 -- so 40
-rows sat visibly darker than the two beside them, spaced at the 240/90
-beat. Those were the shadow bands.
-
-Ranking by luminance alone is worse the other way: it wanders 2.71
-clicks off the circle and the ramp desaturates. The cost is
-`4*luminance_error + hue_error`, and 4 is the measured knee -- **0 rows
-darker than their neighbours, mean deviation 1.18 of a click, no step
-above two**, checked on the machine's own scanout and not on a
-screenshot.
-
-What cannot be fixed: **116 of the 239 neighbouring pairs differ by a
-single click**, which is distinct in the palette and identical to the
-eye. 240 rows over a circle with 90 colours in it leaves no other
-outcome.
-
-The blue quarter is still the darkest part of the ramp, luminance 1.6
-against the yellows' 13.4. That is not an artefact to be removed -- it
-is what a saturated spectrum looks like, and holding luminance flat
-instead costs the saturation that makes it a rainbow at all.
-
-The ends need not meet. The colour is the row, not a cycling counter,
-so entry 0 and entry 239 are opposite edges of the screen and never
-touch.
-
-**Earlier ramps grouped rows in twos and threes, and the arithmetic
-says why.** A smooth ramp moves one channel by one at a time, so the
-distinct colours it can show equals the steps it takes through 12-bit
-RGB. A hue circle at full saturation is six segments of fifteen: **90
-steps and no more**. Spread over 247 entries that is 2.7 entries a
-colour, and the eye sees bands of two and three rows. The first ramp
-here was worse -- an L1 path of 24, so 23 colours and 224 duplicates.
-
-**So the ramp is three hue rotations against one brightness breath**,
-which is long enough to visit 240 distinct colours. Two rotations, or a
-darker floor than `v = 8`, collapse different hues onto the same 4-bit
-RGB and the count falls short -- that is measured, not chosen. 172 of
-the 240 steps move a single channel by one; 54 move two and 14 move
-three, which is the price of insisting on 240 distinct in a 4096-colour
-space. The loop closes on a single step, so `E` wrapping shows no seam.
-
-**The table is `DATA`, computed when this file was written.** 181
+**The tables are `DATA`, computed by `tools/mkwave.py`.** 181 sine
 values for the first quarter, mirrored three ways at run time —
-`S(360-i)`, `240-S(360+i)`, `240-S(720-i)` — which is integer work and
-therefore safe. It is `DATA` rather than a `SIN` loop because **a float
-assigned to an integer variable is not converted on this machine**
-([13-basic.md §8](13-basic.md)): `S(I) = 120 + 110*SIN(...)` stores
-−6654 where 230 belongs, silently, while `PRINT` of the same expression
-is correct. This demo shipped once with a sine table that was not a
-sine and looked plausible enough on screen that only counting the rows
-caught it. Note also that `READ` takes scalar targets only, so it is
-`READ V` then `S(I) = V`; `READ S(I)` is `?INDEX`.
+`S(360-i)`, `239-S(360+i)`, `239-S(720-i)` — which is integer work and
+therefore safe, and 253 packed palette words. `DATA` rather than a
+`SIN` loop because **a float assigned to an integer variable floored
+nothing before D88 existed** ([13-basic.md §8](13-basic.md)):
+`S(I) = 120 + 110*SIN(...)` stored -6654 where 230 belongs, silently,
+while `PRINT` of the same expression was correct. This demo shipped
+once with a sine table that was not a sine and looked plausible enough
+on screen that only counting the rows caught it. Note also that `READ`
+takes scalar targets only, so it is `READ V` then `S(I) = V`;
+`READ S(I)` is `?INDEX`.
 
 ## 5. Adding one
 

@@ -993,6 +993,100 @@ def injected_matches_typed(code, syms):
     return stored(typed), stored(injected)
 
 
+def wave_lockstep(code, syms):
+    """WAVE's colour contract, measured off the framebuffer.
+
+    The demo's spec is that lines and colours step in lockstep: every
+    painted line takes the next of 253 palette entries, wrapping, with
+    entry 0 the black border and 255 the white head. That is checkable
+    from a frame alone -- away from the head the screen must be two
+    arithmetic chains, +1 per row down above it (those rows were painted
+    travelling down) and -1 below (painted travelling up). Any adjacent
+    pair off by anything else is a sync break: a skipped colour, a
+    double-advanced counter, a fill drawn out of order.
+
+    The palette under test is parsed from demos/wave.bas's own DATA
+    lines, so what is verified is the program as stored, not the
+    generator's intentions (tools/mkwave.py holds those).
+
+    Two surfaces are read, deliberately. **The lockstep is checked in
+    VRAM**, where a mode-6 byte *is* the palette index: that is the
+    program's own painting, complete at the sample point. **The head is
+    checked on `fb()`**, the scanline renderer's composed frame -- the
+    picture as the raster scanned it. The two disagree near the head by
+    design: the head and the vacated row are drawn inside vblank, the
+    fill rows a few ms into the scan, so the composed frame shows the
+    previous iteration's colours for rows the raster passed first. A
+    first version checked the chains on `fb()` and reported that
+    one-frame mosaic as a sync break, three pairs in sixty samples, all
+    within two rows of the head near the top of the screen -- true of
+    the display, false of the program.
+
+    Samples are taken with `run(until=h_vsync.vw)` -- the interpreter
+    parked in the VSYNC wait, where the iteration's painting is complete
+    by definition. Sampling at the frame boundary instead catches the
+    demo mid-redraw, and a fixed cycle offset is the same mistake with a
+    magic number.
+    """
+    N = 253
+    src = [l for l in open(os.path.join(ROOT, "demos", "wave.bas"),
+                           encoding="utf-8").read().splitlines()
+           if l.strip()]
+    packed = []
+    for l in src:
+        if int(l.split()[0]) >= 300 and "DATA" in l:
+            packed += [int(v) for v in l.split("DATA", 1)[1].split(",")]
+    check(len(packed) == N and len(set(packed)) == N,
+          "the stored palette is 253 values with no duplicates",
+          "%d values, %d distinct" % (len(packed), len(set(packed))))
+
+    M = B.Machine(code, syms, render=True)
+    M.settle()
+    for ln in src:
+        H.line(M.m, syms, ln)
+    M.m.type(RUNCMD)
+    M.m.run_frame(300)                 # past setup plus a whole sweep
+
+    viol, heads, blacks = [], 0, 0
+    seen = set()
+    for s in range(60):
+        M.m.run_frame(7)
+        M.m.run(until=syms["h_vsync.vw"], budget=2_000_000)
+        # the program's painting: one VRAM byte per row at column 128
+        raw = M.m.video.vram[0:240 * 256]
+        col = [raw[r * 256 + 128] for r in range(240)]
+        whites = [r for r, v in enumerate(col) if v == 255]
+        blacks += sum(1 for v in col if v == 0)
+        if len(whites) != 1:
+            heads += 1
+            continue
+        h = whites[0]
+        seen.update(v for v in col if 1 <= v <= N)
+        for r in range(239):
+            if r == h or r + 1 == h:
+                continue
+            a, b = col[r] - 1, col[r + 1] - 1
+            if (b - a) % N != (1 if r + 1 < h else N - 1):
+                viol.append((s, h, r, a, b))
+        # the viewer's picture: the composed frame holds one white head
+        fb = M.m.fb()
+        fwhites = sum(1 for r in range(0, 480, 2)
+                      if fb[r * 640 + 320] == 0xFFF)
+        if fwhites != 1:
+            heads += 1
+    check(heads == 0, "one white head, in VRAM and on the glass",
+          "%d samples off" % heads)
+    check(blacks == 0, "no black row inside the picture",
+          "%d seen" % blacks)
+    check(not viol,
+          "every adjacent pair is one palette step: lines and colours "
+          "are in lockstep",
+          "; ".join("sample %d head %d row %d holds %s, next %s"
+                    % v for v in viol[:5]))
+    check(len(seen) == N, "all 253 colours reach the screen",
+          "%d of %d over 60 samples" % (len(seen), N))
+
+
 def syscall(code, syms):
     """`SYS addr` runs machine code, which is D63's whole replacement.
 
@@ -1093,6 +1187,9 @@ def main():
     check(a == b and len(a) > 40,
           "an injected program stores the same bytes as a typed one",
           "typed %d bytes, injected %d" % (len(a), len(b)))
+
+    print()
+    wave_lockstep(code, syms)
 
     print()
     M = syscall(code, syms)
