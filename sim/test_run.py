@@ -1261,6 +1261,20 @@ def synth_screen(code, syms):
     check(M.m.bus.mem[lab] == 97, "pressing 4 again brings them back",
           "label attr %02X" % M.m.bus.mem[lab])
 
+    # the editor: the cursor starts at row 3 col 7, an arrow moves it,
+    # and a typed letter is POKEd straight into the memory the
+    # sequencer reads -- the whole point of the demo, gated.
+    M.m.key(["K_RIGHT"])
+    M.m.run_frame(6)
+    cur = base + 3 * 160 + 8 * 2
+    check(M.m.bus.mem[cur + 1] == 22, "the cursor moved right and shows",
+          "attr at col 8 is %02X" % M.m.bus.mem[cur + 1])
+    M.m.key("C")
+    M.m.run_frame(6)
+    check(M.m.bus.mem[cur] == 67,
+          "typing C writes the note into the screen the player reads",
+          "cell holds %02X" % M.m.bus.mem[cur])
+
 
 def wave_lockstep(code, syms):
     """WAVE's colour contract, measured off the framebuffer.

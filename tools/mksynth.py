@@ -60,7 +60,10 @@ TRACKS = [
     "AM AMA MHT HTH TJV JVJ VFR FRF R",
 ]
 MASKS = [82, 70, 46]         # per-track octave offsets, as shipped
-DRUMS = "K   H   K   S   K   H   K   S   "
+# the percussion the bass row already implied, made visible: the
+# original snared on every bass rest, so the drum row IS those rests.
+# K and H decode too, for the editor to type.
+DRUMS = None                 # derived from TRACKS[2] in main()
 
 PAL_CLOCK = 985248           # the synth's PAL SID arithmetic
 SID_MAX = 16777216
@@ -75,15 +78,15 @@ BODY = """1 GOTO 100
 15 IF E=1 AND W>0 AND M(1)=1 THEN W=W-3:IF W<0 THEN W=0
 16 IF E=1 AND W>0 AND M(1)=1 THEN SOUND 1,Q,W,0
 17 IF E=1 AND W=0 AND M(1)=1 THEN SOUND 1,Q,0,0:E=0
-18 IF B=1 AND X>0 AND M(2)=1 THEN X=X-2:IF X<0 THEN X=0
-19 IF B=1 AND X>0 AND M(2)=1 THEN SOUND 2,3000,X,1
-20 IF B=1 AND X=0 AND M(2)=1 THEN SOUND 2,3000,0,1:B=0
-21 IF Y>0 AND M(3)=1 THEN Y=Y-3:IF Y<0 THEN Y=0
-22 IF Y>0 AND M(3)=1 THEN SOUND 3,J,Y,O
-23 IF U>0 AND M(4)=1 THEN U=U-1:SOUND 4,K,U,0
-24 IF H>0 AND M(5)=1 THEN H=H-1:SOUND 5,L,H,0
-25 T=INKEY:IF T=0 THEN GOTO 10
-26 IF T>48 AND T<57 THEN T=T-49:GOSUB 60:GOTO 10
+18 IF Y>0 AND M(3)=1 THEN Y=Y-3:IF Y<0 THEN Y=0
+19 IF Y>0 AND M(3)=1 THEN SOUND 3,J,Y,O
+20 IF U>0 AND M(5)=1 THEN U=U-1:SOUND 5,K,U,0
+21 T=INKEY:IF T=0 THEN GOTO 10
+22 IF T>48 AND T<57 THEN T=T-49:GOSUB 60:GOTO 10
+23 IF T>255 THEN GOSUB 80:GOTO 10
+24 IF T=32 THEN POKE R,32:GOTO 10
+25 IF T>64 AND T<91 THEN POKE R,T:GOTO 10
+26 IF T<>27 THEN GOTO 10
 27 FOR I=0 TO 7:SOUND I,100,0,0:NEXT I
 28 MODE 0
 29 CURSOR 1:END
@@ -93,17 +96,15 @@ BODY = """1 GOTO 100
 35 IF N<1 THEN D=1
 36 N=PEEK(C+160)-64:IF N>0 AND M(1)=1 THEN Q=Z(N+25):W=9:E=0:SOUND 1,Q,9,0
 37 IF N<1 THEN E=1:W=9
-38 N=PEEK(C+320)-64:IF N>0 AND M(2)=1 THEN SOUND 2,Z(N+51),10,0:B=0
-39 IF N<1 THEN B=1:X=13
+38 N=PEEK(C+320)-64:IF N>0 AND M(2)=1 THEN SOUND 2,Z(N+51),10,0
+39 IF N<1 AND M(2)=1 THEN SOUND 2,100,0,0
 45 RETURN
 50 T=S-2:IF T<0 THEN T=T+32
-51 N=PEEK(39406+T+T)-64:IF N>0 AND M(4)=1 THEN K=Z(N-1):U=4:SOUND 4,K,4,0
-52 T=S-1:IF T<0 THEN T=T+32
-53 N=PEEK(39566+T+T)-64:IF N>0 AND M(5)=1 THEN L=Z(N+25):H=3:SOUND 5,L,3,0
-54 N=PEEK(C+320)-64:IF N>0 AND M(6)=1 THEN SOUND 6,Z(N+51)/2,3,0
-55 N=PEEK(C+480)-64
-56 IF N=11 AND M(3)=1 THEN Y=11:J=120:O=0:SOUND 3,120,11,0
-57 IF N=19 AND M(3)=1 THEN Y=11:J=2500:O=1:SOUND 3,2500,11,1
+51 N=PEEK(39406+T+T)-64:IF N>0 AND M(5)=1 THEN K=Z(N-1):U=4:SOUND 5,K,4,0
+52 N=PEEK(C+320)-64:IF N>0 AND M(6)=1 THEN SOUND 6,Z(N+51)/2,3,0
+53 N=PEEK(C+640)-64:IF N>0 AND M(4)=1 THEN SOUND 4,Z(N+25),4,0
+56 N=PEEK(C+480)-64:IF N=19 AND M(3)=1 THEN Y=11:J=2500:O=1:SOUND 3,2500,11,1
+57 IF N=11 AND M(3)=1 THEN Y=11:J=120:O=0:SOUND 3,120,11,0
 58 IF N=8 AND M(3)=1 THEN Y=6:J=9000:O=1:SOUND 3,9000,6,1
 59 RETURN
 60 IF M(T)=1 THEN M(T)=0:POKE 39393+T*160,107:SOUND T,100,0,0:RETURN
@@ -111,7 +112,18 @@ BODY = """1 GOTO 100
 70 N=39407+A+A:T=39407+S+S
 71 POKE N,110:POKE T,230:POKE N+160,110:POKE T+160,230
 72 POKE N+320,110:POKE T+320,230:POKE N+480,110:POKE T+480,230
-73 A=S:RETURN
+73 POKE N+640,110:POKE T+640,230:A=S:POKE R+1,22:RETURN
+80 POKE R+1,110
+81 B=(R-38912)/160:X=(R-38912-B*160)/2
+82 IF T=258 THEN X=X-1
+83 IF T=259 THEN X=X+1
+84 IF T=256 THEN B=B-1
+85 IF T=257 THEN B=B+1
+86 IF X<7 THEN X=7
+87 IF X>38 THEN X=38
+88 IF B<3 THEN B=3
+89 IF B>7 THEN B=7
+90 R=38912+B*160+X+X:POKE R+1,22:RETURN
 100 MODE 1
 101 CLS:CURSOR 0
 102 POKE $FF1A,14
@@ -120,25 +132,26 @@ BODY = """1 GOTO 100
 106 FOR I=0 TO 15
 107 READ N:POKE $FF1E,I:POKE $FF1F,N/256:POKE $FF1F,N-N/256*256
 108 NEXT I
-110 PRINT "  COOL8 SYNTH - 1-8 TOGGLE VOICES"
+110 PRINT "  COOL8 SYNTH  1-8 VOICES  ESC QUITS"
 111 PRINT
 112 PRINT "       %s"
 113 PRINT "1 LEAD %s"
 114 PRINT "2 ARP  %s"
 115 PRINT "3 BASS %s"
 116 PRINT "4 DRUM %s"
-117 PRINT "5 ECHO"
+117 PRINT "5 PAD  %s"
 118 PRINT "6 ECHO"
 119 PRINT "7 DRONE"
 120 PRINT "8"
 121 PRINT
-122 PRINT "       THE SCREEN IS THE SEQUENCER"
+122 PRINT "       TYPE IN THE GRID - IT PLAYS IT"
 125 FOR R=0 TO 29
 126 FOR I=0 TO 39:POKE 38913+R*160+I+I,110:NEXT I
 127 NEXT R
 133 FOR I=0 TO 7:M(I)=1:POKE 39393+I*160,97:NEXT I
-134 S=31:A=31:F=0:D=1:E=1:B=1:V=0:W=0:X=0:Y=0:U=0:H=0
-135 GOTO 10
+134 S=31:A=31:F=0:D=1:E=1:V=0:W=0:Y=0:U=0
+135 R=39406:POKE R+1,22
+136 GOTO 10
 """
 
 
@@ -150,8 +163,12 @@ def pitch(note, mask):
 
 def main():
     assert all(len(t) == 32 for t in TRACKS), "a track is not 32 steps"
-    assert len(DRUMS) == 32
-    assert set(DRUMS) <= set("KSH "), "unknown drum letter"
+    drums = "".join("S" if c == " " else " " for c in TRACKS[2])
+    # the pad holds each bar's root -- the bass line's own bar-start
+    # notes, played soft in the arp's octave
+    pad = "".join(TRACKS[2][i] if i % 8 == 0 else " " for i in range(32))
+    assert len(drums) == 32 and len(pad) == 32
+    assert drums.count("S") == 8, "the bass rests moved: %r" % drums
     pitches = []
     for mask in MASKS:
         for note in range(1, 27):
@@ -180,7 +197,7 @@ def main():
     # DATA is numbers only on this machine, so the track strings ride
     # in their PRINT statements -- stated once, painted once, and from
     # then on the screen copy is the only one the player reads
-    src = (BODY % (("+---" * 8,) + tuple(TRACKS) + (DRUMS,))
+    src = (BODY % (("+---" * 8,) + tuple(TRACKS) + (drums, pad))
            + "\n".join(data(pitches, 200) + data(c64, 240)) + "\n")
     path = os.path.join(ROOT, "demos", "synth.bas")
     io.open(path, "w", encoding="utf-8", newline="\n").write(src)
@@ -189,8 +206,8 @@ def main():
     assert ns == sorted(ns), "line numbers not ascending"
     over = [n for n, l in zip(ns, lines) if len(l) > 79]
     assert not over, "lines over 79 chars: %s" % over
-    print("  synth.bas: %d lines; 78 pitches; 7 voices + toggles; "
-          "C64 palette all 16" % len(lines))
+    print("  synth.bas: %d lines; drums %r; pad %r"
+          % (len(lines), drums, pad))
     print("  -> %s" % path)
 
 
