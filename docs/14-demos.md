@@ -537,14 +537,31 @@ COOL8's ~2·Hz register values. Tempo: the original's 160 ms step is
 9.6 frames at 60 Hz; **9 frames — 150 ms, slightly faster — by
 decision.**
 
-**Three voices onto square-and-noise, envelopes in software (D41).**
-The lead holds and releases one volume step a frame on rests; the
-arpeggio plucks and decays fast; and the bass keeps the original's
-best move — **on a rest the same voice becomes the snare**, one noise
-burst decayed by the frame loop, exactly the `bass_snare` oscillator
-flip. Five more voices sit drawn and empty, rows 4–8. The playhead is
-the attribute byte of the current column on the live rows, restored
-behind it.
+**Seven voices onto square-and-noise, envelopes in software (D41),
+keys 1–8 toggling each live** — the row's digit lights white or dims
+grey to show it, and a muted voice skips its triggers and envelopes.
+The original three: lead held then released slowly (a square standing
+in for a triangle, played softer), arp plucked, and the bass keeping
+the original's best move — **on a rest the same voice becomes the
+snare**, the `bass_snare` oscillator flip. Joining them: a visible,
+editable **drum row** (K kick, S snare, H hat), a **lead echo** two
+steps late — a pure delay, deliberately not a detune — an **arp echo**
+one step late, and a **bass drone** an octave down. Voice 8 is spare;
+its toggle lights, nothing sounds.
+
+**The whole screen is C64 colours**: all sixteen of bank 0's slots
+repainted with the machine's own Commodore 64 palette (bank 10's
+values through the same quantiser), border light blue via
+`VID_BORDER`, every attribute light-blue-on-blue. The playhead is the
+inverted attribute of the current column, moved pairwise per row so no
+frame shows it half-moved.
+
+**The step is staged across three frames, and the gate is why.** All
+the work on one frame overran 16.7 ms and the tempo gate caught it —
+one frame per step showed the playhead restored but not yet lit. Now
+F=0 reads the melodic rows, F=1 the echoes, drone and drums, F=2 moves
+the playhead; every frame stays inside the budget it must share with
+eleven envelope statements.
 
 **Gate-enforced** (`synth_screen`): mode 1; rows 3–5, columns 7–38
 hold the c64-synth tracks byte for byte; exactly one lit column per

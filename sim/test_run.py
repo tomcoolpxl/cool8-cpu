@@ -1235,7 +1235,7 @@ def synth_screen(code, syms):
         M.m.run_frame(1)
         b = rd(io["VID_BASE_L"]) | (rd(io["VID_BASE_H"]) << 8)
         lit = [i for i in range(32)
-               if M.m.bus.mem[b + 3 * 160 + (7 + i) * 2 + 1] == 145]
+               if M.m.bus.mem[b + 3 * 160 + (7 + i) * 2 + 1] == 230]
         seen.append(lit[0] if len(lit) == 1 else -1)
     check(-1 not in seen, "exactly one column is lit on every frame",
           "samples: %s" % seen[:12])
@@ -1248,6 +1248,18 @@ def synth_screen(code, syms):
     check(all((b - a) % 32 == 1 for a, b in zip(steps, steps[1:])),
           "and it walks the 32 columns in order",
           "columns visited: %s" % steps[:8])
+
+    # keys 1-8 toggle voices live; the digit shows it. Voice 4 is the
+    # drum row at screen row 6, its label attribute at column 0.
+    lab = base + 6 * 160 + 1
+    M.m.key("4")
+    M.m.run_frame(12)
+    check(M.m.bus.mem[lab] == 107, "pressing 4 mutes the drums, digit dim",
+          "label attr %02X" % M.m.bus.mem[lab])
+    M.m.key("4")
+    M.m.run_frame(12)
+    check(M.m.bus.mem[lab] == 97, "pressing 4 again brings them back",
+          "label attr %02X" % M.m.bus.mem[lab])
 
 
 def wave_lockstep(code, syms):
