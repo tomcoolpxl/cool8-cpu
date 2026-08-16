@@ -269,13 +269,22 @@ contour bands in the picture are those rectangles.
 pass: the value is already in hand, so the mirror costs four more
 `POKE`s and saves reading 30,720 bytes back.
 
-**The step is 1.5 units, not 2, and that is the framing.** Two units
-over 128 columns forces a view exactly 4.0 wide; the set is 2.25 across,
-so a quarter of the picture sat outside it, escaping on the first
-iteration as one flat band of colour. `I*3/2` is still integer and steps
-1,2,1,2 — 1.5 on average — which gives 2.97 across by 2.81 down: the set
-and very little else. It also samples finer, so more escape counts occur
-and the colour count rose from 45 to 50.
+**The flat band on the left was the left edge, not the zoom, and it
+took two goes to say so.** Every column with x < −2 escapes on the
+*first* iteration — `A` is `X` after one pass, and the test fires at
+`A < −128` — so it comes out one colour, and a run of such columns is a
+flat vertical band. The first attempt narrowed the *step* (2 units to
+1.5), which took the band from 25% to 8.6% and looked like progress:
+thinner columns, so fewer of them outside the set. But the left edge
+stayed at −2.25, a quarter-unit left of the set's leftmost point, so
+eleven columns of 128 still escaped at once. **Narrowing a view does
+not move its edge.**
+
+The edge is −2.00 now and the step is `I*5/4`, which is 2.47 across by
+2.34 down: **no column escapes on the first iteration**, and the set
+fills 91% of the width instead of 76%. Both axes use the same Q6 step,
+so the pixels stay square. The colour count went 50 to 53 — finer
+sampling finds more escape counts.
 
 **Why it is not 256 colours.** The distinct colour count is bounded by
 the iteration cap, not by the palette: 64 iterations can produce at most
