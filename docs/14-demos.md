@@ -351,6 +351,22 @@ with amplitude 110 a one-row step needs a period of at least 2π·110 ≈
 row of 10–230 without skipping one. Measured on the running demo: **0
 background rows inside the band**, at every sample from 2 s to 18 s.
 
+**`VSYNC` comes before the drawing, not after, and the white line is
+drawn first.** Mode 6 uses 61,440 of the 64 KB of VRAM, so there is no
+second page to flip to: the machine is single-buffered and `LINE` walks
+Bresenham left to right over a real slice of the frame. Drawing both
+spans and *then* waiting meant the white one finished about 6 ms in,
+and the raster crossed that row mid-walk -- left half white, right half
+still the trail colour. Measured over 300 frames: **122 of them caught
+it half-drawn, 41 %**. Waiting first and drawing the white line first
+halves its exposure and takes that to **0 of 300**.
+
+**The recolour is skipped when the line has not moved.** A one-row step
+means `O = Y` often at the turning points, where the sine dwells -- so
+that frame does no second `LINE` at all. It is also what keeps the
+reorder correct: with white drawn first, recolouring the same row would
+paint over the head.
+
 **Nothing is erased, because nothing needs to be.** The ring buffer
 that the striped version used to rub out its oldest line is gone: a
 head that visits every row repaints the whole screen every sweep, so
