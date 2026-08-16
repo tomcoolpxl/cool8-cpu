@@ -5660,3 +5660,44 @@ Below 1x there is nothing to round to, so it stays fractional.
 A screenshot of the window is scaled a second time by whatever captured
 it, so it is not evidence about the machine either way. Measure the
 framebuffer.
+
+## D91 -- PIX_DATA_Y: the store address picks the step direction
+
+**Decision:** a second write-only data register on the pixel port,
+`PIX_DATA_Y` at `$FF39`. Writing it plots exactly as `PIX_DATA` does
+and then advances **Y** instead of X, so a vertical run is one store
+per pixel the way a horizontal one has been since D34.
+
+**Why now:** the 3D wireframe demo. `LINE`'s Bresenham walks ~209
+cycles a pixel where the horizontal fast path (D89) walks ~22, and the
+whole difference is coordinate rewriting through `pixxy`. With one
+store advancing X and another advancing Y, every Bresenham step in
+either regime is a single store -- a steep line is a run of
+`PIX_DATA_Y` with an occasional X rewrite, a shallow one the mirror.
+Any line can be drawn from its lesser-Y endpoint, so +1 is the only
+direction either register needs; sx is handled in software, sy never
+exists.
+
+**Why a second register and not a mode bit:** the direction travels
+with the store, so the inner loop holds no state. Nothing to set
+before a line, save around one, or restore after; an interrupt cannot
+land between a mode write and the store it governed; and two demos
+interleaving spans cannot fight over a global. The rejected shape --
+`PIX_CTRL` with a step-direction bit -- costs the same logic plus a
+software contract about who resets it.
+
+**Measured cost: +47 LUT4, +1 FF** on the SoC (3,972 -> 4,019 LUT4 by
+the same `test_soc` synthesis before and after; EBR and SPRAM
+unchanged). Gates run: `sim/test_soc.py` 346 checks incl. the port's
+first direct RTL test (column walked, X held, both nibbles of a shared
+byte), `sim/cosim.py all` 511 encodings, `sim/synth.py` PASS. The Rust
+machine carries the same register, gated by `sim/test_run.py`'s
+vertical-run case.
+
+**What it does not do:** step X and Y together (a diagonal register
+was considered and dropped -- Bresenham's error term decides *when* to
+step both, so a hardware diagonal store saves nothing), step backwards,
+or wrap. D89's note wishing for `VRAM_STEP16` is superseded for this
+purpose: the VRAM port cannot mask sub-byte pixels at 4 bpp, and the
+pixel port already does.
+

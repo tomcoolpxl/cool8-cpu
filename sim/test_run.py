@@ -732,6 +732,20 @@ CASES = [
       "96 B = VPEEK(0)",
       "97 IF A <> 0 AND B <> 0 THEN PRINT 1", "99 END"], "1"),
 
+    # PIX_DATA_Y (D91) is PIX_DATA advancing Y instead of X, so a
+    # vertical run is one POKE per pixel; the store address picks the
+    # direction and there is no mode bit. Asserted three ways: the top
+    # pixel landed, the *bottom* pixel landed (a port that stopped
+    # stepping Y fails here), and X held still through the whole run --
+    # a column, not a staircase.
+    ("a vertical pixel run through PIX_DATA_Y steps Y and holds X",
+     ["10 MODE 4", "20 POKE {PIX_X_L}, 10", "21 POKE {PIX_X_H}, 0",
+      "22 POKE {PIX_Y_L}, 0", "23 POKE {PIX_Y_H}, 0",
+      "30 FOR I = 1 TO 8", "31 POKE {PIX_DATA_Y}, 5", "32 NEXT I",
+      "40 A = VPEEK(5)", "41 B = VPEEK(7 * 160 + 5)",
+      "42 C = VPEEK(7 * 160 + 6)",
+      "50 IF A <> 0 AND B <> 0 AND C = 0 THEN PRINT 1", "60 END"], "1"),
+
     # A shallow line, both directions. Slope 1 is the one case a broken
     # Bresenham gets right -- the e2-recomputed-mid-step bug walked every
     # line at slope 1 and never met the endpoint -- so the checks are an

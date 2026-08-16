@@ -1,9 +1,17 @@
-// cool8_pixport — plot a pixel by coordinate. $FE34-$FE38.
+// cool8_pixport — plot a pixel by coordinate. $FE34-$FE39.
 //
 // Write X, write Y, write a colour, and the pixel appears. X then
 // advances on its own, so a horizontal span is one store per pixel and
 // the address arithmetic happens here rather than in the CPU's four
 // registers.
+//
+// `PIX_DATA_Y` ($39) is the same store advancing **Y** instead, so a
+// vertical run is also one store per pixel (D91). The store address
+// picks the direction — there is deliberately no mode register, so a
+// Bresenham inner loop mixes the two stores freely and nothing has to
+// be saved, restored or remembered. +1 is the only direction either
+// way, because any line can be drawn from its lesser-Y endpoint, which
+// is what `LINE` does.
 //
 // ## Why this survived when the blitter did not
 //
@@ -103,7 +111,8 @@ module cool8_pixport (
                      A_PXH = 8'h35,            //: PIX_X_H      plot X, high
                      A_PYL = 8'h36,            //: PIX_Y_L      plot Y, low
                      A_PYH = 8'h37,            //: PIX_Y_H      plot Y, high
-                     A_PDAT = 8'h38;           //: PIX_DATA     write plots the pixel at X,Y
+                     A_PDAT = 8'h38,           //: PIX_DATA     write plots the pixel at X,Y, then X advances
+                     A_PDATY = 8'h39;          //: PIX_DATA_Y   write plots the pixel at X,Y, then Y advances
 
     localparam [2:0] S_IDLE = 3'd0, S_MUL = 3'd1, S_RD = 3'd2,
                      S_WR   = 3'd3, S_END = 3'd4;
@@ -111,6 +120,9 @@ module cool8_pixport (
     reg [10:0] pix_x, pix_y;
     reg [7:0]  wdat;
     reg        go;
+    reg        adv_y;       // which coordinate S_END advances -- latched
+                            // from the store address, so there is no mode
+                            // bit for software to set or forget (D91)
     reg [2:0]  st;
 
     reg [15:0] a_byte;
@@ -125,7 +137,7 @@ module cool8_pixport (
     assign vr_wdata = wdata_r;
     assign vr_mask  = mask_r;
 
-    assign o_sel   = (io_a >= A_PXL) && (io_a <= A_PDAT);
+    assign o_sel   = (io_a >= A_PXL) && (io_a <= A_PDATY);
 
     wire wr = io_we & o_sel;
 
@@ -172,7 +184,7 @@ module cool8_pixport (
         if (!rst_n) begin
             pix_x <= 11'd0; pix_y <= 11'd0;
             wdat <= 8'd0;
-            go <= 1'b0;
+            go <= 1'b0; adv_y <= 1'b0;
             st <= S_IDLE; a_byte <= 16'd0; old_b <= 8'd0;
             req_r <= 1'b0; we_r <= 1'b0; addr_r <= 16'd0;
             wdata_r <= 16'd0; mask_r <= 4'd0;
@@ -187,6 +199,12 @@ module cool8_pixport (
                     A_PYH: pix_y[10:8] <= io_wdata[2:0];
                     A_PDAT: begin
                         wdat  <= io_wdata;
+                        adv_y <= 1'b0;
+                        go    <= 1'b1;
+                    end
+                    A_PDATY: begin
+                        wdat  <= io_wdata;
+                        adv_y <= 1'b1;
                         go    <= 1'b1;
                     end
                     default: ;
@@ -234,7 +252,8 @@ module cool8_pixport (
                 end
 
                 S_END: begin
-                    pix_x <= pix_x + 11'd1;
+                    if (adv_y) pix_y <= pix_y + 11'd1;
+                    else       pix_x <= pix_x + 11'd1;
                     st    <= S_IDLE;
                 end
 

@@ -348,6 +348,7 @@ enabled at rate 2. Measured off the rendered picture, not the register:
 | `$FF36` | `PIX_Y_L` | R/W | Pixel port Y, low |
 | `$FF37` | `PIX_Y_H` | R/W | `2:0` high |
 | `$FF38` | `PIX_DATA` | W | Write one pixel at (X, Y) of the surface `VID_BASE`/`VID_STRIDE` describes, in the current bpp, with sub-byte masking done in hardware. **Auto-increments X**, so a horizontal span is one store per pixel. **Write-only** — reads `$FF`; see §5.7 |
+| `$FF39` | `PIX_DATA_Y` | W | The same store **auto-incrementing Y** instead, so a vertical run is also one store per pixel. The store address picks the direction — no mode bit (D91). **Write-only** — reads `$FF`; see §5.7 |
 
 `$FF39–$FF3F` are spare, as is `$FF2D–$FF2F`.
 
@@ -1188,6 +1189,15 @@ an 8-bit CPU is genuinely bad at:
 Write `PIX_X`, write `PIX_Y`, write `PIX_DATA`, and the pixel appears in
 the surface `VID_BASE` and `VID_STRIDE` describe. X then advances on its
 own, so a horizontal span is one store per pixel.
+
+**`PIX_DATA_Y` is the same store advancing Y instead** ([D91]), so a
+vertical run is also one store per pixel. The store address picks the
+direction and there is deliberately no mode register: a Bresenham inner
+loop mixes the two stores freely, nothing to set, save or restore, and
+an interrupt cannot land between a mode write and the store it was
+meant for. +1 is the only direction either port steps, because any line
+can be drawn from its lesser-Y endpoint. Measured cost of the register:
+**+47 LUT4, +1 FF** on the SoC (3,972 → 4,019, same synthesis).
 
 **`PIX_DATA` is write-only.** It was readable, and reading it cost two
 more variable shifters — one to bring the pixel down out of its byte and

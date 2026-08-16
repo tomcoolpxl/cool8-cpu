@@ -27,7 +27,8 @@ PIX_X_L     = IOBASE + $34       ; plot X, low
 PIX_X_H     = IOBASE + $35       ; plot X, high
 PIX_Y_L     = IOBASE + $36       ; plot Y, low
 PIX_Y_H     = IOBASE + $37       ; plot Y, high
-PIX_DATA    = IOBASE + $38       ; write plots the pixel at X,Y
+PIX_DATA    = IOBASE + $38       ; write plots the pixel at X,Y, then X advances
+PIX_DATA_Y  = IOBASE + $39       ; write plots the pixel at X,Y, then Y advances
 
 ; ---- cool8_ps2.v
 KBD_STAT    = IOBASE + $40       ; PS/2 status: byte ready, error

@@ -567,6 +567,61 @@ module cool8_soc_tb;
         // port is the last address the page decodes.
         chk_read("...and the last one aliases too", IOB + 16'h00F7, 8'h7D);
 
+        // ---- the pixel port, $FE34-$FE39, through the same bus.
+        //
+        // Mode 4 is still loaded from above: base 0, stride 160, 4 bpp.
+        // Three PIX_DATA_Y stores walk a column (D91) and two PIX_DATA
+        // stores walk a row from where the column left Y -- the store
+        // address picks the direction, no mode bit anywhere. Pixel
+        // x=10 is byte x/2 = 5, high nibble; x=11 is byte 5's low
+        // nibble, so the row pair lands as one $33 byte. Read back
+        // through the VRAM port, whose auto-increment supplies the
+        // empty-neighbour check for free.
+        // Seed every byte the plots will touch: the 4 bpp path writes
+        // nibbles through MASKWREN with no read, so the other half of
+        // each byte keeps what it held -- which in Icarus is x unless
+        // something wrote it. $AA at byte 6 doubles as the proof the
+        // column stayed in its own byte.
+        bus_write("seed row 0 byte 5",          IOB + 16'h0026, 8'h05);
+        bus_write("...high half",               IOB + 16'h0027, 8'h00);
+        bus_write("bytes 5,6 := $00,$AA",       IOB + 16'h0029, 8'h00);
+        bus_write("...",                        IOB + 16'h0029, 8'hAA);
+        bus_write("seed row 1 byte 165",        IOB + 16'h0026, 8'hA5);
+        bus_write("...high half",               IOB + 16'h0027, 8'h00);
+        bus_write("byte 165 := $00",            IOB + 16'h0029, 8'h00);
+        bus_write("seed row 2 byte 325",        IOB + 16'h0026, 8'h45);
+        bus_write("...high half",               IOB + 16'h0027, 8'h01);
+        bus_write("byte 325 := $00",            IOB + 16'h0029, 8'h00);
+        bus_write("seed row 3 byte 485",        IOB + 16'h0026, 8'hE5);
+        bus_write("...high half",               IOB + 16'h0027, 8'h01);
+        bus_write("byte 485 := $00",            IOB + 16'h0029, 8'h00);
+        bus_write("PIX_X := 10",                IOB + 16'h0034, 8'h0A);
+        bus_write("PIX_X_H := 0",               IOB + 16'h0035, 8'h00);
+        bus_write("PIX_Y := 0",                 IOB + 16'h0036, 8'h00);
+        bus_write("PIX_Y_H := 0",               IOB + 16'h0037, 8'h00);
+        bus_write("PIX_DATA_Y := 5, (10,0)",    IOB + 16'h0039, 8'h05);
+        bus_write("PIX_DATA_Y := 5, (10,1)",    IOB + 16'h0039, 8'h05);
+        bus_write("PIX_DATA_Y := 5, (10,2)",    IOB + 16'h0039, 8'h05);
+        chk_read("Y stepped to 3, by the port", IOB + 16'h0036, 8'h03);
+        chk_read("...and X held at 10",         IOB + 16'h0034, 8'h0A);
+        bus_write("PIX_DATA := 3, (10,3)",      IOB + 16'h0038, 8'h03);
+        bus_write("PIX_DATA := 3, (11,3)",      IOB + 16'h0038, 8'h03);
+        chk_read("X stepped to 12, by the port", IOB + 16'h0034, 8'h0C);
+        chk_read("...and Y held at 3",          IOB + 16'h0036, 8'h03);
+        bus_write("VRAM_ADDR := 5 (row 0)",     IOB + 16'h0026, 8'h05);
+        bus_write("...high half",               IOB + 16'h0027, 8'h00);
+        chk_read("(10,0) is $50",               IOB + 16'h0029, 8'h50);
+        chk_read("...and byte 6 kept its $AA",  IOB + 16'h0029, 8'hAA);
+        bus_write("VRAM_ADDR := 165 (row 1)",   IOB + 16'h0026, 8'hA5);
+        bus_write("...high half",               IOB + 16'h0027, 8'h00);
+        chk_read("(10,1) is $50",               IOB + 16'h0029, 8'h50);
+        bus_write("VRAM_ADDR := 325 (row 2)",   IOB + 16'h0026, 8'h45);
+        bus_write("...high half",               IOB + 16'h0027, 8'h01);
+        chk_read("(10,2) is $50",               IOB + 16'h0029, 8'h50);
+        bus_write("VRAM_ADDR := 485 (row 3)",   IOB + 16'h0026, 8'hE5);
+        bus_write("...high half",               IOB + 16'h0027, 8'h01);
+        chk_read("(10,3)+(11,3) is $33",        IOB + 16'h0029, 8'h33);
+
         // ---------------------------------------------------------- 4
         // The page wins. There is RAM under every one of these
         // addresses and it must never be what answers.

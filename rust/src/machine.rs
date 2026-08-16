@@ -754,13 +754,16 @@ impl Video {
             0x35 => self.pix_x = (self.pix_x & 0xFF) | ((v & 7) as u16) << 8,
             0x36 => self.pix_y = (self.pix_y & 0x700) | v as u16,
             0x37 => self.pix_y = (self.pix_y & 0xFF) | ((v & 7) as u16) << 8,
-            0x38 => self.plot(v),
+            0x38 => self.plot(v, false),
+            0x39 => self.plot(v, true),
             _ => {}
         }
     }
 
-    /// PIX_DATA: one pixel at (X, Y), then X advances. Write-only.
-    fn plot(&mut self, colour: u8) {
+    /// PIX_DATA: one pixel at (X, Y), then X advances. PIX_DATA_Y is the
+    /// same store advancing Y instead — the address picks the direction,
+    /// so a Bresenham loop holds no mode bit (D91). Both write-only.
+    fn plot(&mut self, colour: u8, adv_y: bool) {
         let bpp = 1u32 << self.bpp_log();
         let row = self.base as u32 + self.pix_y as u32 * self.stride as u32;
         let byte = ((row + ((self.pix_x as u32 * bpp) >> 3)) & 0xFFFF) as usize;
@@ -773,7 +776,11 @@ impl Video {
             self.vram[byte] = (self.vram[byte] & !mask)
                 | (((colour as u32) << shift) as u8 & mask);
         }
-        self.pix_x = (self.pix_x + 1) & 0x7FF;
+        if adv_y {
+            self.pix_y = (self.pix_y + 1) & 0x7FF;
+        } else {
+            self.pix_x = (self.pix_x + 1) & 0x7FF;
+        }
     }
 }
 

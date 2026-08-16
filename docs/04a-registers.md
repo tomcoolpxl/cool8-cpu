@@ -29,7 +29,8 @@ What the registers *do* at the bit level is [04-system.md](04-system.md), writte
 | `$FF35` | `PIX_X_H` | plot X, high |
 | `$FF36` | `PIX_Y_L` | plot Y, low |
 | `$FF37` | `PIX_Y_H` | plot Y, high |
-| `$FF38` | `PIX_DATA` | write plots the pixel at X,Y |
+| `$FF38` | `PIX_DATA` | write plots the pixel at X,Y, then X advances |
+| `$FF39` | `PIX_DATA_Y` | write plots the pixel at X,Y, then Y advances |
 
 ## `cool8_ps2.v`
 
@@ -110,7 +111,7 @@ What the registers *do* at the bit level is [04-system.md](04-system.md), writte
 
 ## Registers no software name reaches
 
-0 of 60. The hardware decodes them and nothing in `sw/` has an equate for one, so reaching them means a bare `POKE $FExx`. Not a fault — several are read-only status or set once by the boot ROM — but the list is generated so it is a decision rather than an oversight.
+0 of 61. The hardware decodes them and nothing in `sw/` has an equate for one, so reaching them means a bare `POKE $FExx`. Not a fault — several are read-only status or set once by the boot ROM — but the list is generated so it is a decision rather than an oversight.
 
 .
 
