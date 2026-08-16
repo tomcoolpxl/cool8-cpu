@@ -102,6 +102,35 @@ CASES = [
     ("PRINT of an expression",
      ["10 PRINT 2 + 3 * 4", "20 END"], "14"),
 
+    # ---- [D88]: a float crossing into an integer, which used to keep
+    # raw bits. `PRINT` of the same expression was always right, so
+    # these have to check the *stored* value, never the printed one --
+    # that is exactly the trap, and a test that printed the expression
+    # would have passed against the broken interpreter.
+    ("a float assigned to an integer floors, it does not keep bits",
+     ["10 X# = 3.9", "20 A = X#", "30 PRINT A", "40 END"], "3"),
+
+    ("a float into an integer array element",
+     ["10 DIM Q(4)", "20 X# = 3.9", "30 Q(2) = X# + 1",
+      "40 PRINT Q(2)", "50 END"], "4"),
+
+    ("POKE takes a float value",
+     ["10 X# = 65.9", "20 POKE $9800, X#", "30 PRINT PEEK($9800)",
+      "40 END"], "65"),
+
+    ("FOR runs to a float limit",
+     ["10 X# = 3.9", "20 N = 0", "30 FOR I = 1 TO X#", "40 N = N + 1",
+      "50 NEXT I", "60 PRINT N", "70 END"], "3"),
+
+    # The other half of D88: the conversion is at the integer's door,
+    # not inside `earg`, so the two builtins that need a float to
+    # survive argument parsing still get one.
+    ("STR$ still renders a float rather than an integer",
+     ['10 PRINT STR$(3.5)', "20 END"], "3.5"),
+
+    ("INT still floors toward minus infinity",
+     ["10 PRINT INT(0 - 3.1)", "20 END"], "-4"),
+
     ("a variable survives between lines",
      ["10 A = 6", "20 A = A * 7", "30 PRINT A", "40 END"], "42"),
 
@@ -254,21 +283,23 @@ CASES = [
     ("binary minus promotes, as every operator does",
      ["10 PRINT 0 - SQR(2)", "20 END"], "-1.414"),
 
-    # ---- The silent class that remains. Each reads R0:R1, which a
-    # ---- float does not write, so it acts on whatever the integer
-    # ---- registers last held and says nothing. Pinned at the wrong
-    # ---- answer deliberately: these are tripwires, and a failure here
-    # ---- most likely means someone closed the gap. See D63.
+    # ---- The silent class, and **these two tripwires have fired**.
+    # ---- They were pinned at the wrong answer deliberately -- POKE and
+    # ---- FOR each read R0:R1, which a float does not write, so they
+    # ---- acted on whatever the integer registers last held and said
+    # ---- nothing -- with a note that a failure here most likely meant
+    # ---- someone had closed the gap. [D88] closed it: `evali` converts
+    # ---- through the same flooring `ftoi` that `INT()` uses, at every
+    # ---- door where an integer is wanted. So they now assert the right
+    # ---- answer, and they go on being tripwires facing the other way.
 
-    # Should be 65, or an error. POKE reads a stale register instead.
-    ("POKE of a float stores a stale integer",
+    ("POKE of a float floors it",
      ["10 X# = FLT(65)", "20 POKE 700, X#",
-      "30 PRINT PEEK(700)", "40 END"], "2"),
+      "30 PRINT PEEK(700)", "40 END"], "65"),
 
-    # Should run three times. The limit reads as 1, so the body runs once.
-    ("FOR to a float limit runs once",
-     ["10 X# = FLT(3)", "20 FOR I = 1 TO X#",
-      "30 PRINT I", "40 NEXT", "50 END"], "1"),
+    ("FOR to a float limit runs the whole way",
+     ["10 X# = FLT(3)", "20 N = 0", "30 FOR I = 1 TO X#",
+      "40 N = N + 1", "50 NEXT", "60 PRINT N", "70 END"], "3"),
 
     # No float arrays: DIM accepts the name and makes an ordinary
     # two-byte-per-element integer array called "A#(".

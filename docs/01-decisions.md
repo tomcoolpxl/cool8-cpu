@@ -5524,3 +5524,70 @@ symptom of a 97 %-full device, not the cause. **At this occupancy the
 placer's freedom is the constraint**, which is also why the seed spread
 is 4–6 % and why any change of this size is unmeasurable. Something that
 removes logic would help; something that reshapes it will not.
+
+## D88 -- A float crossing into an integer converts, implicitly
+
+`A = 110 * SIN(X#)` used to put **2** in `A`, and
+`A = 120 + 110 * SIN(X#)` put **-6654**. The expression was right up to
+the moment it was stored -- `PRINT` of either printed 110 and 230 --
+because the integer store took whatever `eval` left in `R0:R1`, which
+for a float is not a value at all. **It converts now**, flooring,
+through the same `ftoi` that `INT()` uses.
+
+**16 bytes**, image 19,915 to 19,931, at seven doors: both assignments
+(scalar and array element), both of `POKE`'s operands, and `FOR`'s
+start, limit and step.
+
+### Both other answers were considered, and one was decided on first
+
+**Rejecting it with an error** was the first decision, and it is the one
+this entry originally recorded. The argument was that `INT()` and
+`FLT()` are the language's two crossings and a second, implicit one is
+a second implementation of the same intent; that integers are what this
+machine is for; and that a silent floor hides precision loss where the
+source should show it. That is a real argument and it lost to a simpler
+one: **every other BASIC converts**, the conversion is what a program
+means when it writes it, and an error would reject `A = B# / 2` --
+which is not a mistake, it is arithmetic.
+
+**Doing nothing** was the status quo and is the worst of the three. It
+is not a policy, it is an absence: the failure is silent, and the usual
+way of checking a suspicious line -- printing the expression -- confirms
+it rather than catching it.
+
+### The cost, which is what decided it
+
+Checking is free, and the first version of this entry got the mechanism
+wrong, so it is worth stating exactly. **The type is not in `R2`** --
+that is the parser's lookahead. It is in **`STYPE`**, a byte every value
+already sets so `PRINT` can pick `fprint` over `num_put`, and `sstr`
+and `iint` already test it the same way. So the sequence is a load, a
+compare and a branch, **once per value stored, never per operation**,
+and the conversion call is taken only when the types actually differ --
+which in integer code is never. There is no fast path being given up.
+
+### Why it is not in `earg`
+
+`earg` is the tempting place: `PLOT`, subscripts, line numbers and the
+builtins all reach it, so one edit would cover them. It would also
+break two things. **`STR$` reads `STYPE` itself** to render a float, and
+**`INT()` needs the float intact** to floor it; converting inside `earg`
+makes `STR$(3.5)` answer `"3"`. The crossing belongs where an integer is
+*wanted*, not where an argument is *parsed*, which is why `evali` sits
+beside `eval` and the call sites name themselves.
+
+### The tripwires fired, which is what they were for
+
+`sim/test_run.py` pinned `POKE a, X#` at 2 and `FOR I = 1 TO X#` at one
+pass -- the wrong answers, deliberately, with a note that a failure
+there most likely meant someone had closed the gap. Someone did. They
+asserted 65 and three passes now, and go on being tripwires facing the
+other way.
+
+**It had already cost a session.** `demos/wave.bas` built its sine table
+with `S(I) = 120 + 110*SIN(...)` through several rewrites and filled it
+with plausible noise every time -- a table that swept up and down
+convincingly enough that the demo read as badly tuned rather than
+broken, and the poor row coverage got blamed on phase-locked harmonics,
+which was a real effect in a host-side model and not what the machine
+was doing. Counting painted rows is what caught it.

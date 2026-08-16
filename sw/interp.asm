@@ -1054,7 +1054,7 @@ h_let:
         ST   [TVAR],R0
         SKIPSP
         INCW Y                  ; the '='
-        CALL eval
+        CALL evali              ; [D88] a float crosses here, flooring
         PUSH R1
         PUSH R0
         LD   R0,[TVAR]
@@ -1343,12 +1343,12 @@ skipsp: INCW Y
 ; POKE addr, value
 ; ---------------------------------------------------------------------
 h_poke:
-        CALL eval
+        CALL evali              ; [D88] the address is an integer
         MOV  XL,R0
         MOV  XH,R1
         PUSHW X
         INCW Y                  ; the comma
-        CALL eval
+        CALL evali              ; ...and so is the byte
         POPW X
         ST   [X],R0
         JMP  stmt
@@ -1676,7 +1676,7 @@ h_for:
         ST   [LVAR],R0
         SKIPSP
         INCW Y                  ; the '='
-        CALL eval
+        CALL evali              ; [D88] the control variable is integer
         PUSH R1
         PUSH R0
         LD   R0,[LVAR]
@@ -1687,7 +1687,7 @@ h_for:
         INCW X
         ST   [X],R1
         INCW Y                  ; the TO
-        CALL eval
+        CALL evali              ; [D88] FOR I=1 TO X# read the limit as 1
         ST   [LLIM],R0
         ST   [LLIM+1],R1
         ; STEP, or the 1 it defaults to. Parsed before LBODY is taken,
@@ -1700,7 +1700,7 @@ h_for:
         CMP  R2,#K_STEP
         BNE  .nstep
         INCW Y
-        CALL eval
+        CALL evali              ; [D88] and the STEP with it
         ST   [LSTEP],R0
         ST   [LSTEP+1],R1
 .nstep: MOV  R0,YL
@@ -3240,7 +3240,7 @@ h_leta: CALL arrelem
         PUSHW X
         SKIPSP
         INCW Y                  ; the '='
-        CALL eval
+        CALL evali              ; [D88] as the scalar above
         POPW X
         ST   [X],R0
         INCW X
@@ -5628,6 +5628,42 @@ h_line: MOV  R3,#5
 earg:   CALL sopen
         CALL eval
         JMP  sopen
+
+; ---------------------------------------------------------------------
+; evali -- eval, and answer an integer in R0:R1 whichever type it was.
+;
+; **The float-to-integer crossing, at the door of everything that wants
+; an integer** ([D88]). Before this, a float assigned to an integer kept
+; whatever `eval` left in R0:R1 -- raw bits, not a value -- so
+; `A = 110*SIN(X#)` stored 2 while `PRINT` of the same expression
+; printed 110. The arithmetic could be checked at the prompt, agree, and
+; still be wrong once stored, which is the worst shape a fault takes.
+;
+; **`ftoi` and not a second conversion**: it is the flooring `INT()`
+; already uses (`iint` below), so the implicit crossing and the explicit
+; one cannot drift apart, and a program that adds `INT()` by hand gets
+; the same answer it had without it.
+;
+; The type is not recomputed -- `STYPE` is a byte every value already
+; sets so `PRINT` can pick `fprint` over `num_put` -- so correct integer
+; code pays one load and one compare, once per value, never per
+; operation.
+;
+; **Not folded into `earg`**, which is the tempting place because
+; `PLOT`, subscripts and the builtins all go through it. `STR$` reads
+; `STYPE` itself to render a float, and `INT()` needs the float intact
+; to floor it; converting inside `earg` would make `STR$(3.5)` say "3".
+; The crossing belongs where an integer is *wanted*, not where an
+; argument is *parsed*.
+; ---------------------------------------------------------------------
+evali:  CALL eval
+        LD   R2,[STYPE]
+        CMP  R2,#2              ; 2 is float here -- STYPE's 1 is string
+        BNE  .done
+        PUSHW Y                 ; every caller parses on from Y
+        CALL ftoi               ; FACC -> R0:R1, flooring, saturating
+        POPW Y
+.done:  RET
 
 ; negp16 -- R1:R0 negated, R2/R3 untouched (neg16 above clobbers them). The flags are the final ADC us; every caller
 ; stores or falls onward, none reads them (checked site by site).
