@@ -151,7 +151,7 @@ BODY = """1 GOTO 100
 116 PRINT "4 DRUM %s"
 117 PRINT "5 PAD  %s"
 118 PRINT "6 FLUTE%s"
-119 PRINT "7      %s"
+119 PRINT "7 PLUCK%s"
 120 PRINT "8 HORN %s"
 121 PRINT
 122 PRINT "       TYPE IN THE GRID - IT PLAYS IT"
@@ -180,12 +180,14 @@ def main():
     flute = "".join(FLUTE.get(i, " ") for i in range(32))
     lead = TRACKS[0]
     assert all(lead[i] in " :" for i in FLUTE), "flute clashes the lead"
-    # the drone is gone -- awful, by verdict. Row 7 is an empty,
-    # beat-marked scratch track on a clean mid square: type into it
-    # and it plays, staccato between the bar marks; empty, silence.
-    # The horn stabs the root's fifth on each bar's mid-beat, seven
-    # semitones up the same letters.
-    drone = " " * 32
+    # the drone is gone -- awful, by verdict. In its row: the PLUCK,
+    # three anticipations on a clean mid square -- the coming bar's
+    # root, one step before each chord change, cut by the next beat
+    # mark. J into bar 3, F into bar 4, A leading home.
+    pluck = {15: TRACKS[2][16], 23: TRACKS[2][24], 31: TRACKS[2][0]}
+    drone = "".join(pluck.get(i, " ") for i in range(32))
+    for i in pluck:
+        assert TRACKS[0][i] in " :" and FLUTE.get(i) is None, i
     horn = "".join(chr((ord(TRACKS[2][i - 4]) - 65 + 7) % 26 + 65)
                    if i % 8 == 4 else " " for i in range(32))
 

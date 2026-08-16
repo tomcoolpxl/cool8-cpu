@@ -77,7 +77,7 @@
 116 PRINT "4 DRUM : S : S : S : S : S : S : S : S "
 117 PRINT "5 PAD  A   :   H   :   J   :   F   :   "
 118 PRINT "6 FLUTE:   :VT :   :XV :   :YV : QR:   "
-119 PRINT "7      :   :   :   :   :   :   :   :   "
+119 PRINT "7 PLUCK:   :   :   :  J:   :  F:   :  A"
 120 PRINT "8 HORN :   H   :   O   :   Q   :   M   "
 121 PRINT
 122 PRINT "       TYPE IN THE GRID - IT PLAYS IT"
