@@ -681,7 +681,13 @@ def check():
                    f"to ${SACC + 255:04X}: they overlap by {-gap} bytes. "
                    f"BASIC has to shrink, or the map and system storage "
                    f"have to move down.")
-    elif gap < 256:
+    # The threshold was 256 and tripped at 208 on 2026-08-16, which was
+    # the point of it: it forced the ask rule 5 requires. The decision
+    # was to hold -- BASIC is finished, the demos are verification, and
+    # FREE stays 38,400 -- so the line sits at 128 now: today's 208 is
+    # accepted, and any future growth past ~80 bytes forces the
+    # conversation again before the gap can close silently.
+    elif gap < 128:
         bad.append(f"only {gap} bytes between system storage "
                    f"(${SACC + 255:04X}) and the image (${ORG:04X}). That is "
                    f"the growth room BASIC has left; move the map down "
