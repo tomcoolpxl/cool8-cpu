@@ -257,7 +257,7 @@ def main():
     banner(cmd, code, rom, font)
     print("  building cool8rs --features gui "
           "(SDL2 is vendored; first build after a plain one takes "
-          "minutes)...", flush=True)
+          "longer)...", flush=True)
     r = subprocess.run(["cargo", "build", "--release", "--features", "gui"],
                        cwd=os.path.join(ROOT, "rust"),
                        capture_output=True, text=True, env=env)

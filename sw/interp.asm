@@ -5493,14 +5493,26 @@ h_sound:
 .sn:    ST   [SND_DATA],R1
         JMP  stmt
 
-; LINE x0,y0,x1,y1,c -- Bresenham, about six cycles a pixel through the
-; port. The RTL cut DRAW_LINE for costing 200 LUT4; this is the same
-; algorithm paid for in bytes instead. Coordinates are at most ten
+; LINE x0,y0,x1,y1,c -- Bresenham, and **209 cycles a pixel**, not the
+; six this said for as long as nobody measured it. The RTL cut DRAW_LINE
+; for costing 200 LUT4; this is the same algorithm paid for in bytes
+; instead, and the bytes turned out to be cycles. `hrun` below takes the
+; horizontal case out of it at about 22. Coordinates are at most ten
 ; bits, so every quantity fits 16-bit signed arithmetic with room and
 ; the sign tests below cannot overflow.
 h_line: MOV  R3,#5
         CALL gargs
-        ; dx = |x1-x0|, sx = +-1 as a word
+        ; **y0 == y1 goes somewhere else entirely.** See `hrun`.
+        LD   R0,[garg+2]
+        LD   R2,[garg+6]
+        CMP  R0,R2
+        BNE  .bres
+        LD   R0,[garg+3]
+        LD   R2,[garg+7]
+        CMP  R0,R2
+        BNE  .bres
+        JMP  hrun
+.bres:  ; dx = |x1-x0|, sx = +-1 as a word
         LD   R0,[garg+4]
         LD   R1,[garg+5]
         LD   R3,[garg]
@@ -5620,6 +5632,52 @@ h_line: MOV  R3,#5
         ADC  R0,R2
         ST   [garg+3],R0
 .nx:    JMP  .lp
+
+; ---------------------------------------------------------------------
+; hrun -- LINE where y0 == y1: set the port once, then store.
+;
+; **PIX_DATA auto-increments X** (04-system.md section 5.7), and the
+; Bresenham loop above does not use it: `pixxy` rewrites PIX_X_L/H *and*
+; PIX_Y_L/H for every pixel, and then four 16-bit quantities are
+; compared to decide whether to stop. Measured before this existed, a
+; 256-pixel span cost **6.4 ms -- 209 cycles a pixel**, against CLG's 10
+; on the same memory path doing the same work. The hardware was never
+; the limit; the general algorithm was.
+;
+; Left to right, because the port only steps one way, so x0 > x1 swaps
+; the ends. The count is 16-bit -- a span reaches 640 pixels in mode 3
+; -- and SUB's borrow carries it into the high byte.
+;
+; The colour sits in R2 for the whole run, so nothing in here may call
+; anything that clobbers it.
+; ---------------------------------------------------------------------
+hrun:   LD   R0,[garg+4]        ; x1 - x0
+        LD   R1,[garg+5]
+        LD   R2,[garg]
+        LD   R3,[garg+1]
+        SUB  R0,R2
+        SBC  R1,R3
+        BGE  .fwd
+        CALL negp16             ; |x1 - x0|, and x1 is the left end
+        LD   R2,[garg+4]
+        ST   [garg],R2
+        LD   R2,[garg+5]
+        ST   [garg+1],R2
+.fwd:   PUSH R1                 ; pixxy walks R0; the count must survive
+        PUSH R0
+        CALL pixxy              ; PIX_X = the left end, PIX_Y = y0
+        POP  R0
+        POP  R1
+        LD   R2,[garg+8]        ; the colour, held for the whole run
+.st:    ST   [PIX_DATA],R2      ; and the port steps X itself
+        MOV  R3,R0              ; n == 0 means that was the last pixel
+        OR   R3,R1
+        BEQ  .fin
+        SUB  R0,#1
+        BHS  .st                ; carry is "no borrow" (D9)
+        SUB  R1,#1
+        BRA  .st
+.fin:   JMP  stmt
 
 
 ; earg -- "( expression )": the prologue every one-argument builtin

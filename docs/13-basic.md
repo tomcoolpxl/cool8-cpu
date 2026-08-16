@@ -213,8 +213,8 @@ cannot. Pixel coordinates are the **logical** grid of the current mode
 | | |
 |---|---|
 | `PLOT x, y, c` | one pixel. `c` is masked to the mode's depth (`AND 15` in mode 4) |
-| `LINE x0, y0, x1, y1, c` | Bresenham, any slope, endpoints included. **It is machine code, and that is the point** — a span drawn by a BASIC loop costs a statement a pixel, which is ~15× dearer than the same pixels through here (`WAVE` in [14-demos.md](14-demos.md)) |
-| `CLG c` | the whole surface to colour `c`, ~30 ms. Do it once, not per frame |
+| `LINE x0, y0, x1, y1, c` | Bresenham, any slope, endpoints included. **A horizontal one is ~10x cheaper than any other slope**: `y0 == y1` sets the pixel port once and lets it step X itself, ~22 cycles a pixel against Bresenham's 209 — so prefer horizontal spans when the shape is yours to choose ([D89]). **It is machine code, and that is the point** — a span drawn by a BASIC loop costs a statement a pixel, which is ~15× dearer than the same pixels through here (`WAVE` in [14-demos.md](14-demos.md)) |
+| `CLG c` | the whole surface to colour `c`, **75 ms** measured (61,440 pixels, ~10 cycles each — the fastest fill this machine has). Do it once, not per frame |
 | `MODE n` | one of the seven presets in §4 — loads base, stride and depth together, which is why it is a command and the rest are not. **It turns the cursor back on**: `MODE` runs `con_geom`, which writes `$11` to `CUR_CTRL` because the cursor exists in every mode now, so `CURSOR 0` belongs *after* `MODE`, never before — the other order leaves a blinking cell in the corner of a bitmap screen |
 | `GTEXT x, y, s$, c` | 8×8-cell text in any bitmap mode: set pixels paint `c`, clear pixels paint 0 (opaque). The face is the editor's own Spleen, resampled to 8×8, ASCII 32-127, seeded by boot at VRAM `$FC00` — 8 bytes a glyph, so `$FC00 + (ASC(ch)-32)*8` |
 | `TIME` | there isn't one — read the frame counter: `T=PEEK($FF2D)+PEEK($FF2E)*256`, 59.97 a second, and `$FF2F` is the third byte if you want more than 18 minutes |

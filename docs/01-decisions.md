@@ -5591,3 +5591,46 @@ convincingly enough that the demo read as badly tuned rather than
 broken, and the poor row coverage got blamed on phase-locked harmonics,
 which was a real effect in a host-side model and not what the machine
 was doing. Counting painted rows is what caught it.
+
+## D89 -- LINE takes the horizontal case out of Bresenham
+
+`LINE 0,y,255,y,c` cost **6.4 ms** -- 209 cycles a pixel -- while `CLG`
+filled 61,440 pixels at **10 cycles each** on the same memory path. The
+hardware was never the limit. **80 bytes**, image 19,931 to 20,011, and
+the same span is now **0.67 ms**: 2.6 spans a frame became **25**.
+
+### What the 209 cycles were
+
+Bresenham's inner loop calls `pixxy`, which writes `PIX_X_L`, `PIX_X_H`,
+`PIX_Y_L` and `PIX_Y_H` from `garg` -- eight loads and stores -- then
+stores the colour, then compares four 16-bit quantities against the
+endpoint to decide whether to stop, then updates two 16-bit error terms.
+Per pixel. For a horizontal span, X only ever increments and Y never
+changes at all.
+
+**And `PIX_DATA` auto-increments X in hardware** ([04-system.md](04-system.md)
+section 5.7). The one piece of acceleration the video chip offers for
+exactly this case was sitting unused: `LINE` reset both coordinates
+every pixel instead. `hrun` sets the port once and then stores, which is
+the idiom the removed `HLINE` keyword documented all along.
+
+### Why not a blitter, and why not the VRAM port
+
+There is no blitter, fill engine or DMA -- the whole video register set
+is address *sequencing* (`VRAM_STEP` auto-steps, `PIX_DATA` auto-
+increments X), and every byte still costs a CPU access. Adding one was
+not considered here: this bought 10x without touching the RTL.
+
+The `VRAM_ADDR`/`STEP`/`DATA` port reaches the same memory and is the
+right tool from *machine code*, but from BASIC it measured **0.90 spans
+a frame** against `LINE`'s 2.6 even before this change, because the cost
+is the interpreter's statement dispatch and not the store. That is the
+same lesson `WAVE` learned in [14-demos.md](14-demos.md): the win is a
+primitive that stores without being asked again.
+
+### What it does not cover
+
+Vertical spans still walk Bresenham, and the port cannot help them --
+`VRAM_STEP` is one byte, and mode 6's stride is 256, so a vertical run
+cannot be expressed as a constant step. A `VRAM_STEP16` would fix that
+in RTL; nothing has asked for it yet.
