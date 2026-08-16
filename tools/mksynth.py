@@ -87,7 +87,7 @@ BODY = """1 GOTO 100
 21 T=INKEY:IF T=0 THEN GOTO 10
 22 IF T>48 AND T<57 THEN T=T-49:GOSUB 60:GOTO 10
 23 IF T>255 THEN GOSUB 80:GOTO 10
-24 IF T=32 THEN POKE R,32:GOTO 10
+24 IF T=32 THEN GOSUB 91:GOTO 10
 25 IF T>64 AND T<91 THEN POKE R,T:GOTO 10
 26 IF T>96 AND T<123 THEN POKE R,T-32:GOTO 10
 27 IF T<>27 THEN GOTO 10
@@ -97,14 +97,16 @@ BODY = """1 GOTO 100
 31 C=39406+S+S
 34 N=PEEK(C)-64:IF N>0 AND M(0)=1 THEN P=Z(N-1):V=10:D=0:SOUND 0,P,V,0
 35 IF N<1 THEN D=1
-36 N=PEEK(C+160)-64:IF N>0 AND M(1)=1 THEN Q=Z(N+25):W=9:E=0:SOUND 1,Q,9,0
-37 IF N<1 THEN E=1:W=9
-38 N=PEEK(C+320)-64:IF N>0 AND M(2)=1 THEN SOUND 2,Z(N+51),10,0
+36 N=PEEK(C+160)-64:IF N>0 AND M(1)=1 THEN Q=Z(N+25):W=7:E=0:SOUND 1,Q,7,0
+37 IF N<1 THEN E=1:W=7
+38 N=PEEK(C+320)-64:IF N>0 AND M(2)=1 THEN SOUND 2,Z(N+51),9,0
 39 IF N<1 AND M(2)=1 THEN SOUND 2,100,0,0
 45 RETURN
-51 N=PEEK(C+800)-64:IF N>0 AND M(5)=1 THEN K=Z(N+77):U=6:SOUND 5,K,6,0
-52 N=PEEK(C+320)-64:IF N>0 AND M(6)=1 THEN SOUND 6,Z(N+51)/2,3,0
-53 N=PEEK(C+640)-64:IF N>0 AND M(4)=1 THEN SOUND 4,Z(N+25),4,0
+50 N=PEEK(C+800)-64:IF N>0 AND M(5)=1 THEN K=Z(N+77):U=6:SOUND 5,K,6,0
+51 N=PEEK(C+640)-64:IF N>0 AND M(4)=1 THEN SOUND 4,Z(N+25),4,0
+52 N=PEEK(C+960)-64:IF N>0 AND M(6)=1 THEN SOUND 6,Z(N+51)/2,3,0
+53 N=PEEK(C+1120)-64:IF N>0 AND M(7)=1 THEN SOUND 7,Z(N+25),8,0
+54 IF N<1 AND M(7)=1 THEN SOUND 7,100,0,0
 56 N=PEEK(C+480)-64:IF N=19 AND M(3)=1 THEN Y=11:J=2500:O=1:SOUND 3,2500,11,1
 57 IF N=11 AND M(3)=1 THEN Y=11:J=120:O=0:SOUND 3,120,11,0
 58 IF N=8 AND M(3)=1 THEN Y=6:J=9000:O=1:SOUND 3,9000,6,1
@@ -115,7 +117,8 @@ BODY = """1 GOTO 100
 71 POKE N,110:POKE T,230:POKE N+160,110:POKE T+160,230
 72 POKE N+320,110:POKE T+320,230:POKE N+480,110:POKE T+480,230
 73 POKE N+640,110:POKE T+640,230:POKE N+800,110:POKE T+800,230
-74 A=S:POKE R+1,22:RETURN
+74 POKE N+960,110:POKE T+960,230:POKE N+1120,110:POKE T+1120,230
+75 A=S:POKE R+1,22:RETURN
 80 POKE R+1,110
 81 B=(R-38912)/160:X=(R-38912-B*160)/2
 82 IF T=258 THEN X=X-1
@@ -125,8 +128,11 @@ BODY = """1 GOTO 100
 86 IF X<7 THEN X=7
 87 IF X>38 THEN X=38
 88 IF B<3 THEN B=3
-89 IF B>8 THEN B=8
+89 IF B>10 THEN B=10
 90 R=38912+B*160+X+X:POKE R+1,22:RETURN
+91 B=(R-38912)/160:X=(R-38912-B*160)/2:X=X-7
+92 IF X-X/4*4=0 THEN POKE R,58:RETURN
+93 POKE R,32:RETURN
 100 MODE 1
 101 CLS:CURSOR 0
 102 POKE $FF1A,14
@@ -144,15 +150,15 @@ BODY = """1 GOTO 100
 116 PRINT "4 DRUM %s"
 117 PRINT "5 PAD  %s"
 118 PRINT "6 FLUTE%s"
-119 PRINT "7 DRONE"
-120 PRINT "8"
+119 PRINT "7 DRONE%s"
+120 PRINT "8 HORN %s"
 121 PRINT
 122 PRINT "       TYPE IN THE GRID - IT PLAYS IT"
 125 FOR R=0 TO 29
 126 FOR I=0 TO 39:POKE 38913+R*160+I+I,110:NEXT I
 127 NEXT R
 133 FOR I=0 TO 7:M(I)=1:POKE 39393+I*160,97:NEXT I
-134 S=31:A=31:F=0:D=1:E=1:V=0:W=0:Y=0:U=0
+134 C=39406:S=31:A=31:F=0:D=1:E=1:V=0:W=0:Y=0:U=0
 135 R=39406:POKE R+1,22
 136 GOTO 10
 """
@@ -173,7 +179,23 @@ def main():
     flute = "".join(FLUTE.get(i, " ") for i in range(32))
     lead = TRACKS[0]
     assert all(lead[i] in " :" for i in FLUTE), "flute clashes the lead"
+    # the drone's own row: the bar roots, sustained -- what it always
+    # played, now visible and editable. The horn stabs the root's fifth
+    # on each bar's mid-beat, seven semitones up the same letters.
+    drone = pad
+    horn = "".join(chr((ord(TRACKS[2][i - 4]) - 65 + 7) % 26 + 65)
+                   if i % 8 == 4 else " " for i in range(32))
+
+    def beats(t):
+        # the original's own convention: a bar mark on every fourth
+        # column unless a note sits there
+        return "".join(":" if i % 4 == 0 and c == " " else c
+                       for i, c in enumerate(t))
+
+    drums, pad, flute = beats(drums), beats(pad), beats(flute)
+    drone, horn = beats(drone), beats(horn)
     assert len(drums) == 32 and len(pad) == 32 and len(flute) == 32
+    assert len(drone) == 32 and len(horn) == 32
     assert drums.count("S") == 8, "the bass rests moved: %r" % drums
     pitches = []
     for mask in MASKS:
@@ -203,7 +225,8 @@ def main():
     # DATA is numbers only on this machine, so the track strings ride
     # in their PRINT statements -- stated once, painted once, and from
     # then on the screen copy is the only one the player reads
-    src = (BODY % (("+---" * 8,) + tuple(TRACKS) + (drums, pad, flute))
+    src = (BODY % (("+---" * 8,) + tuple(TRACKS)
+                   + (drums, pad, flute, drone, horn))
            + "\n".join(data(pitches, 200) + data(c64, 240)) + "\n")
     path = os.path.join(ROOT, "demos", "synth.bas")
     io.open(path, "w", encoding="utf-8", newline="\n").write(src)
@@ -212,8 +235,10 @@ def main():
     assert ns == sorted(ns), "line numbers not ascending"
     over = [n for n, l in zip(ns, lines) if len(l) > 79]
     assert not over, "lines over 79 chars: %s" % over
-    print("  synth.bas: %d lines; drums %r; pad %r; flute %r"
-          % (len(lines), drums, pad, flute))
+    print("  synth.bas: %d lines" % len(lines))
+    for nm, t in [("drums", drums), ("pad", pad), ("flute", flute),
+                  ("drone", drone), ("horn", horn)]:
+        print("  %-5s %r" % (nm, t))
     print("  -> %s" % path)
 
 

@@ -547,6 +547,25 @@ percussion made visible**, derived by the generator from the bass
 track's own rests, one S per bar off-beat. K (kick) and H (hat) decode
 too, waiting to be typed. The pad, row 5, holds each bar's root —
 also derived, the bass line's own bar-start notes, soft and sustained.
+**All eight voices are visible, editable rows now.** The bass was
+checked against the source: its instant cut on rests matches the
+original's zeroed oscillator, the snare split off correctly, and the
+one thing out of reach is the sawtooth itself -- square is the only
+tone this chip has. What was off was balance, now the original's own
+ratios (lead .35 / bass .3 / arp .2 mapped to 10/9/7). The **drone**
+owns row 7 -- the bar roots it always played, visible and typable --
+and row 8 is the **horn**: brassy mid-register stabs of each bar
+root's fifth on the bar mid-beats, derived by lettering seven
+semitones up the bass line. **Space types the bar mark**: on a beat
+column (every fourth, the original's own convention) it writes `:`,
+elsewhere a plain rest, and every generated row carries its beat marks
+the same way. One bug worth its ink: the first F=1 ran before any
+step had set `C`, so the fx voices PEEKed the program's own token
+bytes as notes and one indexed the pitch table out of range --
+surfacing as `?SYNTAX` over the `?INDEX`, the interplay
+`sw/interp.asm` documents. `C` is initialised now; the old version had
+merely been lucky about which bytes its offsets hit.
+
 Row 6 is the **flute** — fleeting high two-note sparkles placed in
 the lead's rest gaps, each drawn from that bar's own arpeggio tones,
 played an octave above the lead at low volume with a fast fade, which
