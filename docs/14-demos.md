@@ -342,47 +342,27 @@ may not do quietly. The ramp is built at run time rather than typed as
 `DATA`: `#10F` electric blue through violet to `#F6B` hot pink,
 mirrored at 124 so the cycle has no seam.
 
-**Twelve-bit colour bounds a gradient long before the palette does.**
-248 entries are available, but that hue path crosses about **fifteen**
-distinguishable steps — R runs 1 to 15 and the other channels trail
-it — so consecutive entries are frequently the same colour. Stepping
-the trail's index by one spanned seven of those steps and put **8
-colours** on screen; stepping by four spans the whole ramp and puts
-**22**. Mode 6's 256 entries buy a *smooth* gradient, not a long one.
+**The colour count is the ramp's *path length*, not the palette's
+size** — the thing to know if a gradient ever looks thin here. A smooth
+ramp moves one channel by one at a time, so the number of distinct
+colours it can show equals the number of steps it takes through 12-bit
+RGB space. The first ramp ran R 1→15, G 0→6, B 15→11: an L1 path of
+**24 steps, and it put 23 colours on screen**, with the other 224
+palette entries duplicates of those 23. Mode 6's 256 entries were never
+the constraint.
 
-**The sine is sampled so its step is never more than one row, and that
-is what makes the picture solid.** Sampled uniformly in *phase* a sine
-crawls at the turning points and moves eleven rows a frame through the
-middle, so the trail came out as stripes with black between them. The
-fix is to let the sine supply the *timing* rather than the position:
-with amplitude 110 a one-row step needs a period of at least 2π·110 ≈
-691 frames, so the table is **720 entries** and the head visits every
-row of 10–230 without skipping one. Measured on the running demo: **0
-background rows inside the band**, at every sample from 2 s to 18 s.
+The ramp is three segments now — `#001` → `#00F` → `#F0F` → `#FCF`,
+which is 14 + 15 + 12 = **41 steps, measured at 39 on screen**. Same
+hue family, same cost: it is a table built once at setup and the
+drawing does not know the difference.
 
-**`VSYNC` comes before the drawing, not after, and the white line is
-drawn first.** Mode 6 uses 61,440 of the 64 KB of VRAM, so there is no
-second page to flip to: the machine is single-buffered and `LINE` walks
-Bresenham left to right over a real slice of the frame. Drawing both
-spans and *then* waiting meant the white one finished about 6 ms in,
-and the raster crossed that row mid-walk -- left half white, right half
-still the trail colour. Measured over 300 frames: **122 of them caught
-it half-drawn, 41 %**. Waiting first and drawing the white line first
-halves its exposure and takes that to **0 of 300**.
-
-**The recolour is skipped when the line has not moved.** A one-row step
-means `O = Y` often at the turning points, where the sine dwells -- so
-that frame does no second `LINE` at all. It is also what keeps the
-reorder correct: with white drawn first, recolouring the same row would
-paint over the head.
-
-**Nothing is erased, because nothing needs to be.** The ring buffer
-that the striped version used to rub out its oldest line is gone: a
-head that visits every row repaints the whole screen every sweep, so
-the picture is one continuous gradient and the only cost is two `LINE`s
-a frame — the new row white, the one before it aged into the ramp.
-`E` stepping 1 lays 221 rows against a 247-entry ramp, which is
-one full blue-to-pink gradient down the screen, drifting as it goes.
+**256 distinct is reachable and was not taken.** With G held at 0 the
+blue/purple/magenta plane is 16×16 = 256 colours, every one on-brand —
+but visiting all of them means *snaking*: R climbs 0→15, B ticks up, R
+descends 15→0, sixteen times. Sixteen dark-to-bright reversals down the
+screen instead of one sweep. That is a different picture, not a better
+one, and the choice is smoothness against count rather than a limit
+anyone has to live with.
 
 **The table is `DATA`, computed when this file was written.** 181
 values for the first quarter, mirrored three ways at run time —
