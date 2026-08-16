@@ -1007,6 +1007,94 @@ def injected_matches_typed(code, syms):
     return stored(typed), stored(injected)
 
 
+LINE_FAN = [
+    # every octant, both x directions, the special-cased rows, the
+    # ties. Coordinates stay inside mode 4's 320x240.
+    (10, 10, 300, 40, 1),      # shallow, x increasing
+    (300, 60, 10, 90, 2),      # shallow, x decreasing
+    (20, 10, 50, 230, 3),      # steep, x increasing
+    (80, 230, 60, 10, 4),      # steep, x decreasing, drawn upward
+    (100, 100, 180, 180, 5),   # slope exactly 1
+    (200, 180, 120, 100, 6),   # slope 1, drawn backwards
+    (250, 20, 250, 220, 7),    # vertical, downward
+    (260, 220, 260, 20, 8),    # vertical, upward
+    (5, 5, 315, 5, 9),         # horizontal, hrun's left-to-right
+    (315, 235, 5, 235, 10),    # horizontal, hrun's right-to-left
+    (160, 120, 160, 120, 11),  # one pixel
+    (30, 200, 31, 100, 12),    # dx=1, nearly vertical
+    (40, 60, 260, 61, 13),     # dy=1, nearly horizontal
+    (12, 150, 112, 200, 14),   # dx = 2*dy, the half-step ties
+    (150, 12, 200, 112, 15),   # dy = 2*dx, the same ties steep
+]
+
+
+def line_ref(x0, y0, x1, y1):
+    """the pixels LINE must light -- the all-in-one Bresenham of
+    sw/interp.asm, mirrored exactly: canonicalised to draw downward
+    (D91 gives the port a +1 y step and the code swaps the ends to use
+    it), dx+dy error form, e2 tested against both bounds inclusively,
+    sx taking +1 on a tie. Before D91 the walk started at the caller's
+    first endpoint; a line drawn upward now walks the same pixels from
+    the other end, which can flip an exact half-step tie -- measured
+    over this fan: one pixel of 2,735, mid-line, endpoints identical."""
+    if y1 < y0:
+        x0, y0, x1, y1 = x1, y1, x0, y0
+    dx, sx = abs(x1 - x0), (1 if x1 >= x0 else -1)
+    dy = -abs(y1 - y0)
+    err = dx + dy
+    pts = []
+    while True:
+        pts.append((x0, y0))
+        if x0 == x1 and y0 == y1:
+            return pts
+        e2 = 2 * err
+        if e2 >= dy:
+            err += dy
+            x0 += sx
+        if e2 <= dx:
+            err += dx
+            y0 += 1
+
+
+def line_exact(code, syms):
+    """Every pixel of a fifteen-line fan, against the reference.
+
+    The reference is Python; its claim to correctness is that this case
+    passed against the original all-in-one loop *before* the D91 rework,
+    so the rework is held to the pixels the old code drew. Comparison is
+    the whole mode 4 frame -- 38,400 VRAM bytes built up from the same
+    fan in the same order -- so a stray pixel anywhere fails, not just
+    one near a sampled point.
+    """
+    M = B.Machine(code, syms, render=True)
+    M.settle()
+    prog = ["10 MODE 4", "20 CLG 0"]
+    for i, (x0, y0, x1, y1, c) in enumerate(LINE_FAN):
+        prog.append("%d LINE %d,%d,%d,%d,%d"
+                    % (30 + i, x0, y0, x1, y1, c))
+    prog.append("90 END")
+    for ln in prog:
+        H.line(M.m, syms, ln)
+    M.m.type(RUNCMD)
+    M.m.run(cycles=120_000_000)
+
+    want = bytearray(38400)
+    for (x0, y0, x1, y1, c) in LINE_FAN:
+        for (x, y) in line_ref(x0, y0, x1, y1):
+            a = y * 160 + (x >> 1)
+            if x & 1:
+                want[a] = (want[a] & 0xF0) | c
+            else:
+                want[a] = (want[a] & 0x0F) | (c << 4)
+    got = bytes(M.m.video.vram[0:38400])
+    bad = [i for i in range(38400) if got[i] != want[i]]
+    check(not bad, "LINE lights exactly the reference pixels, all octants",
+          "%d bytes differ; first at %d (row %d): got %02X want %02X"
+          % (len(bad), bad[0] if bad else 0,
+             (bad[0] // 160) if bad else 0,
+             got[bad[0]] if bad else 0, want[bad[0]] if bad else 0))
+
+
 def wave_lockstep(code, syms):
     """WAVE's colour contract, measured off the framebuffer.
 
@@ -1201,6 +1289,9 @@ def main():
     check(a == b and len(a) > 40,
           "an injected program stores the same bytes as a typed one",
           "typed %d bytes, injected %d" % (len(a), len(b)))
+
+    print()
+    line_exact(code, syms)
 
     print()
     wave_lockstep(code, syms)

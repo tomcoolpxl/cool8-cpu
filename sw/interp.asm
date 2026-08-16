@@ -5493,13 +5493,17 @@ h_sound:
 .sn:    ST   [SND_DATA],R1
         JMP  stmt
 
-; LINE x0,y0,x1,y1,c -- Bresenham, and **209 cycles a pixel**, not the
-; six this said for as long as nobody measured it. The RTL cut DRAW_LINE
-; for costing 200 LUT4; this is the same algorithm paid for in bytes
-; instead, and the bytes turned out to be cycles. `hrun` below takes the
-; horizontal case out of it at about 22. Coordinates are at most ten
-; bits, so every quantity fits 16-bit signed arithmetic with room and
-; the sign tests below cannot overflow.
+; LINE x0,y0,x1,y1,c -- Bresenham over the pixel port's two
+; auto-incrementing stores (D91). Measured before the rework: 225-260
+; cycles a pixel, octant depending -- pixxy rewrote four port bytes for
+; every pixel and four 16-bit words were compared to decide whether to
+; stop. Measured after: **121 steep, 101 vertical, 170-181 shallow and
+; diagonal** -- the y walk is PIX_DATA_Y's own step, the rightward x
+; walk is PIX_DATA's, the endpoint test is a pixel countdown, and only
+; a leftward or diagonal x step rewrites a coordinate. `hrun` below
+; still takes the horizontal case at about 22. Coordinates are at most
+; ten bits, so every quantity fits 16-bit signed arithmetic with room
+; and the sign tests cannot overflow.
 h_line: MOV  R3,#5
         CALL gargs
         ; **y0 == y1 goes somewhere else entirely.** See `hrun`.
@@ -5512,45 +5516,82 @@ h_line: MOV  R3,#5
         CMP  R0,R2
         BNE  .bres
         JMP  hrun
-.bres:  ; dx = |x1-x0|, sx = +-1 as a word
+.bres:  ; **Drawn downward, always.** If y1 < y0 the endpoints swap, so
+        ; sy is +1 by construction and every y step is PIX_DATA_Y's own
+        ; increment (D91) -- no sy word, no y bookkeeping, the port
+        ; carries y for the whole line. On the exact half-step ties
+        ; this picks the mirror pixel of what the old walk chose from
+        ; the caller's end; sim/test_run.py's fan is the contract.
+        LD   R0,[garg+6]
+        LD   R1,[garg+7]
+        LD   R2,[garg+2]
+        LD   R3,[garg+3]
+        SUB  R0,R2
+        SBC  R1,R3
+        BGE  .cdn
+        LD   R0,[garg]          ; four byte pairs, unrolled -- there is
+        LD   R2,[garg+4]        ; no indexed displacement mode to loop
+        ST   [garg],R2          ; with
+        ST   [garg+4],R0
+        LD   R0,[garg+1]
+        LD   R2,[garg+5]
+        ST   [garg+1],R2
+        ST   [garg+5],R0
+        LD   R0,[garg+2]
+        LD   R2,[garg+6]
+        ST   [garg+2],R2
+        ST   [garg+6],R0
+        LD   R0,[garg+3]
+        LD   R2,[garg+7]
+        ST   [garg+3],R2
+        ST   [garg+7],R0
+.cdn:   ; dx = |x1-x0| -> lwk, the x direction as a byte flag -> lwk+6
         LD   R0,[garg+4]
         LD   R1,[garg+5]
         LD   R3,[garg]
         SUB  R0,R3
         LD   R3,[garg+1]
         SBC  R1,R3
-        MOV  R2,#$01
-        MOV  R3,#$00
+        MOV  R2,#$00
         BGE  .lx
         CALL negp16
-        MOV  R2,#$FF
-        MOV  R3,#$FF
+        MOV  R2,#$01
 .lx:    ST   [lwk],R0
         ST   [lwk+1],R1
         MOV  R0,R2
         ST   [lwk+6],R0
-        MOV  R0,R3
-        ST   [lwk+7],R0
-        ; dy = -|y1-y0|, sy = +-1
+        ; dy = y1-y0, positive now; count = max(dx,dy)+1 pixels, which
+        ; replaces the old four-word endpoint compare -- the dominant
+        ; axis steps every iteration, so the length is known up front
         LD   R0,[garg+6]
         LD   R1,[garg+7]
         LD   R3,[garg+2]
         SUB  R0,R3
         LD   R3,[garg+3]
         SBC  R1,R3
-        MOV  R2,#$FF
-        MOV  R3,#$FF
-        BLT  .ly                ; negative already is -|dy|
+        MOV  R2,R0
+        MOV  R3,R1
+        LD   R0,[lwk]
+        LD   R1,[lwk+1]
+        SUB  R0,R2
+        SBC  R1,R3
+        BGE  .cdx
+        MOV  R0,R2              ; dy is dominant
+        MOV  R1,R3
+        BRA  .cst
+.cdx:   LD   R0,[lwk]
+        LD   R1,[lwk+1]
+.cst:   ADD  R0,#1
+        BLO  .cs2
+        ADD  R1,#1
+.cs2:   ST   [lwk+7],R0
+        ST   [lwk+8],R1
+        MOV  R0,R2              ; dyn = -dy -> lwk+2
+        MOV  R1,R3
         CALL negp16
-        MOV  R2,#$01
-        MOV  R3,#$00
-.ly:    ST   [lwk+2],R0
+        ST   [lwk+2],R0
         ST   [lwk+3],R1
-        MOV  R0,R2
-        ST   [lwk+8],R0
-        MOV  R0,R3
-        ST   [lwk+9],R0
-        ; err = dx + dy
+        ; err = dx + dyn
         LD   R0,[lwk]
         LD   R1,[lwk+1]
         LD   R2,[lwk+2]
@@ -5559,30 +5600,11 @@ h_line: MOV  R3,#5
         ADC  R1,R3
         ST   [lwk+4],R0
         ST   [lwk+5],R1
-.lp:    CALL pixxy              ; garg 0..3 are the walking x0,y0
-        LD   R0,[garg+8]
-        ST   [PIX_DATA],R0
-        ; the last pixel is drawn before the walk is tested
-        LD   R0,[garg]
-        LD   R2,[garg+4]
-        XOR  R0,R2
-        MOV  R1,R0
-        LD   R0,[garg+1]
-        LD   R2,[garg+5]
-        XOR  R0,R2
-        OR   R1,R0
-        LD   R0,[garg+2]
-        LD   R2,[garg+6]
-        XOR  R0,R2
-        OR   R1,R0
-        LD   R0,[garg+3]
-        LD   R2,[garg+7]
-        XOR  R0,R2
-        OR   R1,R0
-        BNE  .go
-        JMP  stmt
-.go:    ; if 2*err >= dy: err += dy, x0 += sx
-        LD   R0,[lwk+4]
+        CALL pixxy              ; the port holds the current pixel from
+                                ; here on -- every branch below plots
+                                ; through the store whose auto-increment
+                                ; lands the port on the next one
+.lp:    LD   R0,[lwk+4]
         LD   R1,[lwk+5]
         ADD  R0,R0
         ADC  R1,R1
@@ -5592,57 +5614,120 @@ h_line: MOV  R3,#5
         LD   R3,[lwk+3]
         SUB  R0,R2
         SBC  R1,R3
-        BLT  .ny
-        LD   R0,[lwk+4]
+        BLT  .yst               ; e2 < dy: the y-only step
+        LD   R0,[lwk+4]         ; x steps: err += dy
         ADD  R0,R2
         ST   [lwk+4],R0
         LD   R0,[lwk+5]
         ADC  R0,R3
         ST   [lwk+5],R0
-        LD   R0,[garg]
-        LD   R2,[lwk+6]
-        ADD  R0,R2
-        ST   [garg],R0
-        LD   R0,[garg+1]
-        LD   R2,[lwk+7]
-        ADC  R0,R2
-        ST   [garg+1],R0
-.ny:    ; if 2*err <= dx: err += dx, y0 += sy
-        POP  R2
-        POP  R3
-        LD   R0,[lwk]
-        LD   R1,[lwk+1]
-        SUB  R0,R2
-        SBC  R1,R3
-        BLT  .nx
+        POP  R0                 ; and y too?  e2 <= dx
+        POP  R1
         LD   R2,[lwk]
-        LD   R0,[lwk+4]
-        ADD  R0,R2
-        ST   [lwk+4],R0
-        LD   R2,[lwk+1]
-        LD   R0,[lwk+5]
-        ADC  R0,R2
-        ST   [lwk+5],R0
-        LD   R0,[garg+2]
-        LD   R2,[lwk+8]
-        ADD  R0,R2
-        ST   [garg+2],R0
-        LD   R0,[garg+3]
-        LD   R2,[lwk+9]
-        ADC  R0,R2
-        ST   [garg+3],R0
-.nx:    JMP  .lp
+        LD   R3,[lwk+1]
+        SUB  R2,R0
+        SBC  R3,R1
+        BLT  .xst
+        LD   R0,[lwk]           ; both: err += dx, plot stepping y,
+        LD   R2,[lwk+4]         ; then walk x by sx
+        ADD  R2,R0
+        ST   [lwk+4],R2
+        LD   R0,[lwk+1]
+        LD   R2,[lwk+5]
+        ADC  R2,R0
+        ST   [lwk+5],R2
+        LD   R0,[garg+8]
+        ST   [PIX_DATA_Y],R0
+        CALL lxmov
+        BRA  .ltl
+.xst:   ; x alone: plot stepping x. Rightward the port's own step *is*
+        ; the walk and software x only follows; leftward the port
+        ; stepped the wrong way and lxmov rewrites it outright.
+        LD   R0,[garg+8]
+        ST   [PIX_DATA],R0
+        LD   R0,[lwk+6]
+        OR   R0,R0
+        BNE  .xsl
+        LD   R0,[garg]
+        ADD  R0,#1
+        ST   [garg],R0
+        BLO  .ltl
+        LD   R0,[garg+1]
+        ADD  R0,#1
+        ST   [garg+1],R0
+        BRA  .ltl
+.xsl:   CALL lxmov
+        BRA  .ltl
+.yst:   POP  R0                 ; discard the saved e2
+        POP  R0
+        LD   R0,[lwk]           ; err += dx
+        LD   R2,[lwk+4]
+        ADD  R2,R0
+        ST   [lwk+4],R2
+        LD   R0,[lwk+1]
+        LD   R2,[lwk+5]
+        ADC  R2,R0
+        ST   [lwk+5],R2
+        LD   R0,[garg+8]
+        ST   [PIX_DATA_Y],R0    ; port x is already right, y steps
+.ltl:   LD   R0,[lwk+7]         ; one more pixel down
+        SUB  R0,#1
+        ST   [lwk+7],R0
+        BHS  .ltz
+        LD   R0,[lwk+8]
+        SUB  R0,#1
+        ST   [lwk+8],R0
+.ltz:   LD   R0,[lwk+7]
+        LD   R1,[lwk+8]
+        OR   R0,R1
+        BEQ  .lfin
+        JMP  .lp
+.lfin:  JMP  stmt
+
+; lxmov -- the walking x, one step by sx: garg's copy moves and the
+; port is rewritten to match. **X_H is stored every time, not only
+; when garg's low byte wraps**: a leftward step follows a PIX_DATA
+; store, and the port's auto-increment moved the whole 11-bit
+; register -- at x=255 the port sits at 256 with high bits the port
+; set itself, and a low-byte-only rewrite landed it on 510. Shared by
+; the diagonal and the leftward x step; the rightward x-only step
+; never calls it, because PIX_DATA's own increment is the walk.
+lxmov:  LD   R0,[lwk+6]
+        OR   R0,R0
+        BNE  .neg
+        LD   R0,[garg]
+        ADD  R0,#1
+        ST   [garg],R0
+        ST   [PIX_X_L],R0
+        BLO  .done
+        LD   R0,[garg+1]
+        ADD  R0,#1
+        ST   [garg+1],R0
+.done:  LD   R0,[garg+1]
+        ST   [PIX_X_H],R0
+        RET
+.neg:   LD   R0,[garg]
+        SUB  R0,#1
+        ST   [garg],R0
+        ST   [PIX_X_L],R0
+        BHS  .fin
+        LD   R0,[garg+1]
+        SUB  R0,#1
+        ST   [garg+1],R0
+.fin:   LD   R0,[garg+1]
+        ST   [PIX_X_H],R0
+        RET
 
 ; ---------------------------------------------------------------------
 ; hrun -- LINE where y0 == y1: set the port once, then store.
 ;
-; **PIX_DATA auto-increments X** (04-system.md section 5.7), and the
-; Bresenham loop above does not use it: `pixxy` rewrites PIX_X_L/H *and*
-; PIX_Y_L/H for every pixel, and then four 16-bit quantities are
-; compared to decide whether to stop. Measured before this existed, a
-; 256-pixel span cost **6.4 ms -- 209 cycles a pixel**, against CLG's 10
-; on the same memory path doing the same work. The hardware was never
-; the limit; the general algorithm was.
+; **PIX_DATA auto-increments X** (04-system.md section 5.7). The
+; Bresenham loop above uses the port's steps too now (D91), but a
+; horizontal span still has nothing to decide per pixel, so this stays
+; the fastest path: measured when it was written, a 256-pixel span
+; through the old general loop cost **6.4 ms -- 209 cycles a pixel**,
+; against CLG's 10 on the same memory path doing the same work. The
+; hardware was never the limit; the general algorithm was.
 ;
 ; Left to right, because the port only steps one way, so x0 > x1 swaps
 ; the ends. The count is 16-bit -- a span reaches 640 pixels in mode 3

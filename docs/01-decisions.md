@@ -5694,6 +5694,21 @@ byte), `sim/cosim.py all` 511 encodings, `sim/synth.py` PASS. The Rust
 machine carries the same register, gated by `sim/test_run.py`'s
 vertical-run case.
 
+**Measured in software** (`sw/interp.asm`'s rework against it, the
+suite's fan gate holding every octant pixel-exact): cycles a pixel went
+**225 -> 121 steep, 249 -> 170 shallow, 260 -> 181 diagonal**, and a
+vertical line runs at 101. Every line draws downward now -- the ends
+swap when the caller's points go up -- so the port's +1 is the only y
+step that exists; one pixel of the fan's 2,735 moved, an exact
+half-step tie walked from the other end. The rework cost **+155 bytes
+of image**, leaving 208 between the image and system storage --
+`tools/memmap.py --check`'s own warning -- so the next growth moves the
+map, which is rule 5's ask-first. One trap worth the ink: the port's
+auto-increment moves the whole 11-bit X register, so a leftward step
+that rewrites only `PIX_X_L` after a `PIX_DATA` store lands on x+256
+whenever the store crossed a page -- `lxmov` stores `PIX_X_H`
+unconditionally for exactly this reason.
+
 **What it does not do:** step X and Y together (a diagonal register
 was considered and dropped -- Bresenham's error term decides *when* to
 step both, so a hardware diagonal store saves nothing), step backwards,
