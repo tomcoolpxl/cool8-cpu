@@ -230,14 +230,39 @@ automatable.
 ### The emulator window
 
 ```
-poe disk                                    a flash image with BASIC on drive 0
-poe emu                                     boot it in a window
-python tools/cool8rsrun.py --flash IMG      boot some other image
-python tools/cool8rsrun.py --monitor        ROM only: no flash, no BASIC
+poe disk                                     a flash image with BASIC on drive 0
+poe emu                                      boot it in a window
+poe demo                                     rebuild the demo disc and boot it
+python tools/cool8rsrun.py --flash IMG       boot some other image
+python tools/cool8rsrun.py --rebuild ...     rebuild that image first
+python tools/cool8rsrun.py --monitor         ROM only: no flash, no BASIC
 ```
 
 `poe emu -- --flash IMG` does **not** work: poe passes the `--` through
-and argparse rejects it. Call the script.
+and argparse rejects it. Call the script, or use `poe demo`.
+
+**`--rebuild` is the one-command answer to a stale disc.** The launcher
+otherwise builds nothing, deliberately — `basic_image` in
+[cool8rsrun.py](../tools/cool8rsrun.py) says why: a launcher that
+decides *for itself* when an image has gone stale needs a rule about
+when a source counts as newer, and that rule is what quietly boots
+yesterday's image one day. **Asking is not deciding**, so the flag is
+allowed where a timestamp heuristic is not.
+
+It picks the builder from the target: `demos.img` goes to
+`mkdemos.py --no-shots`, anything else to `flash.py`. **`--no-shots`
+matters**: `mkdemos` normally runs every demo for twelve chunks of 500M
+cycles to photograph it, which is minutes; skipping that leaves typing
+the sources onto the disc, which is not. The pictures are for
+[14-demos.md](14-demos.md), not for booting.
+
+**The launcher refuses to hand over idle symbols it knows are wrong.**
+It compares the `BOOT.BIN` it would build against the one on the image,
+and when they differ it says so and names the fix rather than passing
+`+idle=` addresses from a build the machine is not running — which
+makes `Machine::is_idle` never true, so the taskbar's play button waits
+forever for a machine that booted seconds ago. That reads as "the demos
+do not work" and is nothing of the kind; it has cost two sessions.
 
 **There is a taskbar**, and every key below is also a button on it with
 the shortcut and a line of description under the pointer. It carries a

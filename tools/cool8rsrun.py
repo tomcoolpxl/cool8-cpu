@@ -146,6 +146,9 @@ def main():
                     help="boot ROM only: no flash image, no BASIC")
     ap.add_argument("--flash", help="boot this flash image instead of "
                                     "build/cool8.img")
+    ap.add_argument("--rebuild", action="store_true",
+                    help="rebuild the flash image from source first, then "
+                         "boot it")
     args = ap.parse_args()
 
     if not shutil.which("cargo"):
@@ -179,6 +182,27 @@ def main():
         cmd.append(f"+flash={os.path.abspath(args.flash)}")
     elif not args.monitor:
         cmd.append(f"+flash={basic_image()}")
+
+    # **`--rebuild` is a flag and not a rule, and the difference is the
+    # whole reason it is allowed.** `basic_image` says why this launcher
+    # builds nothing: a launcher that decides *for itself* when an image
+    # is stale needs a rule about when a source counts as newer, and that
+    # rule is what quietly boots yesterday's image one day. Asking is not
+    # deciding. The staleness check below still reports drift either way,
+    # so the two together are "tell me, and let me fix it in one command"
+    # rather than "guess for me".
+    if args.rebuild:
+        target = next((c[7:] for c in cmd if c.startswith("+flash=")), None)
+        if target and os.path.basename(target).lower() == "demos.img":
+            build = [sys.executable, os.path.join(HERE, "mkdemos.py"),
+                     "--img", target, "--no-shots"]
+        else:
+            build = [sys.executable, os.path.join(HERE, "flash.py")]
+        print("  rebuilding %s" % os.path.relpath(target or "", ROOT),
+              flush=True)
+        r = subprocess.run(build, cwd=ROOT)
+        if r.returncode != 0:
+            return r.returncode
 
     # **The disc catalogue, read here and handed over as a file.** Same
     # arrangement as the keymap above and for the same reason: the

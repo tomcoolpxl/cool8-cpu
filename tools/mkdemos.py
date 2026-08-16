@@ -71,6 +71,9 @@ def main():
     ap.add_argument("--img", default=os.path.join(H.BUILD, "demos.img"))
     ap.add_argument("--png", metavar="NAME", nargs="?", const="",
                     help="run this demo (default the first) and shoot it")
+    ap.add_argument("--no-shots", action="store_true",
+                    help="build the disc and stop -- no demo is run and no "
+                         "picture taken, which is minutes rather than one")
     args = ap.parse_args()
 
     code, syms = B.build()
@@ -101,7 +104,13 @@ def main():
     # **Every demo gets shot, not just the first.** A picture is the
     # only review a demo really gets, and one that is never rendered is
     # one nobody looks at until a user does.
-    for want in ([args.png] if args.png else
+    # **The pictures are most of the wall clock.** Each demo is run for
+    # twelve chunks of 500M cycles before its frame is grabbed, so
+    # shooting five of them is minutes while typing them onto the disc is
+    # not. `--no-shots` is for the caller that wants a bootable image and
+    # will look at it in the window itself -- `cool8rsrun.py --rebuild`.
+    for want in ([] if args.no_shots else
+                 [args.png] if args.png else
                  [discname(f) for f in sources()]):
         # **Stop whatever is still running.** A demo ends in `GOTO` or
         # `LOOP` and never comes back, so the machine is not idle and

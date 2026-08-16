@@ -80,6 +80,7 @@ board = "python tools/board.py"
 board-screen = "python tools/board.py --screen"
 board-ports = "python tools/board.py --ports"
 emu = "python tools/cool8rsrun.py"
+demo = "python tools/cool8rsrun.py --rebuild --flash sim/build/demos.img"
 console = "python tools/cool8screen.py"
 load = "python tools/cool8load.py"
 
