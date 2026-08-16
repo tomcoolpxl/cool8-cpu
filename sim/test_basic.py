@@ -175,7 +175,19 @@ class Machine:
         # Under the C64 key law, Home is 0,0 and DOWN at the bottom
         # SCROLLS -- so Home first, then exactly to the bottom row.
         self.type("\x1b[H", chunk=3)
-        self.type("\x1b[B" * 29, chunk=3)
+        # **Fifteen bytes a chunk, which is five whole ESC [ B.**
+        # The chunking exists because the UART FIFO is sixteen deep,
+        # and `type` settles after each chunk -- one blocking round
+        # trip. At three bytes that is twenty-nine round trips to
+        # walk the cursor down the screen, before a single character
+        # of the command itself.
+        #
+        # Profiled: 909 `cmd` calls, 29,474 settles, **41.8 s of the
+        # 56 s `sim/test_run.py` took**. Fifteen is the largest
+        # multiple of an escape sequence that still fits the FIFO,
+        # so the walk is six round trips instead of twenty-nine and
+        # no escape is ever split across a feed.
+        self.type("\x1b[B" * 29, chunk=15)
         self.type(s + "\r")
 
     def row(self, r):

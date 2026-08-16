@@ -103,7 +103,7 @@ done.
 
 **Most work needs none of it.** `poe test`, `poe check` and `poe build`
 run with nothing but Python and `cargo` — measured: the whole software
-suite passes in 45 s with `OSS_CAD_SUITE` unset. **This section used to
+suite passes in **29 s** with `OSS_CAD_SUITE` unset. **This section used to
 open "Everything needs OSS CAD Suite", which is false and expensive**:
 an agent reading that prefixes the toolchain to every command it runs,
 and a session of software work drags the hardware flow behind it for
@@ -269,7 +269,7 @@ something — there is nothing to fall back to.
 instructions a second; Icarus simulating `rtl/` manages a few
 thousand. That is not a choice between two similar things — it is
 seconds against a wait nobody sits through, and it is why the software
-suite is 45 s.
+suite is 29 s.
 
 **Go to the RTL only when the hardware itself is the question**:
 `sim/cosim.py` checking the two models agree instruction by

@@ -91,8 +91,28 @@ EQU = re.compile(r"^\s*(?:CONST\s+|\.equ\s+)?([A-Za-z_][A-Za-z0-9_]*)"
 USES = re.compile(r"\b(POKE|PEEK|VPOKE|VPEEK)\b")
 
 
+_CACHE = []
+
+
 def registers():
-    """{offset: {param, addr, name, note, module}} from the RTL."""
+    """{offset: {param, addr, name, note, module}} from the RTL.
+
+    **Read once per process, because it was being read fourteen thousand
+    times.** This globs `rtl/` and walks every line of every file, which
+    is fine for the once-per-run use it was written for -- `poe check`
+    verifying the map, a tool resolving a name at start-up. Then
+    `Machine.row()` grew a call to `ctrl`, `ctrl` resolves its register
+    by name through `addr_of`, and `addr_of` calls this. One screen row
+    read is one full parse of the RTL.
+
+    Profiled on `sim/test_run.py`: **14,278 calls, 46 s of its own time
+    and 100 s of the 157 s the whole suite took** -- the single largest
+    cost in the software suite, and none of it doing anything twice
+    differently. The files do not change while a process runs, so the
+    answer does not either.
+    """
+    if _CACHE:
+        return _CACHE[0]
     out = {}
     for path in sorted(glob.glob(RTL)):
         mod = os.path.basename(path)
@@ -107,6 +127,7 @@ def registers():
                         "note": n.group(2) if n else "",
                         "module": mod,
                         "dup": off in out}
+    _CACHE.append(out)
     return out
 
 
