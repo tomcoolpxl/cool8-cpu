@@ -22,22 +22,21 @@ system clock.
 
 ## The adaptations, and why each one is fair
 
-**GOSUB/RETURN becomes CALL/SUB.** A SUB is found once at RUN rather
-than searched for per call, which is BBC BASIC's arrangement and faster
-than Microsoft's line-number scan. BM5 exists to price a subroutine
-call, and it still does -- but against a machine that resolves the
-target earlier than the ones in the table.
+**GOSUB/RETURN is GOSUB/RETURN again, and BM5 is the published
+listing.** It was CALL/SUB for as long as this BASIC had no GOSUB: a SUB
+is found once at RUN rather than searched for per call, which is BBC
+BASIC's arrangement and faster than Microsoft's line-number scan. That
+adaptation was fair while it was forced, and it stopped being forced
+when GOSUB arrived.
 
-**This said "COOL8 has no GOSUB", and that stopped being true.** GOSUB
-exists now and resolves its target through `prg_find` exactly as the
-Microsoft BASICs in the table do, so the adaptation is a *choice* now
-rather than a necessity, and the table above prices the CALL path only.
-`demos/bench.bas` is the other side of it: it uses real GOSUB, and the
-two-slot memo that bought 2.74x there moved nothing here, because
-nothing here goes through `prg_find` per call. Kept as CALL so the
-published table stays comparable with its own history; switching it
-would be a fair change, but it is a different measurement, not a
-correction to this one.
+**So this number is not comparable with the one this table used to
+print, and that is the point of changing it.** `GOSUB 9000` resolves
+its target through `prg_find` on every call, exactly as the Microsoft
+BASICs in the table do -- and 9000 is a *high* line number, which is
+what the published listing says and what those machines paid for.
+Against CALL, which resolved once at RUN, this measures the thing BM5
+was written to measure. Every other machine's BM5 stands; only COOL8's
+moved.
 
 **LET is gone**, so `510 LET A=...` is `510 A=...`. No semantic change:
 LET was always optional and costs a token nobody needs.
@@ -113,7 +112,7 @@ SYS_HZ = 8_375_000.0
 # against Kilobaud.
 HEAD = ['300 PRINT "S"']
 TAIL = ['700 PRINT "E"', "800 END"]
-SUBDEF = ["820 SUB NUL", "830 RETURN", "840 END SUB"]
+SUBDEF = ["9000 RETURN"]      # the published BM5's target line
 
 BMS = [
     ("BM1", "an empty FOR loop",
@@ -136,19 +135,19 @@ BMS = [
 
     ("BM5", "...and a subroutine call",
      ["400 K = 0", "500 K = K + 1", "510 A = K / 2 * 3 + 4 - 5",
-      "520 CALL NUL", "600 IF K < 1000 THEN GOTO 500"],
+      "520 GOSUB 9000", "600 IF K < 1000 THEN GOTO 500"],
      ["400 K = 0"], True),
 
     ("BM6", "...and an inner FOR loop",
      ["400 K = 0", "430 DIM M(5)", "500 K = K + 1",
-      "510 A = K / 2 * 3 + 4 - 5", "520 CALL NUL",
+      "510 A = K / 2 * 3 + 4 - 5", "520 GOSUB 9000",
       "530 FOR L = 1 TO 5", "540 NEXT L",
       "600 IF K < 1000 THEN GOTO 500"],
      ["400 K = 0", "430 DIM M(5)"], True),
 
     ("BM7", "...writing to an array",
      ["400 K = 0", "430 DIM M(5)", "500 K = K + 1",
-      "510 A = K / 2 * 3 + 4 - 5", "520 CALL NUL",
+      "510 A = K / 2 * 3 + 4 - 5", "520 GOSUB 9000",
       "530 FOR L = 1 TO 5", "535 M(L) = A", "540 NEXT L",
       "600 IF K < 1000 THEN GOTO 500"],
      ["400 K = 0", "430 DIM M(5)"], True),
