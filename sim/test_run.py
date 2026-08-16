@@ -1170,30 +1170,18 @@ def cobra_flips(code, syms):
             prev_d, prev_body = d, shown
         return flips, faults, sum(lits) // len(lits)
 
-    M.m.run_frame(20)      # past the start-up blank: the first page
-                           # shown has nothing on it until the first
-                           # drawn frame flips in
+    M.m.run_frame(60)      # past the start-up blank and the two CLG
+                           # iterations, into the erase-and-draw steady
+                           # state the demo lives in
     fa, xa, la = watch(30)
     check(xa == 0,
           "the shown page is always whole: never blank, never mid-draw",
           "%d bad samples of 30" % xa)
-    check(2 <= fa <= 8, "the display flips as frames finish",
+    check(3 <= fa <= 12, "the display flips as frames finish",
           "%d flips in 30 frames" % fa)
 
-    # ---- SPACE: mode B, the same ship with hidden lines removed and
-    # the profile's hogs paid off -- culling and erase lists computed
-    # by the generator, endpoints unpacked flat at startup. The keys
-    # go through the keyboard, because INKEY reads the keyboard.
-    M.m.key(" ")
-    M.m.run_frame(90)          # two CLG entries, then steady state
-    fb2, xb, lb = watch(30)
-    check(xb == 0, "hidden-line mode keeps the glass whole",
-          "%d bad samples of 30" % xb)
-    check(fb2 > fa, "and it is faster -- more flips in the same window",
-          "mode A %d flips, mode B %d" % (fa, fb2))
-    check(lb < la, "and lighter -- hidden lines are really gone",
-          "mode A %d lit bytes shown, mode B %d" % (la, lb))
-    print("      mode A %d flips/30 frames, %d lit; mode B %d flips, %d lit" % (fa, la, fb2, lb))
+    print("      %d flips in 30 display frames, %d lit bytes shown"
+          % (fa, la))
 
 
 def wave_lockstep(code, syms):

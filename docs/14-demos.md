@@ -447,89 +447,72 @@ on screen that only counting the rows caught it. Note also that `READ`
 takes scalar targets only, so it is `READ V` then `S(I) = V`;
 `READ S(I)` is `?INDEX`.
 
-### `COBRA` — Elite's ship on the double buffer
+### `COBRA` — Elite's ship, hidden lines removed, on the double buffer
 
 ![COBRA](img/demo-cobra.png)
 
-**The model is the published one.** 28 vertices and 38 edges of the
-Cobra Mk III, transcribed by `tools/mk3d.py` from the annotated BBC
-Elite source at
-[bbcelite.com](https://elite.bbcelite.com/6502sp/main/variable/ship_cobra_mk_3.html)
-— integer coordinates from an 8-bit machine, needing nothing but a
-scale. The generator asserts the counts against what the source states
-and emits `DATA`; the machine `READ`s it like any other table. No
-importer, no format, no conversion step to be scared of.
+**The model is the published one.** 28 vertices, 38 edges, 13 faces and
+the edge-to-face table of the Cobra Mk III, transcribed by
+`tools/mk3d.py` from the annotated BBC Elite source at
+[bbcelite.com](https://elite.bbcelite.com/6502sp/main/variable/ship_cobra_mk_3.html).
+The generator asserts the counts against what the source states and
+emits `DATA`; no importer, no conversion step on the machine.
 
 **The tilt is baked, the spin is runtime, and the order is the trick.**
-The host rotates the ship 20° about X once. BASIC spins it about the
-*view's* vertical axis — `RotY` after the tilt, not before — and a Y
-rotation never touches y, so **each vertex's screen Y is one constant**
-and only screen X moves. The startup loop fills 72 frames × 28 vertices
-of screen X, about a second of integer arithmetic; the draw loop is 38
-`LINE`s and nothing else. Everything is integer: the scale is chosen so
-`|qx·cos + qz·sin|` peaks at 23,495 of a signed 16-bit's 32,767,
-asserted at generation rather than hoped.
+The host rotates the ship 20° about X once; BASIC spins it about the
+*view's* vertical axis — `RotY` after the tilt — and a Y rotation never
+touches y, so each vertex's screen Y is one constant and only screen X
+moves. Startup fills 72 frames × 28 vertices of screen X and unpacks
+each frame's visible edges into flat endpoint arrays, all integer, the
+worst product asserted at 23,495 of a signed 16-bit's 32,767.
 
-**This is the first user of mode 5's double buffer, and it shipped
-wrong first** — worth recording because the claim sounded right. The
-first cut flipped `VID_BASE` alone, and the doc said the viewer never
-sees a half-drawn frame. False: the fetch re-latches the base at
-*every* frame start and a drawn frame takes seven of them, so the
-display followed the page under construction — the `CLG` was a visible
-black frame between ships, and the finished page was never shown at
-all. The gate of the day verified flips and page contents, not what
-was on the glass when; the user's eyes caught what it missed.
+**There was a see-through wireframe mode, and it was eliminated by
+decision** — the hidden-line ship is simply better, and one mode is
+one code path. Its lessons stayed: the profile that shaped this loop
+(`python sim/test_run.py --profile cobra`) measured the wireframe's
+frame at **31.5 % `CLG`, ~15 % nested-subscript machinery, ~13 %
+drawing**, which is why this demo erases by redrawing the
+two-flips-old frame's edges in black instead of clearing 24,576 bytes,
+and why every `LINE` argument is a single-subscript array read. Two
+`CLG`s at start cover pages never yet drawn.
 
-[D92](01-decisions.md) is the fix: `VID_DBASE_H` names the page the
-display scans, `VID_BASE` steers only the drawing, and the flip is two
-`POKE`s after `VSYNC` — `DBASE` to the page just finished, `BASE` to
-the other, high bytes only because the pages sit at $0000 and $6000.
+**Visibility is decided by the projected polygon, not the published
+normal.** Elite's normals are hand-rounded integers — `(0,62,31)` is
+near its face's plane, not on it — so a normal-based cull flipped a few
+degrees away from where the *drawn* geometry turns edge-on, and edges
+vanished while their faces were still visibly open. The generator
+walks each face's boundary loop out of the edge table (spurs like the
+laser line pruned), calibrates its winding once against the published
+normal far from the silhouette, and then decides every frame by the
+**signed area of the face under the exact integer projection the
+machine draws**, with a 150 px² grace margin so a closing face holds
+through the transition. The revolution is asserted flicker-free — no
+edge visible, gone one frame, visible again. Cost, measured: 24.6
+edges a frame mean against the normal cull's 23.6, worst 33 against
+32 — **accuracy priced at about one `LINE` a frame**, which was the
+constraint set for it: all of this runs in the generator, and the
+machine only ever `READ`s shorter or equal lists.
 
-**Measured: a drawn frame takes ~6-7 display frames — about 8.5 fps —
-and the glass is never blank.** `sim/test_run.py`'s `cobra_flips` now
-checks the thing the eye sees: over thirty consecutive display frames
-the shown page always holds a complete wireframe, changes only when
-`DBASE` flips, and the two registers stay a page apart. The probe
+**First user of mode 5's double buffer, and it shipped wrong first** —
+worth keeping because the claim sounded right. The first cut flipped
+`VID_BASE` alone and called the viewer safe; false — the fetch
+re-latches the base every frame start and a drawn frame takes several,
+so the display followed the page under construction and the `CLG` was
+a visible black frame between ships. [D92](01-decisions.md) is the
+fix: `VID_DBASE_H` names the page the display scans, `VID_BASE` steers
+only the drawing, and the flip is two `POKE`s after `VSYNC`.
+
+**Measured: about 5 display frames a drawn frame — ~12 fps — and the
+glass is never blank.** `sim/test_run.py`'s `cobra_flips` holds it:
+mode 5 on, the override on, and over thirty consecutive display frames
+the shown page always carries a complete ship, changes only when
+`DBASE` flips, and stays a page apart from the drawing base. The probe
 reads registers through `bus.read()` — `bus.mem[]` is the RAM *under*
-the I/O page, and reading a register there is the mistake
-`cool8_soc_tb`'s "the page wins" section exists to catch.
-
-**SPACE switches to the hidden-line ship, and the profile chose its
-optimisations.** `python sim/test_run.py --profile cobra` is a tool
-now (the scratch version was written twice in one session, which is
-AGENTS.md's own threshold), and it measured the wireframe's frame as
-**31.5 % `CLG`, ~15 % nested-subscript expression machinery, ~13 %
-actual line drawing**. Mode B pays off both hogs and removes hidden
-lines with the same instrument:
-
-- **Backface culling runs in the generator, not on the machine.** The
-  spin is 72 fixed frames, so which edges show is knowable offline: a
-  face when its rotated normal's view-z goes negative — the sign
-  pinned by the stern, visible at frame 0 — and an edge when either of
-  its faces does, out of the published face table. 14–32 edges a
-  frame, mean 23.6, against 38. The rear-panel details all live in
-  face 9's plane and appear with the stern as one unit, which is the
-  Elite look arrived at the Elite way.
-- **Flat per-slot endpoint arrays.** Startup unpacks each frame's
-  visible edges into four arrays; `LINE H(K),J(K),L(K),M(K),10` is
-  four single-subscript arguments, no `U(B+E(K))` nesting. 1,698
-  slots, 13.6 KB of user RAM — spent deliberately, the whole area was
-  opened for it.
-- **Erase replaces `CLG`.** A page holds the frame from two flips ago,
-  whose edge list is precomputed like every other; ~24 black lines
-  beat clearing 24,576 bytes. Two `CLG`s cover mode entry, when the
-  pages still hold the other mode's picture.
-
-**Measured, gate-enforced: mode A 5 flips per 30 display frames, mode
-B 7 — about 8.5 and 14 fps — with 493 lit bytes shown against 820**,
-hidden lines really gone, and the glass whole on every sampled frame
-in both modes. Profiled after, `CLG` is off mode B's table entirely
-and line walking is the honest top cost at ~22 %. **The next lever is
-the interpreter's, not the demo's**: name lookup (`nentry`, `nlook.*`,
-`varidx`, `aelem`) is ~36 % of a mode B frame — a `nlook` memo in the
-shape of `prg_find`'s two-slot one is the recorded candidate, and the
-flat-array trick would migrate to the see-through wireframe if wanted.
-
+the I/O page, the mistake `cool8_soc_tb`'s "the page wins" section
+exists to catch. **The recorded next lever is the interpreter's, not
+the demo's**: name lookup (`nentry`, `nlook.*`, `varidx`, `aelem`) is
+~36 % of a frame, and a `nlook` memo in `prg_find`'s two-slot shape is
+the candidate.
 
 ## 5. Adding one
 
