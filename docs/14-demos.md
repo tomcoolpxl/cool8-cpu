@@ -659,9 +659,29 @@ kill. Every rendering machine loads the real font now.
 
 ### `BAPPLE` — Bad Apple, streamed from the dedicated drives
 
-**The stack is built and gate-proven; the video itself is the user's
-one step**: `python tools/mkbadapple.py badapple.mp4`, then a disc
-build. Until then the pipeline lives against a synthetic clip.
+![BAPPLE](img/demo-bapple-shadow.png)
+
+**The real film is on the disc and plays frame-exact end to end**:
+3,481 frames extracted at 15 fps, 224 of black-and-credits tail
+trimmed by a coverage threshold (the credits are two static text cards
+under 2% lit; the film's last real frame lands to black at 217.1 s),
+leaving 3,257 frames -> 5,259,513 bytes in 82 chunks across all twelve
+dedicated drives. Verified by parking the VM at the VSYNC wait every
+four hardware frames for the *whole film* and requiring both VRAM
+pages to equal the reference decoder's state, park after park -- every
+frame from 0 to the last matched exactly. Rebuild from a video file
+with `python tools/mkbadapple.py badapple.mp4`, then a disc build; the
+mp4 stays out of the repository.
+
+**Fitting was a planner problem, not an encoder problem.** The encoder
+absorbs unchanged same-value bytes into runs and only pays a skip
+token for stretches of eight or more, which brought the stream to
+5.31 MB against 5.41 MB of raw drive capacity -- but a planner that
+only cut 64 KB chunks wasted each drive's unreachable tail, 720 KB of
+packing loss, and reported the stream as not fitting. Chunks are now
+cut against the file-size cap and the drive's remaining space at once
+(the last chunk on a drive fills it), and the planner predicts the
+256-byte page alignment `Volume.add` gives every file start.
 
 **Why this port is easy where every other 8-bit port was hard**: flash
 is 8 MB and `FLS_DATA` auto-advances, so streaming is native and plain
@@ -691,13 +711,28 @@ chunk landing anywhere else would stream garbage from a right-looking
 drive. Between chunks the stub closes `FLS_CTRL`, re-points the
 address, reopens.
 
+**Two build-order traps, both now held by assertions.** First, the
+chunks used to be written into the image file while the disc-building
+machine was already running; the `flush()` after `SAVE "BAPPLE"` put
+the machine's pre-chunk flash back over the file, leaving erased $FF
+where the stream had just been placed -- every placement assertion had
+passed, on an intermediate state. `mkdemos` now places the chunks
+*before* the machine boots and re-reads every chunk from the finished
+file. Second, the stub was typed over the previous demo without a
+`NEW`: every line number the stub does not use survived, and WAVE's
+colour-ramp DATA lines 205-249 sat between the decoder DATA (200-204)
+and the chunk table (250+), so `READ` served palette bytes as flash
+addresses. The program LISTed clean line for line -- only dumping the
+READ stream itself showed the ramp. The fix is one `NEW`; the gate now
+types a decoy demo first to keep the scenario alive.
+
 **Gate-enforced** (`bapple_decodes`): a fresh synthetic clip is
-encoded, placed, and played; both VRAM pages must then equal a
-consecutive reference frame pair with the right parity, and the flip
-must show the page just written — the token walk, the flash
-auto-advance, the VRAM auto-increment, the skip carry, the page
-alternation and the DBASE flip in one comparison. Sound is a later,
-separate step, by decision.
+encoded, placed, and played -- the stub typed over a decoy program, as
+the disc build types it; both VRAM pages must then equal a consecutive
+reference frame pair with the right parity, and the flip must show the
+page just written — the token walk, the flash auto-advance, the VRAM
+auto-increment, the skip carry, the page alternation and the DBASE
+flip in one comparison. Sound is a later, separate step, by decision.
 
 ## 5. Adding one
 

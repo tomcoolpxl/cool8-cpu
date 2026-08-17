@@ -135,26 +135,36 @@ def plane(bits):
 
 
 def encode(planes):
-    """Per-frame token blobs: delta against two frames back."""
+    """Per-frame token blobs: delta against two frames back.
+
+    A value run is allowed to absorb unchanged bytes of the same value
+    -- rewriting a byte to what it already holds costs nothing on the
+    machine -- and bails to skips only at unchanged stretches long
+    enough to be worth a token. The first cut broke a run at *every*
+    unchanged byte, which fragmented edge-heavy frames into two-byte
+    tokens and outgrew the dedicated drives."""
     blobs = []
     for i, cur in enumerate(planes):
         prev = planes[i - 2] if i >= 2 else None
+        # unch[j]: how many unchanged bytes start at j
+        if prev is None:
+            unch = [0] * (PLANE + 1)
+        else:
+            unch = [0] * (PLANE + 1)
+            for j in range(PLANE - 1, -1, -1):
+                unch[j] = unch[j + 1] + 1 if cur[j] == prev[j] else 0
         t = bytearray()
         j = 0
         while j < PLANE:
-            if prev is not None and cur[j] == prev[j]:
-                n = 0
-                while (j < PLANE and n < 128
-                       and cur[j] == prev[j]):
-                    j += 1
-                    n += 1
+            if unch[j] >= 8:
+                n = min(unch[j], 128)
                 t.append(0x80 + n - 1)
+                j += n
             else:
                 v = cur[j]
                 n = 0
                 while (j < PLANE and n < 127 and cur[j] == v
-                       and (prev is None or cur[j] != prev[j]
-                            or n == 0)):
+                       and unch[j] < 16):
                     j += 1
                     n += 1
                 t.append(n)
@@ -229,49 +239,69 @@ def mp4_frames(path):
         base = f * W * H
         frames.append([[raw[base + y * W + x] >= 128 for x in range(W)]
                        for y in range(H)])
+    # the credits: the film lands to black and what follows is two
+    # static text cards -- under 2% lit against the film's tens.
+    # Walking back over near-dark frames sheds exactly that tail.
+    kept = len(frames)
+    while frames and sum(sum(r) for r in frames[-1]) < W * H // 20:
+        frames.pop()
+    if kept != len(frames):
+        print("  credits trimmed: %d frames (%.1fs) after the film" %
+              (kept - len(frames), (kept - len(frames)) / float(FPS)))
     return frames
 
 
 # ---------------------------------------------------------- the plan
 
 def chunk(blobs):
-    """Chunks of whole frames, each within the catalogue's 16 bits."""
-    chunks, cur, frames = [], bytearray(), 0
+    """Chunks of whole frames, cut against BOTH limits at once: the
+    catalogue's 16-bit file length and the drive's remaining space.
+    The first planner cut only 64 KB chunks and wasted each drive's
+    tail -- 720 KB of packing loss on a stream that fits raw with 98 KB
+    to spare."""
+    space = disk.DATA_END - disk.DATA_START
+    chunks, cur, frames, left = [], bytearray(), 0, space
+    di = 0
     for b in blobs:
         assert len(b) <= CHUNK_MAX, "one frame larger than a file"
-        if len(cur) + len(b) > CHUNK_MAX:
-            chunks.append((bytes(cur), frames))
+        if len(cur) + len(b) > min(CHUNK_MAX, left):
+            chunks.append((bytes(cur), frames, di))
+            # the catalogue stores start *pages*: files are 256-aligned
+            left -= (len(cur) + 255) & ~255
             cur, frames = bytearray(), 0
+            if left < len(b):
+                di += 1
+                left = space
+    # end-of-drive bookkeeping happens above; frames append here
         cur += b
         frames += 1
     if cur:
-        chunks.append((bytes(cur), frames))
+        chunks.append((bytes(cur), frames, di))
     return chunks
 
 
 def plan(chunks):
     """Chunks onto the dedicated drives, addresses predicted the way
     Volume.add lays files out: contiguous from DATA_START."""
-    cap = disk.DATA_END - disk.DATA_START
-    man, di, off = [], 0, disk.DATA_START
-    for k, (blob, frames) in enumerate(chunks):
-        if off + len(blob) > disk.DATA_END:
-            di += 1
+    man, off, last = [], disk.DATA_START, 0
+    for k, (blob, frames, di) in enumerate(chunks):
+        if di != last:
             off = disk.DATA_START
+            last = di
         if di >= len(DRIVES):
             sys.exit("the stream outgrew the dedicated drives")
         drive = DRIVES[di]
         addr = disk.vol_base(drive) + off
         man.append({"drive": drive, "name": "BA%03d.DAT" % k,
                     "addr": addr, "frames": frames, "size": len(blob)})
-        off += len(blob)
-    assert cap > 0
+        off += (len(blob) + 255) & ~255
+        assert off <= disk.DATA_END
     return man
 
 
 def emit(outdir, chunks, man, ml):
     os.makedirs(outdir, exist_ok=True)
-    for m, (blob, _) in zip(man, chunks):
+    for m, (blob, _, _) in zip(man, chunks):
         with open(os.path.join(outdir, m["name"]), "wb") as fh:
             fh.write(blob)
     with open(os.path.join(outdir, "manifest.json"), "w") as fh:

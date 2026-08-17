@@ -1228,6 +1228,16 @@ def bapple_decodes(code, syms):
            if l.strip()]
     M = B.Machine(code, syms, flash=img, render=True)
     M.settle()
+    # **The stub is typed after another program, as mkdemos types it.**
+    # Overtyping leaves every line number the stub does not use — the
+    # real disc shipped with WAVE's colour-ramp DATA lines 205–249
+    # sitting between the decoder DATA (200–204) and the chunk table
+    # (250+), and READ served the palette as flash addresses while the
+    # program LISTed clean line for line. The decoy below recreates that
+    # shape; the NEW is the fix under test, mirroring the build.
+    H.line(M.m, syms, "205 DATA 188,189,190,191,192,192,193,194")
+    H.line(M.m, syms, "5 REM A LEFTOVER FROM THE PREVIOUS DEMO")
+    H.key(M.m, syms, "NEW\r")
     for ln in src:
         H.line(M.m, syms, ln)
     M.m.type(RUNCMD)

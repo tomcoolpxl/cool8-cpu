@@ -81,6 +81,31 @@ def main():
     print("  16 volumes; drive 0 bootable (BOOT.BIN {:,}), drive {} is "
           "DEMOS".format(n, DRIVE))
 
+    # **Bad Apple's chunks go in before the machine boots.** They used
+    # to be written into the image file while the machine was running;
+    # the machine's own flash never held them, so the `flush()` after
+    # `SAVE "BAPPLE"` put the pre-chunk flash back over the file and
+    # left erased $FF where the stream had just been placed. The stub
+    # played confetti from a disc whose placement assertions had all
+    # passed. Placed first, the chunks ride inside the machine's flash
+    # from boot and every later flush carries them.
+    bap = os.path.join(DEMOS, "bapple")
+    manp = os.path.join(bap, "manifest.json")
+    man = None
+    if os.path.exists(manp):
+        import json
+        with open(manp) as fh:
+            man = json.load(fh)
+        im = disk.Image(args.img)
+        for e in man:
+            vol = disk.Volume(im, e["drive"])
+            off = vol.free_offset()
+            assert vol.base + off == e["addr"], (
+                "chunk %s: predicted $%06X, placed $%06X"
+                % (e["name"], e["addr"], vol.base + off))
+            vol.add(os.path.join(bap, e["name"]), e["name"])
+        im.save()
+
     m = vm.boot(flash_path=args.img, render=True)
     for _ in range(90):
         m.run_frame()
@@ -111,25 +136,19 @@ def main():
     # **Bad Apple rides on its dedicated drives when it exists.** The
     # chunks and manifest in demos/bapple/ come from tools/mkbadapple.py
     # (run against the user's own mp4, or --selftest); its stub bakes
-    # each chunk's *predicted* flash address, so the placement here is
+    # each chunk's *predicted* flash address, so the placement above is
     # asserted against the prediction -- a chunk that lands anywhere
     # else would stream garbage from the right-looking drive. The stub
     # itself is typed onto the demo drive like any other program.
-    bap = os.path.join(DEMOS, "bapple")
-    manp = os.path.join(bap, "manifest.json")
-    if os.path.exists(manp):
-        import json
-        with open(manp) as fh:
-            man = json.load(fh)
-        im = disk.Image(args.img)
-        for e in man:
-            vol = disk.Volume(im, e["drive"])
-            off = vol.free_offset()
-            assert vol.base + off == e["addr"], (
-                "chunk %s: predicted $%06X, placed $%06X"
-                % (e["name"], e["addr"], vol.base + off))
-            vol.add(os.path.join(bap, e["name"]), e["name"])
-        im.save()
+    # **NEW first.** The stub used to be typed straight over the last
+    # demo; every line number bapple.bas does not use survived the
+    # overtyping -- WAVE's colour-ramp DATA lines 205-249 landed between
+    # the stub's decoder DATA (200-204) and its chunk table (250+), and
+    # READ served the palette as flash addresses. The program LISTed
+    # clean for every line the stub does have, which is why eyeballing
+    # missed it; only dumping the READ stream itself showed the ramp.
+    if man is not None:
+        H.key(m, syms, "NEW\r")
         for line in io.open(os.path.join(bap, "bapple.bas"),
                             encoding="utf-8").read().splitlines():
             if line.strip():
@@ -139,6 +158,20 @@ def main():
         drives = sorted({e["drive"] for e in man}, reverse=True)
         print("  bad apple: %d chunks on drives %s, stub saved as BAPPLE"
               % (len(man), drives))
+
+    # **The finished file is read back, not trusted.** The confetti bug
+    # above survived every placement assertion because those ran against
+    # an intermediate state of the image; only the bytes in the file the
+    # user boots are the truth.
+    if man is not None:
+        with open(args.img, "rb") as fh:
+            final = fh.read()
+        for e in man:
+            with open(os.path.join(bap, e["name"]), "rb") as fh:
+                blob = fh.read()
+            got = final[e["addr"]:e["addr"] + len(blob)]
+            assert got == blob, "chunk %s is not on the finished disc" \
+                % e["name"]
 
     v = disk.Volume(disk.Image(args.img), DRIVE)
     print("  drive %d holds: %s"
