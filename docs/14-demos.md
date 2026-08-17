@@ -657,6 +657,48 @@ worth the trip: suite machines rendered text with no font, so glyphs
 had never lit in `fb()` and a cursor toggle looked like a display
 kill. Every rendering machine loads the real font now.
 
+### `BAPPLE` — Bad Apple, streamed from the dedicated drives
+
+**The stack is built and gate-proven; the video itself is the user's
+one step**: `python tools/mkbadapple.py badapple.mp4`, then a disc
+build. Until then the pipeline lives against a synthetic clip.
+
+**Why this port is easy where every other 8-bit port was hard**: flash
+is 8 MB and `FLS_DATA` auto-advances, so streaming is native and plain
+delta-RLE at 256×192/15 fps (~2–4 MB) needs none of the heroics — the
+C64's 170 KB vector quantisation, the BBC's floppy choreography — that
+define the genre. The fight everywhere else is storage; ours was only
+decode speed, and 8.375 MHz settles it.
+
+**The stream**: frames become mode 5 byte planes (two pixels a byte),
+delta-encoded against the frame *two* back — pages alternate under the
+D92 double buffer, so a page's previous content is two frames old.
+Tokens: `$00` end-of-frame (flip `VID_DBASE_H`), `$01–$7F` a run of
+the next byte through `VRAM_DATA`'s auto-increment, `$80–$FF` a skip
+of token−127. Frames 0 and 1 ship full, so nothing needs clearing.
+
+**The decoder is 68 bytes of machine code** at $9000, assembled by the
+generator through the harness with register addresses stamped from
+`tools/ioregs.py`, POKEd from `DATA` by the stub, one frame per `SYS`
+from a four-`VSYNC` loop — BASIC keeps the tempo and the exit key.
+
+**Dedicated drives, 12 downward**: the catalogue caps a file at
+65,535 bytes, so the stream ships as `BA###.DAT` chunks split at frame
+boundaries. Volume files are contiguous from a fixed offset, so the
+planner *predicts* each chunk's absolute flash address into the stub's
+table, and `mkdemos` asserts the prediction when it places them — a
+chunk landing anywhere else would stream garbage from a right-looking
+drive. Between chunks the stub closes `FLS_CTRL`, re-points the
+address, reopens.
+
+**Gate-enforced** (`bapple_decodes`): a fresh synthetic clip is
+encoded, placed, and played; both VRAM pages must then equal a
+consecutive reference frame pair with the right parity, and the flip
+must show the page just written — the token walk, the flash
+auto-advance, the VRAM auto-increment, the skip carry, the page
+alternation and the DBASE flip in one comparison. Sound is a later,
+separate step, by decision.
+
 ## 5. Adding one
 
 1. Write `demos/name.bas`. Keep it BASIC, keep it under 80 characters a

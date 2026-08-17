@@ -108,6 +108,38 @@ def main():
         print("  typed and saved %-16s as %s" % (f, discname(f)))
     m.flash.flush()
 
+    # **Bad Apple rides on its dedicated drives when it exists.** The
+    # chunks and manifest in demos/bapple/ come from tools/mkbadapple.py
+    # (run against the user's own mp4, or --selftest); its stub bakes
+    # each chunk's *predicted* flash address, so the placement here is
+    # asserted against the prediction -- a chunk that lands anywhere
+    # else would stream garbage from the right-looking drive. The stub
+    # itself is typed onto the demo drive like any other program.
+    bap = os.path.join(DEMOS, "bapple")
+    manp = os.path.join(bap, "manifest.json")
+    if os.path.exists(manp):
+        import json
+        with open(manp) as fh:
+            man = json.load(fh)
+        im = disk.Image(args.img)
+        for e in man:
+            vol = disk.Volume(im, e["drive"])
+            off = vol.free_offset()
+            assert vol.base + off == e["addr"], (
+                "chunk %s: predicted $%06X, placed $%06X"
+                % (e["name"], e["addr"], vol.base + off))
+            vol.add(os.path.join(bap, e["name"]), e["name"])
+        im.save()
+        for line in io.open(os.path.join(bap, "bapple.bas"),
+                            encoding="utf-8").read().splitlines():
+            if line.strip():
+                H.line(m, syms, line)
+        H.key(m, syms, 'SAVE "BAPPLE"\r')
+        m.flash.flush()
+        drives = sorted({e["drive"] for e in man}, reverse=True)
+        print("  bad apple: %d chunks on drives %s, stub saved as BAPPLE"
+              % (len(man), drives))
+
     v = disk.Volume(disk.Image(args.img), DRIVE)
     print("  drive %d holds: %s"
           % (DRIVE, ", ".join(disk.show_name(e["name"]) for e in v.files())))

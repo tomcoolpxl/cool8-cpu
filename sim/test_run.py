@@ -1191,6 +1191,66 @@ SYNTH_TRACKS = [
 ]
 
 
+def bapple_decodes(code, syms):
+    """BAD APPLE's contract: the machine's decoder replays the stream
+    byte-for-byte as the encoder's reference decoder says it must.
+
+    A synthetic clip is encoded fresh, its chunk placed on dedicated
+    drive 12 with the address the planner *predicted* asserted against
+    where Volume.add actually put it; the stub is injected, and after a
+    stretch of playback both VRAM pages must equal a consecutive
+    reference frame pair with the right parity -- proving the token
+    walk, the FLS auto-advance, the VRAM auto-increment, the skip
+    carry, the page alternation and the DBASE flip in one comparison.
+    """
+    sys.path.insert(0, os.path.join(ROOT, "tools"))
+    import mkbadapple as BA
+    import cool8disk as disk
+
+    out = os.path.join(H.BUILD, "baptest")
+    frames = BA.synth_frames(64)
+    man = BA.build(frames, outdir=out)
+    planes = [BA.plane(f) for f in frames]
+    stream = b"".join(BA.encode(planes))
+    ref = BA.decode(stream, len(frames))
+
+    img = os.path.join(H.BUILD, "baptest.img")
+    disk.make_image(img)
+    im = disk.Image(img)
+    vol = disk.Volume(im, man[0]["drive"])
+    off = vol.free_offset()
+    assert vol.base + off == man[0]["addr"], "the planner mispredicted"
+    vol.add(os.path.join(out, man[0]["name"]), man[0]["name"])
+    im.save()
+
+    src = [l for l in open(os.path.join(out, "bapple.bas"),
+                           encoding="utf-8").read().splitlines()
+           if l.strip()]
+    M = B.Machine(code, syms, flash=img, render=True)
+    M.settle()
+    for ln in src:
+        H.line(M.m, syms, ln)
+    M.m.type(RUNCMD)
+    M.m.run(until=syms["h_vsync.vw"], budget=400_000_000)
+    M.m.run_frame(4 * 40 + 10)              # ~40 decoded frames in
+    # park at the VSYNC wait: between SYS calls, the frame is whole
+    M.m.run(until=syms["h_vsync.vw"], budget=100_000_000)
+
+    p0 = bytes(M.m.video.vram[0x0000:0x6000])
+    p1 = bytes(M.m.video.vram[0x6000:0xC000])
+    hit = [i for i, (a, b) in enumerate(ref) if (a, b) == (p0, p1)]
+    check(bool(hit),
+          "both pages match a consecutive reference frame pair",
+          "no reference frame matches the machine's pages")
+    io_ = {v["name"]: v["addr"] for v in ioregs.registers().values()}
+    d = M.m.bus.read(io_["VID_DBASE_H"])
+    if hit:
+        want = 0x60 if (hit[0] & 1) else 0x00
+        check(d == want, "and the flip shows the page just written",
+              "frame %d shown from %02X, wanted %02X"
+              % (hit[0], d, want))
+
+
 def intro_scrolls(code, syms):
     """INTRO's contract: the hardware moves the picture.
 
@@ -1635,6 +1695,9 @@ def main():
 
     print()
     cobra_flips(code, syms)
+
+    print()
+    bapple_decodes(code, syms)
 
     print()
     intro_scrolls(code, syms)
