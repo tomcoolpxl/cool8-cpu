@@ -96,12 +96,18 @@ def main():
     print(f"  boot.asm: {len(img)} bytes at ${base:04X}, "
           f"{sum(1 for b in rom if b)} non-zero of {len(rom)}")
 
-    # Where the boot sequence hands over. cool8_boot_tb has no I/O page
-    # in it, so the monitor cannot run there and the test stops at the
-    # handover instead of at the HALT the ROM used to end on. The address
-    # is the assembler's to know, not the testbench's.
+    # Where the boot sequence hands over, where the banner lands and
+    # where the monitor's cursor row lives. cool8_boot_tb has no I/O
+    # page in it, so the monitor cannot run there and the test stops at
+    # the handover instead of at the HALT the ROM used to end on. All
+    # three addresses are the assembler's to know, not the testbench's:
+    # the banner was a literal $8104 in the testbench once, and every
+    # map move from [D70] to [D82] walked away from it.
     import cool8asm                              # noqa: E402
-    monitor_at = cool8asm.assemble(BOOT_ASM).syms["monitor"]
+    syms = cool8asm.assemble(BOOT_ASM).syms
+    monitor_at = syms["monitor"]
+    banner_at = syms["bancell"]
+    mon_cy_at = syms["mon_cy"]
 
     cells = T.cells()
     ok = True
@@ -127,7 +133,9 @@ def main():
 
     vvp = T.build("cool8_boot_tb", os.path.join(TB, "cool8_boot_tb.v"),
                        SOC + CORE + [cells], gen="2012")
-    good, out = run(vvp, [f"+rom={ROM_HEX}", f"+stopat={monitor_at:04x}"])
+    good, out = run(vvp, [f"+rom={ROM_HEX}", f"+stopat={monitor_at:04x}",
+                          f"+banner={banner_at:04x}",
+                          f"+moncy={mon_cy_at:04x}"])
     ok &= report("booting, cold and through BOOTRAM", good, out,
                  ["checks,", "after", "clocks"])
 
