@@ -211,6 +211,10 @@ def synth_frames(n):
 
 
 def mp4_frames(path):
+    if not os.path.exists(path):
+        sys.exit("%s: not found. Point this at the Bad Apple video "
+                 "file -- any container ffmpeg reads (mp4, mkv, webm) "
+                 "and any location; the path is the argument." % path)
     if not shutil.which("ffmpeg"):
         sys.exit("ffmpeg not on PATH; it does the frame extraction")
     p = subprocess.run(
