@@ -21,6 +21,9 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest", "pytest-xdist", "poethepoet"]
 
+[tool.setuptools]
+packages = []
+
 # ---------------------------------------------------------------- pytest
 #
 # pytest is the runner run.mjs used to be: -m picks a group, -n auto
