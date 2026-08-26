@@ -83,6 +83,8 @@ emu = "python tools/cool8rsrun.py"
 demo = "python tools/cool8rsrun.py --rebuild --flash sim/build/demos.img"
 console = "python tools/cool8screen.py"
 load = "python tools/cool8load.py"
+web = "python tools/mkweb.py --serve"
+web-build = "python tools/mkweb.py"
 
 # ---------------------------------------------------------------- cool8
 #

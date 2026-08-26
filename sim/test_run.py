@@ -615,6 +615,19 @@ CASES = [
      ["10 FOR I = 1 TO 5", "20 S = S + I", "30 NEXT I",
       "40 PRINT S", "50 END"], "15"),
 
+    # **The language is case-insensitive and `NEXT` was not.** The
+    # tokeniser folds keywords and `varidx` folds names through `ctab`,
+    # so every other statement takes `j` and `J` as one variable; the
+    # letter test `h_next` kept inline asked A-Z, so a lower-case name
+    # was no name, NEXT closed the loop as though it had been written
+    # bare, and `stmt` then met the `j` as a statement. ?SYNTAX at a
+    # line whose upper-case twin runs -- and typed programs are the only
+    # thing that could have caught it, because every case in
+    # sim/test_interp.py builds its tokens upper-case by hand.
+    ("a nested loop typed in lower case, NEXT naming its variable",
+     ["10 for i = 1 to 3", "20 for j = 1 to 4", "30 s = s + j",
+      "40 next j", "50 next i", "60 print s", "70 end"], "30"),
+
     ("DO and LOOP UNTIL",
      ["10 DO", "20 N = N + 3", "30 LOOP UNTIL N = 12",
       "40 PRINT N", "50 END"], "12"),
@@ -650,6 +663,22 @@ CASES = [
      ["10 A = 0", "20 DO WHILE A < 2", "30 B = 0", "40 DO WHILE B < 5",
       "50 B = B + 1", "60 LOOP", "70 A = A + 1", "80 LOOP",
       "90 PRINT A * 5", "95 END"], "10"),
+
+    # **`EXIT DO` ended the program**, silently: `doquit` counts DO
+    # tokens on its way forward to find the LOOP that closes this loop,
+    # and the `DO` in `EXIT DO` was one of them -- so the real LOOP
+    # paired with the loop's own name, the scan ran off the last line
+    # and returned. No output, no error, no prompt. Bare `EXIT` takes
+    # the same path with nothing to miscount and worked, which is
+    # exactly why nothing here saw it: the spelling the manual
+    # documents and `sw/comp.bas` accepts was the untested one.
+    ("EXIT DO leaves the loop, and its own DO is not a nested one",
+     ["10 A = 0", "20 DO", "30 A = A + 1", "40 IF A > 6 THEN EXIT DO",
+      "50 LOOP", "60 PRINT A", "70 END"], "7"),
+
+    ("EXIT on its own, the spelling that already worked",
+     ["10 A = 0", "20 DO", "30 A = A + 1", "40 IF A > 4 THEN EXIT",
+      "50 LOOP", "60 PRINT A", "70 END"], "5"),
 
     # The language round-out.
     ("PRINT separators butt items and a trailing one holds the newline",
@@ -1560,6 +1589,235 @@ def wave_lockstep(code, syms):
           "%d of %d over 60 samples" % (len(seen), N))
 
 
+def boing_scrolls(code, syms):
+    """BOING's contract: after the paint, nothing is ever redrawn.
+
+    The ball, its shadow and the room are one 416×288 canvas, and the
+    256×192 window is walked over it — `VID_SCX` for x, `VID_BASE` for
+    y, four `POKE`s a frame. That makes the gate exact rather than
+    approximate: **every byte of VRAM must be identical before and after
+    the flight**, while the ball moves on the glass and the grid does
+    not.
+
+    The grid is held by *lattice phase*, not by position, because the
+    ball occludes part of every row it crosses: the purple pixels of a
+    sampled row all sit on one 16-raster-pixel lattice, and a window
+    step that was not a whole grid cell would shift that phase. The spin
+    is read off the committed palette, which is the only thing that may
+    change at all.
+    """
+    RED, WHITE, GRID = 0xB22, 0xFFF, 0x72C
+    src = [l for l in open(os.path.join(ROOT, "demos", "boing.bas"),
+                           encoding="utf-8").read().splitlines()
+           if l.strip()]
+    M = B.Machine(code, syms, render=True)
+    M.settle()
+    for ln in src:
+        H.line(M.m, syms, ln)
+    M.m.type(RUNCMD)
+    M.m.run(until=syms["h_vsync.vw"], budget=2_000_000_000)
+    M.m.run_frame(4)
+
+    def shot():
+        """One frame off the glass, and everything read out of it.
+
+        `fb()` is a 640x480 transfer, so the ball's corner and the
+        grid's lattice phase come out of the same one rather than one
+        each."""
+        fb = M.m.fb()
+        xs = [(x, y) for y in range(40, 460, 6) for x in range(0, 640, 6)
+              if fb[y * 640 + x] in (RED, WHITE)]
+        corner = (min(x for x, _ in xs), min(y for _, y in xs)) if xs else None
+        ph = {x % 16 for y in (60, 300) for x in range(640)
+              if fb[y * 640 + x] == GRID}
+        return corner, ph
+
+    canvas = bytes(M.m.video.vram[0:0x10000])   # one round trip,
+                                                # not 65,536
+    addr = memmap.VARS + (ord('P') - ord('A')) * 2   # the x accumulator
+    M.m.watch(addr, addr)
+    n0 = len(M.m.hits)
+
+    # **Sampled four times, not twice.** The flight is periodic -- about
+    # 58 frames across and 64 down -- so a before-and-after pair 120
+    # frames apart finds the ball back where it started and the spin
+    # back on phase 0, which reads as a demo that never moved.
+    spots, phases, pals = [], [], set()
+    for _ in range(4):
+        M.m.run_frame(30)
+        c, ph = shot()
+        spots.append(c)
+        phases.append(ph)
+        pals.add(tuple(M.m.palette()[4:12]))
+    moves = len(M.m.hits) - n0
+
+    after = bytes(M.m.video.vram[0:0x10000])
+    check(after == canvas,
+          "not one byte of VRAM changes while the ball flies",
+          "%d bytes differ" % sum(1 for a, b in zip(canvas, after) if a != b))
+    seen = [c for c in spots if c]
+    dx = max(c[0] for c in seen) - min(c[0] for c in seen) if seen else 0
+    dy = max(c[1] for c in seen) - min(c[1] for c in seen) if seen else 0
+    check(len(seen) == 4 and (dx > 64 and dy > 64),
+          "and the ball crosses the screen anyway -- the window travels",
+          "spread %d x %d over %s" % (dx, dy, spots))
+    check(all(p == phases[0] for p in phases) and len(phases[0]) <= 2,
+          "the room stands still: the grid keeps its lattice phase",
+          "%s" % [sorted(p) for p in phases])
+    check(len(pals) >= 2, "and the spin is the palette, not the pixels",
+          "entries 4-11 never changed: %s"
+          % [hex(c) for c in list(pals)[0]])
+    check(moves >= 110,
+          "one position a frame -- it holds 60 Hz with VSYNC to spare",
+          "%d updates in 120 frames" % moves)
+
+
+def mode_homes(code, syms):
+    """`MODE` puts the console's scroll origin back, not just the mode.
+
+    Writing `VID_MODE` reloads the preset's base in hardware -- $9800,
+    the cell map's own row 0 -- so a `CTOP` left pointing at wherever
+    the last scroll reached makes the console's row 0 land that many
+    rows down the glass. Every text program that opens `MODE 0 : CLS`
+    hit it, and only after enough had scrolled past to make it visible:
+    on a fresh machine CTOP is 0 and there is nothing to see.
+
+    So the screen is deliberately scrolled first, and the row is read
+    through the machine's own `VID_BASE` (`m.text()`), which is the only
+    view that can tell the map apart from the window.
+    """
+    M = B.Machine(code, syms)
+    M.settle()
+    for i in range(40):
+        M.cmd('PRINT "L%d"' % i)
+    for ln in ['10 MODE 0', '20 CLS', '30 PRINT "TOP"', '40 END']:
+        M.cmd(reg(ln))
+    M.m.type(RUNCMD)
+    M.settle(40_000_000)
+    rows = M.m.text()
+    where = next((i for i, r in enumerate(rows) if "TOP" in r), None)
+    check(where == 0,
+          "MODE 0 on a scrolled screen prints from the top row",
+          "TOP is on row %s: %s" % (where,
+                                    " | ".join(r.strip() for r in rows
+                                               if r.strip())[:60]))
+
+
+def triangles_fill(code, syms):
+    """TRIANGLES' contract: it fills, it stays on the surface, it moves.
+
+    The interesting one is the middle: the row endpoints are sixteenths
+    of a pixel and `>>` is a **logical** shift here, so an accumulator
+    that ever went negative would come back as 32000-odd and `LINE`
+    would write far outside the 38,400-byte surface -- over the `GTEXT`
+    font at `$FC00`, among other things. It cannot go negative because
+    it interpolates between two on-screen points, and that is an
+    argument, not a measurement: this holds every byte of VRAM above
+    the surface against what it was before `RUN`.
+
+    The rate is gated loosely (measured 11.2 a second) because it is the
+    demo's whole point -- a change that makes the statement loop dearer
+    should say so here rather than in a user's eyes.
+    """
+    src = [l for l in open(os.path.join(ROOT, "demos", "triangles.bas"),
+                           encoding="utf-8").read().splitlines()
+           if l.strip()]
+    M = B.Machine(code, syms, render=True)
+    M.settle()
+    for ln in src:
+        H.line(M.m, syms, ln)
+
+    vr = M.m.video.vram
+    SURF = 160 * 240                      # mode 4: stride 160, 240 rows
+    above = bytes(vr[SURF:])
+
+    # C is written once a triangle, and it is a resident variable: two
+    # bytes at VARS + ('C'-'A')*2. Counting the writes is counting the
+    # triangles without the demo carrying a counter for the test's sake.
+    addr = memmap.VARS + 2 * 2
+    M.m.watch(addr, addr)
+    M.m.type(RUNCMD)
+    M.m.run(cycles=40_000_000)            # past MODE, CLG and the first
+    n0, t0 = len(M.m.hits), M.m.bus.read(ioregs.addr_of("TMR_L")) \
+        + 256 * M.m.bus.read(ioregs.addr_of("TMR_M"))
+    M.m.run_frame(300)
+    n1, t1 = len(M.m.hits), M.m.bus.read(ioregs.addr_of("TMR_L")) \
+        + 256 * M.m.bus.read(ioregs.addr_of("TMR_M"))
+    tris, frames = n1 - n0, t1 - t0
+    rate = tris * 59.97 / max(frames, 1)
+
+    painted = sum(1 for b in vr[:SURF] if b)
+    check(painted > SURF // 3, "the triangles fill, not outline",
+          "%d of %d bytes painted" % (painted, SURF))
+    check(bytes(vr[SURF:]) == above,
+          "and nothing lands above the surface -- no accumulator went "
+          "negative through a logical shift",
+          "%d bytes differ" % sum(1 for a, b in zip(above, vr[SURF:])
+                                  if a != b))
+    check(rate >= 8.0, "it draws at least 8 triangles a second",
+          "%.1f a second, %d in %d frames" % (rate, tris, frames))
+
+
+def minibnch_clock(code, syms):
+    """MINIBNCH's contract: the figure on screen is the machine's clock.
+
+    A demo that reports a time is only worth what its clock is worth, so
+    this does not check that a number appeared -- it reads `TMR_L`/
+    `TMR_M` itself, on either side of the run, and holds the printed
+    frame count against its own. The demo starts and stops its timer
+    inside the program while the probe's window also carries the `RUN`
+    line and the return to the prompt, so the probe's count is the
+    larger of the two by a few frames and never smaller.
+
+    The seconds are checked against the frames rather than against a
+    stopwatch, because that division is the part that can go wrong
+    quietly: the float carries about 4.8 decimal digits, so `F/59.97`
+    is exact enough to hold to a hundredth and not to more.
+
+    Registers through `bus.read()` -- `bus.mem[]` is the RAM *under* the
+    I/O page, which is the mistake the video testbench's "the page wins"
+    section exists to catch.
+    """
+    src = [l for l in open(os.path.join(ROOT, "demos", "minibnch.bas"),
+                           encoding="utf-8").read().splitlines()
+           if l.strip()]
+    M = B.Machine(code, syms)
+    M.settle()
+    for ln in src:
+        H.line(M.m, syms, ln)
+
+    def frames():
+        return (M.m.bus.read(ioregs.addr_of("TMR_L"))
+                + M.m.bus.read(ioregs.addr_of("TMR_M")) * 256)
+
+    t0 = frames()
+    M.m.type(RUNCMD)
+    M.settle(600_000_000)
+    mine = frames() - t0
+    rows = [r.strip() for r in M.screen() if r.strip()]
+    screen = " | ".join(rows)[-120:]
+
+    said = [r for r in rows if r.startswith("TIME")]
+    check(bool(said), "MINIBNCH runs to its report", screen)
+    if not said:
+        return
+    # `TIME  1.65 S IN 99 FRAMES`
+    parts = said[-1].split()
+    secs, shown = float(parts[1]), int(parts[4])
+    check(0 <= mine - shown <= 4,
+          "the frames it printed are the frames the machine counted",
+          "demo %d, probe %d" % (shown, mine))
+    check(abs(secs - shown / 59.97) < 0.01,
+          "and the seconds are that count at 59.97 Hz",
+          "%s s against %.4f" % (parts[1], shown / 59.97))
+    check(shown >= 30,
+          "a tick is 16.7 ms and the run is long enough to swamp one",
+          "%d frames is %.2f s, one tick is %.1f%% of it"
+          % (shown, shown / 59.97, 100.0 / shown))
+    check(any(r.startswith("SUM   -23788") for r in rows),
+          "and the sum is 500500 in sixteen bits", screen)
+
+
 def syscall(code, syms):
     """`SYS addr` runs machine code, which is D63's whole replacement.
 
@@ -1720,6 +1978,18 @@ def main():
 
     print()
     wave_lockstep(code, syms)
+
+    print()
+    boing_scrolls(code, syms)
+
+    print()
+    mode_homes(code, syms)
+
+    print()
+    triangles_fill(code, syms)
+
+    print()
+    minibnch_clock(code, syms)
 
     print()
     M = syscall(code, syms)

@@ -300,6 +300,19 @@ def catalogue(path):
     the launcher derives from `sw/keymap.asm`; a directory walk written a
     second time in Rust would be the same mistake with a different
     filename, and it would drift the first time an entry gained a field.
+
+    **Programs, which here means `.BAS`, and that is the machine's own
+    rule rather than a taste**: `fscmd.asm` fills in `.BAS` when a name
+    is typed with no extension, so a name in this list is exactly what
+    `LOAD` will find — which is what the menu does with it (restart,
+    `DRIVE`, `LOAD`, `RUN`). Anything else on a disc cannot be launched
+    that way and does not belong in a launcher.
+
+    It listed every file, and Bad Apple is what showed why that was
+    wrong: its stream is 82 chunks named `BA000.DAT` upward, spread over
+    twelve drives, so the menu held 82 things that cannot be run and
+    twelve that can. `BOOT.BIN` fell out of the same test and no longer
+    needs naming — it is not a `.BAS` either.
     """
     img = Image(path)
     out = []
@@ -311,7 +324,7 @@ def catalogue(path):
             continue                    #   directory to read
         label = v.label()
         for name in sorted(show_name(e["name"]) for e in files):
-            if name.upper() != "BOOT.BIN":      # the ROM's, not a demo
+            if name.upper().endswith(".BAS"):
                 out.append((n, label, name))
     return out
 

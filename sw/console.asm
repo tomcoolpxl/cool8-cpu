@@ -918,6 +918,34 @@ con_geom:
 .bm:    LDW  X,#con_bmir
 .mset:  STW  [CMIR],X
 
+        ; **A text mode's origin is this console's, and writing
+        ; VID_MODE takes it away.** The engine loads the preset's base
+        ; with the mode -- $9800, the map's own row 0 -- while `CTOP`
+        ; still names the row the last scroll had reached, and from then
+        ; on the console writes its row 0 to map row CTOP while the
+        ; display shows map row 0 at the top. `MODE 0 : CLS` cleared the
+        ; screen and printed into the middle of it, as many rows down as
+        ; had scrolled past before the program ran, which is why nothing
+        ; saw it: on a fresh machine CTOP is 0 and the two agree.
+        ;
+        ; Re-asserted rather than zeroed. Putting `CTOP` back to 0
+        ; instead moves the *map* under text that is already on the
+        ; screen, and the five graphics cases in `sim/test_run.py` that
+        ; read their answer out of the cell map said so at once. Only
+        ; the text modes: the tile and bitmap modes do not display the
+        ; cell map at all, they mirror into it, and `CBASE` below is
+        ; read back from the very base this would overwrite.
+        LD   R0,[CKIND]
+        TST  R0
+        BNE  .nobase
+        CLR  R0
+        CALL con_row            ; where displayed row 0 lives -- it
+        MOV  R0,XL              ;   applies CTOP itself
+        ST   [VID_BASE_L],R0
+        MOV  R0,XH
+        ST   [VID_BASE_H],R0
+.nobase:
+
         ; The cursor, on, in every mode -- there is one now, in
         ; silicon, and it inverts its cell wherever CUR_X/CUR_Y point.
         ; This used to enable it for text and disable it for everything

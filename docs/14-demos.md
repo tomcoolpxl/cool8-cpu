@@ -657,6 +657,147 @@ worth the trip: suite machines rendered text with no font, so glyphs
 had never lit in `fb()` and a cursor toggle looked like a display
 kill. Every rendering machine loads the real font now.
 
+### `BOING` — the Amiga's ball, and not one pixel redrawn
+
+![BOING](img/demo-boing.png)
+
+The 1984 Boing demo, in BASIC, at 60 Hz. A 96-pixel checkered ball on a
+256-pixel screen, a shadow behind it, and a purple room — and the loop
+that runs it is **four `POKE`s a frame**.
+
+**Nothing is redrawn, because nothing can be.** A ball this size is
+about 7,000 pixels; the interpreter manages ~12,000 statements a second
+(`MINIBNCH`), so any per-frame blit from BASIC is a slideshow before it
+starts. So the ball, its shadow and the room are painted **once** into a
+416×288 canvas — 1.6 s, all of it horizontal `LINE` spans — and the
+display's 256×192 window is then walked over that canvas:
+
+| axis | register | step |
+|---|---|---|
+| x | `VID_SCX` | a bitmap gets the full ten bits of fine scroll for nothing (§5.5), so one logical pixel |
+| y | `VID_BASE` | one row is one pixel, and a row is what the base must move in |
+
+Mode 5 rather than mode 4 for the room it leaves: the viewport is
+256×192, so 416×288 of VRAM buys **160 pixels of travel across and 96
+down**, and the ball is placed so it touches all four edges at the ends
+of both. The `sim/test_run.py` gate is exact about the claim — every
+byte of VRAM must be **identical** before and after the flight while the
+ball crosses the glass.
+
+**The room stands still because the window steps a whole cell.** The
+window carries the room with it, so the grid has to be invariant under
+the step: it repeats every 8 pixels and the window moves in eights. The
+price is an 8-pixel quantum, and it is bought back in the *timing* —
+the flight is integrated in sixteenths of a pixel and snapped to eight
+only at the `POKE`, so gravity is where the eye reads it: the ball hangs
+at the top of the arc and flies at the floor. The gate holds the grid by
+its lattice phase rather than its position, because the ball occludes
+part of every row it crosses.
+
+**The spin is the palette, which is how the original did it too.** Eight
+entries carry the checks — the index encodes the meridian mod 4 and the
+band's parity — and rotating them walks the pattern round the ball in
+four phases for 24 `POKE`s. The meridians themselves are cosine-spaced,
+so they crowd at the edge the way a sphere's do, and the rotation reads
+as a sphere turning rather than a flag waving.
+
+**One trap worth the writing down: a subroutine's loop counter is a
+global.** The palette routine counted `FOR P = 0 TO 7` while `P` was the
+ball's x position, and every third frame the ball was quietly reset to
+the left wall — which looks exactly like a physics bug and is not one.
+`LOCAL` exists only inside a `SUB` ([13-basic.md §1](13-basic.md)); a
+`GOSUB` shares the whole namespace, and in this BASIC that namespace is
+26 letters.
+
+### `TRIANGLES` — the BBC Micro's filled triangles, without the primitive
+
+![TRIANGLES](img/demo-triangle.png)
+
+```
+MODE 2:REPEAT:GCOL 0,RND(16)-1
+MOVE RND(1280),RND(1024):MOVE RND(1280),RND(1024)
+PLOT 85,RND(1280),RND(1024):UNTIL FALSE
+```
+
+is the demo every BBC Micro and every Agon runs first. `PLOT 85` is a
+filled triangle in the OS; this machine has no such primitive, so the
+fill *is* the program — sort the three points by Y, walk two edges down
+the shape, and join them with one horizontal `LINE` a row. Mode 4, so
+the 16 colours the original asks for, over the whole 320×240.
+
+**Horizontal is the entire performance argument.** A flat `LINE` sets
+the pixel port once and lets it step X itself — 22 cycles a pixel
+against Bresenham's 209 ([D89](01-decisions.md), and
+[13-basic.md §5](13-basic.md)) — so the shape is chosen to be drawn in
+spans, and the only thing that happens per *pixel* is machine code. The
+edges step in sixteenths of a pixel, which buys one divide an edge
+instead of one a row.
+
+**`>>` is a logical shift here** ([13-basic.md §2](13-basic.md)), so an
+accumulator that ever went negative would come back as 32000-odd and
+`LINE` would write far outside the 38,400-byte surface — over the
+`GTEXT` font, among other things. It cannot, because it interpolates
+between two on-screen points; `sim/test_run.py`'s `triangles_fill`
+holds every byte of VRAM above the surface against what it was before
+`RUN` rather than taking the argument's word for it.
+
+**Measured: 11.2 triangles a second, 5.4 display frames each.** The
+profile says where that goes — `python sim/test_run.py --profile
+triangles`: `hrun` (the span itself) **14.3 %**, `varidx` 11.1 %, and
+the rest spread across `prim`, `eval`, `erel` and `stmt`. It is
+statement-bound, not pixel-bound, which is the same finding `WAVE`
+records from the other end: in this BASIC the cost of a loop is the
+statements in it.
+
+**So the row was written out twice to save a `NEXT`, and it measured
+slower — 10.7 against 11.2.** Unrolling only pays if the duplicate is
+free, and the second row's `I+1` has to be evaluated in two arguments
+where `NEXT`'s own increment is one add nobody parses. Four statements
+a row is the floor here: the `LINE`, the two edge steps, and the
+`NEXT`.
+
+Colours are 1–15, not 0–15: entry 0 is the paper, and a triangle
+painted in it is a triangle nobody sees. The disc name is `TRIANGLE` —
+eight characters is the filesystem's limit and the source keeps the
+plural.
+
+### `MINIBNCH` — ten thousand adds, timed by the machine's own clock
+
+![MINIBNCH](img/demo-minibnch.png)
+
+Ten passes of a thousand `S=S+J`, with a dot a pass, and the time it
+took. The listing inside the timing is exactly what was typed at the
+machine; everything else is the clock around it, and the marker dots
+stay *inside* the measurement because they are part of the program
+being timed.
+
+**`TIMER` is the clock and one tick is 16.7 ms.** It is the vblank
+count at 59.97 Hz, so a run of a hundred frames is measured to about a
+percent — six times finer than the tenth of a second asked of it, with
+no calibration and nothing to drift. It wraps at 65,536 frames and the
+subtraction wraps with it, so only a run past nine minutes would need
+the third byte at `$FF2F`.
+
+**Measured: 99–100 frames, about 1.66 s — 0.166 s for a thousand
+adds**, which
+is about 12,000 interpreted statements a second (each pass is the add
+and the `NEXT`). That is the number to reach for when asking whether
+something belongs in BASIC or in a `SYS` routine, and it is why
+`TRIANGLES` above is statement-bound.
+
+**The answer is `-23788` and it is right.** `S` is an integer, so
+500500 comes back as its low sixteen bits; `S#` would hold the value
+but only to about five digits, and would take five times as long to
+get there. The demo prints the wrapped figure and says so.
+
+`sim/test_run.py`'s `minibnch_clock` reads `TMR_L`/`TMR_M` itself on
+either side of the run and holds the printed frame count against its
+own — a demo that reports a time is worth exactly what its clock is
+worth. It is also what found the console bug in
+[13-basic.md §5](13-basic.md)'s `MODE` row: this was the first text
+demo to open with `MODE 0 : CLS`, and it printed into the middle of the
+screen.
+
 ### `BAPPLE` — Bad Apple, streamed from the dedicated drives
 
 ![BAPPLE](img/demo-bapple-shadow.png)

@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>COOL8 — 8-bit Retro Home Computer</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📟</text></svg>">
+</head>
+<body>
+  <div class="container">
+    <header class="header">
+      <div class="title-area">
+        <h1>COOL8</h1>
+        <span class="subtitle">8-bit FPGA Computer &bull; WebAssembly Emulator</span>
+      </div>
+      <div class="header-links">
+        <a href="https://github.com/tomcoolpxl/cool8-cpu" target="_blank" rel="noopener">GitHub</a>
+        <button id="btn-help" class="btn-secondary" title="Help & Quick Reference">?</button>
+      </div>
+    </header>
+
+    <main class="emulator-frame">
+      <div class="screen-wrapper" id="screen-wrapper">
+        <canvas id="screen" width="640" height="480" tabindex="1"></canvas>
+        <div id="click-to-start" class="overlay-notice">
+          <div class="notice-box">
+            <span class="notice-icon">&#9654;</span>
+            <span>Click or press any key to start COOL8</span>
+          </div>
+        </div>
+        <div id="drop-overlay" class="overlay-drop hidden">
+          <div class="drop-box">
+            <span>Drop .IMG or .BAS file to load</span>
+          </div>
+        </div>
+      </div>
+
+      <nav class="toolbar">
+        <div class="tool-group">
+          <button id="btn-warm" class="btn-tool" title="Warm restart (F1) — Ctrl+Esc">&#8635; Warm</button>
+          <button id="btn-cold" class="btn-tool" title="Cold restart (F10) — Ctrl+Shift+Esc">&#9889; Cold</button>
+          <button id="btn-break" class="btn-tool btn-danger" title="Break / NMI (F11) — Interrupt running program">&#9995; Break</button>
+        </div>
+
+        <div class="tool-group flex-grow">
+          <span class="group-label">&#128190; Demo:</span>
+          <select id="demo-select" class="select-demo" title="Select a demo program">
+            <option value="">(Select demo...)</option>
+          </select>
+          <button id="btn-run-demo" class="btn-primary" title="Load & Run selected demo">&#9654; Run</button>
+        </div>
+
+        <div class="tool-group">
+          <button id="btn-audio" class="btn-tool" title="Toggle audio">&#128266;</button>
+          <input type="range" id="audio-volume" min="0" max="100" value="70" class="volume-slider" title="Volume">
+          <button id="btn-shot" class="btn-tool" title="Screenshot (F12)">&#128247;</button>
+          <button id="btn-full" class="btn-tool" title="Fullscreen (Alt+Enter)">&#x26F6;</button>
+        </div>
+      </nav>
+
+      <footer class="statusbar">
+        <div class="status-left">
+          <span class="led" id="led-indicator" title="CPU LED state"></span>
+          <span id="status-text">Booting machine...</span>
+        </div>
+        <div class="status-right">
+          <span id="fps-counter">60.0 FPS</span>
+          <span class="status-hint">Right-click or Ctrl+V to paste text</span>
+        </div>
+      </footer>
+    </main>
+
+    <!-- Help Modal -->
+    <div id="help-modal" class="modal hidden">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2>COOL8 Quick Reference</h2>
+          <button id="btn-close-help" class="btn-close">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="ref-section">
+            <h3>Shortcuts</h3>
+            <table class="ref-table">
+              <tr><td><kbd>F1</kbd></td><td>Warm Restart (Ctrl+Esc)</td></tr>
+              <tr><td><kbd>F10</kbd></td><td>Cold Restart (Ctrl+Shift+Esc)</td></tr>
+              <tr><td><kbd>F11</kbd></td><td>Break Button (NMI) — stops running program</td></tr>
+              <tr><td><kbd>F12</kbd></td><td>Save Screenshot PNG</td></tr>
+              <tr><td><kbd>Alt</kbd>+<kbd>Enter</kbd></td><td>Toggle Fullscreen</td></tr>
+              <tr><td><kbd>Ctrl</kbd>+<kbd>V</kbd></td><td>Paste text from clipboard</td></tr>
+            </table>
+          </div>
+
+          <div class="ref-section">
+            <h3>Discs & Files</h3>
+            <table class="ref-table">
+              <tr><td><code>DRIVE 13</code></td><td>Switch to Demo Disc</td></tr>
+              <tr><td><code>DIR</code></td><td>List directory of current drive</td></tr>
+              <tr><td><code>LOAD "NAME"</code></td><td>Load program from drive</td></tr>
+              <tr><td><code>SAVE "NAME"</code></td><td>Save program to current drive</td></tr>
+              <tr><td><code>RUN</code></td><td>Run loaded program</td></tr>
+              <tr><td><code>NEW</code> / <code>LIST</code></td><td>Clear program / list code</td></tr>
+            </table>
+          </div>
+
+          <div class="ref-section">
+            <h3>Graphics & Audio</h3>
+            <table class="ref-table">
+              <tr><td><code>MODE 0</code></td><td>80&times;30 Text mode (8 colours)</td></tr>
+              <tr><td><code>MODE 1</code></td><td>40&times;30 Text mode (16 colours)</td></tr>
+              <tr><td><code>MODE 2</code></td><td>320&times;240 Bitmap graphics (256 colours)</td></tr>
+              <tr><td><code>MODE 3</code></td><td>640&times;480 High-res graphics (16 colours)</td></tr>
+              <tr><td><code>SOUND v, p, dur, vol</code></td><td>Play audio note on voice (0..7)</td></tr>
+              <tr><td><code>PLOT x, y, c</code></td><td>Plot pixel with color</td></tr>
+              <tr><td><code>LINE x1, y1, x2, y2, c</code></td><td>Draw line</td></tr>
+              <tr><td><code>RECT x, y, w, h, c</code></td><td>Draw rectangle</td></tr>
+              <tr><td><code>CIRCLE x, y, r, c</code></td><td>Draw circle</td></tr>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

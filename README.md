@@ -1,5 +1,7 @@
 # COOL8
 
+> 🎮 **[Try COOL8 Online in your Browser](https://tomcoolpxl.github.io/cool8-cpu/)** — A self-contained WebAssembly build running the authentic 8-bit machine and demo discs directly in any browser!
+
 An 8-bit home computer on a single iCE40UP5K FPGA:
 
 - The CPU is a completely original design. Roughly the transistor count of a 6502, half that of a Z80. Better performance at equal clock speeds.
@@ -64,9 +66,14 @@ poe disk
 poe emu
 ```
 
+Or run the web emulator locally:
+```bash
+poe web
+```
+
 `disk` builds `build/cool8.img`, a flash image with BASIC installed;
-`emu` boots it in a window. Two commands, not one: building is
-explicit, so `emu` always boots exactly the image on the shelf and
+`emu` boots it in a desktop window (`web` runs the WebAssembly emulator in your browser).
+Building is explicit, so `emu` always boots exactly the image on the shelf and
 never decides for itself that your last edit did not need rebuilding.
 (`--flash other.img` boots one you already have; `--monitor` boots the
 ROM alone with no disk.) In the window:

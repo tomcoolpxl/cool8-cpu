@@ -28,3 +28,9 @@ Thumbs.db
 .idea/
 badapple.mp4
 demos/bapple/
+
+# Web build outputs (built fresh by tools/mkweb.py in CI)
+web/*.wasm
+web/*.bin
+web/*.img
+web/*.json

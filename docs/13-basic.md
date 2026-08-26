@@ -45,6 +45,30 @@ Numbers are decimal or `$` hex (`$FF10`). Variables `A`–`Z` are
 resident and free to find; longer names cost a lookup. `A$`–`Z$` are
 strings.
 
+**The language is case-insensitive, keywords and names alike.**
+`sw/token.asm` folds a word as it matches it against `TOKTAB`, and
+`varidx` folds a name through `ctab` — one table that says which
+characters may start a name and what letter each one is. Worth stating
+because it was not quite true: `NEXT` kept its own inline `A`–`Z`
+compare instead of asking `ctab`, so a lower-case control variable was
+not a name at all. `NEXT` closed the loop as though it had been written
+bare, left the name where it found it, and the statement loop met the
+`j` of `next j` as a statement — `?SYNTAX` at the `NEXT`, in a program
+that runs when it is typed in capitals. A second inline statement of
+what a name is, disagreeing with the table.
+
+**`EXIT DO` was the mirror of it and worse, because it was silent.**
+`EXIT` walks forward counting `DO` tokens to find the `LOOP` that closes
+this loop — and it counted the `DO` in `EXIT DO`, so the real `LOOP`
+paired with the loop's own name, the scan ran past the last line, and
+the program ended with no output, no error and no `?` of any kind. Bare
+`EXIT` has nothing to miscount and always worked, which is exactly what
+kept it hidden: the spelling the table above documents and `sw/comp.bas`
+accepts was the untested one, and the suite only ever typed the other.
+Both are cases in [`sim/test_run.py`](../sim/test_run.py) now, typed at
+the editor, because nothing that builds its tokens by hand can catch
+either.
+
 ### There is no on-machine assembler. `SYS` is how you reach machine code.
 
 `ASM … END ASM` is gone ([D63](01-decisions.md#d63--the-inline-assembler-is-gone-sys-replaced-it-and-floats-are-resident)).
@@ -215,7 +239,7 @@ cannot. Pixel coordinates are the **logical** grid of the current mode
 | `PLOT x, y, c` | one pixel. `c` is masked to the mode's depth (`AND 15` in mode 4) |
 | `LINE x0, y0, x1, y1, c` | Bresenham, any slope, endpoints included. **A horizontal one is ~10x cheaper than any other slope**: `y0 == y1` sets the pixel port once and lets it step X itself, ~22 cycles a pixel against Bresenham's 209 — so prefer horizontal spans when the shape is yours to choose ([D89]). **It is machine code, and that is the point** — a span drawn by a BASIC loop costs a statement a pixel, which is ~15× dearer than the same pixels through here (`WAVE` in [14-demos.md](14-demos.md)) |
 | `CLG c` | the whole surface to colour `c`, **75 ms** measured (61,440 pixels, ~10 cycles each — the fastest fill this machine has). Do it once, not per frame |
-| `MODE n` | one of the seven presets in §4 — loads base, stride and depth together, which is why it is a command and the rest are not. **It turns the cursor back on**: `MODE` runs `con_geom`, which writes `$11` to `CUR_CTRL` because the cursor exists in every mode now, so `CURSOR 0` belongs *after* `MODE`, never before — the other order leaves a blinking cell in the corner of a bitmap screen |
+| `MODE n` | one of the seven presets in §4 — loads base, stride and depth together, which is why it is a command and the rest are not. **It turns the cursor back on**: `MODE` runs `con_geom`, which writes `$11` to `CUR_CTRL` because the cursor exists in every mode now, so `CURSOR 0` belongs *after* `MODE`, never before — the other order leaves a blinking cell in the corner of a bitmap screen. **It also puts a text screen's scroll origin back**, and used not to: writing `VID_MODE` makes the engine load the preset's base (`$9800`, the cell map's row 0) while the console's `CTOP` still named the row the last scroll had reached, so the console wrote its row 0 to map row `CTOP` and the display showed it that far down. `MODE 0 : CLS` then cleared the screen and printed into the middle of it, with as many blank rows above as had scrolled past before the program ran — which is why nothing caught it for so long: on a fresh machine `CTOP` is 0 and the two agree. `con_geom` re-asserts the console's own base rather than zeroing `CTOP`, because zeroing it moves the map under text that is already on the screen |
 | `GTEXT x, y, s$, c` | 8×8-cell text in any bitmap mode: set pixels paint `c`, clear pixels paint 0 (opaque). The face is the editor's own Spleen, resampled to 8×8, ASCII 32-127, seeded by boot at VRAM `$FC00` — 8 bytes a glyph, so `$FC00 + (ASC(ch)-32)*8` |
 | `TIME` | there isn't one — read the frame counter: `T=PEEK($FF2D)+PEEK($FF2E)*256`, 59.97 a second, and `$FF2F` is the third byte if you want more than 18 minutes |
 | `VSYNC` | hold until the next frame starts — **the pacing primitive**. A loop doing `VSYNC` once per pass runs at exactly 60 Hz |

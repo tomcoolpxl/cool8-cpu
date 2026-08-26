@@ -1721,11 +1721,23 @@ h_next:
         ; letter rather than as "not a token". A bare NEXT at the end of
         ; a line sits on the terminator, which is $00 and therefore also
         ; below $80; the looser test consumed it as a name.
+        ;
+        ; **`ctab` says which characters start a name, and this asked
+        ; A-Z instead.** The language is case-insensitive -- the
+        ; tokeniser folds keywords and `varidx` folds names through the
+        ; same table -- so `next j` was the one place a lower-case
+        ; variable was not a variable: the name failed the letter test,
+        ; the bare-NEXT path left Y sitting on the `j`, and `stmt` met it
+        ; as a statement. `?SYNTAX` at the NEXT, in a program whose
+        ; upper-case twin runs. A second inline statement of what a name
+        ; is, disagreeing with the one in the table.
 .live:  SKIPSP
-        CMP  R2,#$41            ; 'A'
-        BCC  .go
-        CMP  R2,#$5B            ; past 'Z'
-        BCS  .go
+        BTST R2,#$80            ; a token byte starts no name, and ctab
+        BNE  .go                ;   is 128 bytes, ASCII only
+        LDW  X,#ctab
+        LD   R0,[X+R2]
+        BTST R0,#$40            ; bit 6: it is a letter, either case
+        BEQ  .go
         CALL varidx             ; R0 = its doubled index, Y past it
         ; `NEXT i` when an inner loop is still open closes the inner one
         ; -- the BBC's rule, and the thing that makes GOTO out of a loop
@@ -3815,9 +3827,21 @@ dopop:  LD   R0,[DDEPTH]
 ; h_exit / doquit -- leave from anywhere inside, which means finding the
 ; LOOP that closes this DO.
 h_exit: LD   R0,[DDEPTH]
-        BNE  doquit
+        BNE  .live
         JMP  e_dos              ; EXIT with no loop open, and out of
                                 ;   branch reach from down here
+        ; **The `DO` in `EXIT DO` has to be stepped over here**, because
+        ; the scan below counts DO tokens to find the LOOP that closes
+        ; this one -- so it counted the loop's own name as a nested loop
+        ; being opened, paired the real LOOP with it, and walked off the
+        ; end of the program. `EXIT DO` is the spelling
+        ; docs/13-basic.md documents and the compiler accepts, and
+        ; interpreted it ended the program: no output, no error, no
+        ; prompt. Bare `EXIT` worked, which is why nothing caught it.
+.live:  SKIPSP
+        CMP  R2,#K_DO
+        BNE  doquit
+        INCW Y
 doquit: LD   R0,[DDEPTH]
         SUB  R0,#1
         ST   [DDEPTH],R0

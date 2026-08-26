@@ -4,6 +4,15 @@ version = "0.1.0"
 edition = "2021"
 description = "The COOL8 machine. Held to the RTL by sim/cosim.py per retired instruction and by sim/test_vm.py per pixel. See RUST_PORT.md."
 
+[lib]
+crate-type = ["cdylib", "rlib"]
+path = "src/lib.rs"
+
+[[bin]]
+name = "cool8rs"
+path = "src/main.rs"
+
+
 [features]
 # The window and the speaker. Off by default so the parity suite's
 # build stays dependency-free; tools/cool8rsrun.py

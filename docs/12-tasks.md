@@ -24,6 +24,8 @@ poe check                the generated tables, against what generated them
 poe build                boot ROM, basic.bin, BOOT.BIN, with sizes
 poe bench                the language benchmark
 poe prof                 where the interpreter's clocks go
+poe web                  build wasm and serve the web emulator locally
+poe web-build            build wasm and web assets for GitHub Pages
 poe list                 everything the runner knows about
 ```
 
@@ -287,6 +289,17 @@ cold-restarts the machine and then types `DRIVE n`, `LOAD "…"`, `RUN` —
 the machine is typed at, exactly as a person would, and knows nothing
 about the menu. **Fullscreen has no bar**, which is what fullscreen is
 for.
+
+**A program means a `.BAS`, and the menu holds nothing else.** That is
+the machine's own rule and not the launcher's taste: `sw/fscmd.asm`
+fills in `.BAS` when a name is typed without an extension, so a name in
+the menu is exactly what the `LOAD` it is about to type will find. The
+menu listed every *file* until Bad Apple made the difference plain —
+its stream is 82 chunks called `BA000.DAT` upward, spread across twelve
+drives, none of which can be loaded and run, and they buried the twelve
+things that can in a list ninety-five long. `tools/cool8disk.py`'s
+`catalogue` filters, `sim/test_fs.py` holds it, and `BOOT.BIN` falls out
+of the same test instead of being named.
 
 The bar is [Dear ImGui](https://github.com/ocornut/imgui) through
 `imgui-sdl2-support` and `imgui-glow-renderer`, and the icons are

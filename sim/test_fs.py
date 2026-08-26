@@ -243,6 +243,37 @@ nm:     .ascii "{name8_3('HELLO.TXT')}"
           "a program below $100000 is refused, and nothing changes",
           f"WCTRL read ${m.bus.mem[OK]:02X}")
 
+    # ---------------------------------------- the launcher's catalogue
+    #
+    # **`catalogue` answers what the emulator's menu can launch**, and
+    # the menu's whole action is restart / DRIVE / LOAD / RUN. `LOAD`
+    # finds a `.BAS` -- `sw/fscmd.asm` fills that extension in when a
+    # name is typed without one -- so anything else on a disc is an
+    # entry that cannot be run.
+    #
+    # It listed every file once, and Bad Apple showed what that costs:
+    # 82 stream chunks named `BA000.DAT` upward across twelve drives
+    # buried the twelve demos in a menu 95 long. Asserted on a volume
+    # holding one of each rather than on the demo image, so the check
+    # does not need a disc built first.
+    cat = os.path.join(BUILD, "cat.img")
+    if os.path.exists(cat):
+        os.remove(cat)
+    ci = disk.Image(cat, create=True)
+    cv = disk.Volume(ci, disk.DEMO_VOL)
+    cv.format("DEMOS")
+    for nm, body in (("DEMO.BAS", b"10 END\r"), ("BA000.DAT", b"\0" * 32),
+                     ("BLOB.BIN", b"\1" * 32)):
+        p = os.path.join(BUILD, "cat_" + nm)
+        with open(p, "wb") as fh:
+            fh.write(body)
+        cv.add(p, nm)
+    ci.save()
+    names = [n for _, _, n in disk.catalogue(cat)]
+    check(names == ["DEMO.BAS"],
+          "the launcher's catalogue lists programs, not stream chunks",
+          "menu would hold %s" % names)
+
     print()
     print("PASS" if not FAILS else f"FAIL -- {len(FAILS)}")
     return 0 if not FAILS else 1
