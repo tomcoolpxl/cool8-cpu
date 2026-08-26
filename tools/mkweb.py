@@ -51,6 +51,7 @@ def build_wasm():
 def build_assets():
     os.makedirs(WEB, exist_ok=True)
     os.makedirs(BUILD, exist_ok=True)
+    os.makedirs(os.path.join(ROOT, "build"), exist_ok=True)
 
     import cool8disk as disk
     import cool8kbd

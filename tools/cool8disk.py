@@ -115,6 +115,9 @@ class Image:
             sys.exit(f"{path}: not found (use `format` to make one)")
 
     def save(self):
+        d = os.path.dirname(os.path.abspath(self.path))
+        if d:
+            os.makedirs(d, exist_ok=True)
         with open(self.path, 'wb') as fh:
             fh.write(self.data)
 
