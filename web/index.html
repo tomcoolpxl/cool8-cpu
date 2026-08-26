@@ -106,15 +106,13 @@
           <div class="ref-section">
             <h3>Graphics & Audio</h3>
             <table class="ref-table">
-              <tr><td><code>MODE 0</code></td><td>80&times;30 Text mode (8 colours)</td></tr>
-              <tr><td><code>MODE 1</code></td><td>40&times;30 Text mode (16 colours)</td></tr>
-              <tr><td><code>MODE 2</code></td><td>320&times;240 Bitmap graphics (256 colours)</td></tr>
-              <tr><td><code>MODE 3</code></td><td>640&times;480 High-res graphics (16 colours)</td></tr>
+              <tr><td><code>MODE n</code></td><td>Set screen mode (0=Text 80x30, 1=Text 40x30, 4=Bitmap 320x240 16-col)</td></tr>
+              <tr><td><code>CLG c</code></td><td>Clear graphics screen with colour <code>c</code></td></tr>
+              <tr><td><code>PLOT x, y, c</code></td><td>Plot pixel at (x, y) with colour <code>c</code></td></tr>
+              <tr><td><code>LINE x0, y0, x1, y1, c</code></td><td>Draw line from (x0, y0) to (x1, y1) with colour <code>c</code></td></tr>
+              <tr><td><code>GTEXT x, y, s$, c</code></td><td>Draw 8&times;8 graphic text in bitmap modes</td></tr>
+              <tr><td><code>VSYNC</code></td><td>Wait for vertical blanking (60 Hz pacing)</td></tr>
               <tr><td><code>SOUND v, p, dur, vol</code></td><td>Play audio note on voice (0..7)</td></tr>
-              <tr><td><code>PLOT x, y, c</code></td><td>Plot pixel with color</td></tr>
-              <tr><td><code>LINE x1, y1, x2, y2, c</code></td><td>Draw line</td></tr>
-              <tr><td><code>RECT x, y, w, h, c</code></td><td>Draw rectangle</td></tr>
-              <tr><td><code>CIRCLE x, y, r, c</code></td><td>Draw circle</td></tr>
             </table>
           </div>
         </div>
