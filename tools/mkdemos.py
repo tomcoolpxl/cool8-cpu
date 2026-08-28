@@ -46,7 +46,12 @@ def sources():
 
 
 def discname(f):
-    return os.path.splitext(f)[0].upper()[:8]
+    name = os.path.splitext(f)[0].upper()
+    if name == "COOLTRIS1":
+        return "COOLTRS1"
+    if name == "COOLTRIS2":
+        return "COOLTRS2"
+    return name[:8]
 
 
 def volume(imgpath, code):

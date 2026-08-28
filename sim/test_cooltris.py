@@ -25,7 +25,7 @@ IMG = os.path.join(BUILD, "demos.img")
 
 
 def load_cooltris(m, syms):
-    bas_path = os.path.join(H.ROOT, "demos", "cooltris.bas")
+    bas_path = os.path.join(H.ROOT, "demos", "cooltris1.bas")
     with open(bas_path, "r", encoding="utf-8") as f:
         lines = [ln.strip() for ln in f if ln.strip() and not ln.strip().startswith("REM")]
 
