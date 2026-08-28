@@ -41,7 +41,7 @@ def main():
         m.run_frame()
 
     # 2. Inspect VRAM Tile Map directly via Machine API
-    # Row 1 is Title Banner 'C O O L T R I S   2'
+    # Row 1 is Title Banner 'C O O L T R I S   2' (Rainbow Palette)
     # Address = row * 128 + col * 2
     r1_vram = m.video.vram[128:208]
     r1_tiles = [r1_vram[i] for i in range(0, 80, 2)]
@@ -60,7 +60,7 @@ def main():
     check(c_ctrl_tl == 108, "Controls single-border top-left corner 108 at (col 1, row 4)",
           f"got: {c_ctrl_tl}")
 
-    # Next box TL corner 108 at col 27, row 4 (address 4*128 + 27*2 = 566)
+    # Next piece box TL corner 108 at col 27, row 4 (address 4*128 + 27*2 = 566)
     c_next_tl = m.video.vram[4 * 128 + 27 * 2]
     check(c_next_tl == 108, "Next piece box single-border top-left corner 108 at (col 27, row 4)",
           f"got: {c_next_tl}")
@@ -88,9 +88,9 @@ def main():
     check(any(16 <= t <= 25 for t in score_tiles), "Score digits rendered in VRAM", f"score tiles: {score_tiles}")
 
     # 7. Test Game Over and restart
-    for _ in range(25):
+    for _ in range(35):
         m.key(" ")
-        for _ in range(15):
+        for _ in range(20):
             m.run_frame(1)
 
     # Check Game Over prompt and curtain
@@ -100,7 +100,7 @@ def main():
 
     # Test restart with N
     m.key("N")
-    for _ in range(40):
+    for _ in range(50):
         m.run_frame(1)
 
     # Board center should be cleared (tile 0) except active piece
