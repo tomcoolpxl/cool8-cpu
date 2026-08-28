@@ -875,6 +875,65 @@ page just written — the token walk, the flash auto-advance, the VRAM
 auto-increment, the skip carry, the page alternation and the DBASE
 flip in one comparison. Sound is a later, separate step, by decision.
 
+### `TAIPAN` — the 1982 China Sea trading game in 40-column Mode 1
+
+![TAIPAN](img/demo-taipan.png)
+
+A port of Art Canfil & Ronald J. Berg's classic 1982 adventure game *Taipan!*,
+ported to COOL8 BASIC in **Mode 1 (40×30 text mode, 16 foreground/background colors per cell)**.
+
+**All mechanics are preserved**:
+- Trading 6 goods (Opium, Silk, Tea, Arms, Pepper, Rice) across 10 historical ports.
+- Debt, loans, and compound interest with Elder Brother Wu in Hong Kong.
+- Hong Kong godown (warehouse) cargo storage.
+- Random market shifts, events, extortion, Li Yuen's pirate fleet, sea battles, typhoons, and ship upgrades.
+- Historical price tracking per port and per commodity.
+
+**Language and platform specifics**:
+- Runs in native 40×30 text mode (`MODE 1`) with per-character foreground and background colors (`COLOR fg, bg`).
+- Uses 24-bit floating-point numbers (`M#`, `D#`, `Q#`, `AP#`, `GP#`, `HI#`, `LO#`) to represent currency and prices beyond 16-bit bounds.
+- Custom sound effects through the 8-voice audio subsystem (`SOUND`).
+- ASCII ship graphic rendered in Mode 1 during pirate encounters.
+
+### `COOLTRIS 1` — 1-player arcade Tetris in 40-column Mode 1 with CP437 character graphics
+
+![COOLTRIS 1](img/demo-cooltris.png)
+
+Classic 1-player arcade Tetris implemented in COOL8 BASIC using **Mode 1 (40×30 text mode)** and CP437 character graphics (`demos/cooltris.bas` / `demos/cooltris1.bas`).
+
+**Game mechanics & features**:
+- Standard 10×20 playing matrix with authentic double-line box border (CP437 201, 205, 187, 186, 200, 188).
+- Complete 7 tetromino set (I, J, L, O, S, T, Z) with standard color palette, 4 rotation states each, and double-width solid block characters (`██` CP437 219).
+- Modern 7-Bag randomizer ensuring uniform piece distribution without droughts.
+- Ghost piece / drop shadow preview (`░░` CP437 176) showing real-time landing position.
+- SRS wall kicks for clockwise (`W`, `K`, `X`, `Up Arrow`) and counter-clockwise (`Z`, `J`) rotation against board boundaries and stack obstructions.
+- Soft drop (`S`, `Down Arrow`) and hard instant drop (`Space`).
+- Real-time NEXT piece preview window in sidebar with single-line box border.
+- Sidebar showing 6-digit score, level, lines cleared, and persistent session high score on separate lines.
+- Anti-hover hardware timer synchronization (`TIMER`) ensuring gravity drops strictly in real-time regardless of input frequency.
+- Clean square-wave sound effects (`SOUND voice, pitch, vol, 0`) for movement, rotation, soft drop, locking, single/double/triple/Tetris line clears, level ups, pause, and game over.
+- Game over curtain animation (`▓▓` CP437 178) with high-score tracking, replay prompt (`N TO PLAY`), and pause (`P`).
+
+### `COOLTRIS 2` — Arcade Tile Engine Tetris in Mode 2 with Custom 4 bpp Graphics and 7 Palettes
+
+Classic arcade Tetris re-engineered for **Mode 2 (40×30 Tile Mode, 320×240 doubled)** with custom 4 bpp tile patterns, multi-bank color palettes, and direct VRAM streaming (`demos/cooltris2.bas`).
+
+**Architecture and tile engine specifics**:
+- Runs in native 40×30 tile mode (`MODE 2`), leveraging the OS auto-font at VRAM `$1000..$1BFF` (Tiles 0..95) alongside 17 custom-designed 4 bpp arcade tiles at VRAM `$1C00..$1E1F` (Tiles 96..112).
+- **Custom 4 bpp Arcade Tile Set**:
+  - Tiles 96 & 97: 3D beveled block halves (left/right specular highlight and core shadow) creating 16×8 arcade tetromino minos.
+  - Tiles 98 & 99: Fine 1-pixel ghost landing outline tiles.
+  - Tiles 100–105: Ornate gold double-rail border set (horizontal, vertical, corners).
+  - Tiles 106–111: Sleek silver single-rail box borders for NEXT preview, Keys, and Stats windows.
+  - Tile 112: Textured arcade curtain dissolve effect for game over sequence.
+- **7-Bank Color Palette**:
+  - Each piece uses an authentic 4-color shading ramp (highlight, base, midtone, shadow) mapped across 7 independent 16-color palette banks (`$FF1E..$FF1F`).
+  - Pieces retain crisp 3D depth and distinct arcade identity (Cyan I, Blue J, Orange L, Yellow O, Green S, Magenta T, Red Z).
+- **Direct VRAM Streaming**:
+  - Uses fast hardware auto-incrementing VRAM address registers (`$FF26..$FF29`) to stream tile index and attribute bytes in ~0.15–0.48 ms per frame (< 3% of the 60 Hz frame budget).
+- **Audio & Timing**:
+  - Crisp noise-free multi-voice square wave sound effects (`noise = 0`), anti-hover hardware timer synchronization (`TIMER`), pause (`P`), game over restart (`N`), and clean exit (`Q`).
+
 ## 5. Adding one
 
 1. Write `demos/name.bas`. Keep it BASIC, keep it under 80 characters a
