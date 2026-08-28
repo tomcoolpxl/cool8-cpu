@@ -45,21 +45,30 @@ def main():
     # Address = row * 128 + col * 2
     r1_vram = m.video.vram[128:208]
     r1_tiles = [r1_vram[i] for i in range(0, 80, 2)]
-    # 'C'-32 = 35, 'O'-32 = 47, 'L'-32 = 44, 'T'-32 = 52, 'R'-32 = 50, 'I'-32 = 41, 'S'-32 = 51, '2'-32 = 18
     check(35 in r1_tiles and 47 in r1_tiles and 18 in r1_tiles,
           "COOLTRIS 2 Title banner tiles rendered in Mode 2 VRAM",
           f"r1 tiles: {r1_tiles}")
 
-    # 3. Check Board double rail borders in VRAM
-    # Corner 102 at col 9, row 4 (address 4*128 + 9*2 = 530)
-    c_tl = m.video.vram[4 * 128 + 9 * 2]
-    check(c_tl == 102, "Top-Left double border tile 102 at (col 9, row 4)",
-          f"got: {c_tl}")
+    # 3. Check Board double rail borders and sidebar single rail boxes in VRAM
+    # Board TL corner 102 at col 14, row 4 (address 4*128 + 14*2 = 540)
+    c_board_tl = m.video.vram[4 * 128 + 14 * 2]
+    check(c_board_tl == 102, "Board double-border top-left corner 102 at (col 14, row 4)",
+          f"got: {c_board_tl}")
 
-    # 4. Check active spawned tetromino pieces (Tiles 96 and 97)
-    spawn_area = [m.video.vram[r * 128 + c * 2] for r in range(5, 10) for c in range(10, 30)]
-    check(96 in spawn_area and 97 in spawn_area,
-          "Spawned active tetromino rendered with 3D beveled tiles 96 & 97",
+    # Controls box TL corner 108 at col 1, row 4 (address 4*128 + 1*2 = 514)
+    c_ctrl_tl = m.video.vram[4 * 128 + 1 * 2]
+    check(c_ctrl_tl == 108, "Controls single-border top-left corner 108 at (col 1, row 4)",
+          f"got: {c_ctrl_tl}")
+
+    # Next box TL corner 108 at col 27, row 4 (address 4*128 + 27*2 = 566)
+    c_next_tl = m.video.vram[4 * 128 + 27 * 2]
+    check(c_next_tl == 108, "Next piece box single-border top-left corner 108 at (col 27, row 4)",
+          f"got: {c_next_tl}")
+
+    # 4. Check active spawned tetromino pieces (Tile 96: 3D square mino)
+    spawn_area = [m.video.vram[r * 128 + c * 2] for r in range(5, 10) for c in range(15, 25)]
+    check(96 in spawn_area,
+          "Spawned active tetromino rendered with 3D square mino tile 96",
           f"spawn area tiles: {spawn_area}")
 
     # 5. Test movement with Left key (A) and rotation with (W)
@@ -74,9 +83,8 @@ def main():
     for _ in range(20):
         m.run_frame(1)
 
-    # Check that score updated in VRAM stats area
-    # Row 12 (SCORE numbers) at cols 32..37
-    score_tiles = [m.video.vram[12 * 128 + c * 2] for c in range(32, 38)]
+    # Check that score updated in VRAM stats area (Row 13 at cols 30..35)
+    score_tiles = [m.video.vram[13 * 128 + c * 2] for c in range(30, 36)]
     check(any(16 <= t <= 25 for t in score_tiles), "Score digits rendered in VRAM", f"score tiles: {score_tiles}")
 
     # 7. Test Game Over and restart
@@ -85,8 +93,8 @@ def main():
         for _ in range(15):
             m.run_frame(1)
 
-    # Check Game Over prompt
-    all_vram = [m.video.vram[r * 128 + c * 2] for r in range(4, 26) for c in range(10, 30)]
+    # Check Game Over prompt and curtain
+    all_vram = [m.video.vram[r * 128 + c * 2] for r in range(5, 25) for c in range(15, 25)]
     check(112 in all_vram or 39 in all_vram, "Game reaches game over screen with curtain in VRAM",
           f"found curtain/game over tiles")
 
@@ -95,8 +103,8 @@ def main():
     for _ in range(40):
         m.run_frame(1)
 
-    # Board should be cleared (tile 0) except active piece
-    center_tile = m.video.vram[15 * 128 + 15 * 2]
+    # Board center should be cleared (tile 0) except active piece
+    center_tile = m.video.vram[15 * 128 + 19 * 2]
     check(center_tile == 0, "Board cleanly reset on restart", f"center tile: {center_tile}")
 
     # 8. Test Q (Quit) key exits cleanly to BASIC prompt
