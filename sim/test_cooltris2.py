@@ -65,6 +65,11 @@ def main():
     check(c_next_tl == 108, "Next piece box single-border top-left corner 108 at (col 27, row 4)",
           f"got: {c_next_tl}")
 
+    # Score box TL corner 108 at col 28, row 12 (address 12*128 + 28*2 = 1592)
+    c_score_tl = m.video.vram[12 * 128 + 28 * 2]
+    check(c_score_tl == 108, "Score box single-border top-left corner 108 at (col 28, row 12)",
+          f"got: {c_score_tl}")
+
     # 4. Check active spawned tetromino pieces (Tile 96: 3D square mino)
     spawn_area = [m.video.vram[r * 128 + c * 2] for r in range(5, 10) for c in range(15, 25)]
     check(96 in spawn_area,
@@ -83,8 +88,8 @@ def main():
     for _ in range(20):
         m.run_frame(1)
 
-    # Check that score updated in VRAM stats area (Row 13 at cols 30..35)
-    score_tiles = [m.video.vram[13 * 128 + c * 2] for c in range(30, 36)]
+    # Check that score updated in VRAM stats area (Row 14 at cols 32..37)
+    score_tiles = [m.video.vram[14 * 128 + c * 2] for c in range(32, 38)]
     check(any(16 <= t <= 25 for t in score_tiles), "Score digits rendered in VRAM", f"score tiles: {score_tiles}")
 
     # 7. Test Game Over and restart
