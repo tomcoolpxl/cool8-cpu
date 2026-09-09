@@ -327,6 +327,13 @@ answer to the UART, and the session machine's `said()` is its check:
 `Primes: 168`. The library, `sw/io.act` and `sw/libaction.act`
 together, compiles to 1,773 bytes.
 
+**`Line` is 128 clocks a pixel** over `sim/test_run.py`'s fifteen-line
+fan (2,735 pixels, profiled by routine), against the interpreter's
+`LINE` at 101 to 181 depending on the octant. Same algorithm, same
+port tricks, and the compiled one is not faster: every one of `dx`,
+`err`, `e2`, `n` and `x0` is a stack-frame load and store per step,
+which is the sieve's profile again in a different routine.
+
 ---
 
 ## 6. The library

@@ -27,6 +27,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import harness as H                                      # noqa: E402
 from harness import check                                # noqa: E402
+import dbg                                               # noqa: E402
 
 sys.path.insert(0, os.path.join(H.ROOT, "tools"))
 import cool8rsvm as vm                                   # noqa: E402
@@ -415,6 +416,51 @@ def test_hardware():
     print()
 
 
+def test_line():
+    """`Line` against BASIC's LINE, pixel for pixel: sim/test_run.py's
+    fan -- every octant, both x directions, the horizontal and vertical
+    special cases, the half-step ties -- through the compiled routine,
+    and the whole mode 4 frame compared with the reference that gates
+    the interpreter. A tie broken the other way is one byte, and it
+    fails."""
+    import test_run as R
+    print("  Line(), against LINE")
+    flat = [v for line in R.LINE_FAN for v in line]
+    src = "CARD ARRAY fan(%d) = [%s]\n" % (len(flat), " ".join(str(v) for v in flat))
+    src += r'''
+PROC Main()
+  CARD j
+  Graphics(4)
+  Clg(0)
+  j = 0
+  WHILE j < %d DO
+    Line(fan(j), fan(j + 1), fan(j + 2), fan(j + 3), fan(j + 4))
+    j += 5
+  OD
+RETURN
+''' % len(flat)
+    prg, syms = H.build_act(H.ACT_LIB + [src], "act_line")
+    same_bytes("act_line", prg)
+    m = H.session()
+    org, end = H.load_act(m, prg)
+    p = dbg.Profile(syms, org, end)
+    p.run(m, limit=20_000_000)
+    check(0xFEF0 <= m.cpu.pc <= 0xFEF4 and m.cpu.sp == 0x0200,
+          "line: ran to the HALT, stack neutral", "PC $%04X SP $%04X" % (m.cpu.pc, m.cpu.sp))
+    want = R.fan_bytes()
+    got = bytes(m.video.vram[0:38400])
+    bad = [i for i in range(38400) if got[i] != want[i]]
+    check(not bad, "line: lights exactly LINE's pixels, all octants and both ties",
+          "%d bytes differ; first at %d (row %d): got %02X want %02X"
+          % (len(bad), bad[0] if bad else 0, (bad[0] // 160) if bad else 0,
+             got[bad[0]] if bad else 0, want[bad[0]] if bad else 0))
+    npx = sum(len(R.line_ref(*l[:4])) for l in R.LINE_FAN)
+    inline = sum(c for n, c in p.by.items() if n.split(".")[0] == "Line")
+    print("    %d pixels, %s clocks in Line: %.0f a pixel over the fan; "
+          "BASIC's LINE is 101-181" % (npx, f"{inline:,}", inline / npx))
+    print()
+
+
 def test_refusals():
     print("  what the compiler refuses, and how it says so")
     cases = [
@@ -522,6 +568,7 @@ def main():
     test_primes()
     test_library()
     test_hardware()
+    test_line()
     test_refusals()
     return H.report()
 

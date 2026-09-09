@@ -1087,6 +1087,23 @@ def line_ref(x0, y0, x1, y1):
             y0 += 1
 
 
+def fan_bytes():
+    """The mode 4 frame LINE_FAN leaves: 38,400 bytes of VRAM, two
+    pixels a byte, built from `line_ref` in the fan's own order. The
+    contract for BASIC's LINE here and for CoolAction!'s `Line` in
+    sim/test_action.py, which is why it is one function and not two
+    copies of the nibble packing."""
+    want = bytearray(38400)
+    for (x0, y0, x1, y1, c) in LINE_FAN:
+        for (x, y) in line_ref(x0, y0, x1, y1):
+            a = y * 160 + (x >> 1)
+            if x & 1:
+                want[a] = (want[a] & 0xF0) | c
+            else:
+                want[a] = (want[a] & 0x0F) | (c << 4)
+    return want
+
+
 def line_exact(code, syms):
     """Every pixel of a fifteen-line fan, against the reference.
 
@@ -1109,14 +1126,7 @@ def line_exact(code, syms):
     M.m.type(RUNCMD)
     M.m.run(cycles=120_000_000)
 
-    want = bytearray(38400)
-    for (x0, y0, x1, y1, c) in LINE_FAN:
-        for (x, y) in line_ref(x0, y0, x1, y1):
-            a = y * 160 + (x >> 1)
-            if x & 1:
-                want[a] = (want[a] & 0xF0) | c
-            else:
-                want[a] = (want[a] & 0x0F) | (c << 4)
+    want = fan_bytes()
     got = bytes(M.m.video.vram[0:38400])
     bad = [i for i in range(38400) if got[i] != want[i]]
     check(not bad, "LINE lights exactly the reference pixels, all octants",
