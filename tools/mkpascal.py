@@ -64,17 +64,17 @@ def main():
         im.data[v15_offset:v15_offset + len(system_vol)] = system_vol
 
         try:
-            vol13 = disk.Volume(im, disk.DEMO_VOL)
+            vol14 = disk.Volume(im, disk.SOFTWARE_VOL)
             try:
-                vol13.delete("PASCAL.BIN")
+                vol14.delete("PASCAL.BIN")
             except BaseException:
                 pass
-            vol13.add(prg_path, "PASCAL.BIN")
+            vol14.add(prg_path, "PASCAL.BIN")
         except BaseException as e:
-            print(f"  Note: Volume 13 update for {target}: {e}")
+            print(f"  Note: Volume 14 update for {target}: {e}")
 
         im.save()
-        print(f"  Updated {os.path.relpath(target, ROOT)}: Drive 15 system.vol, Drive 13 PASCAL.BIN")
+        print(f"  Updated {os.path.relpath(target, ROOT)}: Drive 15 system.vol, Drive 14 PASCAL.BIN")
 
     bas_src = os.path.join(ROOT, "demos", "pascal.bas")
     if os.path.exists(bas_src):
@@ -86,14 +86,14 @@ def main():
             for _ in range(90):
                 m.run_frame()
             H.settle(m, bsyms)
-            H.key(m, bsyms, "DRIVE %d\r" % disk.DEMO_VOL)
+            H.key(m, bsyms, "DRIVE %d\r" % disk.SOFTWARE_VOL)
             H.key(m, bsyms, "NEW\r")
             for line in open(bas_src, encoding="utf-8").read().splitlines():
                 if line.strip():
                     H.line(m, bsyms, line)
             H.key(m, bsyms, 'SAVE "PASCAL"\r')
             m.flash.flush()
-            print(f"  Typed and saved PASCAL.BAS onto {os.path.relpath(target, ROOT)} Drive 13")
+            print(f"  Typed and saved PASCAL.BAS onto {os.path.relpath(target, ROOT)} Drive 14")
 
     print("UCSD Pascal p-System packaging complete.")
 

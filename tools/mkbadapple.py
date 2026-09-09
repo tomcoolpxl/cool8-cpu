@@ -58,7 +58,15 @@ PLANE = W // 2 * H            # 24,576 bytes, one mode 5 page
 FPS = 15
 ORG = 0x9000                  # the decoder, inside user RAM
 CHUNK_MAX = 0xFFFF            # the catalogue's 16-bit file length
-DRIVES = list(range(12, 0, -1))   # dedicated drives, 12 downward
+# **One drive, and that is what ships.** The full film is 5,259,513
+# bytes against 454,656 usable a volume -- 11.57 volumes, so the first
+# build took twelve and its lowest was drive 1, USER_VOL, where a cold
+# machine comes up. The cut that ships is 344 frames on drive 12 alone;
+# the cap lived only in a gitignored manifest for a round while this
+# said `range(12, 0, -1)`, so a rebuild from the mp4 would have walked
+# straight back over drives 1 to 11. `--drives 12,10,9` asks for more,
+# and `plan` refuses any drive `cool8disk.CLAIMED` names.
+DRIVES = [disk.BAPPLE_VOL]
 OUT = os.path.join(ROOT, "demos", "bapple")
 
 
@@ -280,17 +288,25 @@ def chunk(blobs):
     return chunks
 
 
-def plan(chunks):
+def plan(chunks, drives=None):
     """Chunks onto the dedicated drives, addresses predicted the way
     Volume.add lays files out: contiguous from DATA_START."""
+    drives = list(DRIVES if drives is None else drives)
+    for d in drives:
+        if d in disk.CLAIMED:
+            sys.exit("drive %d is %s's; Bad Apple may not use it"
+                     % (d, disk.labels()[d]))
     man, off, last = [], disk.DATA_START, 0
     for k, (blob, frames, di) in enumerate(chunks):
         if di != last:
             off = disk.DATA_START
             last = di
-        if di >= len(DRIVES):
-            sys.exit("the stream outgrew the dedicated drives")
-        drive = DRIVES[di]
+        if di >= len(drives):
+            sys.exit("the stream outgrew the dedicated drives: %d frames "
+                     "of %d placed on %s -- pass --drives for more"
+                     % (sum(f for _, f, _ in chunks[:k]),
+                        sum(f for _, f, _ in chunks), drives))
+        drive = drives[di]
         addr = disk.vol_base(drive) + off
         man.append({"drive": drive, "name": "BA%03d.DAT" % k,
                     "addr": addr, "frames": frames, "size": len(blob)})
@@ -355,12 +371,12 @@ def emit(outdir, chunks, man, ml):
     return stub
 
 
-def build(frames, outdir=OUT):
+def build(frames, outdir=OUT, drives=None):
     ml = build_decoder()
     planes = [plane(f) for f in frames]
     blobs = encode(planes)
     chunks = chunk(blobs)
-    man = plan(chunks)
+    man = plan(chunks, drives)
     stub = emit(outdir, chunks, man, ml)
     total = sum(m["size"] for m in man)
     drives = sorted({m["drive"] for m in man}, reverse=True)
@@ -372,13 +388,28 @@ def build(frames, outdir=OUT):
 
 
 def main():
-    if len(sys.argv) >= 3 and sys.argv[1] == "--selftest":
-        build(synth_frames(int(sys.argv[2])),
-              outdir=sys.argv[3] if len(sys.argv) > 3 else OUT)
-    elif len(sys.argv) == 2:
-        build(mp4_frames(sys.argv[1]))
+    import argparse
+    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    ap.add_argument("mp4", nargs="?", help="the film")
+    ap.add_argument("--selftest", type=int, metavar="N",
+                    help="a synthetic clip of N frames instead")
+    ap.add_argument("--out", default=OUT, help="where the chunks go")
+    ap.add_argument("--drives", default=",".join(map(str, DRIVES)),
+                    help="the drives to fill, in order (default %(default)s)")
+    ap.add_argument("--frames", type=int, metavar="N",
+                    help="stop after N frames -- the shipping cut is what "
+                         "fills the default drive")
+    a = ap.parse_args()
+    drives = [int(d) for d in a.drives.split(",") if d]
+    if a.selftest:
+        frames = synth_frames(a.selftest)
+    elif a.mp4:
+        frames = mp4_frames(a.mp4)
     else:
-        sys.exit(__doc__.split("\n\n")[0])
+        ap.error("an mp4, or --selftest N")
+    if a.frames:
+        frames = frames[:a.frames]
+    build(frames, outdir=a.out, drives=drives)
 
 
 if __name__ == "__main__":

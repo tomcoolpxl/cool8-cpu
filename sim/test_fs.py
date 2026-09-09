@@ -245,34 +245,53 @@ nm:     .ascii "{name8_3('HELLO.TXT')}"
 
     # ---------------------------------------- the launcher's catalogue
     #
-    # **`catalogue` answers what the emulator's menu can launch**, and
-    # the menu's whole action is restart / DRIVE / LOAD / RUN. `LOAD`
-    # finds a `.BAS` -- `sw/fscmd.asm` fills that extension in when a
-    # name is typed without one -- so anything else on a disc is an
-    # entry that cannot be run.
+    # **`catalogue` answers what the emulators' menus can launch, and
+    # how.** A program is something the machine can start, and there
+    # are two ways: a `.BAS` by restart / DRIVE / LOAD / RUN, and a
+    # `.BIN` -- a PRG carrying its own address (D87) -- by DRIVE / SYS.
+    # The `kind` says which. A `.BIN` beside a `.BAS` of the same stem
+    # is that stub's payload and is not listed twice; a stream chunk
+    # is not listed at all; and volume 0 is skipped whole, because
+    # `BOOT.BIN` is a PRG and is not a program to offer.
     #
     # It listed every file once, and Bad Apple showed what that costs:
     # 82 stream chunks named `BA000.DAT` upward across twelve drives
-    # buried the twelve demos in a menu 95 long. Asserted on a volume
+    # buried the twelve demos in a menu 95 long. Asserted on volumes
     # holding one of each rather than on the demo image, so the check
     # does not need a disc built first.
     cat = os.path.join(BUILD, "cat.img")
     if os.path.exists(cat):
         os.remove(cat)
     ci = disk.Image(cat, create=True)
-    cv = disk.Volume(ci, disk.DEMO_VOL)
-    cv.format("DEMOS")
-    for nm, body in (("DEMO.BAS", b"10 END\r"), ("BA000.DAT", b"\0" * 32),
-                     ("BLOB.BIN", b"\1" * 32)):
+
+    def put(vol, nm, body):
         p = os.path.join(BUILD, "cat_" + nm)
         with open(p, "wb") as fh:
             fh.write(body)
-        cv.add(p, nm)
+        vol.add(p, nm)
+    cv = disk.Volume(ci, disk.DEMO_VOL)
+    cv.format("DEMOS")
+    put(cv, "DEMO.BAS", b"10 END\r")
+    put(cv, "BA000.DAT", b"\0" * 32)
+    put(cv, "HHGG.BAS", b"10 SYS \"HHGG.BIN\"\r")
+    put(cv, "HHGG.BIN", b"\0\2" + b"\1" * 32)
+    av = disk.Volume(ci, disk.ACTION_VOL)
+    av.format("ACTION")
+    put(av, "RAINBOW.BIN", b"\0\2" + b"\1" * 32)
+    bv = disk.Volume(ci, disk.BOOT_VOL)
+    bv.format("SYSTEM")
+    put(bv, "BOOT.BIN", b"\0\2" + b"\1" * 32)
     ci.save()
-    names = [n for _, _, n in disk.catalogue(cat)]
-    check(names == ["DEMO.BAS"],
-          "the launcher's catalogue lists programs, not stream chunks",
-          "menu would hold %s" % names)
+    rows = disk.catalogue(cat)
+    check(rows == [(disk.ACTION_VOL, "ACTION", "RAINBOW.BIN", "bin"),
+                   (disk.DEMO_VOL, "DEMOS", "DEMO.BAS", "bas"),
+                   (disk.DEMO_VOL, "DEMOS", "HHGG.BAS", "bas")],
+          "the launcher's catalogue lists programs with their kind: a .BAS, "
+          "a bare .BIN, not a stub's .BIN, not a chunk, not BOOT.BIN",
+          "menu would hold %s" % rows)
+    check([d for d, _ in disk.menus()] == [disk.DEMO_VOL, disk.SOFTWARE_VOL, disk.ACTION_VOL]
+          and disk.ACTION_VOL in disk.CLAIMED and disk.BAPPLE_VOL not in disk.CLAIMED,
+          "a menu is a drive: Demos, Software, CoolAction, and each is a claimed volume")
 
     print()
     print("PASS" if not FAILS else f"FAIL -- {len(FAILS)}")

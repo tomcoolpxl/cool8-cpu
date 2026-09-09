@@ -18,8 +18,39 @@ that volume until the next `DRIVE`.
 |---|---|---|
 | **0** | `SYSTEM` | **the ROM's**: `BOOT.BIN`, and nothing a user should write |
 | **1** | `COOL8` | **where a cold machine comes up** — the user's, empty |
-| 2–12, 14, 15 | `COOL8` | the user's, formatted and empty |
-| **13** | **`DEMOS`** | **the demo disc — what this document is about** |
+| 2–10 | `COOL8` | the user's, formatted and empty |
+| **11** | **`ACTION`** | **the CoolAction! disc**: every `demos/*.act`, compiled, as a bare `.BIN` — the Demos menu's twin |
+| **12** | `BAPPLE` | Bad Apple's stream, capped to this one drive — §4 |
+| **13** | **`DEMOS`** | **the demo disc**: everything written in BASIC, games included |
+| **14** | `SOFTWARE` | the machine-code systems — the four Infocom games and the p-System's loader — each a `.BIN` behind a `.BAS` stub |
+| 15 | `PASCAL` | the p-System's own volume: not a menu, reached through `PASCAL` on 14 |
+
+**Three of those are menus, and a menu is a drive.** The emulators —
+the web page and the window — read the catalogue `tools/cool8disk.py`
+writes, group it by the volume an entry came from, and title each
+group from `cool8disk.MENUS`: **Demos** (13), **Software** (14),
+**CoolAction** (11). Nothing in either emulator names a program or
+knows the disc format; `catalogue()` gained a `kind` per entry so the
+launcher knows which of two things to type — `LOAD` and `RUN` for a
+`.BAS`, `SYS "NAME.BIN"` for a `.BIN` — and that is the whole of what
+they were taught ([D99](01-decisions.md#d99--three-menus-and-a-menu-is-a-drive)).
+
+**The split is by language, not by genre.** If it is written in BASIC
+it is a Demo, and TAIPAN and the two COOLTRIS being games does not
+move them. Software is what the machine runs natively — the Z-Machine
+and the p-System — reached through a small BASIC stub that sets the
+drive and `SYS`es into the interpreter; the stub is the menu entry and
+the `.BIN` beside it is not listed twice. CoolAction is the compiled
+`.BIN` demos, no stub at all. RAINBOW and COBRA therefore exist twice
+under one name, on 13 in BASIC and on 11 compiled, and that is the
+point: the two menus are how the interpreter and the compiler get
+compared on the same picture.
+
+| menu | drive | programs |
+|---|---|---|
+| **Demos** | 13 | MAZE, RAINBOW, WAVE, PLASMA, INTRO, BOING, TRIANGLES, MANDEL, COBRA, SYNTH, BENCH, MINIBNCH, BAPPLE, TAIPAN, COOLTRS1, COOLTRS2 |
+| **Software** | 14 | HHGG, ZORK1, PLANET, LGOP, PASCAL |
+| **CoolAction** | 11 | PRIMES, RAINBOW, COBRA — see §4 |
 
 **Volume 0 is not the user's, and that is the ROM's decision.**
 `sw/boot.asm` walks volume 0's directory for `BOOT.BIN`; it is the 4 KB
@@ -39,7 +70,9 @@ booted to a machine whose every `DIR` and `SAVE` failed on a disk that
 looked fine.
 
 13 for the demos so a demo disc is somewhere a user will not overwrite
-by accident on the first afternoon.
+by accident on the first afternoon. `CLAIMED` in the same file is the
+set of volumes something owns — 0, 1, 11, 13, 14, 15 — and Bad Apple's
+planner may not put a chunk on one of them (§4, `BAPPLE`).
 
 ## 2. The sources are the truth, the disc is derived
 
@@ -802,17 +835,39 @@ screen.
 
 ![BAPPLE](img/demo-bapple-shadow.png)
 
-**The real film is on the disc and plays frame-exact end to end**:
-3,481 frames extracted at 15 fps, 224 of black-and-credits tail
-trimmed by a coverage threshold (the credits are two static text cards
-under 2% lit; the film's last real frame lands to black at 217.1 s),
-leaving 3,257 frames -> 5,259,513 bytes in 82 chunks across all twelve
-dedicated drives. Verified by parking the VM at the VSYNC wait every
-four hardware frames for the *whole film* and requiring both VRAM
-pages to equal the reference decoder's state, park after park -- every
-frame from 0 to the last matched exactly. Rebuild from a video file
-with `python tools/mkbadapple.py badapple.mp4`, then a disc build; the
-mp4 stays out of the repository.
+**What ships is the first 344 frames, on drive 12 alone** — seven
+chunks, the opening of the film, and the stub `BAPPLE` on the demo
+disc that plays them. **The whole film was built and plays frame-exact
+end to end**: 3,481 frames extracted at 15 fps, 224 of black-and-credits
+tail trimmed by a coverage threshold (the credits are two static text
+cards under 2% lit; the film's last real frame lands to black at
+217.1 s), leaving 3,257 frames -> 5,259,513 bytes in 82 chunks. Verified
+by parking the VM at the VSYNC wait every four hardware frames for the
+*whole film* and requiring both VRAM pages to equal the reference
+decoder's state, park after park -- every frame from 0 to the last
+matched exactly.
+
+**Why it is capped, and where the cap lives.** The full stream is
+5,259,513 bytes against 454,656 usable a volume — 11.57 volumes — so
+the full build took twelve drives, 12 downward, and its lowest was
+**drive 1, `USER_VOL`**, where a cold machine comes up: the whole-film
+plan always collided with the user's own disc. An earlier session cut
+the disc to drive 12 alone, but the cut lived only in
+`demos/bapple/manifest.json`, which `.gitignore` excludes, while
+`tools/mkbadapple.py` went on saying `range(12, 0, -1)` and this
+section went on describing the twelve-drive film — so a rebuild from
+the mp4 would have walked straight back over drives 1 to 11 without a
+word. Now the generator's default drive list is `[BAPPLE_VOL]`,
+`--drives 12,10,9` asks for more, `plan()` refuses any drive in
+`cool8disk.CLAIMED`, and `tools/mkdemos.py` asserts the same thing on
+every chunk it places, so a manifest from before the cap fails the
+build rather than the user. Rebuild the shipping cut with
+`python tools/mkbadapple.py badapple.mp4` — the stream stops when the
+drive is full, which is the 344 frames — or `--frames N` for fewer;
+the full film is `--drives 12,10,9,8,7,6,5,4,3,2` and it is not in
+the tree because the full build's directory is kept beside the cut,
+unused, with a `README.md` saying which half is live. The mp4 stays
+out of the repository.
 
 **Fitting was a planner problem, not an encoder problem.** The encoder
 absorbs unchanged same-value bytes into runs and only pays a skip
@@ -843,9 +898,9 @@ generator through the harness with register addresses stamped from
 `tools/ioregs.py`, POKEd from `DATA` by the stub, one frame per `SYS`
 from a four-`VSYNC` loop — BASIC keeps the tempo and the exit key.
 
-**Dedicated drives, 12 downward**: the catalogue caps a file at
-65,535 bytes, so the stream ships as `BA###.DAT` chunks split at frame
-boundaries. Volume files are contiguous from a fixed offset, so the
+**Dedicated drives, in the order `--drives` gives them**: the catalogue
+caps a file at 65,535 bytes, so the stream ships as `BA###.DAT` chunks
+split at frame boundaries. Volume files are contiguous from a fixed offset, so the
 planner *predicts* each chunk's absolute flash address into the stub's
 table, and `mkdemos` asserts the prediction when it places them — a
 chunk landing anywhere else would stream garbage from a right-looking
@@ -977,3 +1032,14 @@ A complete, native port of the UCSD Pascal p-System II.0 virtual machine (P-Mach
 3. Look at the picture. `docs/img/demo-<name>.png`.
 4. Add a section here saying what it demonstrates about *this* machine,
    not just what it draws.
+
+**A CoolAction! one** is `demos/name.act`, and `poe demos` compiles it
+behind the library and places `NAME.BIN` on drive 11 — nothing else to
+do. Its gate is in `sim/test_action.py`, not here: a port of a BASIC
+demo is held to the BASIC one's framebuffer, and a new one to whatever
+it claims. A stub is not wanted and not listed.
+
+**A Software one** — a machine-code system — is a `.BIN` on drive 14
+and a `demos/name.bas` stub that sets `DRIVE 14` and `SYS`es it; add
+the stub's name to `SOFTWARE` in `tools/mkdemos.py`, which is the one
+list that says a `.bas` in `demos/` is a stub and not a demo.

@@ -2,7 +2,7 @@
 """sim/test_z3.py -- Test COOL8 Z-Machine Version 3 Interpreter on Infocom Suite
 
 Verifies native Z-Machine V3 execution on:
-- The Hitchhiker's Guide to the Galaxy (HHGG on Drive 13)
+- The Hitchhiker's Guide to the Galaxy (HHGG on Drive 14)
 - Zork I: The Great Underground Empire (ZORK1 on Drive 14)
 - Planetfall (PLANET on Drive 14)
 - Leather Goddesses of Phobos (LGOP on Drive 14)
@@ -27,14 +27,14 @@ def test_disc_catalogue(demos_img):
     im = disk.Image(demos_img)
     vol12 = disk.Volume(im, disk.BAPPLE_VOL)
     vol13 = disk.Volume(im, disk.DEMO_VOL)
-    vol14 = disk.Volume(im, disk.ADVENTURE_VOL)
+    vol14 = disk.Volume(im, disk.SOFTWARE_VOL)
 
     check(vol12.find("BA000.DAT") is not None, "Bad Apple 7-chunk preview on Drive 12")
-    check(vol13.find("HHGG.BIN") is not None, "HHGG.BIN on Drive 13 (DEMOS)")
-    check(vol13.find("HHGG0.DAT") is not None, "HHGG0.DAT on Drive 13 (DEMOS)")
-    check(vol14.find("ZORK1.BIN") is not None, "ZORK1.BIN on Drive 14 (ADVENTUR)")
-    check(vol14.find("PLANET.BIN") is not None, "PLANET.BIN on Drive 14 (ADVENTUR)")
-    check(vol14.find("LGOP.BIN") is not None, "LGOP.BIN on Drive 14 (ADVENTUR)")
+    check(vol13.find("HHGG.BIN") is None and vol13.find("HHGG.BAS") is None,
+          "nothing of HHGG on Drive 13 (DEMOS): the Software drive has it")
+    for nm in ("HHGG.BIN", "HHGG0.DAT", "HHGG.BAS", "ZORK1.BIN", "ZORK1.BAS",
+               "PLANET.BIN", "LGOP.BIN", "PASCAL.BIN", "PASCAL.BAS"):
+        check(vol14.find(nm) is not None, "%s on Drive 14 (SOFTWARE)" % nm)
 
 
 def test_game_on_disc(demos_img, syms, game_name, drive_num, expected_keywords, exp_attr, exp_stat, exp_bord, input_cmd=None):
@@ -80,7 +80,7 @@ def test_save_restore(demos_img, syms):
         m.run_frame()
     H.settle(m, syms)
 
-    H.key(m, syms, "DRIVE 13\r")
+    H.key(m, syms, "DRIVE %d\r" % disk.SOFTWARE_VOL)
     H.key(m, syms, "LOAD \"HHGG\"\r")
     H.key(m, syms, "RUN")
     m.key(["\r"])
@@ -138,8 +138,8 @@ def main():
 
     code, syms = B.build()
 
-    # 1. The Hitchhiker's Guide to the Galaxy (Drive 13: Amiga dark blue bg $1, white text $F, status $F1)
-    test_game_on_disc(demos_img, syms, "HHGG", 13, ["Bedroom", "Infocom", "wake up"], 0x1F, 0xF1, 0x01)
+    # 1. The Hitchhiker's Guide to the Galaxy (Drive 14: Amiga dark blue bg $1, white text $F, status $F1)
+    test_game_on_disc(demos_img, syms, "HHGG", disk.SOFTWARE_VOL, ["Bedroom", "Infocom", "wake up"], 0x1F, 0xF1, 0x01)
 
     # 2. Zork I: The Great Underground Empire (Drive 14: Black bg $0, amber text $E, status $E0)
     test_game_on_disc(demos_img, syms, "ZORK1", 14, ["West of House", "Infocom", "mailbox"], 0x0E, 0xE0, 0x00)

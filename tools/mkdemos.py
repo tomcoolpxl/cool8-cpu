@@ -1,7 +1,18 @@
 #!/usr/bin/env python3
-"""Build the demo disc: every `demos/*.bas` onto drive 13.
+"""Build the demo disc: every `demos/*.bas` onto drive 13, every
+`demos/*.act` compiled onto drive 11, the machine-code systems and
+their stubs onto drive 14.
 
     python tools/mkdemos.py [--img PATH] [--png NAME]
+
+**Three drives, one per menu, split by language** (`cool8disk.MENUS`):
+a program written in BASIC is a Demo on 13, games included; the
+Z-Machine games and the p-System's loader are Software on 14, each a
+`.BIN` behind a `.BAS` stub that sets the drive and `SYS`es it; and a
+CoolAction! source is compiled behind `sw/libaction.act` and placed as
+a bare `.BIN` on 11 -- no stub, started by `SYS "NAME.BIN"`. RAINBOW
+and COBRA exist on both 11 and 13, which is the point: the two menus
+are how the interpreter and the compiler get compared.
 
 **The machine is booted, not poked.** `BOOT.BIN` goes on drive 0 and the
 ROM autoboots it, which is `poe emu` without a window -- because the boot
@@ -16,7 +27,7 @@ table is `sw/token.asm`; a host-side tokeniser would be a second
 implementation of it and would drift the first time a keyword was added.
 So the sources in `demos/` are the truth and the disc is derived.
 
-Drive 13 is the demo disc; 14 and 15 are the system discs. See
+Drive 15 is the p-System's own volume and not a menu. See
 [docs/14-demos.md](../docs/14-demos.md).
 """
 
@@ -40,9 +51,29 @@ import test_basic as B                                   # noqa: E402
 DEMOS = os.path.join(ROOT, "demos")
 DRIVE = disk.DEMO_VOL     # the layout is cool8disk's, not written twice
 
+# The machine-code systems: (menu name, story file, 5-byte tag, .BIN,
+# story chunks, text attr, status attr, border, save name). Each has a
+# stub `demos/<name>.bas` that goes on the Software drive beside it,
+# and nowhere else -- a stub typed onto the demo drive would be a Demo
+# that SYSes a file that is not there.
+ADVENTURES = [
+    ("HHGG", "hhgg.z3", b"HHGG0", "HHGG.BIN", ["HHGG0.DAT", "HHGG1.DAT"], 0x1F, 0xF1, 0x01, b"HHGG    SAV"),
+    ("ZORK1", "zork1.z3", b"ZORK0", "ZORK1.BIN", ["ZORK0.DAT", "ZORK1.DAT"], 0x0E, 0xE0, 0x00, b"ZORK1   SAV"),
+    ("PLANET", "planetfall.z3", b"PLAN0", "PLANET.BIN", ["PLAN0.DAT", "PLAN1.DAT"], 0x07, 0x70, 0x00, b"PLANET  SAV"),
+    ("LGOP", "lgop.z3", b"LGOP0", "LGOP.BIN", ["LGOP0.DAT", "LGOP1.DAT"], 0x87, 0x78, 0x08, b"LGOP    SAV"),
+]
+SOFTWARE = [a[0].lower() + ".bas" for a in ADVENTURES] + ["pascal.bas"]
+
 
 def sources():
-    return sorted(f for f in os.listdir(DEMOS) if f.endswith(".bas"))
+    """The BASIC demos: every `demos/*.bas` that is not a Software stub."""
+    return sorted(f for f in os.listdir(DEMOS)
+                  if f.endswith(".bas") and f not in SOFTWARE)
+
+
+def actions():
+    """The CoolAction! demos, compiled: `demos/*.act`."""
+    return sorted(f for f in os.listdir(DEMOS) if f.endswith(".act"))
 
 
 def discname(f):
@@ -103,6 +134,15 @@ def main():
             man = json.load(fh)
         im = disk.Image(args.img)
         for e in man:
+            # **No chunk on a drive something owns.** The cap to drive
+            # 12 lived only in a gitignored manifest for a round while
+            # the generator still planned twelve drives down to 1 --
+            # USER_VOL, where a cold machine comes up. The planner
+            # refuses those drives now, and this catches a manifest
+            # from before it did.
+            assert e["drive"] not in disk.CLAIMED, (
+                "chunk %s is planned for drive %d, which is %s's"
+                % (e["name"], e["drive"], disk.labels()[e["drive"]]))
             vol = disk.Volume(im, e["drive"])
             off = vol.free_offset()
             assert vol.base + off == e["addr"], (
@@ -111,7 +151,11 @@ def main():
             vol.add(os.path.join(bap, e["name"]), e["name"])
         im.save()
 
-    # **The Z-Machine interpreter and text adventure stories go onto Drive 13 and Drive 14.**
+    # **The Z-Machine interpreter and the stories go onto the Software
+    # drive**, every one of them: the interpreter scans drive 14 for the
+    # story tag first and 13 second (sw/z3/z3.asm `.scan_vols`), so 14
+    # is where it looks first and where saves land.
+    im = disk.Image(args.img)
     z3_src = os.path.join(ROOT, "sw", "z3", "z3.asm")
     if os.path.exists(z3_src):
         z3_code, z3_syms = H.assemble(z3_src)
@@ -121,16 +165,8 @@ def main():
         bord_off = z3_syms["z_color_border"] - 0x0200
         sav_off = z3_syms["z_save_filename"] - 0x0200
 
-        ADVENTURES = [
-            # (name, story_file, tag_5bytes, bin_name, [chunks], vol_id, color_attr, color_status, color_border, save_name_11bytes)
-            ("HHGG", "hhgg.z3", b"HHGG0", "HHGG.BIN", ["HHGG0.DAT", "HHGG1.DAT"], disk.DEMO_VOL, 0x1F, 0xF1, 0x01, b"HHGG    SAV"),
-            ("ZORK1", "zork1.z3", b"ZORK0", "ZORK1.BIN", ["ZORK0.DAT", "ZORK1.DAT"], disk.ADVENTURE_VOL, 0x0E, 0xE0, 0x00, b"ZORK1   SAV"),
-            ("PLANET", "planetfall.z3", b"PLAN0", "PLANET.BIN", ["PLAN0.DAT", "PLAN1.DAT"], disk.ADVENTURE_VOL, 0x07, 0x70, 0x00, b"PLANET  SAV"),
-            ("LGOP", "lgop.z3", b"LGOP0", "LGOP.BIN", ["LGOP0.DAT", "LGOP1.DAT"], disk.ADVENTURE_VOL, 0x87, 0x78, 0x08, b"LGOP    SAV"),
-        ]
-
-        im = disk.Image(args.img)
-        for name, story_fn, tag_bytes, bin_fn, chunks, vol_id, cattr, cstat, cbord, sav_bytes in ADVENTURES:
+        vol_id = disk.SOFTWARE_VOL
+        for name, story_fn, tag_bytes, bin_fn, chunks, cattr, cstat, cbord, sav_bytes in ADVENTURES:
             story_path = os.path.join(ROOT, "z3", "games", story_fn)
             if not os.path.exists(story_path):
                 continue
@@ -154,43 +190,72 @@ def main():
                 story_bytes = fh.read()
 
             chunk_size = 65280
-            c0_path = os.path.join(H.BUILD, chunks[0])
-            with open(c0_path, "wb") as fh:
-                fh.write(story_bytes[:chunk_size])
+            parts = [(chunks[0], story_bytes[:chunk_size])]
+            if len(story_bytes) > chunk_size:
+                parts.append((chunks[1], story_bytes[chunk_size:]))
 
+            # **The loader goes on the Software drive; the story goes
+            # there too if it fits, and onto the demo drive if not.**
+            # The four stories are 438,218 bytes against 454,656 usable
+            # a volume, before the five loaders, so one of them cannot
+            # be on 14 -- and does not need to be: the interpreter
+            # finds its story by scanning 14 and then 13 for the tag
+            # (sw/z3/z3.asm `.scan_vols`), and saves beside it. The
+            # stub's `DRIVE 14` is for the `.BIN`, which must be where
+            # the stub is.
             vol = disk.Volume(im, vol_id)
             vol.add(prg_path, bin_fn)
-            vol.add(c0_path, chunks[0])
+            need = sum((len(b) + 255) & ~255 for _, b in parts)
+            story_vol = vol_id
+            if disk.DATA_END - vol.free_offset() < need:
+                story_vol = disk.DEMO_VOL
+                vol = disk.Volume(im, story_vol)
+            for nm, blob in parts:
+                p = os.path.join(H.BUILD, nm)
+                with open(p, "wb") as fh:
+                    fh.write(blob)
+                vol.add(p, nm)
 
-            if len(story_bytes) > chunk_size:
-                c1_path = os.path.join(H.BUILD, chunks[1])
-                with open(c1_path, "wb") as fh:
-                    fh.write(story_bytes[chunk_size:])
-                vol.add(c1_path, chunks[1])
+            print("  placed %-10s (%d bytes binary on drive %d, %d bytes story on drive %d)"
+                  % (name, len(prg), vol_id, len(story_bytes), story_vol))
 
-            print("  placed %-10s (%d bytes binary, %d bytes story) on drive %d"
-                  % (name, len(prg), len(story_bytes), vol_id))
+    # **The p-System's loader onto the Software drive; its own volume
+    # is drive 15.**
+    pascal_src = os.path.join(ROOT, "sw", "pascal", "pascal.asm")
+    if os.path.exists(pascal_src):
+        pas_code, _ = H.assemble(pascal_src, name="pascal", write=True)
+        pas_prg = bytes([0x00, 0x02]) + bytes(pas_code)
+        pas_prg_path = os.path.join(H.BUILD, "PASCAL.PRG")
+        with open(pas_prg_path, "wb") as fh:
+            fh.write(pas_prg)
+        disk.Volume(im, disk.SOFTWARE_VOL).add(pas_prg_path, "PASCAL.BIN")
 
-        # **UCSD Pascal p-System II.0 and examples onto Drive 13 and Drive 15.**
-        pascal_src = os.path.join(ROOT, "sw", "pascal", "pascal.asm")
-        if os.path.exists(pascal_src):
-            pas_code, _ = H.assemble(pascal_src, name="pascal", write=True)
-            pas_prg = bytes([0x00, 0x02]) + bytes(pas_code)
-            pas_prg_path = os.path.join(H.BUILD, "PASCAL.PRG")
-            with open(pas_prg_path, "wb") as fh:
-                fh.write(pas_prg)
-            vol13 = disk.Volume(im, disk.DEMO_VOL)
-            vol13.add(pas_prg_path, "PASCAL.BIN")
+        vol_path = os.path.join(ROOT, "tools", "ucsd-psystem-vm", "disk-images", "system.vol")
+        if os.path.exists(vol_path):
+            with open(vol_path, "rb") as fh:
+                system_vol = fh.read()
+            v15_offset = disk.vol_base(disk.PASCAL_VOL)
+            im.data[v15_offset:v15_offset + len(system_vol)] = system_vol
+            print("  placed PASCAL.BIN on drive %d, system.vol (%d bytes) on drive %d"
+                  % (disk.SOFTWARE_VOL, len(system_vol), disk.PASCAL_VOL))
 
-            vol_path = os.path.join(ROOT, "tools", "ucsd-psystem-vm", "disk-images", "system.vol")
-            if os.path.exists(vol_path):
-                with open(vol_path, "rb") as fh:
-                    system_vol = fh.read()
-                v15_offset = disk.vol_base(disk.PASCAL_VOL)
-                im.data[v15_offset:v15_offset + len(system_vol)] = system_vol
-                print("  placed PASCAL.BIN on drive 13, system.vol (%d bytes) on drive 15" % len(system_vol))
+    # **The CoolAction! demos, compiled onto drive 11.** A bare `.BIN`
+    # each -- the PRG carries its own load address (D87), so `SYS
+    # "NAME.BIN"` is the whole launch and there is no stub to type.
+    # Behind the library, which is two files in a fixed order
+    # (H.ACT_LIB); the compiler is built by the harness on the way.
+    vol11 = disk.Volume(im, disk.ACTION_VOL)
+    for f in actions():
+        nm = discname(f)
+        prg, _ = H.build_act(H.ACT_LIB + [os.path.join(DEMOS, f)], "disc_" + nm.lower())
+        p = os.path.join(H.BUILD, nm + ".BIN")
+        with open(p, "wb") as fh:
+            fh.write(prg)
+        vol11.add(p, nm + ".BIN")
+        print("  compiled %-16s %6d bytes -> drive %d as %s.BIN"
+              % (f, len(prg), disk.ACTION_VOL, nm))
 
-        im.save()
+    im.save()
 
     m = vm.boot(flash_path=args.img, render=True)
     for _ in range(90):
@@ -218,17 +283,28 @@ def main():
         H.key(m, syms, 'SAVE "%s"\r' % discname(f))
         print("  typed and saved %-16s as %s" % (f, discname(f)))
 
-    # Also save the adventure launchers directly on Drive 14 (ADVENTUR)
-    H.key(m, syms, "DRIVE %d\r" % disk.ADVENTURE_VOL)
-    for adv_f in ["zork1.bas", "planet.bas", "lgop.bas", "hhgg.bas"]:
-        p = os.path.join(DEMOS, adv_f)
-        if os.path.exists(p):
-            H.key(m, syms, "NEW\r")
-            for line in io.open(p, encoding="utf-8").read().splitlines():
-                if line.strip():
-                    H.line(m, syms, line)
-            H.key(m, syms, 'SAVE "%s"\r' % discname(adv_f))
-            print("  typed and saved %-16s on drive %d as %s" % (adv_f, disk.ADVENTURE_VOL, discname(adv_f)))
+    # **The Software stubs, on the Software drive and only there** --
+    # each beside the `.BIN` it SYSes, and only when that `.BIN` was
+    # placed: a stub whose system is missing would be a menu entry that
+    # fails at the SYS.
+    H.key(m, syms, "DRIVE %d\r" % disk.SOFTWARE_VOL)
+    placed = {disk.stem(disk.show_name(e["name"]))
+              for e in disk.Volume(disk.Image(args.img), disk.SOFTWARE_VOL).files()}
+    for f in SOFTWARE:
+        p = os.path.join(DEMOS, f)
+        if not os.path.exists(p):
+            continue
+        if discname(f) not in placed:
+            print("  %s: its %s.BIN is not on drive %d, so the stub is not typed"
+                  % (f, discname(f), disk.SOFTWARE_VOL))
+            continue
+        H.key(m, syms, "NEW\r")
+        for line in io.open(p, encoding="utf-8").read().splitlines():
+            if line.strip():
+                H.line(m, syms, line)
+        H.key(m, syms, 'SAVE "%s"\r' % discname(f))
+        print("  typed and saved %-16s on drive %d as %s" % (f, disk.SOFTWARE_VOL, discname(f)))
+    H.key(m, syms, "DRIVE %d\r" % DRIVE)
     m.flash.flush()
 
     # **Bad Apple rides on its dedicated drives when it exists.** The
@@ -271,9 +347,10 @@ def main():
             assert got == blob, "chunk %s is not on the finished disc" \
                 % e["name"]
 
-    v = disk.Volume(disk.Image(args.img), DRIVE)
-    print("  drive %d holds: %s"
-          % (DRIVE, ", ".join(disk.show_name(e["name"]) for e in v.files())))
+    for d, title in disk.MENUS:
+        v = disk.Volume(disk.Image(args.img), d)
+        print("  drive %d (%s) holds: %s"
+              % (d, title, ", ".join(disk.show_name(e["name"]) for e in v.files())))
 
     # **Every demo gets shot, not just the first.** A picture is the
     # only review a demo really gets, and one that is never rendered is

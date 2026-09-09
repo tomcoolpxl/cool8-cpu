@@ -271,20 +271,45 @@ class Volume:
 
 BOOT_VOL = 0                    # the ROM's; BOOT.BIN lives here
 USER_VOL = 1                    # where a cold machine comes up
-BAPPLE_VOL = 12                 # Bad Apple demo clip
-DEMO_VOL = 13                   # the demo disc
-ADVENTURE_VOL = 14              # text adventures (Zork I, HHGG, Planetfall, Leather Goddesses)
-PASCAL_VOL = 15                 # UCSD Pascal p-System II.0
+ACTION_VOL = 11                 # the CoolAction! disc: compiled .BIN demos
+BAPPLE_VOL = 12                 # Bad Apple, capped to this one drive
+DEMO_VOL = 13                   # the demo disc: everything written in BASIC
+SOFTWARE_VOL = 14               # the machine-code systems: the Z-Machine games, the p-System's loader
+PASCAL_VOL = 15                 # UCSD Pascal p-System II.0's own volume
+
+# **The volumes something owns.** Bad Apple's planner may not put a
+# chunk on one of these, and `tools/mkdemos.py` asserts it when it
+# places them: the full film once reached drive 1, which is where a
+# cold machine comes up, and nothing in the tree said so until a
+# rebuild from the mp4 walked over it.
+CLAIMED = {BOOT_VOL, USER_VOL, ACTION_VOL, DEMO_VOL, SOFTWARE_VOL, PASCAL_VOL}
+
+# **A menu is a drive, and this is the whole rule.** The emulators group
+# the catalogue by the volume an entry came from and title the group
+# from here; nothing anywhere hardcodes a program list. The order is
+# the order the menus appear in. The split is by *language*: a program
+# written in BASIC is a Demo, games included; Software is what the
+# machine runs natively, reached through a stub that `SYS`es into it;
+# CoolAction is the compiled `.BIN` demos, the Demos menu's twin, which
+# is how the two get compared ([docs/14-demos.md](../docs/14-demos.md)).
+MENUS = [(DEMO_VOL, "Demos"), (SOFTWARE_VOL, "Software"),
+         (ACTION_VOL, "CoolAction")]
 
 
 def labels():
     """The label for every volume, by number."""
     return {n: "SYSTEM" if n == BOOT_VOL else
+               "ACTION" if n == ACTION_VOL else
                "BAPPLE" if n == BAPPLE_VOL else
                "DEMOS" if n == DEMO_VOL else
-               "ADVENTUR" if n == ADVENTURE_VOL else
+               "SOFTWARE" if n == SOFTWARE_VOL else
                "PASCAL" if n == PASCAL_VOL else "COOL8"
             for n in range(N_VOLS)}
+
+
+def stem(name):
+    """`RAINBOW.BAS` -> `RAINBOW`, which is what LOAD wants."""
+    return name.rsplit(".", 1)[0]
 
 
 def make_image(path, bootbin=None):
@@ -307,39 +332,62 @@ def make_image(path, bootbin=None):
 def catalogue(path):
     """Every program on every volume of `path`, grouped by disc.
 
-    `[(drive, label, name), ...]`, drives in order, names sorted. This is
-    what the emulator's demo menu is built from — **the emulator is
+    `[(drive, label, name, kind), ...]`, drives in order, names sorted.
+    This is what the emulators' menus are built from — **the emulator is
     never taught the disc format.** It already takes its keymap as a file
     the launcher derives from `sw/keymap.asm`; a directory walk written a
-    second time in Rust would be the same mistake with a different
-    filename, and it would drift the first time an entry gained a field.
+    second time in Rust or JavaScript would be the same mistake with a
+    different filename, and it would drift the first time an entry
+    gained a field. This one gained `kind`, and nothing else moved.
 
-    **Programs, which here means `.BAS`, and that is the machine's own
-    rule rather than a taste**: `fscmd.asm` fills in `.BAS` when a name
-    is typed with no extension, so a name in this list is exactly what
-    `LOAD` will find — which is what the menu does with it (restart,
-    `DRIVE`, `LOAD`, `RUN`). Anything else on a disc cannot be launched
-    that way and does not belong in a launcher.
+    **A program is something the machine can start, and there are two
+    ways.** `kind` says which:
 
-    It listed every file, and Bad Apple is what showed why that was
-    wrong: its stream is 82 chunks named `BA000.DAT` upward, spread over
-    twelve drives, so the menu held 82 things that cannot be run and
-    twelve that can. `BOOT.BIN` fell out of the same test and no longer
-    needs naming — it is not a `.BAS` either.
+    - `bas` — a `.BAS`. `fscmd.asm` fills in `.BAS` when a name is typed
+      with no extension, so the name is exactly what `LOAD` finds, and
+      the launcher types `DRIVE n`, `LOAD "STEM"`, `RUN`.
+    - `bin` — a `.BIN`, a PRG that carries its own load address
+      ([D87](../docs/01-decisions.md)): the launcher types `DRIVE n`,
+      `SYS "NAME.BIN"`. A compiled CoolAction! demo is one of these and
+      nothing else, which is why the rule grew a second half.
+
+    **A `.BIN` beside a `.BAS` of the same stem belongs to the stub.**
+    `HHGG.BAS` sets the drive and the colours and then `SYS`es
+    `HHGG.BIN`; listing both would put every machine-code system on the
+    menu twice, once without its colours. The stub is the entry.
+
+    Anything else on a disc cannot be launched and does not belong in a
+    launcher. It listed every file once, and Bad Apple is what showed
+    why that was wrong: its stream was 82 chunks named `BA000.DAT`
+    upward, so the menu held 82 things that cannot be run and twelve
+    that can. Volume 0 is skipped whole: `BOOT.BIN` is a PRG, but it is
+    the one the ROM is about to jump into and not a program to offer.
     """
     img = Image(path)
     out = []
     for n in range(N_VOLS):
+        if n == BOOT_VOL:
+            continue
         v = Volume(img, n)
         try:
             files = v.files()
         except Exception:               # an unformatted volume has no
             continue                    #   directory to read
         label = v.label()
-        for name in sorted(show_name(e["name"]) for e in files):
-            if name.upper().endswith(".BAS"):
-                out.append((n, label, name))
+        names = sorted(show_name(e["name"]).upper() for e in files)
+        stubs = {stem(nm) for nm in names if nm.endswith(".BAS")}
+        for name in names:
+            if name.endswith(".BAS"):
+                out.append((n, label, name, "bas"))
+            elif name.endswith(".BIN") and stem(name) not in stubs:
+                out.append((n, label, name, "bin"))
     return out
+
+
+def menus():
+    """`[(drive, title), ...]` in menu order — `MENUS`, for callers that
+    write it into a file the emulator reads."""
+    return list(MENUS)
 
 
 def cmd_format(a):
