@@ -335,8 +335,7 @@ vclear: MOV  R0,#<USERTOP
 
 prg_store:
         ST   [PRGN],R0
-        MOV  R0,R1
-        ST   [PRGN+1],R0
+        ST   [PRGN+1],R1
         ; **Storing a line clears the variables**, which is the C64's
         ; rule and not a convenience: the name table is based at PROGEND
         ; and editing the program moves it, so entries indexed off the
@@ -589,10 +588,8 @@ PRGSP   = PRGW+2                ;   and the step. prg_newno reads both
 
 prg_renum:
         ST   [PRGST],R0
-        MOV  R0,R1
-        ST   [PRGST+1],R0
-        MOV  R0,R2
-        ST   [PRGSP],R0
+        ST   [PRGST+1],R1
+        ST   [PRGSP],R2
 
         ; ---- pass 2 first, while the old numbers are still in place:
         ; every line reference is rewritten to what pass 1 is about to
@@ -655,14 +652,13 @@ prg_fixrefs:
         BRA  .c
 .plain: CMP  R0,#$2C            ; a comma continues a list of them
         BEQ  .keep
+        CMP  R0,#$20            ; space between keyword and line number
+        BEQ  .keep
         CLR  R2                 ; anything else ends the expectation
 .keep:  INCW Y
         SUB  R3,#1
         BRA  .c
-.skip4: INCW Y
-        INCW Y
-        INCW Y
-        INCW Y
+.skip4: ADDW Y,#4
         SUB  R3,#4
         CLR  R2
         BRA  .c
@@ -701,8 +697,7 @@ PRGT    = PRGW+3                ; prg_newno: the old number being mapped
 
 prg_newno:
         ST   [PRGT],R0
-        MOV  R0,R1
-        ST   [PRGT+1],R0
+        ST   [PRGT+1],R1
         PUSHW X
         LDW  X,#PROGBOT
         LD   R2,[PRGST]         ; the new number this position will get
@@ -762,20 +757,14 @@ prg_show:
         BEQ  .lit
         CMP  R0,#K_FLT
         BEQ  .flt
-        CMP  R0,#$80
-        BHS  .kw
         PUSH R3
         PUSHW Y
-        CALL con_emit
-        POPW Y
-        POP  R3
-        INCW Y
-        SUB  R3,#1
-        BRA  .c
-.kw:    PUSH R3
-        PUSHW Y
+        CMP  R0,#$80
+        BLO  .emit
         CALL tok_show
-        POPW Y
+        BRA  .step
+.emit:  CALL con_emit
+.step:  POPW Y
         POP  R3
         INCW Y
         SUB  R3,#1
@@ -799,13 +788,11 @@ prg_show:
         MOVW X,Y
         CALL fload
         POPW Y
-        INCW Y
-        INCW Y
-        INCW Y
+        ADDW Y,#3
         PUSH R3
         PUSHW Y
         CALL fstr
-        MOVW X,Y
+        LDW  X,#FSBUF
         CALL con_putsn
         POPW Y
         POP  R3

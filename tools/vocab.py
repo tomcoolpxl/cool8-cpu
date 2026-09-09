@@ -100,6 +100,7 @@ F_VERB, F_LINE = 0x01, 0x02
 FLAGS = {
     "REM": F_VERB,
     "GOTO": F_LINE,             # GOTO n, and ON x GOTO n,n,n
+    "GOSUB": F_LINE,            # GOSUB n, and ON x GOSUB n,n,n
     "THEN": F_LINE,             # IF c THEN n
     "LIST": F_LINE,             # LIST a,b
     "DELETE": F_LINE,           # DELETE a,b

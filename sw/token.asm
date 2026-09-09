@@ -190,16 +190,16 @@ tok_flags:
         CLR  R1
         CMP  R0,#K_PRINT
         BLO  .out
-        PUSHW X
         PUSH R0
         SUB  R0,#K_PRINT
         CMP  R0,#NTOK
         BHS  .off
+        PUSHW X
         LDW  X,#TOKFLG
         ADDW X,R0
         LD   R1,[X]
-.off:   POP  R0
         POPW X
+.off:   POP  R0
 .out:   RET
 
 ; =====================================================================
@@ -212,16 +212,14 @@ tok_flags:
 ; where a number shrinks three characters into three bytes -- which it
 ; cannot do more often than it has characters.
 tok_byte:
+        LD   R1,[TLEN]
         PUSHW X
-        PUSH R0
-        LD   R0,[TLEN]
         LDW  X,#TBUF
-        ADDW X,R0
-        ADD  R0,#1
-        ST   [TLEN],R0
-        POP  R0
+        ADDW X,R1
         ST   [X],R0
         POPW X
+        ADD  R1,#1
+        ST   [TLEN],R1
         RET
 
 ; tok_word -- append T_LIT and the 16-bit value in R0:R1.

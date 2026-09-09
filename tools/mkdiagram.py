@@ -25,7 +25,7 @@ import tempfile
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                 "..", "sim"))
-import cosim
+import toolchain
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TOP = "cool8_soc"
@@ -68,7 +68,7 @@ def netlist():
     script = (f"read_verilog {files}; blackbox {' '.join(BOXES)}; "
               f"hierarchy -top {TOP}; proc; opt_clean; "
               f"write_json {out.replace(os.sep, '/')}")
-    subprocess.run([cosim._tool("yosys"), "-q", "-p", script], check=True)
+    subprocess.run([toolchain.tool("yosys"), "-q", "-p", script], check=True)
     with open(out) as fh:
         return json.load(fh)["modules"][TOP]
 
@@ -87,7 +87,7 @@ def schematic(out):
     netlistsvg's transparent background, a PNG carries its own."""
     tmp = os.path.join(tempfile.gettempdir(), "cool8_alu")
     src = os.path.join(REPO, "rtl", "core", "cool8_alu.v")
-    subprocess.run([cosim._tool("yosys"), "-q", "-p",
+    subprocess.run([toolchain.tool("yosys"), "-q", "-p",
                     f"read_verilog {src.replace(os.sep, '/')}; "
                     f"hierarchy -top cool8_alu; proc; opt -full; opt_clean; "
                     f"write_json {tmp}.json".replace(os.sep, "/")],

@@ -64,8 +64,8 @@ def tool():
     the part about putting `bin` and `lib` on PATH so the DLLs beside
     the executable resolve. Reuse it rather than write a third one.
     """
-    import cosim
-    return cosim._tool("icesprog")
+    import toolchain
+    return toolchain.tool("icesprog")
 
 
 def icelink():

@@ -151,7 +151,7 @@ MTMP    = $0023                 ;: 4 multiply scratch
 ; in two places, agreeing until the day one of them moves.
 NSIG    = 7                     ; significant characters
 NENT    = NSIG + 6              ; type, length, NSIG name bytes, value, aux
-MAXNAME = 32
+MAXNAME = 64
 
 ; A string variable's four bytes are BBC BASIC's descriptor exactly:
 ; where the characters are, how many there are, and how many were

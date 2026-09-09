@@ -5796,6 +5796,21 @@ which was found already failing before this session and is flagged as
 its own investigation; the suite's INTRO gate is the end-to-end proof,
 holding rendered glyphs actually sliding across frames.
 
+## D94 -- Relational expressions always return integer booleans; MAXNAME=64
+
+**Decision 1:** `true:` and `false:` in `sw/interp.asm` explicitly clear `STYPE`
+to 0. Relational expressions (`<`, `>`, `=`, `<=`, `>=`, `<>`) always return
+an integer boolean (`-1` or `0`) in `R0:R1`. Previously, comparisons with float
+operands (`A# < 1000.0`) left `STYPE = 2` (float), returning float bits in
+`FACC` that failed relational `IF` tests.
+
+**Decision 2:** `MAXNAME` is increased from 32 to 64 in `sw/lowram.asm`.
+`NTAB` sits dynamically in user RAM between `PROGEND` and `CSTK` (allocated at `RUN`).
+64 entries use 832 bytes of the ~38.4 KB user memory, providing ample space for
+large programs and games with multiple typed arrays (`PT$(9)`, `AP#(9,5)`, etc.)
+and scalar variables.
+
+---
 
 ## D97 -- CoolAction!: a compiled language for games, cross-compiled in Rust
 

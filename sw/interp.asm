@@ -387,6 +387,10 @@ h_local:
         CALL varidx
         LD   R2,[ERR]
         BNE  .out
+        CMP  R0,#52
+        BCC  .loc_res
+        CALL nfind
+.loc_res:
         MOV  R2,R0
         PUSH R2
         CALL lpush
@@ -1035,6 +1039,7 @@ h_let:
         SKIPSP
         CMP  R2,#$28            ; '('
         BEQ  .notstr
+        CALL nfind              ; a long scalar: ensure in NTAB
         PUSH R0
         CALL isflt
         POP  R0
@@ -1168,13 +1173,11 @@ varidx:
         CLR  R0
         RET
 
-; vlong -- two characters or more: into NBUF, then the table.
-;
-; NBUF is not blanked first. `nfind` compares the stored length before
-; it compares any characters, so only the significant ones are ever
-; looked at and whatever follows them is never read.
+; vlong -- two characters or more: into NBUF, then nlook (without creating).
+; Callers that want to auto-allocate on definition (LET, FOR, READ, INPUT)
+; call nfind if R0 >= 52; prim and arrays do not.
 vlong:  CALL nscan
-        JMP  nfind
+        JMP  nlook
 
 ; nscan -- the identifier at Y into NBUF and NLEN, however short. Y ends
 ; past it. Split out of vlong because a subscripted `A(3)` needs the
@@ -1230,6 +1233,7 @@ nlook:  CLR  R2
 .each:  LD   R0,[NNAME]
         CMP  R2,R0
         BCC  .try
+        MOV  R0,#52
         SEC
         RET
 .try:   MOV  R0,R2
@@ -1283,22 +1287,12 @@ nfind:  CALL nlook
         SUB  R1,#1
         BNE  .cp
         POPW Y
-        INCW X                  ; the value, two bytes of zero
         CLR  R0
+        MOV  R1,#4
+.z4:    INCW X
         ST   [X],R0
-        INCW X
-        ST   [X],R0
-        ; **And the aux field, which this did not touch.** An entry is
-        ; type, length, six name bytes, value and aux, and a slot is
-        ; reused the moment NNAME goes back to zero -- so a new string
-        ; variable landing on an old one's slot inherited its length
-        ; while getting a zeroed address. Harmless for an integer, which
-        ; does not use aux; for a string it is a descriptor half of
-        ; which is somebody else's.
-        INCW X
-        ST   [X],R0
-        INCW X
-        ST   [X],R0
+        SUB  R1,#1
+        BNE  .z4
         LD   R0,[NNAME]
         MOV  R2,R0
         ADD  R0,#1
@@ -1344,9 +1338,8 @@ skipsp: INCW Y
 ; ---------------------------------------------------------------------
 h_poke:
         CALL evali              ; [D88] the address is an integer
-        MOV  XL,R0
-        MOV  XH,R1
-        PUSHW X
+        PUSH R1
+        PUSH R0
         INCW Y                  ; the comma
         CALL evali              ; ...and so is the byte
         POPW X
@@ -1673,6 +1666,10 @@ h_for:
 
         SKIPSP             ; the dispatcher left Y on the FOR's space
         CALL varidx
+        CMP  R0,#52
+        BCC  .for_res
+        CALL nfind
+.for_res:
         ST   [LVAR],R0
         SKIPSP
         INCW Y                  ; the '='
@@ -2289,11 +2286,13 @@ sumrest:
 ; single implementation: every bit of a true is set, so `(a<b) AND (c<d)`
 ; and `mask AND $0F` are the same instruction. With 1 the first works by
 ; accident and stops working the moment anything is negated.
-true:   MOV  R0,#$FF
-        MOV  R1,#$FF
-        RET
 false:  CLR  R0
         CLR  R1
+        BRA  true.out
+true:   MOV  R0,#$FF
+        MOV  R1,#$FF
+.out:   CLR  R2
+        ST   [STYPE],R2
         RET
 
 ; edin / edout -- one level of expression nesting, and back.
@@ -2389,6 +2388,9 @@ prim:
         CMP  R2,#$28            ; '('
         BEQ  .notstr            ; an array of any type: .sub sorts it out
 
+        ; Not a builtin and not an array: ensure it exists in NTAB.
+        CALL nfind
+.hasvar:
         PUSH R0
         CALL isflt
         POP  R0
@@ -2871,19 +2873,20 @@ agen:   PUSH R1                 ; block hi
         ADD  R0,R2              ; and back: (a - b) + b is a
         ADC  R1,R3
 
-        LD   R2,[SP+0]          ; d
-        TST  R2
+        PUSH R1                 ; subscript hi
+        PUSH R0                 ; subscript lo
+        LD   R0,[SP+2]          ; d
+        TST  R0
         BNE  .horner
+        POP  R0                 ; subscript lo
+        POP  R1                 ; subscript hi
         ST   [SP+1],R0          ; the first: the index *is* the subscript
-        MOV  R2,R1
-        ST   [SP+2],R2
+        ST   [SP+2],R1
         BRA  .next
 
         ; index = index * count[d] + subscript. The only multiply in the
         ; path, and a one-dimensional array never arrives here.
 .horner:
-        PUSH R1                 ; subscript hi
-        PUSH R0                 ; subscript lo
         LD   R0,[SP+3]          ; index lo
         LD   R1,[SP+4]          ; index hi
         CALL amul16             ; R1:R0 = index * count[d]
@@ -2892,8 +2895,7 @@ agen:   PUSH R1                 ; block hi
         POP  R2                 ; subscript hi
         ADC  R1,R2
         ST   [SP+1],R0
-        MOV  R2,R1
-        ST   [SP+2],R2
+        ST   [SP+2],R1
 
 .next:  LD   R0,[SP+0]          ; d = d + 1
         ADD  R0,#1
@@ -3008,18 +3010,10 @@ h_dim:  SKIPSP
 .haveto:
         CALL arrname
         CALL nfind              ; X on the entry's value
-
-        ; **Dimensioned twice is an error, not a silent leak.** The old
-        ; block was simply abandoned, and with no garbage collector a
-        ; DIM inside a loop eats the heap and reports ?OUT OF MEM a long
-        ; way from the cause. A fresh entry has a zero block pointer,
-        ; which is what `nfind` writes and what `vclear` restores.
         PUSHW X
         LD   R0,[X]
-        PUSHW X
         INCW X
         LD   R1,[X]
-        POPW X
         OR   R0,R1
         BEQ  .fresh
         POPW X
@@ -4774,6 +4768,10 @@ argpass:
         CALL varidx             ; R0 = the formal's handle, Y past it
         LD   R2,[ERR]
         BNE  .bad
+        CMP  R0,#52
+        BCC  .cf_res
+        CALL nfind
+.cf_res:
         MOV  R2,R0
 
         ; What this parameter is, read off its suffix **now** -- `eval`
@@ -5984,6 +5982,10 @@ h_input:
         INCW Y
 .var:   SKIPSP
         CALL varidx             ; R0 the handle, X the slot, Y past it
+        CMP  R0,#52
+        BCC  .inp_res
+        CALL nfind
+.inp_res:
         PUSH R0
         PUSHW X
         PUSHW Y                 ; the editor's routines use Y freely
@@ -6104,6 +6106,10 @@ drst:   MOV  R0,#1
 ; READ a, b, c -- each target takes the next DATA item.
 h_read: SKIPSP
         CALL varidx
+        CMP  R0,#52
+        BCC  .read_res
+        CALL nfind
+.read_res:
         PUSHW X
         CALL dnext
         POPW X

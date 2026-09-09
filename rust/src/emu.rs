@@ -66,6 +66,10 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
+#[cfg(windows)]
+#[link(name = "advapi32")]
+extern "C" {}
+
 const SND_HZ: f64 = 8_375_000.0 / 256.0;
 /// The machine's own frame rate: 266 cycles a line, 525 lines a frame.
 const FRAME_HZ: f64 = 8_375_000.0 / (266.0 * 525.0);
@@ -404,7 +408,7 @@ pub fn run(args: &Args) {
     // be told a demo the instant BASIC is listening, rather than after
     // a guessed number of frames that is either wrong or slow. Same
     // predicate the `settle` command uses for the suites.
-    let idle: Option<(u16, usize, usize)> = args.idle.as_ref()
+    let idle: Option<(u16, usize, usize)> = args.idle.as_deref()
         .and_then(|s| {
             let n: Vec<usize> = s.split(',')
                 .filter_map(|f| f.trim().parse().ok()).collect();
