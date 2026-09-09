@@ -44,37 +44,81 @@ pub const IC_DISC: &str = "\u{e564}"; // disc
 /// The height of the bar in logical points.
 pub const BAR_H: f32 = 34.0;
 
-/// One program on one disc, as the launcher reported it.
+/// One program on one disc, as the launcher reported it. `kind` is how
+/// it is started: `bas` by LOAD and RUN, `bin` by SYS -- the second
+/// half of the rule `tools/cool8disk.py`'s `catalogue` sets, and the
+/// only thing this file knows about what is on a disc.
 #[derive(Clone)]
 pub struct Entry {
     pub drive: u8,
     pub label: String,
     pub name: String,
+    pub kind: String,
 }
 
-/// `drive<TAB>label<TAB>name` a line — written by tools/cool8rsrun.py.
-pub fn load_catalogue(path: &str) -> Vec<Entry> {
+/// A menu is a drive: `menu<TAB>drive<TAB>title` lines come first,
+/// in menu order, from `cool8disk.MENUS`.
+#[derive(Clone)]
+pub struct Menu {
+    pub drive: u8,
+    pub title: String,
+}
+
+/// `drive<TAB>label<TAB>name<TAB>kind` a line — written by
+/// tools/cool8rsrun.py — after the `menu` lines.
+pub fn load_catalogue(path: &str) -> (Vec<Menu>, Vec<Entry>) {
+    let mut menus = Vec::new();
     let mut out = Vec::new();
     let text = match std::fs::read_to_string(path) {
         Ok(t) => t,
         Err(e) => {
             eprintln!("no disc catalogue at {}: {}", path, e);
-            return out;
+            return (menus, out);
         }
     };
     for line in text.lines() {
-        let mut f = line.split('\t');
-        if let (Some(d), Some(l), Some(n)) = (f.next(), f.next(), f.next()) {
-            if let Ok(drive) = d.parse::<u8>() {
+        let f: Vec<&str> = line.split('\t').collect();
+        if f.len() == 3 && f[0] == "menu" {
+            if let Ok(drive) = f[1].parse::<u8>() {
+                menus.push(Menu { drive, title: f[2].to_string() });
+            }
+        } else if f.len() >= 3 {
+            if let Ok(drive) = f[0].parse::<u8>() {
                 out.push(Entry {
                     drive,
-                    label: l.to_string(),
-                    name: n.to_string(),
+                    label: f[1].to_string(),
+                    name: f[2].to_string(),
+                    kind: f.get(3).unwrap_or(&"bas").to_string(),
                 });
             }
         }
     }
+    (menus, out)
+}
+
+/// The menus to draw: the launcher's, or -- for a catalogue file with
+/// no `menu` lines -- one per drive that holds anything, titled by its
+/// label, so an old file still gets a bar that works.
+pub fn menus_or_drives(menus: Vec<Menu>, discs: &[Entry]) -> Vec<Menu> {
+    if !menus.is_empty() {
+        return menus;
+    }
+    let mut out: Vec<Menu> = Vec::new();
+    for e in discs {
+        if !out.iter().any(|m| m.drive == e.drive) {
+            out.push(Menu { drive: e.drive, title: e.label.clone() });
+        }
+    }
     out
+}
+
+/// What the launch types once the restarted machine has a prompt.
+pub fn launch_text(e: &Entry) -> String {
+    if e.kind == "bin" {
+        format!("DRIVE {}\rSYS \"{}\"\r", e.drive, e.name)
+    } else {
+        format!("DRIVE {}\rLOAD \"{}\"\rRUN\r", e.drive, stem(&e.name))
+    }
 }
 
 /// What a click asked for. The window owns the machine, so the bar
@@ -108,10 +152,12 @@ pub fn cold(m: &mut Machine) {
 
 /// Draw the bar and say what was clicked.
 ///
-/// `sel` is the combo's current index and is written back, so the menu
-/// keeps its place across frames the way an immediate-mode menu must.
-pub fn draw(ui: &imgui::Ui, discs: &[Entry], sel: &mut usize,
-            fullscreen: bool) -> Act {
+/// `sel` is each menu's combo index and is written back, so the menus
+/// keep their place across frames the way an immediate-mode menu must.
+/// **A menu is a drive**: one combo and one play button per entry of
+/// `menus`, holding the programs on that drive and nothing else.
+pub fn draw(ui: &imgui::Ui, menus: &[Menu], discs: &[Entry],
+            sel: &mut [usize], fullscreen: bool) -> Act {
     let mut act = Act::None;
     let vp = ui.io().display_size;
 
@@ -166,29 +212,38 @@ pub fn draw(ui: &imgui::Ui, discs: &[Entry], sel: &mut usize,
                 return;
             }
 
-            ui.text(IC_DISC);
-            ui.same_line();
-            ui.set_next_item_width(230.0);
-            let names: Vec<String> = discs.iter()
-                .map(|e| format!("{}  {}", e.label, stem(&e.name)))
-                .collect();
-            let refs: Vec<&String> = names.iter().collect();
-            ui.combo_simple_string("##disc", sel, &refs);
-            if ui.is_item_hovered() {
-                ui.tooltip(|| {
-                    ui.text("Every program on every disc");
-                });
-            }
-            ui.same_line();
-            if ui.button(IC_PLAY) {
-                if let Some(e) = discs.get(*sel) {
-                    act = Act::Launch(e.clone());
+            for (i, menu) in menus.iter().enumerate() {
+                let mine: Vec<&Entry> = discs.iter()
+                    .filter(|e| e.drive == menu.drive).collect();
+                ui.text(format!("{} {}", IC_DISC, menu.title));
+                ui.same_line();
+                ui.set_next_item_width(150.0);
+                let names: Vec<String> = mine.iter()
+                    .map(|e| stem(&e.name).to_string()).collect();
+                let refs: Vec<&String> = names.iter().collect();
+                let _id = ui.push_id_usize(i);
+                ui.combo_simple_string("##disc", &mut sel[i], &refs);
+                if ui.is_item_hovered() {
+                    ui.tooltip(|| {
+                        ui.text(format!("Drive {}: every program on it",
+                                        menu.drive));
+                    });
                 }
-            }
-            if ui.is_item_hovered() {
-                ui.tooltip(|| {
-                    ui.text("Restart, then DRIVE / LOAD / RUN it");
-                });
+                ui.same_line();
+                if ui.button(IC_PLAY) {
+                    if let Some(e) = mine.get(sel[i]) {
+                        act = Act::Launch((*e).clone());
+                    }
+                }
+                if ui.is_item_hovered() {
+                    ui.tooltip(|| {
+                        ui.text(match mine.get(sel[i]).map(|e| e.kind.as_str()) {
+                            Some("bin") => "Restart, then DRIVE / SYS it",
+                            _ => "Restart, then DRIVE / LOAD / RUN it",
+                        });
+                    });
+                }
+                ui.same_line();
             }
         });
     act

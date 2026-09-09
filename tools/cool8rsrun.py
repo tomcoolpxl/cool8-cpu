@@ -127,7 +127,7 @@ def banner(cmd, code, rom, font):
 
     rows = disk.catalogue(flash)
     by = {}
-    for drive, label, name in rows:
+    for drive, label, name, _kind in rows:
         by.setdefault((drive, label), []).append(name)
     for (drive, label), names in sorted(by.items()):
         print("              drive %-2d %-6s %s"
@@ -216,8 +216,13 @@ def main():
         rows = disk.catalogue(flash_arg)
         cat_p = os.path.join(BUILD, "emu_discs.txt")
         with open(cat_p, "w", newline="\n") as f:
-            for drive, label, name in rows:
-                f.write("%d\t%s\t%s\n" % (drive, label, name))
+            # the menus first, `menu<TAB>drive<TAB>title`, then a program
+            # a line with the kind that says how it is started (bas: LOAD
+            # and RUN; bin: SYS) -- rust/src/bar.rs reads exactly this
+            for drive, title in disk.menus():
+                f.write("menu\t%d\t%s\n" % (drive, title))
+            for drive, label, name, kind in rows:
+                f.write("%d\t%s\t%s\t%s\n" % (drive, label, name, kind))
         cmd.append(f"+discs={cat_p}")
 
     # **The idle symbols, so the window can wait on the machine.** The

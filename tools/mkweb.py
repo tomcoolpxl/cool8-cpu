@@ -80,20 +80,22 @@ def build_assets():
     shutil.copyfile(disk_p, dst_disk)
     print(f"  copied disk image to web/cool8.img ({os.path.getsize(dst_disk) / (1024 * 1024):.1f} MB)")
 
-    # 3. Disc catalogue metadata
+    # 3. Disc catalogue metadata. **The menus and the programs, both
+    # from tools/cool8disk.py**: a menu is a drive (`MENUS`), and a
+    # program carries the drive it is on and how it is started (`kind`),
+    # so the page groups and launches without knowing a disc format or
+    # a program name.
     rows = disk.catalogue(disk_p)
-    discs = []
-    for drive, label, name in rows:
-        discs.append({
-            "drive": drive,
-            "label": label,
-            "name": name,
-            "stem": disk.stem(name) if hasattr(disk, "stem") else name.rsplit(".", 1)[0],
-        })
+    discs = {
+        "menus": [{"drive": d, "title": t} for d, t in disk.menus()],
+        "programs": [{"drive": drive, "label": label, "name": name,
+                      "stem": disk.stem(name), "kind": kind}
+                     for drive, label, name, kind in rows],
+    }
     discs_p = os.path.join(WEB, "discs.json")
     with open(discs_p, "w", encoding="utf-8") as f:
         json.dump(discs, f, indent=2)
-    print(f"  wrote {len(discs)} demo catalogue entries to web/discs.json")
+    print(f"  wrote {len(rows)} catalogue entries in {len(discs['menus'])} menus to web/discs.json")
 
     # 4. Keyboard mapping table
     chars, named = cool8kbd.kbd_tables()

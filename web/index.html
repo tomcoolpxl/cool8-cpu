@@ -43,13 +43,10 @@
           <button id="btn-break" class="btn-tool btn-danger" title="Break / NMI (F11) — Interrupt running program">&#9995; Break</button>
         </div>
 
-        <div class="tool-group flex-grow">
-          <span class="group-label">&#128190; Demo:</span>
-          <select id="demo-select" class="select-demo" title="Select a demo program">
-            <option value="">(Select demo...)</option>
-          </select>
-          <button id="btn-run-demo" class="btn-primary" title="Load & Run selected demo">&#9654; Run</button>
-        </div>
+        <!-- One select and one Run button per menu, built by app.js from
+             discs.json: a menu is a drive, titled by tools/cool8disk.py,
+             and nothing here names a program. -->
+        <div class="tool-group flex-grow" id="menus"></div>
 
         <div class="tool-group">
           <button id="btn-audio" class="btn-tool" title="Toggle audio">&#128266;</button>

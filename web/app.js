@@ -98,7 +98,7 @@ class Cool8Emulator {
 
       if (discsResp && discsResp.ok) {
         this.discs = await discsResp.json();
-        this.populateDemos(this.discs);
+        this.populateMenus(this.discs);
       }
       if (cfgResp && cfgResp.ok) {
         this.config = await cfgResp.json();
@@ -230,8 +230,8 @@ class Cool8Emulator {
       if (this.pendingLaunch && !this.launchBooted) {
         if (this.wasm.cool8_is_idle(this.state, this.config.idle_pc, this.config.irhead, this.config.irtail)) {
           this.launchBooted = true;
-          this.typeString(`DRIVE ${this.pendingLaunch.drive}\rLOAD "${this.pendingLaunch.stem}"\rRUN\r`);
-          this.setStatus(`Launched demo: ${this.pendingLaunch.stem}`);
+          this.typeString(this.launchText(this.pendingLaunch));
+          this.setStatus(`Launched ${this.pendingLaunch.stem}`);
           this.pendingLaunch = null;
         }
       }
@@ -324,26 +324,58 @@ class Cool8Emulator {
     }
   }
 
-  populateDemos(discs) {
-    const select = document.getElementById("demo-select");
-    select.innerHTML = '<option value="">(Select demo...)</option>';
-    for (const d of discs) {
-      const opt = document.createElement("option");
-      opt.value = JSON.stringify(d);
-      opt.textContent = `${d.label} — ${d.stem}`;
-      select.appendChild(opt);
+  // **A menu is a drive.** discs.json carries the menus in order, each
+  // a drive and a title from tools/cool8disk.py's MENUS, and every
+  // program with the drive it is on; the page groups by drive and
+  // never names a program or a disc format itself.
+  populateMenus(discs) {
+    const host = document.getElementById("menus");
+    host.innerHTML = "";
+    for (const menu of discs.menus) {
+      const label = document.createElement("span");
+      label.className = "group-label";
+      label.textContent = `\u{1F4BE} ${menu.title}:`;
+      const select = document.createElement("select");
+      select.className = "select-demo";
+      select.title = `Select a program from drive ${menu.drive}`;
+      const blank = document.createElement("option");
+      blank.value = "";
+      blank.textContent = `(${menu.title}...)`;
+      select.appendChild(blank);
+      for (const d of discs.programs) {
+        if (d.drive !== menu.drive) continue;
+        const opt = document.createElement("option");
+        opt.value = JSON.stringify(d);
+        opt.textContent = d.stem;
+        select.appendChild(opt);
+      }
+      const run = document.createElement("button");
+      run.className = "btn-primary";
+      run.title = `Restart, then start the selected ${menu.title} program`;
+      run.innerHTML = "&#9654; Run";
+      run.addEventListener("click", () => this.runSelected(select));
+      host.append(label, select, run);
     }
   }
 
-  runSelectedDemo() {
-    const select = document.getElementById("demo-select");
+  // How a program is started is the catalogue's `kind`: a `.BAS` by
+  // LOAD and RUN, a `.BIN` -- a PRG carrying its own address (D87) --
+  // by SYS. The same two strings rust/src/bar.rs types.
+  launchText(p) {
+    if (p.kind === "bin") {
+      return `DRIVE ${p.drive}\rSYS "${p.name}"\r`;
+    }
+    return `DRIVE ${p.drive}\rLOAD "${p.stem}"\rRUN\r`;
+  }
+
+  runSelected(select) {
     if (!select.value) return;
-    const demo = JSON.parse(select.value);
+    const prog = JSON.parse(select.value);
 
     this.coldReset();
-    this.pendingLaunch = demo;
+    this.pendingLaunch = prog;
     this.launchBooted = false;
-    this.setStatus(`Rebooting to launch ${demo.stem}...`);
+    this.setStatus(`Rebooting to launch ${prog.stem}...`);
   }
 
   setStatus(text) {
@@ -358,7 +390,6 @@ class Cool8Emulator {
     document.getElementById("btn-warm").addEventListener("click", () => this.warmReset());
     document.getElementById("btn-cold").addEventListener("click", () => this.coldReset());
     document.getElementById("btn-break").addEventListener("click", () => this.pulseBreak());
-    document.getElementById("btn-run-demo").addEventListener("click", () => this.runSelectedDemo());
     document.getElementById("btn-shot").addEventListener("click", () => this.saveScreenshot());
     document.getElementById("btn-full").addEventListener("click", () => this.toggleFullscreen());
 
@@ -478,5 +509,9 @@ class Cool8Emulator {
 
 window.addEventListener("DOMContentLoaded", () => {
   const emu = new Cool8Emulator();
+  // Reachable from the console as `cool8`, so the machine can be driven
+  // and inspected by hand -- a hidden tab gets no animation frames, and
+  // a launch can still be stepped through from the devtools.
+  window.cool8 = emu;
   emu.load();
 });

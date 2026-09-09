@@ -398,10 +398,11 @@ pub fn run(args: &Args) {
     // register, which is why this is a cast and not a lookup.
     let screen_id = imgui::TextureId::new(screen.0.get() as usize);
 
-    let discs = args.discs.as_ref()
+    let (menus, discs) = args.discs.as_ref()
         .map(|p| crate::bar::load_catalogue(p))
         .unwrap_or_default();
-    let mut disc_sel: usize = 0;
+    let menus = crate::bar::menus_or_drives(menus, &discs);
+    let mut disc_sel: Vec<usize> = vec![0; menus.len()];
     // **Waiting on the machine, not on a stopwatch.** `+idle=` carries
     // the three symbols `Machine::is_idle` wants -- the keyboard wait's
     // address and the input ring's head and tail -- so the launcher can
@@ -653,10 +654,7 @@ pub fn run(args: &Args) {
         // knows nothing about any of this.
         if booted {
             if let Some(e) = launch.take() {
-                for ch in format!("DRIVE {}\rLOAD \"{}\"\rRUN\r",
-                                  e.drive, crate::bar::stem(&e.name))
-                    .bytes()
-                {
+                for ch in crate::bar::launch_text(&e).bytes() {
                     typed.push_back(ch);
                 }
             }
@@ -692,7 +690,7 @@ pub fn run(args: &Args) {
         let act = if full {
             crate::bar::Act::None
         } else {
-            crate::bar::draw(ui, &discs, &mut disc_sel, full)
+            crate::bar::draw(ui, &menus, &discs, &mut disc_sel, full)
         };
         match act {
             crate::bar::Act::Warm => crate::bar::warm(&mut m),

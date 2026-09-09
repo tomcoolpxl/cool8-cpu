@@ -5934,10 +5934,15 @@ it is not started because the number that justifies it was only just
 measured. `demos/primes.act` prints `Primes: 168` to the UART, which is
 the check that a real program reaches the hardware.
 
-Not on the demo disc yet: [14-demos.md](14-demos.md) ships machine code
-as a PRG behind `SYS "NAME.BIN"`, and `tools/mkdemos.py` does not know
-about `.act` sources. The web page does not expose the compiler either;
-the export exists and the UI does not call it.
+Not on the demo disc yet, as first written: [14-demos.md](14-demos.md)
+ships machine code as a PRG behind `SYS "NAME.BIN"`, and
+`tools/mkdemos.py` did not know about `.act` sources. **It does now**
+-- every `demos/*.act` is compiled onto drive 11 and launched from a
+menu of its own ([D99](#d99--three-menus-and-a-menu-is-a-drive)),
+after the library was found to be wrong in seventeen of thirty
+addresses and made right ([D98](#d98--the-register-check-reads-every-dialect-and-the-library-names-no-address)).
+The web page still does not expose the compiler; the export exists and
+the UI does not call it.
 
 ## D98 -- The register check reads every dialect, and the library names no address
 
@@ -6014,3 +6019,77 @@ run, and costs 128 clocks a pixel to the interpreter's 101-181.
   it is the interrupt handler's, when a program has one. The frame
   counter is free-running, cannot be missed, and waiting for it to
   change is what `VSYNC` already does.
+
+## D99 -- Three menus, and a menu is a drive
+
+**Decision:** the disc has three volumes that are menus -- 13 `DEMOS`,
+14 `SOFTWARE`, 11 `ACTION` -- named in `cool8disk.MENUS` with their
+titles, **Demos**, **Software**, **CoolAction**, in that order. The
+emulators group the catalogue by the volume an entry came from and
+title the group from that table; `catalogue()` carries a `kind` per
+entry, `bas` or `bin`, and the launcher types `DRIVE n` / `LOAD` /
+`RUN` for one and `DRIVE n` / `SYS "NAME.BIN"` for the other. That is
+everything the web page and the window know about a disc.
+
+**The split is by language, not by genre.** A program written in
+BASIC is a Demo, and TAIPAN and the two COOLTRIS being games does not
+move them; Software is what the machine runs natively -- the Z-Machine
+games and the p-System -- reached through a BASIC stub that sets the
+drive and `SYS`es the interpreter; CoolAction is every `demos/*.act`
+compiled behind the library and placed as a bare `.BIN`, no stub. The
+line is drawn there because it is the line the user can *see*: RAINBOW
+and COBRA appear under both Demos and CoolAction, and picking each in
+turn is how the interpreter and the compiler get compared on the same
+picture with the same keystrokes.
+
+**Why `kind` and not a stub.** A `.BAS` stub per compiled demo would
+have kept the launcher's one rule -- everything is `LOAD` and `RUN` --
+at the cost of a second file per demo, typed at the machine by the
+disc build, saying nothing but `SYS`. `SYS "NAME.BIN"` already loads a
+PRG to the address in its own header ([D87](#d87--sys-name-a-binary-carries-its-own-address)),
+so the machine can start a `.BIN` in one line, and the catalogue
+saying *which* line is a field, not a file. The rule in
+`catalogue()`'s docstring changed from "a program is a `.BAS`" to "a
+program is something the machine can start, and there are two ways".
+
+**What the catalogue hides, and why.** A `.BIN` beside a `.BAS` of
+the same stem is that stub's payload: listing `HHGG.BIN` beside `HHGG`
+would put every Software entry on the menu twice, once without the
+colours and the drive its stub sets. Volume 0 is skipped whole --
+`BOOT.BIN` is a PRG and is not a program to offer. Stream chunks were
+already out, from the round Bad Apple put 82 of them on the menu.
+
+**Drive 14 cannot hold all four stories**, which the plan's menu table
+did not check: 438,218 bytes of story against 454,656 usable, before
+the five loaders. The build puts every loader and stub on 14, each
+story on 14 while it fits, and the one that does not on 13 -- the
+interpreter finds its story by scanning 14 and then 13 for the tag,
+which is how HHGG already worked from 13, and saves beside it. The
+menu entry is the stub, so the menu is still one drive.
+
+**Bad Apple's cap is in the tree now.** It was on disc alone: an
+earlier session cut the film to drive 12 in a gitignored manifest
+while `tools/mkbadapple.py` still planned twelve drives down to 1,
+`USER_VOL`. The generator's default drive list is `[BAPPLE_VOL]`,
+`--drives` asks for more, `plan()` refuses any volume in
+`cool8disk.CLAIMED`, and `mkdemos.py` asserts the same on every chunk
+it places. `docs/14-demos.md` describes what ships -- 344 frames, one
+drive -- and the full film as a rebuild with its cost.
+
+**Rejected, and why:**
+
+- *One menu with the label in front of each name*, which is what the
+  page had. Twenty-three entries in one list, and the two RAINBOWs
+  told apart by a prefix. Three lists say what the machine can do
+  before anything is picked.
+- *A menu as a list of drives*, so Software could span 14 and another
+  volume. The interpreter scans two fixed drives for its story, so a
+  third would not be found, and the entries fit on 14 anyway; it is
+  only a story file that spills.
+- *Teaching the window and the page the disc format* so each could
+  walk the directory itself. That is the rule `catalogue()` set in the
+  first place ([14-demos.md](14-demos.md) §1), and a `kind` field is
+  the whole cost of keeping it.
+- *A hardcoded program list per menu.* The disc build is the list;
+  `demos/` is the truth and the disc is derived, which is §2 of the
+  same document.
