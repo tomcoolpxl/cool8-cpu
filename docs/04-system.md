@@ -373,7 +373,11 @@ enabled at rate 2. Measured off the rendered picture, not the register:
 | `$FF2A` | `SPR_IDX` | R/W | Sprite descriptor byte index, 0–255 |
 | `$FF2B` | `SPR_DATA` | W | **Auto-increments `SPR_IDX`.** Eight bytes per descriptor (§5.6), written as pairs from an even index. Write-only, for the same reason `PAL_DATA` is |
 | `$FF2C` | `SPR_CTRL` | R/W | `0` sprite engine enable, `1` overrun occurred this frame (write 1 to clear), `7:4` the palette bank **every** sprite uses — see §5.6 |
-| `$FF30–$FF33` | — | — | **Reserved for a blitter, which is not built.** Reads `$FF`. See [D34](01-decisions.md#d34--the-video-engine-ships-with-sprites-and-a-pixel-port-and-no-blitter) and §5.11 |
+| `$FF2D` | `TMR_L` | R | Frames since reset, low byte — §5.5a. Waiting for it to change is `VSYNC` |
+| `$FF2E` | `TMR_M` | R | middle byte |
+| `$FF2F` | `TMR_H` | R | high byte |
+| `$FF30` | `VID_DBASE_H` | R/W | Display base override, high byte: the fetch scans from `{VID_DBASE_H, $00}` while `VID_CTRL` bit 6 is set, and `VID_BASE` goes on steering the drawing ([D92](01-decisions.md#d92--vid_dbase_h-the-glass-and-the-pencil-part-company)) |
+| `$FF31–$FF33` | — | — | **Reserved for a blitter, which is not built.** Reads `$FF`. See [D34](01-decisions.md#d34--the-video-engine-ships-with-sprites-and-a-pixel-port-and-no-blitter) and §5.11 |
 | `$FF34` | `PIX_X_L` | R/W | Pixel port X, low |
 | `$FF35` | `PIX_X_H` | R/W | `2:0` high |
 | `$FF36` | `PIX_Y_L` | R/W | Pixel port Y, low |
@@ -381,7 +385,11 @@ enabled at rate 2. Measured off the rendered picture, not the register:
 | `$FF38` | `PIX_DATA` | W | Write one pixel at (X, Y) of the surface `VID_BASE`/`VID_STRIDE` describes, in the current bpp, with sub-byte masking done in hardware. **Auto-increments X**, so a horizontal span is one store per pixel. **Write-only** — reads `$FF`; see §5.7 |
 | `$FF39` | `PIX_DATA_Y` | W | The same store **auto-incrementing Y** instead, so a vertical run is also one store per pixel. The store address picks the direction — no mode bit (D91). **Write-only** — reads `$FF`; see §5.7 |
 
-`$FF39–$FF3F` are spare, as is `$FF2D–$FF2F`.
+`$FF3A–$FF3F` are spare. This table said `$FF2D–$FF2F` were too, and
+listed `$FF30` under the blitter, for as long as `sw/libaction.act`
+was writing its "timer" at `$FF52` and its "pixel control" at `$FF30`:
+[04a-registers.md](04a-registers.md) is generated from the Verilog and
+is the one to trust when the two disagree.
 
 `$FF29` and `$FF38` have read side effects, and `$FF1E` and `$FF2A` are
 readable so an interrupt handler can save and restore the index it
@@ -537,6 +545,19 @@ is about twenty instructions and can make shapes no hardware ADSR offers.
 A voice is silenced by clearing its enable bit or its volume.
 
 ### 4.5 Timer — `$FF60`
+
+**Not built.** Nothing in `rtl/soc/` decodes `$FF60–$FF63`; the four
+addresses read `$FF` like any the page does not claim, and
+[04a-registers.md](04a-registers.md), read out of the Verilog, does not
+list them. The clock the machine actually has is the frame counter of
+§5.5a — `TMR_L`/`TMR_M`/`TMR_H` at `$FF2D–$FF2F`, which `TIMER`,
+`PAUSE`, `VSYNC` and CoolAction!'s `WaitVBlank` all read — and
+`VID_RCMP` does raster interrupts. This section is what a programmable
+timer would look like if one were ever needed, kept because the
+arithmetic below was done once and is right; it is not a description
+of the board. It was read as one: the first CoolAction! library wrote
+`TMR_CTRL` at an address that turned out to be the sound engine's, and
+nothing noticed until [D98](01-decisions.md#d98--the-register-check-reads-every-dialect-and-the-library-names-no-address).
 
 | Addr | Name | Description |
 |---|---|---|

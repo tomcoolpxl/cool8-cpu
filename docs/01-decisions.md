@@ -5938,3 +5938,79 @@ Not on the demo disc yet: [14-demos.md](14-demos.md) ships machine code
 as a PRG behind `SYS "NAME.BIN"`, and `tools/mkdemos.py` does not know
 about `.act` sources. The web page does not expose the compiler either;
 the export exists and the UI does not call it.
+
+## D98 -- The register check reads every dialect, and the library names no address
+
+**Decision:** `tools/ioregs.py` emits a third generated file,
+`sw/io.act`, beside `sw/io.asm` and `sw/io.bas`; its checker and its
+literal-rewriter glob `*.act` with the other two; and
+`sw/libaction.act` declares no register of its own -- it compiles
+behind `sw/io.act`, and `sim/test_action.py` proves it does not
+compile without it.
+
+**Why it exists.** The first library shipped with seventeen of thirty
+register equates wrong. It was written from a plan's prose, which had
+invented a register map, rather than from the generated one:
+`SetColor` wrote `CUR_X` and `CUR_Y`, `WaitVBlank` polled `VID_BORDER`
+and never returned, `SetTileBase` wrote `VID_PAT` by accident and
+`Scroll` was right by the same accident, and the timer calls wrote at
+`$FF52` and `$FF54`, which the sound engine decodes -- the timer
+[04-system.md §4.5](04-system.md) describes was never built, and the
+doc did not say so. It compiled, its size was reported in
+[15-action.md](15-action.md), and `poe check` passed for the whole
+round, because the check that exists for exactly this fault
+([D67](#d67--the-io-page-is-at-ff00-and-every-address-is-generated))
+globbed `sw/*.asm` and `sw/*.bas` and nobody had told it a third
+language had arrived. That is the same door D67 closed, entered from a
+direction that did not exist when it was closed.
+
+**What the gate can and cannot see, and why the library changed shape
+rather than just its numbers.** Run over the old file, the extended
+check fails on two addresses -- the two that land where nothing
+decodes. The other fifteen land on real registers under the wrong
+name, and no address check can tell `pal_idx = $FF22` from a program
+that genuinely wants `CUR_X`. The only fix for those is that the
+library never writes an address: the name is the hardware's, from the
+file the hardware generates, and a wrong name is an undefined
+variable. So `sw/io.act` is not a convenience; it is the half of the
+check that reads names rather than numbers.
+
+**`sw/io.act` carries a `CARD` for every `_L`/`_H` pair**, `CARD
+VID_BASE` over `VID_BASE_L` and `VID_BASE_H`, because a sixteen-bit
+store to a pair is what every caller wants and the two byte names are
+the proof the pair is adjacent. It is derived from the RTL's own
+names, not declared, and the check reports each as a second name for
+the low byte -- which is what it is.
+
+**The second round of the fix was reading every routine, not
+replacing seventeen numbers.** A routine can name the right register
+and still write the wrong bits: `Graphics` wrote the preset without
+bit 7 and turned the display off; `SetColor` wrote the low byte of the
+colour first where `PAL_DATA` takes the high; `SetSprite` wrote eight
+bytes to a VRAM address the sprite engine has never read from. Each
+was re-read against [04-system.md §4](04-system.md) and BASIC's own
+handler in `sw/interp.asm`, and the test that came out of it reads
+back what the *machine* holds after the call -- VRAM, the palette RAM,
+the descriptor and voice arrays, the registers -- rather than what the
+source says it wrote. The routines the plan promised and the library
+lacked came with it: `Clg`, in `h_clg`'s own fill loop; `FlipBuffer`;
+and `Line`, which is `h_line` pixel for pixel and is gated on
+`sim/test_run.py`'s fan, 38,400 bytes compared. It matched on the first
+run, and costs 128 clocks a pixel to the interpreter's 101-181.
+
+**Rejected, and why:**
+
+- *Fix the seventeen equates by hand and move on.* It is the same
+  file written the same way; the eighteenth would be next session's.
+- *A word-view convention in `sw/io.asm` too.* Nothing in assembly
+  wants it -- `LDW`/`STW` on the byte names are the idiom there -- and
+  a generated file should carry what its dialect uses, not what
+  another one does.
+- *Teach the compiler an `INCLUDE`* so the library could name
+  `sw/io.act` itself. It would be the first path the compiler
+  resolves and the browser build has no filesystem; the command line
+  and `H.ACT_LIB` say the order once.
+- *Polling `VID_IRQ` bit 1 for `WaitVBlank`.* It needs clearing and
+  it is the interrupt handler's, when a program has one. The frame
+  counter is free-running, cannot be missed, and waiting for it to
+  change is what `VSYNC` already does.

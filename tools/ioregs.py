@@ -57,6 +57,27 @@ RTL = os.path.join(ROOT, "rtl", "soc", "*.v")
 DOC = os.path.join(ROOT, "docs", "04a-registers.md")
 ASM = os.path.join(ROOT, "sw", "io.asm")
 BAS = os.path.join(ROOT, "sw", "io.bas")
+ACT = os.path.join(ROOT, "sw", "io.act")
+GENERATED = ("io.asm", "io.bas", "io.act")
+
+# **Every source dialect in sw/, and the check globs all of them.** For
+# a year this was `*.asm` and `*.bas`, and then CoolAction! arrived as a
+# third language nobody told the glob about: `sw/libaction.act` was
+# written from a plan's prose with seventeen of thirty addresses wrong
+# -- `SetColor` writing the cursor position, `WaitVBlank` polling the
+# border colour -- and it compiled cleanly, was size-reported, and
+# passed `poe check` for the whole of the round, because the gate that
+# exists for exactly that fault never read the file. A new dialect
+# goes in this tuple before it gets a file in sw/.
+DIALECTS = ("*.asm", "*.bas", "*.act")
+
+
+def sources():
+    """Every software source the register check reads, sorted."""
+    out = []
+    for pat in DIALECTS:
+        out += glob.glob(os.path.join(ROOT, "sw", pat))
+    return sorted(out)
 
 # **The page base lives here and nowhere else.** It used to be the
 # literal `0xFE00` here, `8'hFE` twice in the RTL, `0xFE00` twice in
@@ -84,7 +105,10 @@ NOTE = re.compile(r"//:\s*(\S+)\s*(.*?)\s*$")
 # `IOBASE + $xx` the generated file emits. Both are recognised so the
 # check keeps biting during the transition and after it. Lines that
 # merely POKE a literal are not declarations and are counted separately.
-EQU = re.compile(r"^\s*(?:CONST\s+|\.equ\s+)?([A-Za-z_][A-Za-z0-9_]*)"
+# CoolAction!'s binding is `BYTE NAME = address` (15-action.md section
+# 2.3), so a type may stand where `CONST` or `.equ` would.
+EQU = re.compile(r"^\s*(?:CONST\s+|\.equ\s+|(?:BYTE|CARD|INT|CHAR)\s+)?"
+                 r"([A-Za-z_][A-Za-z0-9_]*)"
                  r"\s*,?\s*=\s*,?\s*(?:\$%02X([0-9A-Fa-f]{2})"
                  r"|IOBASE\s*\+\s*\$([0-9A-Fa-f]{1,2}))\b"
                  % (IO_BASE >> 8))
@@ -149,8 +173,7 @@ def addr_of(name):
 def software():
     """{offset: {name: [files]}} for every $FExx equate in sw/."""
     out = {}
-    for path in sorted(glob.glob(os.path.join(ROOT, "sw", "*.asm")) +
-                       glob.glob(os.path.join(ROOT, "sw", "*.bas"))):
+    for path in sources():
         base = os.path.basename(path)
         for line in io.open(path, encoding="utf-8"):
             if USES.search(line):
@@ -187,13 +210,12 @@ def literals():
     # kind of address. Only a bare `$FFxx` -- `[$FF11]` in assembly, a
     # POKE or PEEK argument in BASIC -- is a reference to the page.
     lit = re.compile(r"(?<!#)\$([0-9A-Fa-f]{4})\b")
-    for path in sorted(glob.glob(os.path.join(ROOT, "sw", "*.asm")) +
-                       glob.glob(os.path.join(ROOT, "sw", "*.bas"))):
+    for path in sources():
         base = os.path.basename(path)
-        if base in ("io.asm", "io.bas"):
+        if base in GENERATED:
             continue
         for n, line in enumerate(io.open(path, encoding="utf-8"), 1):
-            code = line.split(";")[0].split("'")[0]
+            code, _ = _code(line, base)
             if EQU.match(code):
                 continue
             for m in lit.finditer(code):
@@ -221,6 +243,24 @@ def _code(line, path):
         import cool8asm
         code, _ = cool8asm.Assembler.split(line)
         return line[:len(code)], line[len(code):]
+    if path.endswith(".act"):
+        # CoolAction!: `;` or `//` to the end of the line, neither of
+        # them inside a "string" or a 'c' literal (15-action.md 2.1).
+        q = None
+        i = 0
+        while i < len(line):
+            ch = line[i]
+            if q:
+                if ch == "\\":
+                    i += 1
+                elif ch == q:
+                    q = None
+            elif ch in "\"'":
+                q = ch
+            elif ch == ";" or line.startswith("//", i):
+                return line[:i], line[i:]
+            i += 1
+        return line, ""
     q = False
     for i, ch in enumerate(line):
         if ch == '"':
@@ -252,10 +292,9 @@ def name_literals(write=False):
     # POKE or PEEK argument in BASIC -- is a reference to the page.
     lit = re.compile(r"(?<!#)\$([0-9A-Fa-f]{4})\b")
     done, missing = {}, []
-    for path in sorted(glob.glob(os.path.join(ROOT, "sw", "*.asm")) +
-                       glob.glob(os.path.join(ROOT, "sw", "*.bas"))):
+    for path in sources():
         base = os.path.basename(path)
-        if base in ("io.asm", "io.bas"):
+        if base in GENERATED:
             continue
         out, hit = [], []
         for n, line in enumerate(io.open(path, encoding="utf-8",
@@ -357,7 +396,7 @@ def check():
 
     if not bad:
         for path, want in ((DOC, markdown()), (ASM, assembly() + "\n"),
-                           (BAS, basic() + "\n")):
+                           (BAS, basic() + "\n"), (ACT, action() + "\n")):
             rel = os.path.relpath(path, ROOT).replace("\\", "/")
             if not os.path.exists(path):
                 bad.append("%s is missing: "
@@ -477,6 +516,69 @@ def basic():
     return "\n".join(o)
 
 
+def action():
+    """`sw/io.act` -- the same registers as CoolAction! bindings.
+
+    **The third dialect, and the one that shipped wrong.** A CoolAction!
+    program reaches a register by binding a name to its address --
+    `BYTE VID_MODE = $FF10` (15-action.md section 2.3) -- and there is
+    no INCLUDE, so this file goes first on the compiler's command line
+    and `sw/libaction.act` uses these names and declares none of its
+    own. The library used to carry its own thirty equates, written from
+    a plan's prose, and seventeen were wrong.
+
+    Each register is a `BYTE`, as the hardware decodes it. **A `_L`/`_H`
+    pair also gets a `CARD` under the stem**, `CARD VID_BASE` over
+    `VID_BASE_L` and `VID_BASE_H`, because a sixteen-bit store to the
+    pair is what every caller wants and the two byte names are the
+    proof the pair is adjacent and little-endian -- the word view is
+    derived from the RTL's own names, not declared here. It is a second
+    name for the low byte's address, and the check reports it as one.
+    """
+    regs = registers()
+    o = []
+    o.append("; -----------------------------------------------------"
+             "----------------")
+    o.append("; io.act -- the I/O page for CoolAction!, generated by "
+             "tools/ioregs.py.")
+    o.append(";")
+    o.append("; **Do not edit.** Same source as sw/io.asm: the Verilog "
+             "localparams in")
+    o.append("; rtl/soc/*.v that decode these addresses. `poe check` "
+             "fails if stale.")
+    o.append(";")
+    o.append("; There is no INCLUDE, so this file goes first on the "
+             "compiler's command")
+    o.append("; line, ahead of sw/libaction.act. A BYTE is a register; "
+             "a CARD is a")
+    o.append("; _L/_H pair, so `VID_BASE = addr` is both bytes in one "
+             "store.")
+    o.append("; -----------------------------------------------------"
+             "----------------")
+    o.append("")
+    o.append("CONST IOBASE = $%04X" % IO_BASE)
+    o.append("")
+
+    bymod = {}
+    for off, r in regs.items():
+        bymod.setdefault(r["module"], []).append(off)
+    for mod in sorted(bymod):
+        o.append("; ---- %s" % mod)
+        for off in sorted(bymod[mod]):
+            r = regs[off]
+            name = r["name"] or r["param"]
+            o.append("BYTE %-11s = IOBASE + $%02X   ; %s" %
+                     (name, off, r["note"]))
+        for off in sorted(bymod[mod]):
+            name = regs[off]["name"] or ""
+            hi = regs.get(off + 1, {}).get("name") or ""
+            if name.endswith("_L") and hi == name[:-2] + "_H":
+                o.append("CARD %-11s = IOBASE + $%02X   ; %s and %s" %
+                         (name[:-2], off, name, hi))
+        o.append("")
+    return "\n".join(o)
+
+
 def markdown():
     regs, sw = registers(), software()
     o = []
@@ -545,12 +647,12 @@ def markdown():
                if len([n for n in sw.get(off, {})]) > 1]
     o.append("## Registers with more than one software name")
     o.append("")
-    o.append("%d of them, and all the same split: the interpreter uses "
-             "its own `G`-prefixed shorthand while the boot ROM, the "
-             "demo and the library use the longer name. Two spellings "
-             "of one address is untidy but harmless, so the check "
-             "reports rather than refuses; a spelling pointing at the "
-             "*wrong* address is what it fails on." % len(aliased))
+    o.append("%d of them. `IOBASE` is the page itself, and the rest "
+             "are `sw/io.act`'s `CARD` views of an `_L`/`_H` pair, "
+             "which share the low byte's address by construction. Two "
+             "spellings of one address is untidy but harmless, so the "
+             "check reports rather than refuses; a spelling pointing at "
+             "the *wrong* address is what it fails on." % len(aliased))
     o.append("")
     o.append("| | |")
     o.append("|---|---|")
@@ -595,9 +697,12 @@ def main():
             assembly() + "\n")
         io.open(BAS, "w", encoding="utf-8", newline="\n").write(
             basic() + "\n")
-        print("wrote %s, %s and %s" % (os.path.relpath(DOC, ROOT),
-                                       os.path.relpath(ASM, ROOT),
-                                       os.path.relpath(BAS, ROOT)))
+        io.open(ACT, "w", encoding="utf-8", newline="\n").write(
+            action() + "\n")
+        print("wrote %s, %s, %s and %s" % (os.path.relpath(DOC, ROOT),
+                                           os.path.relpath(ASM, ROOT),
+                                           os.path.relpath(BAS, ROOT),
+                                           os.path.relpath(ACT, ROOT)))
         return 0
     return check()
 

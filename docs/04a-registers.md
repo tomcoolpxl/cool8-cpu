@@ -25,9 +25,9 @@ What the registers *do* at the bit level is [04-system.md](04-system.md), writte
 
 | | | |
 |---|---|---|
-| `$FF34` | `PIX_X_L` | plot X, low |
+| `$FF34` | `PIX_X_L` *(also `PIX_X`)* | plot X, low |
 | `$FF35` | `PIX_X_H` | plot X, high |
-| `$FF36` | `PIX_Y_L` | plot Y, low |
+| `$FF36` | `PIX_Y_L` *(also `PIX_Y`)* | plot Y, low |
 | `$FF37` | `PIX_Y_H` | plot Y, high |
 | `$FF38` | `PIX_DATA` | write plots the pixel at X,Y, then X advances |
 | `$FF39` | `PIX_DATA_Y` | write plots the pixel at X,Y, then Y advances |
@@ -58,7 +58,7 @@ What the registers *do* at the bit level is [04-system.md](04-system.md), writte
 | `$FF03` | `LED` | the board's LEDs, one per bit |
 | `$FF70` | `UART_STAT` | transmit ready, receive ready |
 | `$FF71` | `UART_DATA` | read receives, write transmits |
-| `$FF72` | `UART_DIV_L` | baud divisor, low |
+| `$FF72` | `UART_DIV_L` *(also `UART_DIV`)* | baud divisor, low |
 | `$FF73` | `UART_DIV_H` | baud divisor, high |
 | `$FF80` | `LDR_CTRL` | boot loader control |
 | `$FF81` | `LDR_STAT` | boot loader status |
@@ -75,7 +75,7 @@ What the registers *do* at the bit level is [04-system.md](04-system.md), writte
 
 | | | |
 |---|---|---|
-| `$FF26` | `VRAM_ADDR_L` | indirect VRAM address, low |
+| `$FF26` | `VRAM_ADDR_L` *(also `VRAM_ADDR`)* | indirect VRAM address, low |
 | `$FF27` | `VRAM_ADDR_H` | indirect VRAM address, high |
 | `$FF28` | `VRAM_STEP` | added to the address after each access |
 | `$FF29` | `VRAM_DATA` | the byte at that address; access auto-steps |
@@ -86,13 +86,13 @@ What the registers *do* at the bit level is [04-system.md](04-system.md), writte
 |---|---|---|
 | `$FF10` | `VID_MODE` | screen mode, low nibble |
 | `$FF11` | `VID_CTRL` | display enable, sprite enable, blanking |
-| `$FF12` | `VID_BASE_L` | character/bitmap base, low |
+| `$FF12` | `VID_BASE_L` *(also `VID_BASE`)* | character/bitmap base, low |
 | `$FF13` | `VID_BASE_H` | character/bitmap base, high |
-| `$FF14` | `VID_STRIDE_L` | bytes per row, low |
+| `$FF14` | `VID_STRIDE_L` *(also `VID_STRIDE`)* | bytes per row, low |
 | `$FF15` | `VID_STRIDE_H` | bytes per row, high |
-| `$FF16` | `VID_SCX_L` | horizontal scroll, low |
+| `$FF16` | `VID_SCX_L` *(also `VID_SCX`)* | horizontal scroll, low |
 | `$FF17` | `VID_SCX_H` | horizontal scroll, high |
-| `$FF18` | `VID_SCY_L` | vertical scroll, low |
+| `$FF18` | `VID_SCY_L` *(also `VID_SCY`)* | vertical scroll, low |
 | `$FF19` | `VID_SCY_H` | vertical scroll, high |
 | `$FF1A` | `VID_BORDER` | border colour index |
 | `$FF1B` | `VID_RASTER` | current raster line, read-only |
@@ -100,7 +100,7 @@ What the registers *do* at the bit level is [04-system.md](04-system.md), writte
 | `$FF1D` | `VID_IRQ` | interrupt enable and acknowledge |
 | `$FF1E` | `PAL_IDX` | palette entry to address |
 | `$FF1F` | `PAL_DATA` | that entry's colour |
-| `$FF20` | `VID_PAT_L` | pattern/tile base, low |
+| `$FF20` | `VID_PAT_L` *(also `VID_PAT`)* | pattern/tile base, low |
 | `$FF21` | `VID_PAT_H` | pattern/tile base, high |
 | `$FF22` | `CUR_X` | text cursor column |
 | `$FF23` | `CUR_Y` | text cursor row |
@@ -118,8 +118,17 @@ What the registers *do* at the bit level is [04-system.md](04-system.md), writte
 
 ## Registers with more than one software name
 
-1 of them, and all the same split: the interpreter uses its own `G`-prefixed shorthand while the boot ROM, the demo and the library use the longer name. Two spellings of one address is untidy but harmless, so the check reports rather than refuses; a spelling pointing at the *wrong* address is what it fails on.
+10 of them. `IOBASE` is the page itself, and the rest are `sw/io.act`'s `CARD` views of an `_L`/`_H` pair, which share the low byte's address by construction. Two spellings of one address is untidy but harmless, so the check reports rather than refuses; a spelling pointing at the *wrong* address is what it fails on.
 
 | | |
 |---|---|
 | `$FF00` | `IOBASE` · `SYS_CTRL` |
+| `$FF12` | `VID_BASE` · `VID_BASE_L` |
+| `$FF14` | `VID_STRIDE` · `VID_STRIDE_L` |
+| `$FF16` | `VID_SCX` · `VID_SCX_L` |
+| `$FF18` | `VID_SCY` · `VID_SCY_L` |
+| `$FF20` | `VID_PAT` · `VID_PAT_L` |
+| `$FF26` | `VRAM_ADDR` · `VRAM_ADDR_L` |
+| `$FF34` | `PIX_X` · `PIX_X_L` |
+| `$FF36` | `PIX_Y` · `PIX_Y_L` |
+| `$FF72` | `UART_DIV` · `UART_DIV_L` |

@@ -290,21 +290,128 @@ def test_primes():
     check(said == "Primes: 168\n", "primes: said 'Primes: 168'", repr(said))
 
     # the library and a program as one text, which is how a game is built
-    prg, syms = H.build_act(["sw/libaction.act", "demos/primes.act"], "act_both")
+    prg, syms = H.build_act(H.ACT_LIB + ["demos/primes.act"], "act_both")
     same_bytes("act_both", prg)
     m, why = run(prg)
     check(why == "halt" and m.said() == b"Primes: 168\n" and "VFill" in syms,
-          "primes: the same, compiled behind sw/libaction.act", why)
+          "primes: the same, compiled behind the library", why)
     print()
 
 
 def test_library():
-    print("  sw/libaction.act")
-    prg, syms = H.build_act("sw/libaction.act", "act_lib")
+    print("  sw/io.act and sw/libaction.act")
+    prg, syms = H.build_act(H.ACT_LIB, "act_lib")
     same_bytes("act_lib", prg)
-    for name in ("VFill", "Plot", "SetTile", "SetSprite", "WaitVBlank", "Print"):
+    for name in ("VFill", "Plot", "Line", "Clg", "SetPalette", "FlipBuffer",
+                 "SetTile", "SetSprite", "Sound", "WaitVBlank", "Print"):
         check(name in syms, "library: %s is a routine" % name)
+    # the library declares no address of its own: every register name
+    # it uses resolves to the generated file's binding
+    prg2, why = H.try_build_act("sw/libaction.act", "act_lib_alone")
+    check(prg2 is None and "undefined variable" in why,
+          "library: names no register itself -- it does not compile without sw/io.act",
+          "compiled" if prg2 else why)
     print("    %d bytes" % (len(prg) - 2))
+    print()
+
+
+HARDWARE = r'''
+; every routine that touches a register, then the machine is asked
+; what it saw -- VRAM, the palette, the sprite and sound arrays, the
+; registers themselves, and the UART
+CARD ARRAY pal(2) = [$0F0 $00F]
+BYTE ARRAY out(8)
+
+PROC Main()
+  Graphics(4)
+  Cursor(0)
+  Clg(3)                        ; 4 bpp: every byte $33
+  Plot(10, 20, 5)
+  Plot(11, 20, 6)               ; the same byte, both nibbles
+  HLine(0, 0, 4, 1)
+  VLine(0, 100, 2, 2)
+  SetTile(3, 2, 7, 9)           ; through the VRAM port, as a map entry
+  SetColor(1, $F00)
+  SetPalette(pal, 2, 2)
+  Sound(1, 881, 12, 0)
+  Border(7)
+  SetSprite(3, 100, 200, $8020, 1, $40)
+  SpritesOn(2)
+  out(2) = Key()
+  out(3) = Key()
+  out(0) = Frame()
+  WaitVBlank()
+  out(1) = Frame()
+  DoubleBuffer($00, $60)
+  FlipBuffer()
+  PrintE("OK")
+RETURN
+'''
+
+
+def test_hardware():
+    """The library against the machine, not against its own source.
+
+    The first library compiled, was measured and passed every gate with
+    seventeen wrong addresses, because no test ever ran it -- every
+    check here reads back what the *hardware* holds after the call, so
+    a routine that writes the right value to the wrong register fails
+    by name.
+    """
+    import ioregs
+    print("  the library, on the hardware")
+    prg, syms = H.build_act(H.ACT_LIB + [HARDWARE], "act_hw")
+    same_bytes("act_hw", prg)
+    m = H.session()
+    m.scancode([0x1C])                     # one make code queued
+    why = H.run_act(m, prg, budget=4_000_000)
+    check(why == "halt", "hardware: ran to the HALT (WaitVBlank returned)", why)
+    check(m.cpu.sp == 0x0200, "hardware: stack neutral", "SP $%04X" % m.cpu.sp)
+    reg = lambda n: m.bus.read(ioregs.addr_of(n))   # noqa: E731
+
+    check(reg("VID_MODE") == 0x84, "Graphics(4): mode 4 with display enable",
+          "VID_MODE $%02X" % reg("VID_MODE"))
+    check(reg("CUR_CTRL") == 0x10, "Cursor(0): enable off, rate kept",
+          "CUR_CTRL $%02X" % reg("CUR_CTRL"))
+
+    vr = bytes(m.video.vram[0:38400])
+    want = bytearray(b"\x33" * 38400)
+    want[20 * 160 + 5] = 0x56
+    want[0] = want[1] = 0x11
+    want[100 * 160] = want[101 * 160] = 0x23
+    want[2 * 128 + 6], want[2 * 128 + 7] = 7, 9
+    bad = [i for i in range(38400) if vr[i] != want[i]]
+    check(not bad, "Clg, Plot, HLine, VLine, SetTile: VRAM holds exactly what was drawn",
+          "%d bytes differ; first at %d: got %02X want %02X"
+          % (len(bad), bad[0] if bad else 0, vr[bad[0]] if bad else 0,
+             want[bad[0]] if bad else 0))
+
+    p = m.palette()
+    check(p[1] == 0x0F00 and p[2] == 0x00F0 and p[3] == 0x000F,
+          "SetColor, SetPalette: entries 1-3 are $F00 $0F0 $00F",
+          "%03X %03X %03X" % (p[1], p[2], p[3]))
+    s = m.sound()
+    check(s[8] == 881 & 0xFF and s[9] == 881 >> 8 and s[12] == 12 and s[13] == 0x40,
+          "Sound(1, 881, 12, 0): voice 1 programmed", s[8:14].hex())
+    check(reg("VID_BORDER") == 7, "Border(7)", "VID_BORDER %d" % reg("VID_BORDER"))
+    d = m.sprites()[24:32]
+    check(bytes(d) == bytes([200, 0xC0, 100, 0, 0x01, 4, 0x40, 0]),
+          "SetSprite(3, 100, 200, $8020, 1, $40): descriptor 3", d.hex())
+    check(reg("SPR_CTRL") == 0x21, "SpritesOn(2): engine on, bank 2",
+          "SPR_CTRL $%02X" % reg("SPR_CTRL"))
+
+    out = m.bus.mem[syms["v_out"]:syms["v_out"] + 8]
+    check(out[2] == 0x1C and out[3] == 0, "Key(): the queued scancode, then 0",
+          "%02X %02X" % (out[2], out[3]))
+    check(out[1] == (out[0] + 1) & 0xFF,
+          "WaitVBlank(): returned on the very next frame",
+          "frame %d before, %d after" % (out[0], out[1]))
+    check(reg("VID_DBASE_H") == 0x60 and reg("VID_BASE_H") == 0x00
+          and reg("VID_CTRL") & 0x40,
+          "DoubleBuffer($00, $60) then FlipBuffer(): showing $60, drawing $00, bit 6 set",
+          "DBASE_H $%02X BASE_H $%02X CTRL $%02X"
+          % (reg("VID_DBASE_H"), reg("VID_BASE_H"), reg("VID_CTRL")))
+    check(m.said() == b"OK\r\n", "PrintE: said OK", repr(m.said()))
     print()
 
 
@@ -395,15 +502,10 @@ def profile_sieve():
     """`--profile`: where the sieve's clocks go, by loop label. The
     labels are the compiler's own (.do, .wh, .od ...), qualified by
     routine, so the report names the loop rather than the routine."""
-    import dbg
     prg, syms = H.build_act("sw/bench/sieve.act", "act_sieve")
-    org = prg[0] | (prg[1] << 8)
     m = H.session()
-    code = prg[2:]
-    m.bus.mem[org:org + len(code)] = code
-    m.bus.mem[0xFEF0:0xFEF4] = bytes([0x29, org & 0xFF, org >> 8, 0x21])
-    m.cpu.pc, m.cpu.sp, m.romen = 0xFEF0, 0x0200, False
-    p = dbg.Profile(syms, org, org + len(code))
+    org, end = H.load_act(m, prg)
+    p = dbg.Profile(syms, org, end)
     p.run(m)
     print(p.report(top=12, roll=False))
     return 0
@@ -419,6 +521,7 @@ def main():
     test_sieve()
     test_primes()
     test_library()
+    test_hardware()
     test_refusals()
     return H.report()
 

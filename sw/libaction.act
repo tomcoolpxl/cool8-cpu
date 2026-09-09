@@ -1,230 +1,452 @@
-; ====================================================================
-; CoolAction! Standard Library for COOL8
-; Low-level hardware abstractions for video, sound, input, and memory
-; ====================================================================
+; =====================================================================
+; libaction.act -- the CoolAction! hardware library for COOL8
+;
+; Video, the pixel port, the palette, the double buffer, tiles,
+; sprites, sound, timing, the keyboard and the UART, as routines a
+; game calls. docs/15-action.md section 6 is the reference.
+;
+; **No register address is written in this file.** Every name here
+; comes from sw/io.act, which tools/ioregs.py generates out of the
+; Verilog that decodes the page -- so this file compiles behind it:
+;
+;     coolaction sw/io.act sw/libaction.act game.act -o GAME.BIN
+;
+; The first version carried thirty equates of its own, written from a
+; plan's prose rather than from the hardware, and seventeen were wrong:
+; `SetColor` wrote the cursor position, `WaitVBlank` polled the border
+; colour and never returned, the timer calls wrote into a hole. It
+; compiled, its size was reported, and `poe check` passed, because the
+; gate that catches a bad address read `.asm` and `.bas` and nobody had
+; told it about a third dialect. It reads `.act` now, and there is
+; nothing here for it to find.
+;
+; **Every routine that touches the video registers was re-read against
+; docs/04-system.md section 4 and BASIC's own handlers in
+; sw/interp.asm**, which is why several do something the old ones did
+; not: `Graphics` sets the display-enable bit MODE sets, `SetColor`
+; writes the high byte first as PAL_DATA requires, `SetSprite` goes
+; through the descriptor port rather than a made-up VRAM address, and
+; `Clg` clears exactly what CLG clears, in a fill loop that is CLG's.
+; =====================================================================
 
-; --- Hardware Register Mappings ---
-BYTE vid_mode    = $FF10
-BYTE vid_ctrl    = $FF11
-CARD vid_base    = $FF12
-CARD vid_dbase   = $FF14
-CARD vid_scrlx   = $FF16
-CARD vid_scrly   = $FF18
-BYTE vid_status  = $FF1A
-BYTE vid_irq     = $FF1D
-BYTE vid_irq_en  = $FF1E
-BYTE vid_raster  = $FF1F
-CARD pat_base    = $FF20
-BYTE pal_idx     = $FF22
-BYTE pal_data_l  = $FF23
-BYTE pal_data_h  = $FF24
-CARD vram_addr   = $FF26
-BYTE vram_step   = $FF28
-BYTE vram_data   = $FF29
-
-BYTE pix_ctrl    = $FF30
-CARD pix_x       = $FF34
-CARD pix_y       = $FF36
-BYTE pix_data    = $FF38
-BYTE pix_data_y  = $FF39
-
-BYTE kbd_status  = $FF40
-BYTE kbd_data    = $FF41
-BYTE joy_data    = $FF44
-
-CARD tmr0_div    = $FF50
-CARD tmr0_cnt    = $FF52
-BYTE tmr0_ctrl   = $FF54
-
-BYTE uart_status = $FF70
-BYTE uart_data   = $FF71
-
-; --- Low-Level VRAM Operations ---
+; ---------------------------------------------------------------------
+; VRAM, through the indirect port. VRAM_DATA auto-steps the address by
+; VRAM_STEP after every access, read or write.
+; ---------------------------------------------------------------------
 
 PROC VPoke(CARD addr, BYTE val)
-  vram_addr = addr
-  vram_data = val
+  VRAM_ADDR = addr
+  VRAM_DATA = val
 RETURN
 
 FUNC BYTE VPeek(CARD addr)
-  vram_addr = addr
-RETURN (vram_data)
+  VRAM_ADDR = addr
+RETURN (VRAM_DATA)
 
 PROC VFill(CARD addr, CARD count, BYTE val)
-  vram_addr = addr
-  vram_step = 1
+  VRAM_ADDR = addr
+  VRAM_STEP = 1
   WHILE count > 0 DO
-    vram_data = val
+    VRAM_DATA = val
     count -= 1
   OD
 RETURN
 
 PROC VWrite(CARD addr, BYTE POINTER src, CARD count)
-  vram_addr = addr
-  vram_step = 1
+  VRAM_ADDR = addr
+  VRAM_STEP = 1
   WHILE count > 0 DO
-    vram_data = *src
+    VRAM_DATA = *src
     src += 1
     count -= 1
   OD
 RETURN
 
 PROC VRead(CARD addr, BYTE POINTER dest, CARD count)
-  vram_addr = addr
-  vram_step = 1
+  VRAM_ADDR = addr
+  VRAM_STEP = 1
   WHILE count > 0 DO
-    *dest = vram_data
+    *dest = VRAM_DATA
     dest += 1
     count -= 1
   OD
 RETURN
 
-; --- Video & Screen Modes ---
+; ---------------------------------------------------------------------
+; The screen
+; ---------------------------------------------------------------------
 
+; Graphics(mode) -- what MODE does: the preset number in the low nibble
+; and bit 7, display enable, set. Written bare, as the first version
+; did, the mode register's bit 7 is 0 and the screen is off.
 PROC Graphics(BYTE mode)
-  vid_mode = mode
+  VID_MODE = (mode & $0F) | $80
+RETURN
+
+; Cursor(on) -- CURSOR on: bit 0 enables, bits 4:3 keep rate 2, the
+; 32-frames-a-phase blink this machine has always had (04-system.md
+; section 4.2). CURSOR 0 leaves the rate and clears the enable, so
+; this does too.
+PROC Cursor(BYTE on)
+  CUR_CTRL = (on & 1) | $10
 RETURN
 
 PROC Scroll(CARD x, CARD y)
-  vid_scrlx = x
-  vid_scrly = y
+  VID_SCX = x
+  VID_SCY = y
 RETURN
 
-PROC SetColor(BYTE idx, CARD rgb12)
-  pal_idx = idx
-  pal_data_l = rgb12 & $FF
-  pal_data_h = (rgb12 >> 8) & $0F
+PROC Border(BYTE color)
+  VID_BORDER = color
 RETURN
 
-; --- Fast Drawing & Pixel Port ---
+; SetColor(idx, rgb) -- one palette entry, $0RGB. PAL_DATA takes two
+; writes, **high byte first**: 0000RRRR then GGGGBBBB, and the second
+; commits the pair and advances PAL_IDX. The old version wrote the low
+; byte first, into the cursor row.
+PROC SetColor(BYTE idx, CARD rgb)
+  PAL_IDX = idx
+  PAL_DATA = rgb >> 8
+  PAL_DATA = rgb
+RETURN
+
+; SetPalette(pal, first, n) -- n entries from a CARD ARRAY of $0RGB
+; words, starting at entry `first`. One PAL_IDX write; the data port
+; advances the index itself, so a sixteen-colour palette is one call
+; and thirty-two stores.
+PROC SetPalette(CARD POINTER pal, BYTE first, BYTE n)
+  PAL_IDX = first
+  WHILE n > 0 DO
+    PAL_DATA = *pal >> 8
+    PAL_DATA = *pal
+    pal += 2
+    n -= 1
+  OD
+RETURN
+
+; ---------------------------------------------------------------------
+; The pixel port. A store to PIX_DATA plots at (X, Y) and steps X; a
+; store to PIX_DATA_Y plots and steps Y (D91). Masking to the mode's
+; depth is the hardware's.
+; ---------------------------------------------------------------------
 
 PROC Plot(CARD x, CARD y, BYTE color)
-  pix_x = x
-  pix_y = y
-  pix_data = color
+  PIX_X = x
+  PIX_Y = y
+  PIX_DATA = color
 RETURN
 
 PROC HLine(CARD x, CARD y, CARD len, BYTE color)
-  pix_x = x
-  pix_y = y
+  PIX_X = x
+  PIX_Y = y
   WHILE len > 0 DO
-    pix_data = color
+    PIX_DATA = color
     len -= 1
   OD
 RETURN
 
 PROC VLine(CARD x, CARD y, CARD len, BYTE color)
-  pix_x = x
-  pix_y = y
+  PIX_X = x
+  PIX_Y = y
   WHILE len > 0 DO
-    pix_data_y = color
+    PIX_DATA_Y = color
     len -= 1
   OD
 RETURN
 
-; --- Mode 2 Tile Engine ---
+; Line(x0, y0, x1, y1, c) -- BASIC's LINE, pixel for pixel.
+;
+; This is `h_line` in sw/interp.asm and not a textbook Bresenham, and
+; the difference is visible: a compiled RAINBOW that tied the other way
+; would erase a trail one pixel off the line it drew. So the structure
+; is h_line's, in order --
+;
+;   * y0 == y1 goes to `hrun`: one store a pixel, the port stepping X,
+;     the ends swapped so it runs rightward.
+;   * otherwise the line is **always drawn downward** -- y1 < y0 swaps
+;     the endpoints -- so every y step is PIX_DATA_Y's own increment
+;     and there is no sy to carry.
+;   * the endpoint test is a pixel countdown of max(dx, dy) + 1.
+;   * err = dx - dy; e2 = 2 err; e2 >= -dy steps x, e2 <= dx steps y,
+;     both tested against the same e2 (the h_line comment's "both
+;     tests must see this same e2").
+;   * rightward the port's own X step is the walk; leftward and on a
+;     diagonal the coordinate is rewritten, both bytes (`lxmov`).
+;
+; sim/test_action.py draws sim/test_run.py's fan through this and
+; through the reference and requires the same 38,400 bytes of VRAM.
+PROC Line(CARD x0, CARD y0, CARD x1, CARD y1, BYTE c)
+  INT dx, dyn, err, e2
+  CARD n, t
+  BYTE left = [0]
+  IF y0 == y1 THEN
+    IF x1 < x0 THEN
+      t = x0
+      x0 = x1
+      x1 = t
+    FI
+    n = x1 - x0
+    PIX_X = x0
+    PIX_Y = y0
+    DO
+      PIX_DATA = c
+      IF n == 0 THEN EXIT FI
+      n -= 1
+    OD
+    RETURN
+  FI
+  IF y1 < y0 THEN
+    t = x0
+    x0 = x1
+    x1 = t
+    t = y0
+    y0 = y1
+    y1 = t
+  FI
+  dx = x1 - x0
+  IF dx < 0 THEN
+    dx = -dx
+    left = 1
+  FI
+  dyn = y0 - y1                 ; -dy, never positive
+  IF dx >= -dyn THEN n = dx + 1 ELSE n = 1 - dyn FI
+  err = dx + dyn
+  PIX_X = x0
+  PIX_Y = y0
+  DO
+    e2 = err << 1
+    IF e2 >= dyn THEN
+      err += dyn
+      IF e2 <= dx THEN
+        err += dx               ; both: plot stepping y, then walk x
+        PIX_DATA_Y = c
+        IF left THEN x0 -= 1 ELSE x0 += 1 FI
+        PIX_X = x0
+      ELSE
+        PIX_DATA = c            ; x alone: rightward the port walks
+        IF left THEN
+          x0 -= 1
+          PIX_X = x0
+        ELSE
+          x0 += 1
+        FI
+      FI
+    ELSE
+      err += dx                 ; y alone: the port's Y step
+      PIX_DATA_Y = c
+    FI
+    n -= 1
+  UNTIL n == 0 OD
+RETURN
+
+; Clg(c) -- CLG c: the drawing surface to one colour.
+;
+; `h_clg`, exactly, including what it clears: the pattern is the colour
+; masked to the mode's depth and repeated across the byte (clgm's two
+; rows), and the fill is 240 rows of the stride's low byte -- 0 meaning
+; 256 -- from VID_BASE through the VRAM port. That is the surface in
+; modes 4, 5 and 6, and it is what BASIC clears in every mode, so a
+; compiled program clears the same bytes. The loop is CLG's own, in
+; assembly: ten clocks a byte, the fastest fill this machine has, and
+; a compiled WHILE would be three times that.
+BYTE ARRAY clgm(8) = [$01 $03 $0F $FF $FF $55 $11 $01]
+BYTE clgpat
+
+PROC Clg(BYTE c)
+  BYTE b
+  b = (VID_CTRL >> 2) & 3
+  clgpat = (c & clgm(b)) * clgm(b + 4)
+  VRAM_STEP = 1
+  VRAM_ADDR = VID_BASE
+  ASM
+    LD   R2,[v_clgpat]
+    MOV  R3,#240
+.cgr: LD   R1,[v_VID_STRIDE_L]
+.cgc: ST   [v_VRAM_DATA],R2
+    SUB  R1,#1
+    BNE  .cgc
+    SUB  R3,#1
+    BNE  .cgr
+  ENDASM
+RETURN
+
+; ---------------------------------------------------------------------
+; The double buffer (D92). The display scans from {VID_DBASE_H, $00}
+; while VID_CTRL bit 6 is set; VID_BASE steers the drawing -- the pixel
+; port and Clg both follow it. Mode 5 is the one with room for two
+; pages, at $0000 and $6000.
+; ---------------------------------------------------------------------
+
+; DoubleBuffer(show, draw) -- turn it on: show one page, draw the other.
+; A mode preset clears bit 6, so this comes after Graphics().
+PROC DoubleBuffer(BYTE show_h, BYTE draw_h)
+  VID_DBASE_H = show_h
+  VID_BASE_H = draw_h
+  VID_CTRL = VID_CTRL | $40
+RETURN
+
+; FlipBuffer() -- show the page just drawn, draw into the one that was
+; showing. Call it after WaitVBlank(), as COBRA does.
+PROC FlipBuffer()
+  BYTE p
+  p = VID_DBASE_H
+  VID_DBASE_H = VID_BASE_H
+  VID_BASE_H = p
+RETURN
+
+; ---------------------------------------------------------------------
+; Mode 2 tiles. The map is stride 128 at the bottom of VRAM, an entry
+; is index then attribute; patterns are 32 bytes each at VID_PAT.
+; ---------------------------------------------------------------------
 
 PROC SetTileBase(CARD addr)
-  pat_base = addr
+  VID_PAT = addr
 RETURN
 
-PROC SetTile(CARD col, CARD row, BYTE tile_idx, BYTE attr)
-  ; Mode 2 tilemap cell address = row * 128 + col * 2
-  CARD cell_addr
-  cell_addr = (row * 128) + (col * 2)
-  vram_addr = cell_addr
-  vram_step = 1
-  vram_data = tile_idx
-  vram_data = attr
+PROC SetTile(CARD col, CARD row, BYTE tile, BYTE attr)
+  VRAM_ADDR = (row << 7) + (col << 1)
+  VRAM_STEP = 1
+  VRAM_DATA = tile
+  VRAM_DATA = attr
 RETURN
 
-PROC LoadTile(BYTE tile_idx, BYTE POINTER pattern_32bytes)
-  CARD dest_addr
-  dest_addr = pat_base + (tile_idx * 32)
-  VWrite(dest_addr, pattern_32bytes, 32)
+PROC LoadTile(BYTE tile, BYTE POINTER pattern)
+  VWrite(VID_PAT + (tile << 5), pattern, 32)
 RETURN
 
-PROC LoadTileFont(CARD vram_dest, BYTE POINTER data_ptr, CARD num_bytes)
-  VWrite(vram_dest, data_ptr, num_bytes)
+; ---------------------------------------------------------------------
+; Sprites (04-system.md section 5.6). Thirty-two descriptors of eight
+; bytes behind SPR_IDX/SPR_DATA, written as pairs from an even index:
+; the even byte is held and the odd one commits both.
+;
+;   0  Y 7:0             1  bit 7 16x16, bit 6 enable, bit 0 Y 8
+;   2  X 7:0             3  X 9:8
+;   4  pattern 12:5      5  pattern 15:13
+;   6  bit 7 V-flip, bit 6 H-flip, bit 5 behind    7  unused
+;
+; Positions are in raster coordinates, 640 by 480, whatever the mode.
+; ---------------------------------------------------------------------
+
+; SetSprite(id, x, y, pat, big, flags) -- a whole descriptor, enabled.
+; `pat` is the pattern's VRAM address, 32-byte aligned; `big` is 1 for
+; 16x16; `flags` is byte 6.
+PROC SetSprite(BYTE id, CARD x, CARD y, CARD pat, BYTE big, BYTE flags)
+  BYTE b
+  SPR_IDX = id << 3
+  SPR_DATA = y
+  b = ((y >> 8) & 1) | $40
+  IF big THEN b = b | $80 FI
+  SPR_DATA = b
+  SPR_DATA = x
+  SPR_DATA = (x >> 8) & 3
+  SPR_DATA = pat >> 5
+  SPR_DATA = (pat >> 13) & 7
+  SPR_DATA = flags
+  SPR_DATA = 0
 RETURN
 
-; --- Hardware Sprites ---
-
-PROC SetSprite(BYTE id, CARD x, CARD y, CARD pat, BYTE attr)
-  CARD spr_addr
-  spr_addr = $FE00 + (id * 8)
-  vram_addr = spr_addr
-  vram_step = 1
-  vram_data = x & $FF
-  vram_data = (x >> 8) & $FF
-  vram_data = y & $FF
-  vram_data = (y >> 8) & $FF
-  vram_data = pat & $FF
-  vram_data = (pat >> 8) & $FF
-  vram_data = attr
-  vram_data = 1 ; enable
+; SpriteMove(id, x, y, big) -- the position words only. Byte 1 carries
+; the enable and the size, and a pair is written whole, so the size is
+; asked for again.
+PROC SpriteMove(BYTE id, CARD x, CARD y, BYTE big)
+  BYTE b
+  SPR_IDX = id << 3
+  SPR_DATA = y
+  b = ((y >> 8) & 1) | $40
+  IF big THEN b = b | $80 FI
+  SPR_DATA = b
+  SPR_DATA = x
+  SPR_DATA = (x >> 8) & 3
 RETURN
 
-PROC SpriteMove(BYTE id, CARD x, CARD y)
-  CARD spr_addr
-  spr_addr = $FE00 + (id * 8)
-  vram_addr = spr_addr
-  vram_step = 1
-  vram_data = x & $FF
-  vram_data = (x >> 8) & $FF
-  vram_data = y & $FF
-  vram_data = (y >> 8) & $FF
+PROC SpriteHide(BYTE id)
+  SPR_IDX = id << 3
+  SPR_DATA = 0
+  SPR_DATA = 0
 RETURN
 
-PROC SpriteEnable(BYTE id, BYTE enable)
-  CARD spr_addr
-  spr_addr = $FE00 + (id * 8) + 7
-  vram_addr = spr_addr
-  vram_data = enable
+; SpritesOn(bank) -- the engine on, every sprite drawing from palette
+; bank `bank` (SPR_CTRL 7:4; the per-sprite field is ignored).
+PROC SpritesOn(BYTE bank)
+  SPR_CTRL = (bank << 4) | 1
 RETURN
 
-; --- Timing & Sync ---
+PROC SpritesOff()
+  SPR_CTRL = 0
+RETURN
+
+; ---------------------------------------------------------------------
+; Sound (04-system.md section 4.4): eight voices of six bytes behind
+; SND_IDX/SND_DATA. This is SOUND v, inc, vol, noise.
+; ---------------------------------------------------------------------
+
+; Sound(v, inc, vol, noise) -- pitch is the phase increment, 0.5 Hz a
+; step (881 is A4); a word commits on its odd byte, low byte first.
+PROC Sound(BYTE v, CARD inc, BYTE vol, BYTE noise)
+  SND_IDX = v << 3
+  SND_DATA = inc
+  SND_DATA = inc >> 8
+  SND_IDX = (v << 3) + 4
+  SND_DATA = vol & $0F
+  IF noise THEN SND_DATA = $C0 ELSE SND_DATA = $40 FI
+RETURN
+
+PROC Silence(BYTE v)
+  SND_IDX = (v << 3) + 5
+  SND_DATA = 0
+RETURN
+
+; ---------------------------------------------------------------------
+; Timing. TMR_L is the low byte of the hardware frame counter, so
+; waiting for it to change is VSYNC: bounded by one frame, no interrupt
+; needed, and the pacing primitive every game loop wants. The old
+; version polled bit 0 of VID_BORDER and never returned.
+; ---------------------------------------------------------------------
 
 PROC WaitVBlank()
-  ; Wait until VBlank bit (bit 0) in vid_status is 1
-  WHILE (vid_status & 1) == 0 DO
-  OD
+  BYTE t
+  t = TMR_L
+  WHILE TMR_L == t DO OD
 RETURN
 
-PROC WaitFrame()
-  ; Wait for end of current VBlank then wait for next start
-  WHILE (vid_status & 1) != 0 DO
-  OD
-  WHILE (vid_status & 1) == 0 DO
-  OD
-RETURN
+; Frame() -- the frame counter's low byte, for anything that counts
+; frames rather than waits for one.
+FUNC BYTE Frame()
+RETURN (TMR_L)
 
-; --- Console & Input ---
+; ---------------------------------------------------------------------
+; Input and the UART
+; ---------------------------------------------------------------------
 
+; Key() -- the next raw Set 2 scancode, or 0 when none is queued. A
+; break code arrives as $F0 then the key, so "any key" is any nonzero
+; answer and a specific key is a small state machine on the caller's
+; side; KBD_STAT bit 0 is read first, as 04-system.md section 4.3
+; requires, because KBD_DATA means nothing without it.
 FUNC BYTE Key()
-  IF (kbd_status & 1) != 0 THEN
-    RETURN (kbd_data)
-  FI
+  IF KBD_STAT & 1 THEN RETURN (KBD_DATA) FI
 RETURN (0)
 
+; PutChar(c) -- one byte out of the serial port, waiting for the
+; holding register: a write while it is occupied is lost.
 PROC PutChar(CHAR c)
-  uart_data = c
+  WHILE (UART_STAT & 2) == 0 DO OD
+  UART_DATA = c
 RETURN
 
+; Print(s) -- a string, which is a length byte and the characters.
 PROC Print(BYTE POINTER s)
-  BYTE len
-  BYTE i
-  len = *s
-  i = 1
-  WHILE i <= len DO
+  BYTE n
+  n = *s
+  WHILE n > 0 DO
     s += 1
-    uart_data = *s
-    i += 1
+    PutChar(*s)
+    n -= 1
   OD
 RETURN
 
 PROC PrintE(BYTE POINTER s)
   Print(s)
-  uart_data = 13 ; CR
-  uart_data = 10 ; LF
+  PutChar(13)
+  PutChar(10)
 RETURN

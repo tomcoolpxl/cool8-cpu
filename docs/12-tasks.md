@@ -116,7 +116,7 @@ above.
 | `memmap` | in the `check` group — [`tools/memmap.py`](../tools/memmap.py) is the one machine-readable memory map, the same arrangement `opcodes.py` has for the encoding. It verifies itself against the equates every `sw/*.asm` actually declares, and refuses two names on one byte of page 0. **Import from it rather than writing an address down twice**: `sim/test_interp.py` used to carry its own `VARS = 0x0040` and `sim/build_basic.py` its own `ORG`/`TOP` |
 | `fp` | the loadable float package of [D62](01-decisions.md#d62--floating-point-ships-as-a-loadable-library-not-as-part-of-the-system) — arithmetic, decimal text, trig. **It also prints its own size and timing table**, which is what the decision entries quote rather than a hand-typed copy. `--trace <op> <x> <y> <label> <n>` breakpoints a routine and decodes forward; that is how `fdiv16` was caught answering the wrong question |
 | `names` | global name collisions across the system image |
-| `action` | the CoolAction! compiler of [15-action.md](15-action.md): one program per construct read back by symbol, the Byte sieve's clocks beside compiled BASIC's, `demos/primes.act` at the UART, what the compiler refuses -- and its assembler against `tools/cool8asm.py`: every program byte for byte, and all 491 encodings through both. `--profile` prints the sieve's clocks by loop |
+| `action` | the CoolAction! compiler of [15-action.md](15-action.md): one program per construct read back by symbol, the Byte sieve's clocks beside compiled BASIC's, `demos/primes.act` at the UART, what the compiler refuses -- and its assembler against `tools/cool8asm.py`: every program byte for byte, and all 491 encodings through both. **The library on the hardware**: every routine of `sw/libaction.act` called and the machine read back -- VRAM, palette, sprites, sound, the registers -- and `Line` against `LINE` over `test_run.py`'s fan, the whole mode 4 frame compared. `--profile` prints the sieve's clocks by loop |
 
 **Ten suites are on disk and not in the runner.** This paragraph said
 five, and then named six; it also said "this is all of them", and it
@@ -447,8 +447,11 @@ shell that has not set that up says "no" and means nothing.
 ### `check` and `build`
 
 `check` runs `opcodes --check`, `mkasmtab --check`, `mkrsopc --check`
-and the emulator's self-test — the ones that verify a generated table
-still matches what generated it.
+and the emulator's self-test — the ones that verify a
+generated table still matches what generated it. `ioregs --check` is
+in the same group and reads every dialect in `sw/` — `.asm`, `.bas`
+and `.act` — because the one it did not read shipped a library with
+seventeen wrong addresses ([D98](01-decisions.md#d98--the-register-check-reads-every-dialect-and-the-library-names-no-address)).
 
 `build` produces the boot ROM and the system image and **prints the
 sizes**, because the image grows down from `$FEFF` into a finite gap

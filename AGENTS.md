@@ -209,6 +209,7 @@ return H.report()
 | BASIC compiled and assembled | `H.build_bas`, `H.compile_bas` | your own `subprocess` to `cool8asm.py` |
 | assembly text built | `H.assemble_text`, `H.assemble` | the same, again |
 | assembly that *should* fail | `H.try_assemble` → `(None, why)` | catching a non-zero exit |
+| CoolAction! compiled, behind the library | `H.build_act(H.ACT_LIB + ["game.act"], name)`, then `H.run_act` or `H.load_act` | your own `coolaction` command line, or the library named as one file |
 | a pass/fail line and an exit code | `H.check`, `H.report` | a fourteenth copy of `check()` |
 | paths | `H.ROOT`, `H.BUILD`, `H.SW` | a fresh `HERE`/`ROOT` preamble |
 | the iverilog toolchain | `sim/toolchain.py` — `T.tool`, `T.build`, `T.run`, `T.cells`, `T.CORE` | reaching into `cosim`'s privates |
