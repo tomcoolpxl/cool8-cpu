@@ -34,3 +34,27 @@ web/*.wasm
 web/*.bin
 web/*.img
 web/*.json
+
+# Upstream sources, cloned rather than vendored. `tools/ucsd-psystem-os`
+# and `tools/ucsd-psystem-vm` are Peter Miller's reconstruction of the
+# UCSD p-System and its VM, and they carry their own .git -- committing
+# them would nest a repository inside this one and add 5.4 MB of
+# somebody else's history. sim/test_pascal.py reads system.vol out of
+# the VM tree; clone it there before running that suite.
+/tools/ucsd-psystem-os/
+/tools/ucsd-psystem-vm/
+
+# The Z-Machine story files and the reference ZIL sources. Infocom's
+# games are commercial software and are not ours to redistribute, and
+# z3/ref/ is three more cloned repositories. sw/z3/ is the interpreter
+# and it is committed; the stories are not, and tools/gen_z3.py names
+# the ones it wants.
+/z3/
+
+# The demo disc the suites build at the repo root. sim/test_pascal.py
+# and sim/test_z3.py write it, `python tools/mkdemos.py` makes it, and
+# it is 8 MB of flash image with the Infocom stories inside it.
+/demos.img
+
+# `pip install -e .` leaves this behind.
+*.egg-info/
