@@ -97,8 +97,12 @@ def pad_name(s):
 
 
 def show_name(b):
-    return (b[:8].decode('ascii').rstrip() + '.' +
-            b[8:11].decode('ascii').rstrip()).rstrip('.')
+    try:
+        stem = b[:8].decode('ascii').rstrip()
+        ext = b[8:11].decode('ascii').rstrip()
+        return (stem + '.' + ext).rstrip('.')
+    except Exception:
+        return ''
 
 
 class Image:
@@ -267,13 +271,19 @@ class Volume:
 
 BOOT_VOL = 0                    # the ROM's; BOOT.BIN lives here
 USER_VOL = 1                    # where a cold machine comes up
+BAPPLE_VOL = 12                 # Bad Apple demo clip
 DEMO_VOL = 13                   # the demo disc
+ADVENTURE_VOL = 14              # text adventures (Zork I, HHGG, Planetfall, Leather Goddesses)
+PASCAL_VOL = 15                 # UCSD Pascal p-System II.0
 
 
 def labels():
     """The label for every volume, by number."""
     return {n: "SYSTEM" if n == BOOT_VOL else
-               "DEMOS" if n == DEMO_VOL else "COOL8"
+               "BAPPLE" if n == BAPPLE_VOL else
+               "DEMOS" if n == DEMO_VOL else
+               "ADVENTUR" if n == ADVENTURE_VOL else
+               "PASCAL" if n == PASCAL_VOL else "COOL8"
             for n in range(N_VOLS)}
 
 

@@ -118,10 +118,20 @@ above.
 | `names` | global name collisions across the system image |
 | `action` | the CoolAction! compiler of [15-action.md](15-action.md): one program per construct read back by symbol, the Byte sieve's clocks beside compiled BASIC's, `demos/primes.act` at the UART, what the compiler refuses -- and its assembler against `tools/cool8asm.py`: every program byte for byte, and all 491 encodings through both. `--profile` prints the sieve's clocks by loop |
 
-**Five suites are on disk and not in the runner**, and this is all of
-them — the list was three for a while, which is the failure mode a
-"deliberately excluded" list has: the two it forgot looked identical
-from outside to a suite nobody had written.
+**Ten suites are on disk and not in the runner.** This paragraph said
+five, and then named six; it also said "this is all of them", and it
+was not. Two Tetris suites arrived with the demos and were never added
+here, and the two ports below arrived after that. **The count is
+derived, so check it rather than trusting it:**
+
+```bash
+for f in sim/test_*.py; do grep -q "$(basename $f)" pyproject.toml || echo $f; done
+```
+
+That is the failure mode a "deliberately excluded" list has, and it has
+now happened twice: an excluded suite and a forgotten one look
+identical from outside, so nothing complains when the list falls
+behind.
 
 The shelved on-machine compiler's gates — `sim/test_comp.py`,
 `sim/test_emit.py`, `sim/test_lex.py` — cost minutes to gate code that
@@ -130,13 +140,23 @@ before touching `sw/comp.bas`, `sw/emit.bas` or `sw/lex.bas`, and before
 any change to the token table or the stored-program format, which both
 sides of those diffs share.
 
-The other two:
+The rest:
 
 | | |
 |---|---|
 | `sim/test_asm.py` | `sw/asm.asm`, the assembler **on the machine**, gated on byte-identity with `tools/cool8asm.py` for the same source. Run it when either assembler changes |
 | `sim/timing.py` (`poe timing`) | measures every encoding's clocks from `rtl/core`. **Not a suite and not gated**, and it is the only thing that keeps `rtl/core`, `tools/opcodes.py:cycles()` and the emulator's accounting in step — cosim cannot, because the two models are not expected to agree on a cycle. Run it whenever the control FSM changes, then update the other two ([02-isa.md §8](02-isa.md)) |
 | `sim/test_load.py` | the host loader against the real RTL and against itself — the wire format of [07-loader.md](07-loader.md). Needs the toolchain, which is why it is not in the `sw` group |
+| `sim/test_cooltris.py`, `sim/test_cooltris2.py` | the two Tetris demos, driven through the text buffer and through the tile map. They gate a demo rather than the system. Run them when `demos/cooltris*.bas` changes |
+| `sim/test_pascal.py` | UCSD p-System II.0 ([14-demos.md](14-demos.md), [D95 and D96](01-decisions.md)). **It needs a system volume this repository does not contain** — `tools/ucsd-psystem-vm` is cloned rather than vendored, and `.gitignore` says why. Clone it there and the suite boots the p-System, walks into the Filer and back, and compiles `HELLO` with the real `SYSTEM.COMPILER` |
+| `sim/test_z3.py` | the Z-Machine and the four Infocom games. **It needs story files that are not ours to redistribute.** Put them where `tools/gen_z3.py` looks and it boots all four, then saves and restores |
+
+**Neither port can be gated, and that is what not vendoring them
+costs.** `sim/test_pascal.py` skips its volume when the clone is
+absent, which is the one thing the per-job build directory paragraph
+above forbids — a check that cannot run has not passed. It cost
+exactly that: the Pascal interpreter stopped assembling at some point,
+and nothing said so until someone ran the suite by hand.
 
 ### `rtl` — `poe test-rtl`
 

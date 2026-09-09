@@ -111,6 +111,87 @@ def main():
             vol.add(os.path.join(bap, e["name"]), e["name"])
         im.save()
 
+    # **The Z-Machine interpreter and text adventure stories go onto Drive 13 and Drive 14.**
+    z3_src = os.path.join(ROOT, "sw", "z3", "z3.asm")
+    if os.path.exists(z3_src):
+        z3_code, z3_syms = H.assemble(z3_src)
+        tag_off = z3_syms["z_story_tag"] - 0x0200
+        attr_off = z3_syms["z_color_attr"] - 0x0200
+        stat_off = z3_syms["z_color_status"] - 0x0200
+        bord_off = z3_syms["z_color_border"] - 0x0200
+        sav_off = z3_syms["z_save_filename"] - 0x0200
+
+        ADVENTURES = [
+            # (name, story_file, tag_5bytes, bin_name, [chunks], vol_id, color_attr, color_status, color_border, save_name_11bytes)
+            ("HHGG", "hhgg.z3", b"HHGG0", "HHGG.BIN", ["HHGG0.DAT", "HHGG1.DAT"], disk.DEMO_VOL, 0x1F, 0xF1, 0x01, b"HHGG    SAV"),
+            ("ZORK1", "zork1.z3", b"ZORK0", "ZORK1.BIN", ["ZORK0.DAT", "ZORK1.DAT"], disk.ADVENTURE_VOL, 0x0E, 0xE0, 0x00, b"ZORK1   SAV"),
+            ("PLANET", "planetfall.z3", b"PLAN0", "PLANET.BIN", ["PLAN0.DAT", "PLAN1.DAT"], disk.ADVENTURE_VOL, 0x07, 0x70, 0x00, b"PLANET  SAV"),
+            ("LGOP", "lgop.z3", b"LGOP0", "LGOP.BIN", ["LGOP0.DAT", "LGOP1.DAT"], disk.ADVENTURE_VOL, 0x87, 0x78, 0x08, b"LGOP    SAV"),
+        ]
+
+        im = disk.Image(args.img)
+        for name, story_fn, tag_bytes, bin_fn, chunks, vol_id, cattr, cstat, cbord, sav_bytes in ADVENTURES:
+            story_path = os.path.join(ROOT, "z3", "games", story_fn)
+            if not os.path.exists(story_path):
+                continue
+
+            game_code = bytearray(z3_code)
+            for i in range(len(tag_bytes)):
+                game_code[tag_off + i] = tag_bytes[i]
+            game_code[tag_off + len(tag_bytes)] = 0
+            for i in range(11):
+                game_code[sav_off + i] = sav_bytes[i]
+            game_code[attr_off] = cattr
+            game_code[stat_off] = cstat
+            game_code[bord_off] = cbord
+
+            prg = bytes([0x00, 0x02]) + bytes(game_code)
+            prg_path = os.path.join(H.BUILD, bin_fn)
+            with open(prg_path, "wb") as fh:
+                fh.write(prg)
+
+            with open(story_path, "rb") as fh:
+                story_bytes = fh.read()
+
+            chunk_size = 65280
+            c0_path = os.path.join(H.BUILD, chunks[0])
+            with open(c0_path, "wb") as fh:
+                fh.write(story_bytes[:chunk_size])
+
+            vol = disk.Volume(im, vol_id)
+            vol.add(prg_path, bin_fn)
+            vol.add(c0_path, chunks[0])
+
+            if len(story_bytes) > chunk_size:
+                c1_path = os.path.join(H.BUILD, chunks[1])
+                with open(c1_path, "wb") as fh:
+                    fh.write(story_bytes[chunk_size:])
+                vol.add(c1_path, chunks[1])
+
+            print("  placed %-10s (%d bytes binary, %d bytes story) on drive %d"
+                  % (name, len(prg), len(story_bytes), vol_id))
+
+        # **UCSD Pascal p-System II.0 and examples onto Drive 13 and Drive 15.**
+        pascal_src = os.path.join(ROOT, "sw", "pascal", "pascal.asm")
+        if os.path.exists(pascal_src):
+            pas_code, _ = H.assemble(pascal_src, name="pascal", write=True)
+            pas_prg = bytes([0x00, 0x02]) + bytes(pas_code)
+            pas_prg_path = os.path.join(H.BUILD, "PASCAL.PRG")
+            with open(pas_prg_path, "wb") as fh:
+                fh.write(pas_prg)
+            vol13 = disk.Volume(im, disk.DEMO_VOL)
+            vol13.add(pas_prg_path, "PASCAL.BIN")
+
+            vol_path = os.path.join(ROOT, "tools", "ucsd-psystem-vm", "disk-images", "system.vol")
+            if os.path.exists(vol_path):
+                with open(vol_path, "rb") as fh:
+                    system_vol = fh.read()
+                v15_offset = disk.vol_base(disk.PASCAL_VOL)
+                im.data[v15_offset:v15_offset + len(system_vol)] = system_vol
+                print("  placed PASCAL.BIN on drive 13, system.vol (%d bytes) on drive 15" % len(system_vol))
+
+        im.save()
+
     m = vm.boot(flash_path=args.img, render=True)
     for _ in range(90):
         m.run_frame()
@@ -136,6 +217,18 @@ def main():
                 H.line(m, syms, line)
         H.key(m, syms, 'SAVE "%s"\r' % discname(f))
         print("  typed and saved %-16s as %s" % (f, discname(f)))
+
+    # Also save the adventure launchers directly on Drive 14 (ADVENTUR)
+    H.key(m, syms, "DRIVE %d\r" % disk.ADVENTURE_VOL)
+    for adv_f in ["zork1.bas", "planet.bas", "lgop.bas", "hhgg.bas"]:
+        p = os.path.join(DEMOS, adv_f)
+        if os.path.exists(p):
+            H.key(m, syms, "NEW\r")
+            for line in io.open(p, encoding="utf-8").read().splitlines():
+                if line.strip():
+                    H.line(m, syms, line)
+            H.key(m, syms, 'SAVE "%s"\r' % discname(adv_f))
+            print("  typed and saved %-16s on drive %d as %s" % (adv_f, disk.ADVENTURE_VOL, discname(adv_f)))
     m.flash.flush()
 
     # **Bad Apple rides on its dedicated drives when it exists.** The
@@ -202,6 +295,7 @@ def main():
         H.settle(m, syms)
         H.key(m, syms, "MODE 0\r")      # back to text to be typed at
         H.key(m, syms, "NEW\r")
+        H.key(m, syms, "DRIVE %d\r" % DRIVE)
         H.key(m, syms, 'LOAD "%s"\r' % want)
         # **`H.key` settles after every keystroke, and a demo does not
         # settle** -- it ends in `GOTO` or `LOOP`, so the Return that

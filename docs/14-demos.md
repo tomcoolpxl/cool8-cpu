@@ -934,6 +934,40 @@ Classic arcade Tetris re-engineered for **Mode 2 (40×30 Tile Mode, 320×240 dou
 - **Audio & Timing**:
   - Crisp noise-free multi-voice square wave sound effects (`noise = 0`), anti-hover hardware timer synchronization (`TIMER`), pause (`P`), game over restart (`N`), and clean exit (`Q`).
 
+### `HHGG`, `ZORK1`, `PLANET`, `LGOP` — Infocom Text Adventure Suite (Native Z3 Interpreter)
+
+Infocom's celebrated interactive fiction text adventure games, running natively on COOL8's pure assembly Z-Machine Version 3 (Z3) interpreter on Drive 13 (`DEMOS`) and Drive 14 (`ADVENTUR`):
+
+1. **`HHGG` (Drive 13)**: *The Hitchhiker's Guide to the Galaxy* (1984) by Douglas Adams and Steve Meretzky. Styled with the authentic Amiga dark blue background, crisp white letters, inverted status bar, and matching blue border (`CATTR = $1F`, status `$F1`, border `$01`).
+2. **`ZORK1` (Drive 14)**: *Zork I: The Great Underground Empire* (1980) by Marc Blank and Dave Lebling. Styled with classic amber phosphor letters on a deep black background (`CATTR = $0E`, status `$E0`, border `$00`).
+3. **`PLANET` (Drive 14)**: *Planetfall* (1983) by Steve Meretzky. Styled in standard crisp monochrome text on black (`CATTR = $07`, status `$70`, border `$00`).
+4. **`LGOP` (Drive 14)**: *Leather Goddesses of Phobos* (1986) by Steve Meretzky. Styled with a dark gray background and very light gray foreground text (`CATTR = $87`, status `$78`, border `$08`).
+
+**Architecture and execution**:
+- Launched via `SYS "<NAME>.BIN"` from their respective `.BAS` loader programs on Drive 13/14.
+- **Interpreter footprint**: 7.5 KB at `$0200..$1F73`.
+- **Story file storage**: Stored as `.DAT` chunks on Drives 13 and 14 (up to 128 KB per story).
+- **Demand-paging memory**: 16-page LRU cache (512 bytes/page = 8 KB RAM window) backed by SPI Flash paging.
+- **Visuals & I/O**:
+  - Full 80×30 text mode (`MODE 0`) with automatic word wrapping.
+  - Real-time inverse video status bar on Row 0 showing room location, score, and move counter.
+  - Interrupt-driven keyboard input with line editing, word tokenization, and 16-bit binary search across Infocom vocabulary dictionaries.
+
+### UCSD Pascal p-System II.0 (`PASCAL`)
+
+![UCSD Pascal](img/demo-pascal.png)
+
+A complete, native port of the UCSD Pascal p-System II.0 virtual machine (P-Machine), running the authentic 1979 operating system, compiler, filer, and editor directly on COOL8.
+
+- **Interpreter footprint**: 8.6 KB native machine code at `$0200..$247A`.
+- **Operating system volume**: Packaged as standard UCSD disk volume on Drive 15 (`SYSTEM.PASCAL`, `SYSTEM.FILER`, `SYSTEM.COMPILER`, `SYSTEM.EDITOR`, `SYSTEM.MISCINFO`, `SYSTEM.SYNTAX`, and example programs `HELLO`, `SIEVE`, `HANOI`, `MANDEL`, `GUESS`, `FACT`).
+- **Interactive Console & Terminal**: Emulates VT-52 terminal protocol with cursor home (`$19`), erase-to-end-of-screen (`$0B`), erase-to-end-of-line (`$1D`), cursor-up (`$1F`), and gotoxy (`$1E`), driving the native 80×32 text hardware directly.
+- **Execution**:
+  - Launched from BASIC via `RUN "PASCAL"` (or `SYS "PASCAL.BIN"`).
+  - Boots through Segment 4 (`INITIALIZE`), loads `SYSTEM.MISCINFO`, mounts volumes, and drops into the root command line prompt:
+    `Command: E(dit, R(un, F(ile, C(omp, L(ink, X(ecute, A(ssem, D(ebug,? [II.0]`
+  - Supports interactive command menu navigation and execution of native Pascal tools.
+
 ## 5. Adding one
 
 1. Write `demos/name.bas`. Keep it BASIC, keep it under 80 characters a
