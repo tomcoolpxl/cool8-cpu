@@ -1,0 +1,8 @@
+10 REM ============================================
+11 REM PLANETFALL
+12 REM INFOCOM INTERACTIVE FICTION (1983)
+13 REM STEVE MERETZKY
+14 REM NATIVE COOL8 Z-MACHINE V3 INTERPRETER
+15 REM ============================================
+20 DRIVE 14 : MODE 0 : COLOR 7, 0 : CLS
+30 SYS "PLANET.BIN"
