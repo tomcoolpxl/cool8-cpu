@@ -5812,6 +5812,63 @@ and scalar variables.
 
 ---
 
+## D95 — UCSD Pascal P-Machine: dynamic segment unloading, CSP_XIT stack unwinding, and XJP table alignment
+
+Three critical bugs in the P-Machine bytecode interpreter (`sw/pascal/`) prevented interactive commands (Filer, Editor, Compiler) from running:
+
+1. **Cross-segment procedure returns must unload dynamic segments (`pm_do_ret_tail` in `sw/pascal/pm_call.asm`):**
+   In UCSD Pascal II.0, dynamic segments (Segment 1 `SYSTEM.FILER`, Segment 2 `SYSTEM.EDITOR`, Segment 3 `SYSTEM.COMPILER`) allocate memory downwards from the current call stack base `KP`. When a procedure returns across segment boundaries (`OldSeg != NewSeg`), `pm_unload_segment` must be called to decrement `UseCount` and, when reaching 0, restore `KP` to `SegDict[SegNo].OldKp`. Without this, `KP` remained corrupted at `$96A8`, causing subsequent segment loads to allocate on top of Segment 0 (`SYSTEM.PASCAL`), destroying the operating system.
+
+2. **`CSP_XIT` (Exit) must unwind dynamic call frames using the caller's jump table (`sw/pascal/pm_csp.asm`):**
+   When `EXIT(Procedure)` is called (e.g. `EXIT(FILEHANDLER)` when quitting the Filer), the P-machine traverses dynamic links (`MS_DYN`). For each intermediate frame, it updates the saved `MS_IPC` with the *caller's* `ProcExitIpc` (`[xJTab - 2] - [xJTab - 4] - 2`) until reaching `(TargetProc, TargetSeg)`. Setting `MS_IPC` to the child's exit IPC previously caused caller procedures to execute past their code bounds.
+
+3. **`XJP` jump tables follow a 2-byte default jump instruction (`sw/pascal/pm_jump.asm`):**
+   In UCSD Pascal bytecode, the range limits `lo` and `hi` are followed immediately by a 2-byte default jump instruction (`UJP`) executed when the test value is out of bounds. The jump table entries begin after this default instruction:
+   `entry_offset = table_base + 2 + 2 * (value - lo)`
+   `target_ipc = entry_offset - Disp` (where `Disp` is the word displacement read from `entry_offset`).
+   Correcting this indexing ensures all `CASE` statements across the OS, Filer, and Editor jump to their exact branch targets.
+
+---
+
+## D96 — UCSD Pascal Split-Pool Memory Architecture & Physical Boundary Enforcement
+
+**Decided to resolve memory overlap and corruption on the 64 KB COOL8 address space.**
+
+### 1. Physical Hardware Constraints
+On COOL8, Main CPU RAM is 64 KB (`$0000–$FFFF`), but it is split by fixed hardware mappings:
+- `$0000–$00FF`: Zero Page (CPU registers and P-Machine state).
+- `$0100–$01FF`: Hardware CPU Stack (256 bytes, starts at `$0200` downwards).
+- `$9800–$ABFF`: **Hardware Text Screen VRAM (5,120 bytes: 80×32 cells, stride 160)**. The video rasterizer continuously reads character codes and attributes directly from Main RAM in Modes 0 & 1. Any code, stack, or heap placed here causes visual tearing and fatal data corruption.
+- `$AC00–$AE69`: **Console System Variables (618 bytes)** used by `sw/console.asm` (`CCX`, `CCY`, scroll window, terminal escape sequences).
+- `$AE6A–$FEFF`: **High RAM (20,630 bytes = 20.15 KB)**. During normal system operation, this holds the BASIC interpreter image (`$AFEC–$FEFF`). Under Pascal, BASIC is dead, making all 20.15 KB available for Pascal.
+- `$FF00–$FFF7`: Hardware Memory-Mapped I/O registers.
+- `$FFF8–$FFFF`: Hardware vectors.
+
+### 2. Segment Position Independence in UCSD Pascal
+UCSD Pascal II.0 P-code uses position-independent segment addressing:
+- Inter-segment procedure calls (`CXP`, `CLP`, `CGP`, `CBP`) reference procedures by `(SegmentNumber, ProcedureNumber)`.
+- The P-Machine resolves procedure entry points by looking up `PM_SEG_DICT[SegmentNumber].SegBase` and indexing the procedure jump table (`JTAB`).
+- Intra-segment jumps (`UJP`, `FJP`, `XJP`) are strictly relative to `PM_IPC` or `PM_JTAB`.
+- As a result, segments do **not** require contiguous placement relative to one another or relative to user heap/stack memory.
+
+### 3. Allocation Strategy
+To prevent dynamic segments and call frames from crashing into the text screen `$9800` or the interpreter code `$0200–$2A50`, memory is strictly partitioned into two independent pools:
+
+1. **High RAM Pool (`$B000–$FEFF`, 20.2 KB)**:
+   - `$B000–$B1FF`: `SYSCOM` (Pascal System Communication Record, 512 bytes).
+   - `$B200–$B3FF`: Disk Sector Buffer (`PM_SEC_BUF`, 512 bytes).
+   - `$B400–$B47F`: Segment Dictionary (`PM_SEG_DICT`, 128 bytes, 16 entries × 8 bytes).
+   - `$B500–$D357`: **Segment 0 (`KERNEL`, 7,768 bytes)** — permanent resident standard library and operating system core.
+   - `$D358–$FEFF`: **Segment 1 Resident / Overlay Slot (11,176 bytes = 10.9 KB)** — accommodates `SYSTEM.EDITOR` Segment 1 (2,934 bytes) or system overlays, fully isolated from user memory.
+
+2. **Lower RAM User Pool (`$2A50–$97FE`, 27.5 KB)**:
+   - `$0200–$2A50`: `PASCAL.BIN` native machine-code interpreter (~10.1 KB).
+   - `$2A50–$2FFF`: Evaluation Stack (grows down from `PM_EVAL_TOP = $3000`).
+   - `$3000–$97FE`: **Dynamic User RAM (26,623 bytes = 26.0 KB)**.
+     - `PM_HEAP_BASE = $3000`: Heap grows **upwards** (`NEW()`, file buffers, directories).
+     - `PM_MEM_TOP = $97FE`: Mark Stack activation frames (`PM_MP`) and user program code (`PM_KP`) grow **downwards**.
+     - Hard boundary guard: `PM_KP` must never exceed `$97FE`, and `PM_KP` must never cross `PM_NP` (`NP > KP` triggers Stack Overflow error).
+
 ## D97 -- CoolAction!: a compiled language for games, cross-compiled in Rust
 
 [D52](#d52--the-operating-system-is-cool8-basic-and-how-it-got-that-shape)

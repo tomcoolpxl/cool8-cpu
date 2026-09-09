@@ -164,6 +164,37 @@ and its voice state fits in one block RAM.
 | `$FFFC` | `IRQ` |
 | `$FFFE` | `BRK` |
 
+### 2.2 UCSD Pascal Memory Map (D96)
+
+When running the UCSD Pascal p-System II.0, BASIC and its interpreter are
+not active. The 64 KB address space is strictly partitioned into two separate
+functional pools separated by the hardware text buffer and console state:
+
+| Range | Size | Pool / Function | Purpose |
+|---|---|---|---|
+| `$0000–$003F` | 64 B | Low Scratch | Scratch registers and temporary calculations |
+| `$0040–$0073` | 52 B | P-Machine State | Zero-page architectural registers (`PM_SP`, `PM_MP`, `PM_BP`, `PM_IPC`, `PM_SEGB`, `PM_SEG`, `PM_JTAB`, `PM_SYSCOM`, `PM_NP`, `PM_KP`) |
+| `$0074–$00FF` | 140 B | Low Scratch | BIOS buffers and interrupt workspace |
+| `$0100–$01FF` | 256 B | CPU Stack | Hardware 6502/COOL8 call stack (starts at `$0200` downwards) |
+| `$0200–$2A50` | ~10.1 KB | Interpreter | `PASCAL.BIN` native machine-code interpreter and SBIOS drivers |
+| `$2A50–$2FFF` | ~1.4 KB | Eval Stack | P-Machine expression evaluation stack (`PM_EVAL_TOP = $3000`) |
+| `$3000–$97FE` | **26.6 KB** | **User Pool** | **Dynamic User Memory**: Heap grows **upwards** from `$3000` (`PM_NP`), procedure activation frames (`PM_MP`) and user program code (`PM_KP`) grow **downwards** from `$97FE` |
+| `$9800–$ABFF` | **5,120 B** | **HARDWARE VRAM** | **Text screen buffer** (80×32 cells, stride 160). The FPGA video rasterizer reads this buffer continuously in Modes 0 & 1. **PASCAL MUST NEVER PLACE CODE, HEAP, OR STACK IN THIS RANGE.** |
+| `$AC00–$AE69` | 618 B | Console State | `SYSVARS` (used by `sw/console.asm`: `CCX`, `CCY`, `CTOP`, `CROWS`, `CCOLS`, escape parser) |
+| `$B000–$B1FF` | 512 B | High Pool | Pascal `SYSCOM` system communication record |
+| `$B200–$B3FF` | 512 B | High Pool | Disk sector buffer (`PM_SEC_BUF`) |
+| `$B400–$B47F` | 128 B | High Pool | 16-entry Segment Dictionary (`PM_SEG_DICT`) |
+| `$B500–$D357` | **7,768 B** | **High Pool** | **Segment 0 (`KERNEL`)**: Permanent resident standard library and operating system core |
+| `$D358–$FEFF` | **11.2 KB** | **High Pool** | **Segment 1 / Overlay Slot**: Accommodates `SYSTEM.EDITOR` Segment 1 (2,934 bytes) or Filer/Compiler overlays, fully isolated from user memory |
+| `$FF00–$FFF7` | 248 B | Hardware I/O | Memory-mapped I/O page (UART, KBD, Video, Sound, SPI Flash) |
+| `$FFF8–$FFFF` | 8 B | Vectors | Hardware interrupt and reset vectors |
+
+**Hardware Separation & Integrity Rules:**
+1. **Character ROM is in FPGA EBR, NOT Main RAM**: Text font glyphs (Spleen 8×16 font) are stored in dedicated hardware EBR block RAM on a separate read port. Main RAM text buffer `$9800–$ABFF` stores only ASCII character codes and attribute bytes.
+2. **Text Screen Barrier**: User RAM is strictly capped at `$97FE`. Any allocation or stack frame advancing beyond `$97FE` or below `$3000` triggers a fatal `Stack Overflow` (XEQERR = 1).
+3. **No Collision with Interpreter**: `PM_HEAP_BASE` is strictly `$3000`, well above `PASCAL.BIN` (`$0200–$2A50`) and the evaluation stack (`$2E00–$2FFF`).
+4. **Position-Independent Segments**: Segments are addressed via `PM_SEG_DICT[SegNo].SegBase`. Segment 0 and Segment 1 live safely in High RAM without fragmenting or reducing User RAM.
+
 ---
 
 ## 3. Boot sequence

@@ -1,0 +1,8 @@
+10 REM ============================================
+11 REM UCSD PASCAL P-SYSTEM II.0 (1979)
+12 REM NATIVE COOL8 P-MACHINE INTERPRETER
+13 REM DRIVE 15: SYSTEM VOLUME & COMPILER
+14 REM ============================================
+20 DRIVE 13 : MODE 0 : CLS
+30 SYS "PASCAL.BIN"
+
