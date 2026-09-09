@@ -1,0 +1,29 @@
+; The Byte sieve. 1899 primes below 8190 -- sw/bench/sieve.bas, in
+; CoolAction!, statement for statement, so the two clock counts are the
+; same work. The globals are what sim/test_action.py reads back.
+CONST SIZE = 8190
+BYTE ARRAY flags(SIZE + 1)
+CARD c, i, j, p
+
+PROC Main()
+  c = 0
+  i = 0
+  DO
+    flags(i) = 1
+    i += 1
+  UNTIL i > SIZE OD
+
+  i = 0
+  DO
+    IF flags(i) <> 0 THEN
+      p = i + i + 3
+      j = i + p
+      WHILE j <= SIZE DO
+        flags(j) = 0
+        j += p
+      OD
+      c += 1
+    FI
+    i += 1
+  UNTIL i > SIZE OD
+RETURN

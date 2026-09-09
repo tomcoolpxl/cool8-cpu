@@ -232,6 +232,12 @@ def _parse_unary(toks, i, syms, pc, where):
     if t == "-":
         v, i = _parse_unary(toks, i + 1, syms, pc, where)
         return -v, i
+    if t == "+":
+        # The disassembler renders a signed displacement as `+18`, and
+        # the contract is that everything it emits assembles; this was
+        # the one rendering that did not, found by sim/test_action.py
+        # feeding every encoding back through.
+        return _parse_unary(toks, i + 1, syms, pc, where)
     if t == "~":
         v, i = _parse_unary(toks, i + 1, syms, pc, where)
         return ~v, i

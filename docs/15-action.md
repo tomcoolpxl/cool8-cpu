@@ -1,0 +1,326 @@
+# 15 — CoolAction!, the compiled language
+
+**Normative for the language, its calling convention, and the
+compiler's command line.** [D97](01-decisions.md#d97--coolaction-a-compiled-language-for-games-cross-compiled-in-rust)
+is the argument for having it; this is what it is.
+
+CoolAction! is a small structured language for games and demos,
+compiled on the host to a COOL8 PRG. It is Clinton Parker's
+Action! (OSS, 1983) with C's operators, and it exists because a 60 Hz
+game is the one job the BASIC interpreter of [13-basic.md](13-basic.md)
+was never going to do. `BYTE`, `CARD`, `INT`, pointers, arrays, records,
+`PROC`/`FUNC`, and nothing else: no strings beyond a length-prefixed
+array, no floats, no heap.
+
+```
+rust/src/action/         the compiler: lexer, parser, code generator, assembler
+rust/src/action_main.rs  the `coolaction` command
+rust/src/wasm.rs         cool8_compile_action, the same compiler for the browser
+sw/libaction.act         the hardware library: video, tiles, sprites, timing, input
+sw/bench/sieve.act       the Byte sieve, beside sw/bench/sieve.bas
+demos/primes.act         a program that talks to the UART
+sim/test_action.py       the gate -- `poe test` runs it as the `action` job
+```
+
+---
+
+## 1. Compiling and running
+
+```bash
+cargo build --release --bin coolaction          # once; sim/harness.py does it for the suites
+rust/target/release/coolaction game.act -o GAME.BIN --asm game.asm --sym game.sym
+rust/target/release/coolaction sw/libaction.act game.act -o GAME.BIN
+```
+
+| Option | |
+|---|---|
+| `file.act ...` | one or more sources, compiled as if concatenated in that order -- there is no `INCLUDE`, so the library goes first on the command line |
+| `-o file` | the PRG: two bytes of load address, then the image ([D87](01-decisions.md#d87--sys-name-a-binary-carries-its-own-address)) |
+| `--org $0200` | where the program loads and runs. `$0200` unless told otherwise |
+| `--asm file` | the generated assembly, which `tools/cool8asm.py` also assembles, to the same bytes |
+| `--sym file` | `addr name`, sorted -- a global `foo` is the label `v_foo`, a routine is its own name |
+| `--assemble file.asm` | the compiler's assembler on its own; the output is the raw image |
+
+**Running it.** From BASIC, `SYS "GAME.BIN"` loads the file where its
+header says and jumps in; the program's entry is `CALL Main` then
+`RET`, so a program that finishes comes back to the prompt. The entry
+routine is `Main` if there is one, otherwise the last `PROC` in the
+source, which is Action!'s rule.
+
+**Where it lives.** The default origin is `$0200`, the byte above the
+CPU stack, because a game does not need BASIC and BASIC is the only
+thing that needs the map of [04-system.md §2](04-system.md). What a
+program at `$0200` must still respect: page 1 is the stack, `$9800`
+to `$ABFF` is the text map *while a text mode is showing* (a game in
+modes 2 to 6 draws into VRAM and may use it), and the I/O page is at
+`$FF00`. A program that means to return to BASIC compiles with
+`--org $0400` or higher and stays below `$97FF`, the user area's top.
+
+**In the browser**, `cool8_compile_action(src, len, org, &out_len)`
+in `rust/src/wasm.rs` is the same compiler and returns the same PRG.
+
+---
+
+## 2. The language
+
+### 2.1 Lexical
+
+- Comments run from `;` or `//` to the end of the line.
+- Keywords are case-insensitive; **names are case-sensitive**, so
+  `Main` and `main` are two routines.
+- Numbers: decimal `200`, hex `$FF10` or `0xFF10`, binary `0b1010`,
+  a character `'A'` (with `\n \r \t \0 \\ \'`). Underscores may
+  separate digits. **`%` is modulo**, never a binary literal.
+- A string `"text"` is the address of a length byte followed by the
+  characters, Action!'s layout, and it is a `BYTE POINTER`.
+- There is no statement terminator. Two rules stand in for one:
+  **a binary operator that begins a line ends the expression before
+  it**, so `x = y` on one line and `*p = 1` on the next do not read as
+  `x = y * p`; and a returned value is always parenthesised,
+  `RETURN (expr)`.
+
+### 2.2 Types
+
+| Type | Bytes | Range |
+|---|---|---|
+| `BYTE`, `CHAR` | 1 | 0 – 255, unsigned |
+| `CARD` | 2 | 0 – 65535, unsigned |
+| `INT` | 2 | −32768 – 32767, two's complement |
+| `T POINTER` | 2 | an address of a `T`; `T` is `BYTE`, `CARD`, `INT` or a record |
+| `T ARRAY name(n)` | n × size | `T` is `BYTE`, `CARD` or `INT`; `name(i)` is an element |
+| `TYPE R = [ ... ]` | the fields' sum | a record: `TYPE Hero = [CARD x, y BYTE hp]` |
+
+Little-endian, no padding, fields in declaration order. A record's
+fields are scalars and pointers; there are no arrays of records and no
+records in records.
+
+### 2.3 Declarations
+
+```action
+BYTE vid_mode = $FF10          ; bound to that address: the hardware register
+CARD score                     ; storage in the program image, uninitialised
+BYTE lives = [3]               ; storage, starting at 3
+BYTE ARRAY tab(4) = [1 2 3 4]  ; space or comma separated, the rest zero
+CARD ARRAY sq(3) = [$0001 4 9]
+BYTE ARRAY name = "COOL8"      ; sized from the string: a length byte and five characters
+CONST SIZE = 8190              ; a constant expression; SIZE + 1 is also one
+TYPE Hero = [CARD x, y BYTE hp, state]
+Hero h                         ; a record variable
+Hero POINTER hp                ; a pointer to one
+```
+
+`= address` is Action!'s binding of a name to a fixed byte, and it is
+how every hardware register is reached. `=[value]` is an initial
+value. A global's storage is part of the image, so an initial value is
+what the file holds and an uninitialised global is whatever the loader
+left there. **Declarations may appear anywhere outside a routine**: at
+the top of the file, or after one -- a declaration cannot be a
+statement, so it ends the routine before it. Action!'s `MODULE` is
+accepted and does the same, and is never required.
+
+Several names share one type: `CARD i, j, count`. An array's size is
+a constant expression; a `CONST` is folded wherever it is used and
+also emitted as the assembler equate `c_NAME`.
+
+### 2.4 Routines
+
+```action
+PROC Plot(CARD x, CARD y, BYTE color)
+  pix_x = x
+  pix_y = y
+  pix_data = color
+RETURN
+
+FUNC CARD Fact(BYTE n)
+  IF n <= 1 THEN RETURN (1) FI
+RETURN (n * Fact(n - 1))
+```
+
+Parameters are by value; an array is passed as a `POINTER`. A routine's
+locals are declared before its first statement, with `=[value]` for
+an initial value, and live in a stack frame -- **so recursion works**,
+which Action!'s static locals did not allow. The frame is at most 200
+bytes and no argument or local may sit more than 255 bytes below the
+stack top, which is the reach of `[SP+u8]`. A `FUNC` answers in R0 (one
+byte) or R1:R0; a `PROC` in an expression is an error. A routine ends
+at the next `PROC`, `FUNC`, `MODULE` or the end of the file; a `RETURN`
+at the end is optional and one in the middle returns early.
+
+### 2.5 Statements
+
+```action
+x = expr        x += 1   x -= 1   x *= 2   x /= 2   x %= 8
+x &= mask       x |= bit x ^= bit x <<= 1  x >>= 1
+Plot(x, y, 3)
+
+IF a == 1 THEN ... ELSEIF a == 2 THEN ... ELSE ... FI
+WHILE cond DO ... OD
+DO ... OD                          ; for ever, until EXIT
+DO ... UNTIL cond OD
+FOR i = 0 TO 39 DO ... OD          ; STEP n, STEP -1
+EXIT                               ; leave the innermost loop
+RETURN                             ; RETURN (value) in a FUNC
+ASSERT cond, "message"             ; BRK when false, the message's address in X
+BREAK                              ; BRK
+ASM ... ENDASM
+```
+
+Any of `x`, `arr(i)`, `*p`, `h.field`, `hp.field` is assignable; a
+compound assignment evaluates its target's address twice, so an index
+with a side effect (`arr(Next()) += 1`) calls `Next` twice.
+
+`FOR` evaluates the limit on every pass and steps by a constant.
+With a positive step it runs while `var <= limit`, with a negative one
+while `var >= limit`, both in the variable's own type -- so
+`FOR i = 0 TO 255` on a `BYTE` never ends, exactly as it would not
+on the Atari.
+
+**`ASM` blocks** are passed to the assembler as written, in the
+dialect of [08-assembler.md](08-assembler.md). Every register is
+free. A global `foo` is `v_foo`, a constant is `c_NAME`, a routine is
+its name; a local has no name at all. A block may define local labels
+(`.loop:`) but not global ones, because the compiler's own labels are
+locals of the routine and a new global would end their scope.
+
+### 2.6 Expressions
+
+Loosest binding first:
+
+```
+OR  ||
+AND &&
+NOT !
+==  !=  <>  <  <=  >  >=
+|
+^  XOR
+&
+<<  >>  LSH  RSH
++  -
+*  /  %  MOD
+unary  -  ~  *p  &name
+```
+
+**Comparisons bind looser than the bitwise operators**, Python's order
+rather than C's, so `IF status & 1 == 0` asks about the masked bit --
+the question a hardware register invites, and the one C's order
+silently gets wrong. `AND`/`OR` and `&&`/`||` are the same operators:
+logical, short-circuit, the right side not evaluated when the left
+decides. `&`, `|`, `^` are bitwise.
+
+| | |
+|---|---|
+| Width | a `BYTE` with a `CARD` or `INT` is widened (zero-extended) and the result is two bytes; assigning a word to a `BYTE` keeps the low byte |
+| Comparison | unsigned, unless either side is `INT`; the result is 0 or 1 |
+| `*` | two bytes multiply on the hardware `MUL` and give a `CARD`; a word operand calls the 16-bit routine, low 16 bits |
+| `/` `%` | unsigned unless either side is `INT`, then C's truncation and sign rules; a constant power of two is a shift or a mask |
+| `<<` `>>` | the count is a byte; `INT >>` is arithmetic |
+| `-x` | a two-byte `INT` |
+| `arr`, `&x`, `"s"` | an address, as a `POINTER` |
+| `p + n` | **in bytes**, whatever `p` points at -- Action!'s rule, and the one to remember with a `CARD POINTER` |
+| `*p` | the pointee; `*p = v` stores |
+| `h.f`, `hp.f` | a field, through a record variable or a pointer to one |
+| `arr(i)` | an element; a word index reaches the whole array, a byte index the first 256 elements |
+
+Constant expressions fold at compile time, including `CONST` names and
+character literals.
+
+### 2.7 Not there, deliberately or yet
+
+No `INCLUDE` (list the files), no `DEFINE`, no `DOWNTO`, no string
+operators, no signed bytes, no arrays of records, no `TRACE` (the
+plan named one; the machine has no channel for it), and nothing that
+allocates. Interrupts are reachable from `ASM` and nothing more.
+
+---
+
+## 3. The calling convention and the code model
+
+For anyone writing `ASM` against compiled code, or a routine in
+assembly that CoolAction! calls.
+
+- Arguments are pushed **right to left**, each at its declared width
+  (a byte as one `PUSH`, a word high byte first so it is little-endian
+  in memory), then `CALL name`, then the **caller** releases them with
+  `ADDW SP`. The callee sees the first argument at `[SP + frame + 2]`.
+- The callee opens its frame with `ADDW SP,#-n` and closes it before
+  `RET`. Locals are at `[SP+0]` upward in declaration order.
+- A result comes back in R0, or R1:R0 with R0 the low byte.
+- **A call clobbers everything**: R0–R3, X, Y and the flags. Nothing is
+  callee-saved.
+- An expression is evaluated into R0 / R1:R0 with its right operand in
+  R2/R3; a temporary is pushed only around a right operand that is not
+  a constant or a plain variable. Y is the address a load or store is
+  about to use and X is `MUL`'s product; neither is live across a
+  sub-expression.
+- `/` and `%` on words use two bytes of scratch (`__dv`, and `__sg`
+  for `INT`), so **16-bit division is not reentrant from an interrupt
+  handler**.
+
+---
+
+## 4. The assembler inside the compiler
+
+The compiler assembles its own output so the browser can go from
+source to bytes with no Python. It has **no mnemonic table of its
+own**: `tools/mkrsopc.py` renders `tools/cool8asm.py`'s signature table
+-- itself derived from `tools/opcodes.py` by disassembling every
+encoding -- into `rust/src/optab.rs`, and `poe check` fails on drift.
+The first draft carried its own table and had `PUSH`, `LD [SP+u8]`,
+`MUL` and `LDW` all wrong, which is the second-table trap
+[AGENTS.md](../AGENTS.md) names.
+
+What the Rust side re-implements is the logic around the table:
+operand normalisation, the expression grammar (`$hex`, `%bin`, `'c'`,
+`*`, `<`/`>` for the low and high byte, the same precedence),
+`label:` and `.local:`, `NAME = expr`, the directives `.org .equ .byte
+.word .ascii .asciz .space .align`, the aliases of
+[08-assembler.md §2.6](08-assembler.md), and branch relaxation with the
+same policy. Not carried over: `.include` and `.macro`.
+
+`sim/test_action.py` holds it to `tools/cool8asm.py` three ways: every
+program it compiles is assembled a second time from `--asm` and the
+bytes compared; **all 491 encodings**, rendered by the disassembler,
+go through both assemblers and must come back as their own bytes; and
+an out-of-range branch must grow identically. The exhaustive pass found
+one thing on its first run: the disassembler renders a signed
+displacement as `+18` and neither assembler accepted a unary plus.
+Both do now.
+
+---
+
+## 5. Measured
+
+`poe test` runs `sim/test_action.py`; `python sim/test_action.py
+--profile` prints where the sieve's clocks go, by loop.
+
+**The Byte sieve**, `sw/bench/sieve.act`, is `sw/bench/sieve.bas`
+statement for statement: 8190 flags, 1899 primes.
+
+| | clocks | |
+|---|---|---|
+| compiled BASIC (`sim/test_bas.py`'s golden) | 3,069,408 | |
+| CoolAction!, first working generator | 2,495,317 | 1.2× |
+| CoolAction!, constants compared as immediates, a word index loaded with `LDW Y` | **2,078,879** | **1.5×** |
+
+The code is 234 bytes; the file is 8,425 with the flag array in it.
+
+Where the 2,078,879 go, by the compiler's own loop labels:
+
+```
+Main.cm10    740,648   35.6%   the inner loop's body: flags(j) = 0, j += p
+Main.do1     426,444   20.5%   the first loop, flags(i) = 1
+Main.fi6     295,388   14.2%   i += 1 and the UNTIL of the outer loop
+Main.do4     271,468   13.1%   the outer loop's head, IF flags(i) <> 0
+Main.wh8     237,568   11.4%   the inner loop's WHILE j <= SIZE
+```
+
+Every line of that is loads and stores of `i`, `j` and `p`, which live
+in memory because nothing lives in a register across a statement. The
+inner loop is about 60 clocks a pass where a hand-written one is 20.
+**Keeping loop variables in registers is the next step**, and this
+profile is the evidence for it -- not the estimate that the multiply
+or the compare was the cost, which it was not.
+
+`demos/primes.act` counts the primes to 1000 recursively printing the
+answer to the UART, and the session machine's `said()` is its check:
+`Primes: 168`. `sw/libaction.act` compiles to 992 bytes.

@@ -216,6 +216,11 @@ id = "names"
 run = "sim/check_names.py"
 about = "global name collisions across the system image"
 
+[[tool.cool8.jobs.sw]]
+id = "action"
+run = "sim/test_action.py"
+about = "the CoolAction! compiler: the language on the machine, the Byte sieve beside BASIC's, and its assembler against tools/cool8asm.py byte for byte"
+
 [[tool.cool8.jobs.rtl]]
 id = "cosim"
 run = "sim/cosim.py"

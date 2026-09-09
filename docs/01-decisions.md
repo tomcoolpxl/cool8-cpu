@@ -5796,3 +5796,73 @@ which was found already failing before this session and is flagged as
 its own investigation; the suite's INTRO gate is the end-to-end proof,
 holding rendered glyphs actually sliding across frames.
 
+
+## D97 -- CoolAction!: a compiled language for games, cross-compiled in Rust
+
+[D52](#d52--the-operating-system-is-cool8-basic-and-how-it-got-that-shape)
+chose "native compilation on the Action! model" and then lost it: the
+self-hosted compiler was built, measured, and shelved on image size
+([11-compiler.md](11-compiler.md)). That arithmetic was about a
+compiler *on the machine*, and it does not apply to one on the host --
+which is where `tools/cool8bas.py` has compiled the system all along.
+What was missing was a language for the thing the interpreter cannot
+do: a game that has 139,000 clocks a frame and wants most of them.
+
+**The language is Action! with C's operators**, and
+[15-action.md](15-action.md) is normative for it. Action! because its
+type set is exactly this machine's -- `BYTE`, `CARD`, `INT`, a pointer,
+an array, a record, and a variable bound to an address for every
+hardware register -- and because a tokenised, line-numbered BASIC is
+the wrong shape for a sprite routine. C's operators because `==+` and
+`!` for OR are the parts of 1983 nobody misses.
+
+**The compiler is Rust, in `rust/src/action/`, not an extension of
+`tools/cool8bas.py`**, for one reason: the web emulator
+(`tools/mkweb.py`, `rust/src/wasm.rs`) is the machine most people will
+touch, and a compiler that runs there has to be in the crate. That is
+also why it carries its own assembler, and why that assembler has no
+table of its own: the first draft did, and got `PUSH`, `LD [SP+u8]`,
+`MUL` and `LDW` wrong -- AGENTS.md's second-mnemonic-table trap, hit in
+the one place a Python import could not reach. `tools/mkrsopc.py` now
+renders `cool8asm.py`'s signature table into `optab.rs` beside the
+cycle tables, `poe check` gates drift, and `sim/test_action.py` feeds
+all 491 encodings through both assemblers and compares the bytes. That
+sweep found that the disassembler writes a displacement as `+18` and
+neither assembler took a unary plus; both do now.
+
+**Rejected, and why:**
+
+- *`%` as a binary literal*, which the assembler has. It is modulo in
+  every language the operators were borrowed from, and `val % 10`
+  failing to lex was the first thing the sieve hit. Binary is `0b`.
+- *C's precedence for `&` against `==`.* `status & 1 == 0` is the
+  question every register poll asks and C answers the wrong one
+  silently. Comparisons bind looser than the bitwise operators, as in
+  Python.
+- *`RETURN x` without parentheses.* With no statement terminator,
+  `RETURN` followed by a statement that begins with a name reads as
+  returning it. Action! required the parentheses too.
+- *Action!'s static locals.* They forbid recursion and buy nothing
+  here: `[SP+u8]` reaches a 255-byte frame in one instruction, and
+  `ADDW SP,#d8` opens one in four clocks. The price is that a local is
+  a load, never a register, which is the whole of the profile below.
+- *Passing the first arguments in registers*, which Action! did. Not
+  until a profile says calls are the cost; the stack is uniform and
+  the sieve has no calls in its loops.
+
+**Measured.** The Byte sieve, statement for statement with
+`sw/bench/sieve.bas`: compiled BASIC 3,069,408 clocks; the first
+working generator 2,495,317 (1.2×); with constants compared as
+immediates and a word index loaded straight into Y, **2,078,879
+(1.5×)**, in 234 bytes of code. The profile (`sim/test_action.py
+--profile`) puts 47 % in the inner loop and all of it in loads and
+stores of `i`, `j` and `p`: the inner pass is ~60 clocks against ~20
+by hand. **Keeping loop variables in registers is the next step**, and
+it is not started because the number that justifies it was only just
+measured. `demos/primes.act` prints `Primes: 168` to the UART, which is
+the check that a real program reaches the hardware.
+
+Not on the demo disc yet: [14-demos.md](14-demos.md) ships machine code
+as a PRG behind `SYS "NAME.BIN"`, and `tools/mkdemos.py` does not know
+about `.act` sources. The web page does not expose the compiler either;
+the export exists and the UI does not call it.

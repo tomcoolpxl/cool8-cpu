@@ -1,3 +1,4 @@
+pub mod action;
 pub mod cpu;
 pub mod machine;
 pub mod optab;

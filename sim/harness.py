@@ -322,6 +322,117 @@ def compile_bas(source, name, org=None, optimize=False, lower=False,
     asm = bas.compile_source(source, org, optimize=optimize)
     return assemble_text(asm, name, lower=lower, incdirs=incdirs,
                          write=write)
+# ------------------------------------------------------------- CoolAction!
+
+ACT_EXE = os.path.join(ROOT, "rust", "target", "release",
+                       "coolaction.exe" if os.name == "nt" else "coolaction")
+_ACT_BUILT = [False]
+
+
+def _act_exe():
+    """The compiler binary, built once per process. `cargo build` on an
+    up-to-date tree is a tenth of a second, and running it every time
+    is what keeps a suite from testing a stale compiler -- the trap
+    flash.py's BOOT.BIN comment names, in a different coat."""
+    import shutil
+    import subprocess
+    if not _ACT_BUILT[0]:
+        if not shutil.which("cargo"):
+            if not os.path.exists(ACT_EXE):
+                raise SystemExit("coolaction needs cargo; none on PATH")
+        else:
+            r = subprocess.run(["cargo", "build", "--release", "--bin",
+                                "coolaction", "--quiet"],
+                               cwd=os.path.join(ROOT, "rust"),
+                               capture_output=True, text=True)
+            if r.returncode != 0:
+                raise SystemExit("cargo build coolaction failed:\n" + r.stderr)
+        _ACT_BUILT[0] = True
+    return ACT_EXE
+
+
+def try_build_act(source, name, org=0x0200):
+    """Compile CoolAction!: `(prg, syms)` or `(None, error_text)`.
+
+    `source` is a path (absolute, or relative to ROOT), a list of
+    paths compiled as one text in that order (the library first), or
+    the program text. The generated assembly is left at `BUILD/<name>.asm`, which
+    is what makes a code-generation fault readable and what lets a
+    suite assemble the same text with tools/cool8asm.py and compare.
+    `prg` carries its two-byte load address (D87); `syms` is the label
+    table -- a global `foo` is `v_foo`, a routine is its own name.
+    """
+    import subprocess
+    if isinstance(source, (list, tuple)):
+        paths = [p if os.path.isabs(p) else os.path.join(ROOT, p) for p in source]
+    elif source.endswith(".act") or os.path.exists(source):
+        paths = [source if os.path.isabs(source) else os.path.join(ROOT, source)]
+    else:
+        paths = [os.path.join(BUILD, name + ".act")]
+        with open(paths[0], "w", encoding="utf-8") as fh:
+            fh.write(source)
+    stem = os.path.join(BUILD, name)
+    r = subprocess.run([_act_exe()] + paths + ["-o", stem + ".bin",
+                        "--asm", stem + ".asm", "--sym", stem + ".sym",
+                        "--org", "$%04X" % org],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        return None, (r.stderr or r.stdout).strip()
+    with open(stem + ".bin", "rb") as fh:
+        prg = fh.read()
+    syms = {}
+    with open(stem + ".sym", encoding="utf-8") as fh:
+        for line in fh:
+            addr, _, sym = line.strip().partition(" ")
+            if sym:
+                syms[sym] = int(addr, 16)
+    return prg, syms
+
+
+def build_act(source, name, org=0x0200):
+    """`try_build_act`, exiting on a compile error."""
+    prg, syms = try_build_act(source, name, org)
+    if prg is None:
+        raise SystemExit("CoolAction! compile failed: %s\n%s" % (name, syms))
+    return prg, syms
+
+
+def assemble_act(text, name):
+    """The compiler's own assembler on assembly text: `(org, image)`,
+    or `(None, error_text)`. For holding it to `assemble()` -- the
+    same text through tools/cool8asm.py -- byte for byte."""
+    import subprocess
+    path = os.path.join(BUILD, name + ".asm")
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(text)
+    out = os.path.join(BUILD, name + ".rs.bin")
+    r = subprocess.run([_act_exe(), "--assemble", path, "-o", out],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        return None, (r.stderr or r.stdout).strip()
+    org = int(r.stdout.split("at $")[1].split(",")[0], 16)
+    with open(out, "rb") as fh:
+        return org, fh.read()
+
+
+def run_act(m, prg, at=0xFEF0, sp=0x0200, budget=50_000_000):
+    """Load a PRG where its header says and run it to completion.
+
+    The program's `_start` is `CALL Main / RET`, so four bytes of
+    `CALL org / HALT` at `at` -- high in RAM, where no program this
+    size reaches -- are the caller it returns to. Returns why the
+    machine stopped; "halt" is the answer a finished program gives,
+    and afterwards `m.cpu.sp` back at `sp` is the stack-neutrality
+    check every frame and every call has to pass.
+    """
+    org = prg[0] | (prg[1] << 8)
+    code = prg[2:]
+    m.bus.mem[org:org + len(code)] = code
+    m.bus.mem[at:at + 4] = bytes([0x29, org & 0xFF, org >> 8, 0x21])
+    m.cpu.pc, m.cpu.sp, m.romen = at, sp, False
+    return m.run(budget=budget)
+
+
 def call(m, syms, routine, regs=(), at=0x0200, budget=20_000_000):
     """Call one routine in the loaded system image and come back.
 

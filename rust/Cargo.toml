@@ -12,6 +12,10 @@ path = "src/lib.rs"
 name = "cool8rs"
 path = "src/main.rs"
 
+[[bin]]
+name = "coolaction"
+path = "src/action_main.rs"
+
 
 [features]
 # The window and the speaker. Off by default so the parity suite's

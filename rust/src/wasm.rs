@@ -321,3 +321,51 @@ pub extern "C" fn cool8_get_led(state: *mut WasmState) -> u8 {
         st.machine.bus.led
     }
 }
+
+/// Compile CoolAction! source text to PRG binary in WebAssembly.
+/// Returns pointer to PRG bytes and writes byte length to `out_len`.
+/// On error, returns null and sets out_len to 0.
+#[no_mangle]
+pub extern "C" fn cool8_compile_action(
+    src_ptr: *const u8,
+    src_len: usize,
+    org: u16,
+    out_len: *mut usize,
+) -> *mut u8 {
+    if src_ptr.is_null() || src_len == 0 {
+        if !out_len.is_null() {
+            unsafe { *out_len = 0; }
+        }
+        return std::ptr::null_mut();
+    }
+
+    let src_slice = unsafe { std::slice::from_raw_parts(src_ptr, src_len) };
+    let src_str = match std::str::from_utf8(src_slice) {
+        Ok(s) => s,
+        Err(_) => {
+            if !out_len.is_null() {
+                unsafe { *out_len = 0; }
+            }
+            return std::ptr::null_mut();
+        }
+    };
+
+    match crate::action::compile(src_str, org) {
+        Ok(res) => {
+            let mut prg = res.prg;
+            let len = prg.len();
+            let ptr = prg.as_mut_ptr();
+            std::mem::forget(prg);
+            if !out_len.is_null() {
+                unsafe { *out_len = len; }
+            }
+            ptr
+        }
+        Err(_) => {
+            if !out_len.is_null() {
+                unsafe { *out_len = 0; }
+            }
+            std::ptr::null_mut()
+        }
+    }
+}

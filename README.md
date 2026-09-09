@@ -209,6 +209,7 @@ The full command vocabulary is [docs/12-tasks.md](docs/12-tasks.md);
 | [11-compiler.md](docs/11-compiler.md) | the self-hosted compiler |
 | [12-tasks.md](docs/12-tasks.md) | the commands |
 | [13-basic.md](docs/13-basic.md) | the BASIC language reference |
+| [15-action.md](docs/15-action.md) | CoolAction!, the compiled language for games |
 
 ## License
 

@@ -1,0 +1,230 @@
+; ====================================================================
+; CoolAction! Standard Library for COOL8
+; Low-level hardware abstractions for video, sound, input, and memory
+; ====================================================================
+
+; --- Hardware Register Mappings ---
+BYTE vid_mode    = $FF10
+BYTE vid_ctrl    = $FF11
+CARD vid_base    = $FF12
+CARD vid_dbase   = $FF14
+CARD vid_scrlx   = $FF16
+CARD vid_scrly   = $FF18
+BYTE vid_status  = $FF1A
+BYTE vid_irq     = $FF1D
+BYTE vid_irq_en  = $FF1E
+BYTE vid_raster  = $FF1F
+CARD pat_base    = $FF20
+BYTE pal_idx     = $FF22
+BYTE pal_data_l  = $FF23
+BYTE pal_data_h  = $FF24
+CARD vram_addr   = $FF26
+BYTE vram_step   = $FF28
+BYTE vram_data   = $FF29
+
+BYTE pix_ctrl    = $FF30
+CARD pix_x       = $FF34
+CARD pix_y       = $FF36
+BYTE pix_data    = $FF38
+BYTE pix_data_y  = $FF39
+
+BYTE kbd_status  = $FF40
+BYTE kbd_data    = $FF41
+BYTE joy_data    = $FF44
+
+CARD tmr0_div    = $FF50
+CARD tmr0_cnt    = $FF52
+BYTE tmr0_ctrl   = $FF54
+
+BYTE uart_status = $FF70
+BYTE uart_data   = $FF71
+
+; --- Low-Level VRAM Operations ---
+
+PROC VPoke(CARD addr, BYTE val)
+  vram_addr = addr
+  vram_data = val
+RETURN
+
+FUNC BYTE VPeek(CARD addr)
+  vram_addr = addr
+RETURN (vram_data)
+
+PROC VFill(CARD addr, CARD count, BYTE val)
+  vram_addr = addr
+  vram_step = 1
+  WHILE count > 0 DO
+    vram_data = val
+    count -= 1
+  OD
+RETURN
+
+PROC VWrite(CARD addr, BYTE POINTER src, CARD count)
+  vram_addr = addr
+  vram_step = 1
+  WHILE count > 0 DO
+    vram_data = *src
+    src += 1
+    count -= 1
+  OD
+RETURN
+
+PROC VRead(CARD addr, BYTE POINTER dest, CARD count)
+  vram_addr = addr
+  vram_step = 1
+  WHILE count > 0 DO
+    *dest = vram_data
+    dest += 1
+    count -= 1
+  OD
+RETURN
+
+; --- Video & Screen Modes ---
+
+PROC Graphics(BYTE mode)
+  vid_mode = mode
+RETURN
+
+PROC Scroll(CARD x, CARD y)
+  vid_scrlx = x
+  vid_scrly = y
+RETURN
+
+PROC SetColor(BYTE idx, CARD rgb12)
+  pal_idx = idx
+  pal_data_l = rgb12 & $FF
+  pal_data_h = (rgb12 >> 8) & $0F
+RETURN
+
+; --- Fast Drawing & Pixel Port ---
+
+PROC Plot(CARD x, CARD y, BYTE color)
+  pix_x = x
+  pix_y = y
+  pix_data = color
+RETURN
+
+PROC HLine(CARD x, CARD y, CARD len, BYTE color)
+  pix_x = x
+  pix_y = y
+  WHILE len > 0 DO
+    pix_data = color
+    len -= 1
+  OD
+RETURN
+
+PROC VLine(CARD x, CARD y, CARD len, BYTE color)
+  pix_x = x
+  pix_y = y
+  WHILE len > 0 DO
+    pix_data_y = color
+    len -= 1
+  OD
+RETURN
+
+; --- Mode 2 Tile Engine ---
+
+PROC SetTileBase(CARD addr)
+  pat_base = addr
+RETURN
+
+PROC SetTile(CARD col, CARD row, BYTE tile_idx, BYTE attr)
+  ; Mode 2 tilemap cell address = row * 128 + col * 2
+  CARD cell_addr
+  cell_addr = (row * 128) + (col * 2)
+  vram_addr = cell_addr
+  vram_step = 1
+  vram_data = tile_idx
+  vram_data = attr
+RETURN
+
+PROC LoadTile(BYTE tile_idx, BYTE POINTER pattern_32bytes)
+  CARD dest_addr
+  dest_addr = pat_base + (tile_idx * 32)
+  VWrite(dest_addr, pattern_32bytes, 32)
+RETURN
+
+PROC LoadTileFont(CARD vram_dest, BYTE POINTER data_ptr, CARD num_bytes)
+  VWrite(vram_dest, data_ptr, num_bytes)
+RETURN
+
+; --- Hardware Sprites ---
+
+PROC SetSprite(BYTE id, CARD x, CARD y, CARD pat, BYTE attr)
+  CARD spr_addr
+  spr_addr = $FE00 + (id * 8)
+  vram_addr = spr_addr
+  vram_step = 1
+  vram_data = x & $FF
+  vram_data = (x >> 8) & $FF
+  vram_data = y & $FF
+  vram_data = (y >> 8) & $FF
+  vram_data = pat & $FF
+  vram_data = (pat >> 8) & $FF
+  vram_data = attr
+  vram_data = 1 ; enable
+RETURN
+
+PROC SpriteMove(BYTE id, CARD x, CARD y)
+  CARD spr_addr
+  spr_addr = $FE00 + (id * 8)
+  vram_addr = spr_addr
+  vram_step = 1
+  vram_data = x & $FF
+  vram_data = (x >> 8) & $FF
+  vram_data = y & $FF
+  vram_data = (y >> 8) & $FF
+RETURN
+
+PROC SpriteEnable(BYTE id, BYTE enable)
+  CARD spr_addr
+  spr_addr = $FE00 + (id * 8) + 7
+  vram_addr = spr_addr
+  vram_data = enable
+RETURN
+
+; --- Timing & Sync ---
+
+PROC WaitVBlank()
+  ; Wait until VBlank bit (bit 0) in vid_status is 1
+  WHILE (vid_status & 1) == 0 DO
+  OD
+RETURN
+
+PROC WaitFrame()
+  ; Wait for end of current VBlank then wait for next start
+  WHILE (vid_status & 1) != 0 DO
+  OD
+  WHILE (vid_status & 1) == 0 DO
+  OD
+RETURN
+
+; --- Console & Input ---
+
+FUNC BYTE Key()
+  IF (kbd_status & 1) != 0 THEN
+    RETURN (kbd_data)
+  FI
+RETURN (0)
+
+PROC PutChar(CHAR c)
+  uart_data = c
+RETURN
+
+PROC Print(BYTE POINTER s)
+  BYTE len
+  BYTE i
+  len = *s
+  i = 1
+  WHILE i <= len DO
+    s += 1
+    uart_data = *s
+    i += 1
+  OD
+RETURN
+
+PROC PrintE(BYTE POINTER s)
+  Print(s)
+  uart_data = 13 ; CR
+  uart_data = 10 ; LF
+RETURN

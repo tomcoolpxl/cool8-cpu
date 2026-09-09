@@ -24,8 +24,45 @@ ROOT = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
 
 import opcodes  # noqa: E402
+import cool8asm  # noqa: E402
 
 OUT = os.path.join(ROOT, "rust", "src", "optab.rs")
+
+
+def _rs_str(s):
+    return '"' + s.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def _encodings():
+    """The assembler's signature table, as cool8asm.TABLE holds it.
+
+    The CoolAction! compiler (rust/src/action/) carries an assembler so
+    the browser build can go from source to bytes with no Python. It
+    must not carry a mnemonic table of its own -- the first draft did,
+    and got PUSH, LD [SP+u8], MUL and LDW all wrong -- so the table is
+    this one, rendered: the same signatures cool8asm normalises a
+    source line to, with the opcode, page-2 byte and operand kind. The
+    Rust side re-implements only the normalisation (logic, not data)
+    and sim/test_action.py checks the two assemblers produce identical
+    bytes from the compiler's own output.
+    """
+    rows = []
+    for (mnem, canon), (op, op2, kind) in sorted(cool8asm.TABLE.items()):
+        sig = mnem + (" " + ",".join(canon) if canon else "")
+        rows.append((sig, op, op2, kind))
+    return rows
+
+
+def _aliases():
+    """cool8asm.ALIASES, each evaluated on a placeholder operand so the
+    rewrite can be carried as text: (alias, mnemonic, operands with
+    {0} where the operand goes)."""
+    rows = []
+    for (name, n), fn in sorted(cool8asm.ALIASES.items()):
+        assert n == 1
+        mnem, ops = fn("{0}")
+        rows.append((name, mnem, ops))
+    return rows
 
 
 def _array(name, ty, values, per_line, fmt):
@@ -82,7 +119,54 @@ def generate():
         _array("P2_ASSIGNED", "bool", p2_have, 8,
                lambda v: "true" if v else "false"),
         "",
+        "/// Operand kinds, as tools/opcodes.py numbers them.",
+        "pub const K_NONE: u8 = %d;" % opcodes.NONE,
+        "pub const K_IMM8: u8 = %d;" % opcodes.IMM8,
+        "pub const K_MASK8: u8 = %d;" % opcodes.MASK8,
+        "pub const K_DISP8: u8 = %d;" % opcodes.DISP8,
+        "pub const K_U8: u8 = %d;" % opcodes.U8,
+        "pub const K_REL8: u8 = %d;" % opcodes.REL8,
+        "pub const K_ABS16: u8 = %d;" % opcodes.ABS16,
+        "pub const K_IMM16: u8 = %d;" % opcodes.IMM16,
+        "",
+        "/// Bytes that follow the opcode, by operand kind.",
+        "pub const EXTRA: [u8; 8] = [%s];" % ", ".join(
+            str(opcodes.EXTRA[k]) for k in range(8)),
+        "",
+        "/// The condition codes in encoding order; a branch's inverse is",
+        "/// its index with the bottom bit flipped.",
+        "pub const COND: [&str; 16] = [%s];" % ", ".join(
+            _rs_str(c) for c in opcodes.COND),
+        "",
+        "/// One assemblable signature: the canonical text tools/cool8asm.py",
+        "/// normalises a source line to, the opcode, the page-2 byte if",
+        "/// any, and the operand kind.",
+        "pub struct Enc {",
+        "    pub sig: &'static str,",
+        "    pub op: u8,",
+        "    pub op2: Option<u8>,",
+        "    pub kind: u8,",
+        "}",
+        "",
+        "/// Every encoding the assembler accepts, as cool8asm.TABLE.",
+        "pub const ENCODINGS: &[Enc] = &[",
     ]
+    for sig, op, op2, kind in _encodings():
+        o2 = "None" if op2 is None else "Some(0x%02X)" % op2
+        parts.append("    Enc { sig: %s, op: 0x%02X, op2: %s, kind: %d },"
+                     % (_rs_str(sig), op, o2, kind))
+    parts += [
+        "];",
+        "",
+        "/// Assembler aliases (docs/08-assembler.md section 2.6): alias,",
+        "/// the mnemonic it rewrites to, and its operands with {0} where",
+        "/// the alias's one operand goes.",
+        "pub const ALIASES: &[(&str, &str, &str)] = &[",
+    ]
+    for name, mnem, ops in _aliases():
+        parts.append("    (%s, %s, %s)," % (_rs_str(name), _rs_str(mnem),
+                                            _rs_str(ops)))
+    parts += ["];", ""]
     return "\n".join(parts)
 
 
