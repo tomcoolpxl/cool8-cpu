@@ -334,6 +334,33 @@ port tricks, and the compiled one is not faster: every one of `dx`,
 `err`, `e2`, `n` and `x0` is a stack-frame load and store per step,
 which is the sieve's profile again in a different routine.
 
+**The two ports, against their originals.** `demos/rainbow.act` and
+`demos/cobra.act` are `rainbow.bas` and `cobra.bas` statement for
+statement, and `sim/test_action.py` runs each pair to the same frame
+wait and compares VRAM -- both pages, for COBRA -- byte for byte.
+Both matched on the first run, which is the `Line` gate paying off.
+The numbers, the interpreter's beside the compiler's:
+
+| | interpreted | compiled | |
+|---|---|---|---|
+| RAINBOW, 40 frames | 6,722,811 | 5,745,642 | 1.2× -- both sit in `VSYNC` most of the frame, so the wall clock is the same 60 Hz |
+| COBRA, start-up: 2,016 projections and 1,772 table gathers | 50,538,504 | 2,708,535 | **18.7×** |
+| COBRA, a frame's drawing, the wait excluded (mean of frames 2-10) | 578,058 | 290,435 | 2.0× |
+| COBRA, the PRG | -- | 14,433 bytes | 7 KB of it the four endpoint arrays, `BYTE` where the BASIC has integers |
+
+**That is the first real answer to "how much faster".** Where the work
+is arithmetic and array traffic -- the start-up -- the compiler is
+eighteen times the interpreter, because an interpreted statement's
+cost is parsing it. Where the work is `Line`, it is twice, because
+`Line` and `LINE` are the same algorithm at the same 128 clocks a
+pixel and the compiler only saves the statements *around* each call.
+A frame is 139,583 clocks, so neither COBRA holds 60 Hz: the
+interpreted one draws a frame in four, the compiled one in two. The
+next clock to find is inside `Line`, and the profile says it is the
+stack-frame traffic the sieve's profile already named -- the second
+piece of evidence [D97](01-decisions.md#d97--coolaction-a-compiled-language-for-games-cross-compiled-in-rust)
+said to wait for before keeping variables in registers.
+
 ---
 
 ## 6. The library

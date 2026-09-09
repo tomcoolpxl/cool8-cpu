@@ -343,6 +343,12 @@ run = "tools/mkrsopc.py"
 args = ["--check"]
 about = "rust/src/optab.rs is current"
 
+[[tool.cool8.jobs.check]]
+id = "cobra"
+run = "tools/mkcobra.py"
+args = ["--check"]
+about = "demos/cobra.act carries demos/cobra.bas's DATA -- the port's 2,264 table entries are copied by machine, and a change to the BASIC's model fails here rather than in the framebuffer"
+
 [[tool.cool8.jobs.build]]
 id = "rom"
 run = "tools/mkrom.py"

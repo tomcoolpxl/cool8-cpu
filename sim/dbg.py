@@ -346,13 +346,26 @@ class Profile:
         session pipe one tick at a time); the label attribution stays
         here, where the symbol table is.
         """
-        m.profile_start()
+        self.start(m)
         m.run(budget=limit)
+        return self.collect(m)
+
+    def start(self, m):
+        """Begin counting; for a caller that drives the run itself --
+        `run(until=)` to a frame boundary, say -- and then `collect`s."""
+        m.profile_start()
+
+    def collect(self, m):
+        """Charge what the machine counted since `start` to its routines."""
         for pc, cost in m.profile_cycles().items():
             who = self._who(pc)
             self.by[who] = self.by.get(who, 0) + cost
             self.total += cost
         return self.total
+
+    def of(self, routine):
+        """The clocks charged to one routine, its local labels included."""
+        return sum(c for n, c in self.by.items() if n.split(".")[0] == routine)
 
     def report(self, top=14, roll=True):
         """Roll local labels up into the routine that owns them."""

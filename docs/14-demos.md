@@ -989,6 +989,51 @@ Classic arcade Tetris re-engineered for **Mode 2 (40×30 Tile Mode, 320×240 dou
 - **Audio & Timing**:
   - Crisp noise-free multi-voice square wave sound effects (`noise = 0`), anti-hover hardware timer synchronization (`TIMER`), pause (`P`), game over restart (`N`), and clean exit (`Q`).
 
+### `RAINBOW` and `COBRA`, compiled — the CoolAction menu
+
+The same two demos, in CoolAction! ([15-action.md](15-action.md)), on
+drive 11 as bare `.BIN`s: `demos/rainbow.act` and `demos/cobra.act`
+are the BASIC sources statement for statement, and `sim/test_action.py`
+holds each to its original by running both to the same frame wait and
+comparing VRAM byte for byte — both pages, for COBRA. They matched on
+the first run, because the library's `Line` is `LINE` pixel for pixel
+and was gated on the same fan first.
+
+**What a port changes.** `READ`/`DATA` becomes an initialised array,
+`DIM` a declaration, `0-Q` is `-q`, and `POKE $FF30,P` is
+`VID_DBASE_H = p` through the generated register names. COBRA's 2,264
+table entries are not typed twice: `tools/mkcobra.py` copies them out
+of the BASIC's `DATA` into a marked block of the `.act`, and `poe
+check` fails if the block is stale — a change to the model in
+`cobra.bas` fails there rather than in the framebuffer. Its four
+endpoint arrays and its projection table are `BYTE` where the BASIC
+has integers, because a mode 5 coordinate is 0–255 by construction;
+7 KB of PRG instead of 14, the same picture.
+
+**What the pair measures.** COBRA's start-up — 2,016 projections and
+1,772 table gathers — is **18.7× faster** compiled (2.7 M clocks
+against 50.5 M), and a frame's drawing is 2.0× (290 K against 578 K),
+because `Line` and `LINE` cost the same 128 clocks a pixel and the
+compiler only saves the statements around each call. Neither holds
+60 Hz: a frame is 139,583 clocks, so the interpreted ship draws in
+four and the compiled one in two. RAINBOW is 1.2× and does not matter,
+because both sit in the frame wait. The full table is in
+[15-action.md §5](15-action.md).
+
+**`PRIMES` is on the same menu**, because it is `demos/primes.act` and
+the disc is derived from `demos/`: it counts the primes to a thousand
+and says so on the serial port, which the page does not show. A
+demonstration that a compiled program reaches the hardware, not a
+picture.
+
+**One thing the port made visible**: `CLG` clears 240 rows of the
+stride in every mode (`h_clg`), which in mode 5 is 30,720 bytes from
+`VID_BASE` — 6,144 past the page — so COBRA's second clearing frame
+wipes the top 48 rows of the page then on show. It lasts one frame,
+the library's `Clg` does exactly the same, and the two framebuffers
+agree; it is recorded here because it is the kind of thing a port
+finds and a viewer does not.
+
 ### `HHGG`, `ZORK1`, `PLANET`, `LGOP` — Infocom Text Adventure Suite (Native Z3 Interpreter)
 
 Infocom's celebrated interactive fiction text adventure games, running natively on COOL8's pure assembly Z-Machine Version 3 (Z3) interpreter on Drive 13 (`DEMOS`) and Drive 14 (`ADVENTUR`):

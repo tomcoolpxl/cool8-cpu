@@ -211,6 +211,13 @@ PROC Main()
   c += 1
   wout(22) = c          ; 0, wraps
   out(31) = h.hp + tab(1)   ; 5
+  s = -300
+  wout(23) = s / 256    ; -1: truncation, not an arithmetic shift
+  wout(24) = s % 256    ; -44: the sign of the dividend
+  s = -256
+  wout(25) = s / 256    ; -1
+  s = 300
+  wout(26) = s / 256    ; 1
 RETURN
 '''
 
@@ -259,6 +266,9 @@ def test_features():
         (12, 60000, "16x16 multiply"), (13, 3750, "CARD / 16"), (14, 48, "CARD <<= var"),
         (15, (-16) & 0xFFFF, "INT >>= 2 keeps the sign"), (21, 7, "-(-7)"),
         (22, 0, "CARD wraps at 65536"),
+        (23, (-1) & 0xFFFF, "INT / 256 truncates towards zero, as BASIC's does"),
+        (24, (-44) & 0xFFFF, "INT % 256 takes the dividend's sign"),
+        (25, (-1) & 0xFFFF, "-256 / 256"), (26, 1, "300 / 256"),
     ]:
         check(w(i) == want, "  %s" % what, "wout(%d) = %d, want %d" % (i, w(i), want))
     check(m.bus.mem[0x7000] == 77, "  a variable bound to an address",
@@ -518,6 +528,93 @@ def test_rainbow():
     print()
 
 
+def test_cobra():
+    """The second port, held to the original the same way, on both
+    pages: demos/cobra.bas and demos/cobra.act each run to the K-th
+    VSYNC / WaitVBlank, and the two VRAM pages and both base registers
+    must be identical. Ten frames is past the two clearing frames and
+    into the erase-and-draw steady state, so a wrong projection, a
+    wrong cull table, a Line tie or a flip out of step is a different
+    page.
+
+    And the first real answer to "how much faster": the same work on
+    both sides, measured two ways -- the start-up (projection and cull,
+    2,016 multiply-adds and 1,772 table gathers, to the first frame
+    wait) and the clocks a frame of drawing costs, which is everything
+    not spent waiting for the frame. Both are VSYNC-paced, so the wall
+    clock is the same; the number that differs is how much of the frame
+    is left."""
+    import test_basic as B
+    import memmap
+    K = 10
+    print("  COBRA: the port against the original, %d frames, both pages" % K)
+    code, bsyms = B.build()
+    M = B.Machine(code, bsyms)
+    M.settle()
+    for ln in open(os.path.join(H.ROOT, "demos", "cobra.bas"), encoding="utf-8"):
+        if ln.strip():
+            H.line(M.m, bsyms, ln.rstrip("\r\n"))
+    M.m.type("RUN\r")
+    c0 = M.m.cpu.cycles
+    why = M.m.run(until=bsyms["h_vsync"], budget=600_000_000)
+    bas_start = M.m.cpu.cycles - c0
+    check(why == "until", "cobra: the BASIC reached its first VSYNC", why)
+    # the frames are profiled from the first wait, so the start-up is
+    # not averaged into them
+    bp = dbg.Profile(bsyms, memmap.ORG, memmap.ORG + len(code))
+    bp.start(M.m)
+    for _ in range(K - 1):
+        M.m.tick()
+        why = M.m.run(until=bsyms["h_vsync"], budget=60_000_000)
+    check(why == "until", "cobra: the BASIC reached VSYNC %d times" % K, why)
+    bp.collect(M.m)
+    bas_vram = bytes(M.m.video.vram[0:0xC000])
+    import ioregs
+    rd = M.m.bus.read
+    bas_regs = (rd(ioregs.addr_of("VID_DBASE_H")), rd(ioregs.addr_of("VID_BASE_H")),
+                rd(ioregs.addr_of("VID_CTRL")))
+
+    prg, syms = H.build_act(H.ACT_LIB + ["demos/cobra.act"], "act_cobra")
+    same_bytes("act_cobra", prg)
+    m = H.session()
+    org, end = H.load_act(m, prg)
+    c0 = m.cpu.cycles
+    why = m.run(until=syms["WaitVBlank"], budget=60_000_000)
+    act_start = m.cpu.cycles - c0
+    check(why == "until", "cobra: reached the first WaitVBlank", why)
+    ap = dbg.Profile(syms, org, end)
+    ap.start(m)
+    for _ in range(K - 1):
+        m.tick()
+        why = m.run(until=syms["WaitVBlank"], budget=20_000_000)
+    check(why == "until", "cobra: reached WaitVBlank %d times" % K, why)
+    ap.collect(m)
+    act_vram = bytes(m.video.vram[0:0xC000])
+    rd = m.bus.read
+    act_regs = (rd(ioregs.addr_of("VID_DBASE_H")), rd(ioregs.addr_of("VID_BASE_H")),
+                rd(ioregs.addr_of("VID_CTRL")))
+    check(act_regs == bas_regs, "cobra: the same display base, drawing base and control byte",
+          "compiled %s BASIC %s" % (act_regs, bas_regs))
+    bad = [i for i in range(0xC000) if act_vram[i] != bas_vram[i]]
+    check(not bad, "cobra: both pages identical to the BASIC's after %d frames" % K,
+          "%d bytes differ; first at $%04X: compiled %02X BASIC %02X"
+          % (len(bad), bad[0] if bad else 0,
+             act_vram[bad[0]] if bad else 0, bas_vram[bad[0]] if bad else 0))
+    lit = sum(1 for b in act_vram if b)
+    check(lit > 300, "cobra: a ship is on the pages", "%d lit bytes" % lit)
+
+    bas_work = (bp.total - bp.of("h_vsync")) / (K - 1)
+    act_work = (ap.total - ap.of("WaitVBlank")) / (K - 1)
+    print("    start-up, projection and cull: %s clocks compiled, %s interpreted (%.1fx)"
+          % (f"{act_start:,}", f"{bas_start:,}", bas_start / act_start))
+    print("    a frame's drawing, the wait excluded: %s clocks compiled, %s interpreted "
+          "(%.1fx), the mean of frames 2-%d; a frame is 139,583; %d bytes of PRG"
+          % (f"{act_work:,.0f}", f"{bas_work:,.0f}", bas_work / act_work, K, len(prg)))
+    print("    where the compiled frames go:")
+    print("\n".join("    " + l for l in ap.report(top=5).split("\n")[1:]))
+    print()
+
+
 def test_refusals():
     print("  what the compiler refuses, and how it says so")
     cases = [
@@ -627,6 +724,7 @@ def main():
     test_hardware()
     test_line()
     test_rainbow()
+    test_cobra()
     test_refusals()
     return H.report()
 
