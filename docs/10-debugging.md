@@ -254,17 +254,27 @@ To investigate rather than assert, run without the guards by stepping
 
 ## 3. Two rules that came out of this
 
-**`m.run(until=...)` advances the CPU, not the raster.** A machine run
-to a PC that way has had no vblank, no UART drain and no interrupt —
-the no-time-passes trap in a second costume. Use `run(cycles=)` or
-`tick()` when peripherals must live, and `until` only for "get me to
-this address fast".
+**`m.run(until=...)` used to advance the CPU and not the raster** — a
+machine run to a PC that way had had no vblank, no UART drain and no
+interrupt, the no-time-passes trap in a second costume. **On the Rust
+machine it does not**: `run_loop` in `rust/src/main.rs` is one `tick()`
+per instruction whatever the stop condition, so the raster, the frame
+counter and the interrupts all move under an `until`. The evidence is
+`sim/test_action.py`'s RAINBOW gate, whose forty `run(until=)` calls
+each pass through a `WaitVBlank` that returns only when the frame
+counter changes. The rule that remains is the next one.
 
 **An armed `until` or breakpoint at the current PC returns in zero
 cycles**, forever, and a loop around it spins without the machine
 moving. Step off first — one `tick()` — or discard the breakpoint on
 each stop. Both of these were rediscovered the hard way in the same
-session; the transcript is in the direct-mode work.
+session; the transcript is in the direct-mode work. **And a third
+time**, in `sim/test_action.py`'s RAINBOW gate: forty
+`run(until=h_vsync)` calls in a row were one `VSYNC`, both the
+interpreter and the compiled port were parked before their first
+frame, and two blank screens compared equal and passed. The gate
+checks that something is drawn now, which is the check that would
+have caught it.
 
 **The stack is 256 bytes, and running out is silent.**
 

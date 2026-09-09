@@ -461,6 +461,63 @@ RETURN
     print()
 
 
+def test_rainbow():
+    """The first port, held to the original: demos/rainbow.bas on the
+    interpreter and demos/rainbow.act compiled, each run the same
+    number of frames -- parked at the K-th VSYNC / WaitVBlank, where a
+    frame's work is whole -- and the mode 4 frame and the sixteen
+    palette entries must be identical. The picture after 40 frames has
+    every one of the fifteen trail lines drawn and the oldest erased
+    twice over, so a Line that tied the other way, a bounce off by one,
+    or a palette entry byte-swapped is a different frame."""
+    import test_basic as B
+    K = 40
+    print("  RAINBOW: the port against the original, %d frames" % K)
+    code, bsyms = B.build()
+    M = B.Machine(code, bsyms)
+    M.settle()
+    for ln in open(os.path.join(H.ROOT, "demos", "rainbow.bas"), encoding="utf-8"):
+        if ln.strip():
+            H.line(M.m, bsyms, ln.rstrip("\r\n"))
+    M.m.type("RUN\r")
+    # **A tick between stops.** `run(until=)` checks the PC before it
+    # steps, so called again from the address it stopped at it returns
+    # at once: forty calls were one VSYNC, and the first version of
+    # this gate compared two blank screens and passed.
+    for _ in range(K):
+        why = M.m.run(until=bsyms["h_vsync"], budget=60_000_000)
+        M.m.tick()
+    check(why == "until", "rainbow: the BASIC reached VSYNC %d times" % K,
+          "%s; screen: %s" % (why, [r for r in M.m.text() if r][:4]))
+    bas_vram = bytes(M.m.video.vram[0:38400])
+    bas_pal = M.m.palette()[:16]
+    bas_cyc = M.m.cpu.cycles
+    check(sum(1 for b in bas_vram if b) > 200, "rainbow: the BASIC drew something",
+          "%d lit bytes, mode %d" % (sum(1 for b in bas_vram if b), M.m.video.ctrl))
+
+    prg, syms = H.build_act(H.ACT_LIB + ["demos/rainbow.act"], "act_rainbow")
+    same_bytes("act_rainbow", prg)
+    m = H.session()
+    H.load_act(m, prg)
+    for _ in range(K):
+        why = m.run(until=syms["WaitVBlank"], budget=20_000_000)
+        m.tick()
+    check(why == "until", "rainbow: reached WaitVBlank %d times" % K, why)
+    act_vram = bytes(m.video.vram[0:38400])
+    bad = [i for i in range(38400) if act_vram[i] != bas_vram[i]]
+    check(not bad, "rainbow: the same 38,400 bytes of VRAM as the BASIC after %d frames" % K,
+          "%d bytes differ; first at %d (row %d): compiled %02X BASIC %02X"
+          % (len(bad), bad[0] if bad else 0, (bad[0] // 160) if bad else 0,
+             act_vram[bad[0]] if bad else 0, bas_vram[bad[0]] if bad else 0))
+    check(m.palette()[:16] == bas_pal, "rainbow: the same sixteen palette entries",
+          " ".join("%03X" % p for p in m.palette()[:16]))
+    lit = sum(1 for b in act_vram if b)
+    check(lit > 200, "rainbow: something is on the screen", "%d lit bytes" % lit)
+    print("    %s clocks compiled against %s interpreted to the %dth frame, "
+          "%d bytes of PRG" % (f"{m.cpu.cycles:,}", f"{bas_cyc:,}", K, len(prg)))
+    print()
+
+
 def test_refusals():
     print("  what the compiler refuses, and how it says so")
     cases = [
@@ -569,6 +626,7 @@ def main():
     test_library()
     test_hardware()
     test_line()
+    test_rainbow()
     test_refusals()
     return H.report()
 

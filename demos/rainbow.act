@@ -1,0 +1,89 @@
+; RAINBOW -- a bouncing line with a fifteen-line trail, in CoolAction!
+;
+; demos/rainbow.bas statement for statement: two endpoints bounce
+; independently around mode 4's 320x240, a ring of fifteen holds the
+; older lines so the trail erases oldest-first, and the colour is the
+; ring slot, so the trail walks the palette. It is a demonstration of
+; WaitVBlank more than of Line -- one line drawn, one erased, one
+; frame waited -- and the compiled one runs at the same 60 Hz because
+; the hardware says when, not because the work takes that long.
+;
+; **Exact.** sim/test_action.py runs this and the BASIC original the
+; same number of frames and requires the same 38,400 bytes of VRAM and
+; the same sixteen palette entries; the port is the BASIC's integer
+; arithmetic in CARD and INT, and Line is LINE pixel for pixel. What
+; changed in translation: READ/DATA is an initialised array, DIM is a
+; declaration, and 0-Q is -q.
+;
+; Compile behind the library: coolaction sw/io.act sw/libaction.act
+; demos/rainbow.act -o RAINBOW.BIN. Runs until a key is pressed.
+
+; black, then fifteen colours round the hue circle, $0RGB -- the
+; BASIC's DATA pairs, high byte first, as one word each
+CARD ARRAY pal(16) = [$000 $F02 $F05 $F09 $F0D $D0F $90F $50F
+                      $20F $2AF $2FF $2FA $2F5 $6F2 $BF2 $FF2]
+
+; the ring: the endpoints of the fifteen lines still on the screen
+CARD ARRAY a(15), b(15), c(15), d(15)
+
+PROC Main()
+  INT m, n, o, p          ; the two endpoints
+  INT q, r, s, t          ; and their velocities
+  BYTE j, i               ; the slot the next line takes
+
+  Graphics(4)
+  Cursor(0)
+  SetPalette(pal, 0, 16)
+  Clg(0)
+
+  m = 24
+  n = 20
+  o = 295
+  p = 215
+  q = 5
+  r = 4
+  s = -4
+  t = 5
+  j = 0
+  FOR i = 0 TO 14 DO
+    a(i) = m
+    b(i) = n
+    c(i) = o
+    d(i) = p
+  OD
+
+  ; each frame: erase the oldest, move, bounce, draw the newest
+  DO
+    WaitVBlank()
+    Line(a(j), b(j), c(j), d(j), 0)
+    m += q
+    IF m < 4 THEN q = -q FI
+    IF m < 4 THEN m = 4 FI
+    IF m > 315 THEN q = -q FI
+    IF m > 315 THEN m = 315 FI
+    n += r
+    IF n < 4 THEN r = -r FI
+    IF n < 4 THEN n = 4 FI
+    IF n > 235 THEN r = -r FI
+    IF n > 235 THEN n = 235 FI
+    o += s
+    IF o < 4 THEN s = -s FI
+    IF o < 4 THEN o = 4 FI
+    IF o > 315 THEN s = -s FI
+    IF o > 315 THEN o = 315 FI
+    p += t
+    IF p < 4 THEN t = -t FI
+    IF p < 4 THEN p = 4 FI
+    IF p > 235 THEN t = -t FI
+    IF p > 235 THEN p = 235 FI
+    a(j) = m
+    b(j) = n
+    c(j) = o
+    d(j) = p
+    Line(m, n, o, p, j + 1)
+    j += 1
+    IF j > 14 THEN j = 0 FI
+  UNTIL Key() OD
+  Graphics(0)
+  Cursor(1)
+RETURN
