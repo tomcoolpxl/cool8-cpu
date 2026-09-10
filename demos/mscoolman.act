@@ -4,8 +4,8 @@
 ; the fruit and the font are the arcade's own pixels, ripped from the
 ; board's sprite sheet by tools/mkmscool.py into
 ; assets/misscool/mscoolman_art.act, which this file compiles behind
-; (demos/mscoolman.parts names it). That art is private and never
-; committed; this file is the game, and it is.
+; (demos/mscoolman.parts names it). This file is the game; the art is
+; the arcade's, in the repository for a hobby project with no users.
 ;
 ; **Mode 2, because the arcade board is a tile map and sprites too.**
 ; The maze is 28 x 31 tiles of 8 x 8 drawn by the hardware from the

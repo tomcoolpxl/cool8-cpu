@@ -251,8 +251,8 @@ def main():
         nm = discname(f)
         srcs = H.act_sources(os.path.join("demos", f))
         if srcs is None:
-            # a program whose parts are private and not on this machine
-            # (Ms. Cool-Man's ripped art): the manifest says which
+            # a program whose parts are not on this machine (Ms.
+            # Cool-Man's generated art): the manifest says which
             print("  %s: a part named in demos/%s.parts is not here, so it is not on the disc"
                   % (f, os.path.splitext(f)[0]))
             continue

@@ -9,9 +9,8 @@ gate in test_action.py is built on it; run this file to look:
 
     python sim/mscool.py [title|pill|death|clear|fruit]
 
-writes the frames to sim/build/ms_*.png. The art is not in the
-repository (assets/misscool/ is ignored), so both say so and stop
-when it is absent rather than fail.
+writes the frames to sim/build/ms_*.png. Both say so and stop rather
+than fail if the art part the manifest names is absent.
 """
 import os
 import sys

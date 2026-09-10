@@ -967,8 +967,8 @@ def test_mscoolman():
     import mscool
     print("  MS. COOL-MAN")
     if mscool.sources() is None:
-        print("    SKIPPED: the art is not here -- assets/misscool/ is private, "
-              "tools/mkmscool.py makes it from the ripped sheets")
+        print("    SKIPPED: the art part is not here -- "
+              "tools/mkmscool.py makes assets/misscool/mscoolman_art.act from the sheets")
         print()
         return
     r = subprocess.run([sys.executable, os.path.join(H.ROOT, "tools", "mkmscool.py"), "--check"],

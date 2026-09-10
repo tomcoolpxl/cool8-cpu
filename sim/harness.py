@@ -344,11 +344,9 @@ def act_sources(path):
     the parts its `.parts` manifest names, then itself -- or None when
     a part is missing.
 
-    A manifest is one path a line, relative to ROOT, and it exists for
-    a program whose data is not in the repository: Ms. Cool-Man's art
-    is ripped from the arcade sheets and lives, with the `.act` the
-    generator writes from it, in a directory `.gitignore` excludes. The
-    manifest is committed, the part is not, and a machine without the
+    A manifest is one path a line, relative to ROOT, for a program
+    whose data is generated elsewhere: Ms. Cool-Man's art, which
+    tools/mkmscool.py writes from the arcade sheets. A tree without the
     part gets None here and says so rather than a compile error.
     """
     rel = path if not os.path.isabs(path) else os.path.relpath(path, ROOT)

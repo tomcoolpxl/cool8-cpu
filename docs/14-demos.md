@@ -1114,16 +1114,17 @@ or a board is in doubt; the serial log is the record.
 mazes with the arcade's rules: the pink maze for levels 1 and 2, the
 light blue one from level 3, the four ghosts with their own targets,
 the pills, the fruit, the house, the tunnels, the score beside the
-maze. A hobby port for the machine's owner; **its art is the arcade's
-own pixels and is not in the repository.** `tools/mkmscool.py` rips
-the two mazes, her nine frames, the ghosts', the fruit and the font
-from sheet images in `assets/misscool/`, which `.gitignore` excludes,
-and writes `assets/misscool/mscoolman_art.act` beside them;
-`demos/mscoolman.parts` names that file as the part the game compiles
-behind, and `sim/harness.py`'s `act_sources()` reads the manifest.
+maze. A hobby port for the machine's owner, with no users; **its art
+is the arcade's own pixels**, in the repository by that owner's
+decision. `tools/mkmscool.py` rips the two mazes, her nine frames, the
+ghosts', the fruit and the font from the sheet images in
+`assets/misscool/` (The Spriters Resource's arcade Ms. Pac-Man and
+Pac-Man sheets) and writes `assets/misscool/mscoolman_art.act` beside
+them; `demos/mscoolman.parts` names that file as the part the game
+compiles behind, `sim/harness.py`'s `act_sources()` reads the
+manifest, and `poe check` holds the generated file to the sheets.
 Without the part, `poe demos` leaves the game off the disc and says
-so, and the gate skips, loudly. The game logic, the generator and the
-manifest are committed; the sheets and the generated art never are.
+so, and the gate skips, loudly.
 
 **Mode 2, because the arcade board is a tile map with sprites.** The
 maze is 28 × 31 tiles of 8 × 8 in the map at VRAM 0, a dot is a tile

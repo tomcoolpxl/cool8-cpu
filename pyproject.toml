@@ -308,6 +308,12 @@ args = ["--check"]
 about = "the encoding table against the documented examples"
 
 [[tool.cool8.jobs.check]]
+id = "mscool"
+run = "tools/mkmscool.py"
+args = ["--check"]
+about = "Ms. Cool-Man's generated art against the ripped sheets"
+
+[[tool.cool8.jobs.check]]
 id = "memmap"
 run = "tools/memmap.py"
 args = ["--check"]

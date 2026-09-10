@@ -1,4 +1,4 @@
-# Ms. Cool-Man compiles behind its art, which is ripped from the arcade
-# sheets and private: tools/mkmscool.py writes it into a directory
-# .gitignore excludes. One path a line, relative to the repository root.
+# Ms. Cool-Man compiles behind its art, which tools/mkmscool.py rips
+# from the arcade sheets in assets/misscool/. One path a line,
+# relative to the repository root.
 assets/misscool/mscoolman_art.act
