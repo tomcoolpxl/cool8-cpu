@@ -1059,17 +1059,20 @@ accumulators -- is `INT`, and every divide truncates towards zero as
 the BASIC's does.
 
 **What the pairs measure.** COBRA's start-up -- 2,016 projections and
-1,772 table gathers -- is **18.7× faster** compiled (2.7 M clocks
-against 50.5 M), and a frame's drawing 2.0× (290 K against 578 K),
-because `Line` and `LINE` cost the same 128 clocks a pixel and the
-compiler only saves the statements around each call; neither holds
-60 Hz. **MANDEL is 7.1×**: the whole set in 298 M clocks against
-2,126 M -- 36 s against 4 min 14 s of machine time -- with the same
-Mariani-Silver rectangles and the same Q6 iteration, which is the
-arithmetic-and-array-traffic case the sieve profile predicted. PLASMA's
-25 s of visible top-down paint is a fraction of a second. RAINBOW,
-WAVE, SYNTH and INTRO sit in the frame wait either way and gain
-nothing a viewer can see. The full table is in
+1,772 table gathers -- is **36× faster** compiled (1.4 M clocks against
+50.5 M), and a frame's drawing 2.4× (239 K against 578 K), because
+`Line` and `LINE` are the same algorithm and the compiled one, at 97
+clocks a pixel, has only just overtaken the interpreter's 101-181;
+neither holds 60 Hz. **MANDEL is 35×**: the whole set in 60.5 M clocks
+against 2,126 M -- 7 s against 4 min 14 s of machine time -- with the
+same Mariani-Silver rectangles and the same Q6 iteration, which is the
+arithmetic-and-array-traffic case the sieve profile predicted. Those
+are the figures after the compiler's optimiser
+([15-action.md §4a](15-action.md)); before it they were 18.7×, 2.0×
+and 7.1×, and reading these ports' hot loops is what found the
+patterns. PLASMA's 25 s of visible top-down paint is a fraction of a
+second. RAINBOW, WAVE, SYNTH and INTRO sit in the frame wait either
+way and gain nothing a viewer can see. The full table is in
 [15-action.md §5](15-action.md).
 
 **`PRIMES` is on the same menu**, because it is `demos/primes.act` and

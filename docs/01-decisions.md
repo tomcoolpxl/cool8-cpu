@@ -6093,3 +6093,62 @@ drive -- and the full film as a rebuild with its cost.
 - *A hardcoded program list per menu.* The disc build is the list;
   `demos/` is the truth and the disc is derived, which is §2 of the
   same document.
+
+## D100 -- An optimiser before a register allocator
+
+**Decision:** the CoolAction! compiler gains a peephole pass over its
+emitted code (`rust/src/action/peep.rs`) and seven better patterns in
+the generator, and does not yet gain a register allocator.
+[15-action.md §4a](15-action.md) is the list; this is why that list
+and not another.
+
+**The evidence came from the ports, not from the sieve.** D97 recorded
+the sieve's profile -- every clock in loads and stores of loop
+variables -- and named register allocation as the next step, to be
+taken on a second piece of evidence. The nine ports were that evidence,
+and reading their hot loops as generated found something the sieve
+could not show: patterns that were expensive for no reason the model
+required. MANDEL's iteration called the sixteen-step signed divide
+twice a pass for `/ 32` and `/ 64`, and compared four times a pass by
+loading a constant into two registers and flipping both sign bits.
+`Line` and MANDEL both reloaded, on the line after a store, the very
+bytes just stored. Every ordering of two words was two compares round
+a label. None of that is register allocation; all of it is cheaper
+than register allocation and measurable at once.
+
+**Measured.** The sieve 2,078,879 to 1,864,836 clocks; `Line` 128 to
+97 a pixel, which is under `LINE`'s 101-181 for the first time; COBRA's
+start-up 2,708,535 to 1,391,498 and its frame 290,435 to 238,810;
+MANDEL 298,434,837 to 60,530,720 -- 7.1× to 35× the interpreter -- with
+every port still byte-identical to its original, which is what made
+the changes safe to make quickly. Every PRG got smaller; the pass has
+no tables and no runtime, which was the constraint set for it.
+
+**What it found on the way.** The arithmetic shift right by eight or
+more extended the sign from bit 0: `SAR R1` then `SEXC R1`, where
+`SEXC` under D9's convention extends from the bit the `SAR` shifted
+*out*. `INT >> 8` of -1 was 255. It had never been reached. And the
+first version of the flag rule -- drop the `CMP Rd,#0` after a load
+because `LD` sets Z -- dropped the high-byte compare of a word test,
+whose `BHI` at the join still read the carry; every `WHILE n > 0` in
+SYNTH and INTRO ran zero times, and the pair gates caught it in the
+text map before anything else could.
+
+**Rejected, and why:**
+
+- *A register allocator first.* It is the larger win and the larger
+  risk, and the profile that justifies it was taken on code that also
+  called a division loop to divide by 32. Take the cheap wins, measure
+  again, then allocate against the profile that remains. That profile
+  is in 15-action.md §5, and it still says loop variables.
+- *Doing the peephole on the assembly text after the fact*, outside
+  the generator. It has to know which labels are joins, which lines
+  are ASM blocks, and which addresses are hardware; the generator
+  knows all three and the text does not.
+- *`BGT`/`BLE` for `>` and `<=`.* After `SBC` the Z flag is the high
+  byte's, so a 16-bit `BLE` would branch on a zero high byte. The
+  other side's `<` and `>=` cost the same and are right.
+- *Caching hardware registers like variables.* A status register read
+  in a loop is read for a reason; anything the generator writes as
+  `[$FFxx]` stays uncached, and so does a variable bound to a RAM
+  address, which costs nothing because no port has one.

@@ -218,6 +218,25 @@ PROC Main()
   wout(25) = s / 256    ; -1
   s = 300
   wout(26) = s / 256    ; 1
+  s = -1
+  wout(27) = s >> 8     ; -1: the sign extends from bit 15, not from bit 0
+  s = -2
+  wout(28) = s / 2      ; -1
+  s = -3
+  wout(29) = s / 2      ; -1, towards zero
+  wout(30) = s * 4      ; -12
+  c = 3
+  b = 0
+  WHILE c > 0 DO        ; a word countdown: the test the maps found broken
+    b += 1
+    c -= 1
+  OD
+  out(32) = b           ; 3
+  c = 0
+  WHILE c > 0 DO b = 99 OD
+  out(33) = b           ; still 3: zero passes
+  c = 258
+  IF c == 0 THEN out(34) = 1 ELSE out(34) = 2 FI    ; 2: both bytes count
 RETURN
 '''
 
@@ -250,6 +269,8 @@ def test_features():
         (27, 4, "BYTE % 8 as a mask"), (28, 31, "BYTE >>="), (29, 65, "'A'"),
         (30, 2, "INT >= 0 on -1"), (31, 5, "record byte + array byte"),
         (30 + 0, 2, "ELSE"),
+        (32, 3, "WHILE on a word counting down"), (33, 3, "WHILE false runs zero times"),
+        (34, 2, "a word against zero tests both bytes"),
     ]:
         check(out[i] == want, "  %s" % what, "out(%d) = %d, want %d" % (i, out[i], want))
     check(out[40:43] == b"\x09\x09\x09" and out[43] == 0,
@@ -269,6 +290,9 @@ def test_features():
         (23, (-1) & 0xFFFF, "INT / 256 truncates towards zero, as BASIC's does"),
         (24, (-44) & 0xFFFF, "INT % 256 takes the dividend's sign"),
         (25, (-1) & 0xFFFF, "-256 / 256"), (26, 1, "300 / 256"),
+        (27, (-1) & 0xFFFF, "INT >> 8 extends the sign from bit 15"),
+        (28, (-1) & 0xFFFF, "-2 / 2"), (29, (-1) & 0xFFFF, "-3 / 2 truncates towards zero"),
+        (30, (-12) & 0xFFFF, "INT * 4 as a shift keeps the sign"),
     ]:
         check(w(i) == want, "  %s" % what, "wout(%d) = %d, want %d" % (i, w(i), want))
     check(m.bus.mem[0x7000] == 77, "  a variable bound to an address",
@@ -913,13 +937,24 @@ def test_every_encoding():
 def profile_sieve():
     """`--profile`: where the sieve's clocks go, by loop label. The
     labels are the compiler's own (.do, .wh, .od ...), qualified by
-    routine, so the report names the loop rather than the routine."""
-    prg, syms = H.build_act("sw/bench/sieve.act", "act_sieve")
+    routine, so the report names the loop rather than the routine.
+    `--profile line` does the same for the library's Line over
+    test_run.py's fan, which is where COBRA's frame goes."""
+    if "line" in sys.argv:
+        import test_run as R
+        flat = [v for line in R.LINE_FAN for v in line]
+        src = "CARD ARRAY fan(%d) = [%s]\n" % (len(flat), " ".join(str(v) for v in flat))
+        src += ("PROC Main()\n  CARD j\n  Graphics(4)\n  Clg(0)\n  j = 0\n"
+                "  WHILE j < %d DO\n    Line(fan(j), fan(j + 1), fan(j + 2), fan(j + 3), fan(j + 4))\n"
+                "    j += 5\n  OD\nRETURN\n" % len(flat))
+        prg, syms = H.build_act(H.ACT_LIB + [src], "act_line")
+    else:
+        prg, syms = H.build_act("sw/bench/sieve.act", "act_sieve")
     m = H.session()
     org, end = H.load_act(m, prg)
     p = dbg.Profile(syms, org, end)
     p.run(m)
-    print(p.report(top=12, roll=False))
+    print(p.report(top=16, roll=False))
     return 0
 
 

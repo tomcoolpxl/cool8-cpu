@@ -52,8 +52,23 @@ enum Simple {
     Addr(Loc),
 }
 
+/// One line of output, by what it is: an instruction the generator
+/// emitted and the peephole pass may rewrite, a label, or text passed
+/// through untouched -- an ASM block, a runtime routine, data.
+#[derive(Debug, Clone, PartialEq)]
+pub enum LineKind {
+    Code,
+    Label,
+    /// A label every path into which carries the same register facts:
+    /// the `.cm` of a word compare, reached by the fall-through and by
+    /// the `BNE` over one `CMP`. The peephole pass keeps its facts
+    /// across one where a `Label` makes it forget them.
+    Join,
+    Raw,
+}
+
 pub struct Codegen {
-    out: String,
+    lines: Vec<(LineKind, String)>,
     org: u16,
     globals: HashMap<String, Sym>,
     records: HashMap<String, RecordDecl>,
@@ -77,7 +92,7 @@ const R: [&str; 4] = ["R0", "R1", "R2", "R3"];
 impl Codegen {
     pub fn new(org: u16) -> Self {
         Self {
-            out: String::new(),
+            lines: Vec::new(),
             org,
             globals: HashMap::new(),
             records: HashMap::new(),
@@ -96,19 +111,41 @@ impl Codegen {
     // ---------------------------------------------------------- output
 
     fn emit(&mut self, s: &str) {
-        self.out.push_str("    ");
-        self.out.push_str(s);
-        self.out.push('\n');
+        self.lines.push((LineKind::Code, s.to_string()));
     }
 
     fn label(&mut self, l: &str) {
-        self.out.push_str(l);
-        self.out.push_str(":\n");
+        self.lines.push((LineKind::Label, l.to_string()));
+    }
+
+    /// A label whose every predecessor holds the same registers -- see
+    /// LineKind::Join. Only for a label the generator can vouch for.
+    fn join(&mut self, l: &str) {
+        self.lines.push((LineKind::Join, l.to_string()));
     }
 
     fn raw(&mut self, s: &str) {
-        self.out.push_str(s);
-        self.out.push('\n');
+        self.lines.push((LineKind::Raw, s.to_string()));
+    }
+
+    /// The text, after the peephole pass (peep.rs) over the emitted code.
+    fn text(&self) -> String {
+        let mut out = String::new();
+        for (kind, s) in super::peep::optimise(&self.lines) {
+            match kind {
+                LineKind::Code => {
+                    out.push_str("    ");
+                    out.push_str(&s);
+                }
+                LineKind::Label | LineKind::Join => {
+                    out.push_str(&s);
+                    out.push(':');
+                }
+                LineKind::Raw => out.push_str(&s),
+            }
+            out.push('\n');
+        }
+        out
     }
 
     /// A fresh local label. Local, so dbg.Profile rolls its cost up
@@ -546,7 +583,7 @@ impl Codegen {
             self.emit(&format!(".byte   {}", bytes.len()));
             self.emit_bytes(bytes);
         }
-        Ok(self.out.clone())
+        Ok(self.text())
     }
 
     fn emit_bytes(&mut self, bytes: &[u8]) {
@@ -751,14 +788,20 @@ impl Codegen {
                 self.label(&end);
             }
             StmtKind::While { cond, body } => {
+                // Tested at the bottom: one branch a pass instead of a
+                // test, a branch and a BRA back. The entry jumps to
+                // the test, so a false condition still runs the body
+                // zero times.
                 let top = self.lbl("wh");
+                let test = self.lbl("wt");
                 let end = self.lbl("od");
+                self.emit(&format!("BRA     {}", test));
                 self.label(&top);
-                self.gen_cond(cond, &end, false)?;
                 self.loops.push(end.clone());
                 self.gen_block(body)?;
                 self.loops.pop();
-                self.emit(&format!("BRA     {}", top));
+                self.label(&test);
+                self.gen_cond(cond, &top, true)?;
                 self.label(&end);
             }
             StmtKind::DoLoop { body, until_cond } => {
@@ -785,9 +828,12 @@ impl Codegen {
                     .unwrap_or(Expr { kind: ExprKind::Number(1), span: span.clone() });
                 let down = self.const_of(&step_e).map(|v| v < 0).unwrap_or(false);
                 self.gen_assign(&var_e, &AssignOp::Assign, start, span)?;
+                // Tested at the bottom, like WHILE: the step and the
+                // test are one straight run, and the peephole pass then
+                // finds the stepped value still in R0 for the compare.
                 let top = self.lbl("for");
+                let test_l = self.lbl("ft");
                 let end = self.lbl("od");
-                self.label(&top);
                 let test = Expr {
                     kind: ExprKind::Binary {
                         op: if down { BinaryOp::Lt } else { BinaryOp::Gt },
@@ -796,12 +842,14 @@ impl Codegen {
                     },
                     span: span.clone(),
                 };
-                self.gen_cond(&test, &end, true)?;
+                self.emit(&format!("BRA     {}", test_l));
+                self.label(&top);
                 self.loops.push(end.clone());
                 self.gen_block(body)?;
                 self.loops.pop();
                 self.gen_assign(&var_e, &AssignOp::PlusAssign, &step_e, span)?;
-                self.emit(&format!("BRA     {}", top));
+                self.label(&test_l);
+                self.gen_cond(&test, &top, false)?;
                 self.label(&end);
             }
             StmtKind::Return(e) => self.gen_return(e.as_ref(), span)?,
@@ -830,7 +878,9 @@ impl Codegen {
                             return Err(err(span, "an ASM block may define local labels (.name) only"));
                         }
                     }
-                    self.emit(t);
+                    // as written, and a wall to the peephole pass: a
+                    // hand-written block may branch on a load's flags
+                    self.raw(&format!("    {}", t));
                 }
             }
             StmtKind::Assert { cond, msg } => {
@@ -1201,14 +1251,93 @@ impl Codegen {
                         self.operands(left, right, 1)?;
                         self.emit("CMP     R0,R2");
                     }
-                } else if let (Some(v), false) = (rc, signed) {
-                    // against a constant: the immediates, no R2/R3
+                } else if matches!(op, BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge)
+                    && !(rc == Some(0) && !signed)
+                {
+                    // **An ordering of two words is a subtraction and one
+                    // branch.** SUB/SBC leaves the 16-bit result's sign and
+                    // overflow in N and V, which BLT/BGE read, and its
+                    // borrow in C, which BLO/BHS read -- so a signed
+                    // compare is 7 clocks where flipping both sign bits
+                    // and comparing twice was 15, and an unsigned one 7
+                    // for 9. `>` and `<=` are the other operand's `<` and
+                    // `>=`: against a constant that is the constant plus
+                    // one, otherwise the subtraction is done the other
+                    // way round into R2:R3. Z after SBC is the high
+                    // byte's alone, which is why BGT/BLE are not used.
+                    let mut cmp_lt = matches!(op, BinaryOp::Lt | BinaryOp::Gt);
+                    let mut swap = matches!(op, BinaryOp::Gt | BinaryOp::Le);
+                    let mut cval = rc;
+                    if swap {
+                        if let Some(v) = rc {
+                            let top = if signed { 32767 } else { 65535 };
+                            if v < top {
+                                cval = Some(v + 1);
+                                swap = false;
+                                cmp_lt = !cmp_lt; // a > k is a >= k+1; a <= k is a < k+1
+                            } else {
+                                cval = None;
+                            }
+                        }
+                    }
+                    if let Some(v) = cval {
+                        self.gen_expr_w(left, 2)?;
+                        self.emit(&format!("SUB     R0,#{}", v & 0xFF));
+                        self.emit(&format!("SBC     R1,#{}", (v >> 8) & 0xFF));
+                    } else {
+                        self.operands(left, right, 2)?;
+                        if swap {
+                            self.emit("SUB     R2,R0");
+                            self.emit("SBC     R3,R1");
+                        } else {
+                            self.emit("SUB     R0,R2");
+                            self.emit("SBC     R1,R3");
+                        }
+                    }
+                    // the branch takes when the difference is negative
+                    // for `<` wanted true or `>=` wanted false
+                    let neg = cmp_lt == jump_if_true;
+                    let br = match (signed, neg) {
+                        (true, true) => "BLT",
+                        (true, false) => "BGE",
+                        (false, true) => "BLO",
+                        (false, false) => "BHS",
+                    };
+                    self.emit(&format!("{}     {}", br, target));
+                    return Ok(());
+                } else if rc == Some(0)
+                    && !signed
+                    && matches!(op, BinaryOp::Eq | BinaryOp::Ne | BinaryOp::Gt | BinaryOp::Le)
+                {
+                    // a word against zero: `n > 0`, `n == 0`, the test of
+                    // every countdown loop -- one OR of the two bytes
+                    // and a Z branch, not two compares and a label
+                    self.gen_expr_w(left, 2)?;
+                    self.emit("OR      R0,R1");
+                    let br = match (op, jump_if_true) {
+                        (BinaryOp::Eq, true) | (BinaryOp::Le, true) => "BEQ",
+                        (BinaryOp::Eq, false) | (BinaryOp::Le, false) => "BNE",
+                        (BinaryOp::Ne, true) | (BinaryOp::Gt, true) => "BNE",
+                        _ => "BEQ",
+                    };
+                    self.emit(&format!("{}     {}", br, target));
+                    return Ok(());
+                } else if let Some(v) = rc {
+                    // against a constant: the immediates, no R2/R3. A
+                    // signed compare flips the sign bit of both sides
+                    // so that unsigned branches order them; with a
+                    // constant that is one XOR on R1 and a flipped
+                    // immediate, not two registers loaded and flipped.
                     self.gen_expr_w(left, 2)?;
                     let l = self.lbl("cm");
-                    self.emit(&format!("CMP     R1,#{}", (v >> 8) & 0xFF));
+                    let hi = ((v >> 8) & 0xFF) ^ if signed { 0x80 } else { 0 };
+                    if signed {
+                        self.emit("XOR     R1,#$80");
+                    }
+                    self.emit(&format!("CMP     R1,#{}", hi));
                     self.emit(&format!("BNE     {}", l));
                     self.emit(&format!("CMP     R0,#{}", v & 0xFF));
-                    self.label(&l);
+                    self.join(&l);
                 } else {
                     self.operands(left, right, 2)?;
                     if signed {
@@ -1219,7 +1348,7 @@ impl Codegen {
                     self.emit("CMP     R1,R3");
                     self.emit(&format!("BNE     {}", l));
                     self.emit("CMP     R0,R2");
-                    self.label(&l);
+                    self.join(&l);
                 }
                 let br = match (op, jump_if_true) {
                     (BinaryOp::Eq, true) | (BinaryOp::Ne, false) => "BEQ",
@@ -1282,7 +1411,10 @@ impl Codegen {
     }
 
     fn gen_const(&mut self, v: i64) -> TypeKind {
-        if (0..=255).contains(&v) {
+        if v == 0 {
+            self.emit("CLR     R0"); // SUB R0,R0: 2 clocks against MOV's 3
+            TypeKind::Byte
+        } else if (0..=255).contains(&v) {
             self.emit(&format!("MOV     R0,#{}", v));
             TypeKind::Byte
         } else {
@@ -1407,6 +1539,18 @@ impl Codegen {
             | BinaryOp::LogicalOr => self.gen_bool(&whole),
 
             BinaryOp::Mul => {
+                // by a small power of two: shifts. A BYTE times 2 is
+                // CLR R1 / ADD R0,R0 / ADC R1,R1, 6 clocks, where the
+                // MUL path is 20; a word times 4 is 16 where __mul16 is
+                // a call and a loop. `c * 2` is every other array index.
+                if let Some(d) = self.const_of(right) {
+                    if d > 0 && (d & (d - 1)) == 0 && d <= 16 {
+                        let k = d.trailing_zeros() as usize;
+                        self.gen_expr_w(left, result.width())?;
+                        self.shift_const(true, k, result.width(), false);
+                        return Ok(result);
+                    }
+                }
                 if lt.width() == 1 && rt.width() == 1 {
                     self.operands(left, right, 1)?;
                     self.emit("MUL     R0,R2");
@@ -1436,6 +1580,23 @@ impl Codegen {
                             self.emit(&format!("AND     R1,#{}", ((d - 1) >> 8) & 0xFF));
                         }
                         return Ok(lt);
+                    }
+                    // signed, by a power of two: C's truncation towards
+                    // zero is an arithmetic shift of the value biased by
+                    // d-1 when it is negative. MANDEL's iteration is
+                    // `a*b/32` and `a*a/64` twice a pass, and each was a
+                    // call into a sixteen-step division loop.
+                    if d > 0 && (d & (d - 1)) == 0 && signed && *op == BinaryOp::Div && d <= 256 {
+                        let k = d.trailing_zeros() as usize;
+                        self.gen_expr_w(left, 2)?;
+                        let pos = self.lbl("dp");
+                        self.emit("OR      R1,R1");
+                        self.emit(&format!("BPL     {}", pos));
+                        self.emit(&format!("ADD     R0,#{}", (d - 1) & 0xFF));
+                        self.emit(&format!("ADC     R1,#{}", ((d - 1) >> 8) & 0xFF));
+                        self.label(&pos);
+                        self.shift_const(false, k, 2, true);
+                        return Ok(TypeKind::Int);
                     }
                 }
                 let w = lt.width().max(rt.width());
@@ -1549,15 +1710,28 @@ impl Codegen {
             }
             return;
         }
+        // **The sign extension of R1 into itself is three instructions,
+        // and the first version had it wrong.** `SEXC` is `SBC Rd,Rd`,
+        // which under D9's carry-means-no-borrow is $00 when C is set
+        // and $FF when it is clear; `ADD R1,R1` puts the sign bit in C,
+        // so the pair gives the *inverse* and needs the `NOT`. The old
+        // sequence was `SAR R1 / SEXC R1`, which extended from the bit
+        // shifted out -- bit 0 -- and `INT >> 8` came out as 255 for
+        // -1. It was never reached until signed division by a power of
+        // two became a shift, and the features test caught it then.
+        let sext = |cg: &mut Self| {
+            cg.emit("ADD     R1,R1");
+            cg.emit("SEXC    R1");
+            cg.emit("NOT     R1");
+        };
         let mut n = n;
         if n >= 16 {
             if left || !arith {
                 self.emit("CLR     R0");
                 self.emit("CLR     R1");
             } else {
-                self.emit("SAR     R1");
+                sext(self);
                 self.emit("MOV     R0,R1");
-                self.emit("SEXC    R1");
             }
             return;
         }
@@ -1568,8 +1742,7 @@ impl Codegen {
             } else {
                 self.emit("MOV     R0,R1");
                 if arith {
-                    self.emit("SAR     R1");
-                    self.emit("SEXC    R1");
+                    sext(self);
                 } else {
                     self.emit("CLR     R1");
                 }

@@ -289,10 +289,76 @@ Both do now.
 
 ---
 
+## 4a. The optimiser
+
+The generator's model is one expression at a time into R0 or R1:R0,
+every variable in memory, and a statement that ends with a store. That
+is right for a first compiler and it leaves clocks on the floor in the
+same few places in every program, so there is a small optimiser -- not
+a register allocator, which is still the next step -- in two parts.
+
+**The peephole pass, `rust/src/action/peep.rs`**, runs over the emitted
+lines before they are assembled. It carries one fact per register --
+which memory byte, if any, it is known to equal -- and:
+
+- turns a load of a byte a register already holds into a `MOV` from
+  that register (2 clocks against 3 or 4), or into nothing when it is
+  the same register -- so `x += 1` followed by a test of `x` no longer
+  stores two bytes and reloads them, and `i + i` no longer loads `i`
+  twice into two register pairs;
+- drops the `OR Rd,Rd` or `CMP Rd,#0` before a `BEQ`/`BNE` when the
+  line before it, as emitted, loaded that register, because `LD` sets
+  Z and N (02-isa.md §1.2) -- but never before a branch into a word
+  compare's join, whose `BHI`/`BLS` still reads the carry the `CMP`
+  set. The first version dropped that one too and every `WHILE n > 0`
+  ran zero times.
+
+The facts are forgotten wherever they stop being true: at every label
+(except a `Join`, a label the generator vouches every path into holds
+the same registers -- the `.cm` of a word compare), at every `CALL`, on
+a store through `X` or `Y`, on anything that moves `SP` for the
+`[SP+n]` facts, and for every register an instruction writes. Hardware
+registers, which the generator writes as `[$FFxx]`, are never cached:
+a status register read twice is read twice. `ASM` blocks and the
+runtime routines are raw lines the pass does not touch and treats as
+walls, since a hand-written block may branch on a load's flags.
+
+**Better patterns in the generator itself**, each found by reading a
+port's hot loop:
+
+| was | is now | clocks |
+|---|---|---|
+| `INT / 2^k`: a call into the sixteen-step signed divide | bias by `2^k - 1` when negative, then an arithmetic shift -- C's truncation towards zero, which is BASIC's | ~200 → 8 + 4k |
+| a signed word compared with a constant: the constant loaded into R2:R3 and both sign bits flipped | one `XOR R1,#$80` and a flipped immediate | 16 → 12 |
+| any ordering of two words, `<` `<=` `>` `>=`: two compares round a label, four when signed | `SUB`/`SBC` and one signed or unsigned branch -- `BLT`/`BGE` read the 16-bit result's N and V, `BLO`/`BHS` its borrow; `>` and `<=` are the other side's `<` and `>=`, against a constant the constant plus one | 15 → 7 signed, 9 → 7 unsigned |
+| a word against zero, `n > 0`, `n == 0` | `OR R0,R1` and a Z branch | 9 → 4 |
+| `x * 2^k` for k ≤ 4: `MUL` and three moves, or a call to `__mul16` | shifts | 20 → 6 for a byte times 2 |
+| `WHILE` and `FOR`: the test at the top and a `BRA` back | tested at the bottom, entered by a jump to the test | 3 a pass |
+| a constant 0: `MOV R0,#0` | `CLR R0` | 1 |
+
+One bug fell out of it: the arithmetic shift right by eight or more
+sign-extended from bit 0 -- `SAR R1` then `SEXC R1`, which under D9's
+carry-means-no-borrow extends from the bit shifted *out* -- so `INT >>
+8` of -1 was 255. Nothing had reached it until signed division became
+a shift; the features test holds it now.
+
+**What it costs in memory: nothing.** Every one of these makes the
+code smaller -- the sieve 234 to 208 bytes of code, COBRA's PRG 15,325
+to 15,009, MANDEL's 12,457 to 12,046 -- and the pass adds no tables and
+no runtime. **What it does not do** is keep a variable in a register
+across a loop, which is where the sieve's remaining clocks are:
+`python sim/test_action.py --profile` puts 35 % in the inner loop and
+every line of it is still a load or a store of `j` and `p`. That is
+the register allocator, and this pass is what made the measurement
+worth taking again.
+
+---
+
 ## 5. Measured
 
 `poe test` runs `sim/test_action.py`; `python sim/test_action.py
---profile` prints where the sieve's clocks go, by loop.
+--profile` prints where the sieve's clocks go, by loop, and
+`--profile line` the library's `Line` over the fan.
 
 **The Byte sieve**, `sw/bench/sieve.act`, is `sw/bench/sieve.bas`
 statement for statement: 8190 flags, 1899 primes.
@@ -301,23 +367,24 @@ statement for statement: 8190 flags, 1899 primes.
 |---|---|---|
 | compiled BASIC (`sim/test_bas.py`'s golden) | 3,069,408 | |
 | CoolAction!, first working generator | 2,495,317 | 1.2× |
-| CoolAction!, constants compared as immediates, a word index loaded with `LDW Y` | **2,078,879** | **1.5×** |
+| CoolAction!, constants compared as immediates, a word index loaded with `LDW Y` | 2,078,879 | 1.5× |
+| CoolAction!, with the optimiser of §4a | **1,864,836** | **1.6×** |
 
-The code is 234 bytes; the file is 8,425 with the flag array in it.
+The code is 208 bytes; the file is 8,393 with the flag array in it.
 
-Where the 2,078,879 go, by the compiler's own loop labels:
+Where the 1,864,836 go, by the compiler's own loop labels:
 
 ```
-Main.cm10    740,648   35.6%   the inner loop's body: flags(j) = 0, j += p
-Main.do1     426,444   20.5%   the first loop, flags(i) = 1
-Main.fi6     295,388   14.2%   i += 1 and the UNTIL of the outer loop
-Main.do4     271,468   13.1%   the outer loop's head, IF flags(i) <> 0
-Main.wh8     237,568   11.4%   the inner loop's WHILE j <= SIZE
+Main.wh7     644,957   34.6%   the inner loop's body: flags(j) = 0, j += p
+Main.do1     384,976   20.6%   the first loop, flags(i) = 1
+Main.wt8     285,367   15.3%   the inner loop's test, j <= SIZE
+Main.fi5     270,301   14.5%   i += 1 and the UNTIL of the outer loop
+Main.do3     237,400   12.7%   the outer loop's head, IF flags(i) <> 0
 ```
 
 Every line of that is loads and stores of `i`, `j` and `p`, which live
-in memory because nothing lives in a register across a statement. The
-inner loop is about 60 clocks a pass where a hand-written one is 20.
+in memory because nothing lives in a register across a loop. The
+inner loop is about 50 clocks a pass where a hand-written one is 20.
 **Keeping loop variables in registers is the next step**, and this
 profile is the evidence for it -- not the estimate that the multiply
 or the compare was the cost, which it was not.
@@ -325,43 +392,48 @@ or the compare was the cost, which it was not.
 `demos/primes.act` counts the primes to 1000 recursively printing the
 answer to the UART, and the session machine's `said()` is its check:
 `Primes: 168`. The library, `sw/io.act` and `sw/libaction.act`
-together, compiles to 1,773 bytes.
+together, compiles to about 2,300 bytes with the keyboard tables in it.
 
-**`Line` is 128 clocks a pixel** over `sim/test_run.py`'s fifteen-line
+**`Line` is 97 clocks a pixel** over `sim/test_run.py`'s fifteen-line
 fan (2,735 pixels, profiled by routine), against the interpreter's
-`LINE` at 101 to 181 depending on the octant. Same algorithm, same
-port tricks, and the compiled one is not faster: every one of `dx`,
-`err`, `e2`, `n` and `x0` is a stack-frame load and store per step,
-which is the sieve's profile again in a different routine.
+`LINE` at 101 to 181 depending on the octant. It was 128 before §4a:
+same algorithm, same port tricks, and the difference is the ordering
+compares that are now a subtract and a branch and the values that stay
+in R0:R1 between a store and their next use. What is left is `dx`,
+`err`, `dyn`, `n` and `x0` in the stack frame -- the sieve's profile in
+a different routine.
 
-**The two ports, against their originals.** `demos/rainbow.act` and
-`demos/cobra.act` are `rainbow.bas` and `cobra.bas` statement for
-statement, and `sim/test_action.py` runs each pair to the same frame
-wait and compares VRAM -- both pages, for COBRA -- byte for byte.
-Both matched on the first run, which is the `Line` gate paying off.
-The numbers, the interpreter's beside the compiler's:
+**The nine ports, against their originals.** Every `demos/name.act` is
+its `name.bas` statement for statement, and `sim/test_action.py` runs
+each pair to the same point and compares what the machine holds --
+[14-demos.md §4](14-demos.md) has the table of what and where. Every
+one matched on its first run, which is the `Line` gate and the `Rnd`
+of §6 paying off. The numbers, the interpreter's beside the compiler's,
+after §4a:
 
 | | interpreted | compiled | |
 |---|---|---|---|
-| RAINBOW, 40 frames | 6,722,811 | 5,745,642 | 1.2× -- both sit in `VSYNC` most of the frame, so the wall clock is the same 60 Hz |
-| COBRA, start-up: 2,016 projections and 1,772 table gathers | 50,538,504 | 2,708,535 | **18.7×** |
-| COBRA, a frame's drawing, the wait excluded (mean of frames 2-10) | 578,058 | 290,435 | 2.0× |
-| COBRA, the PRG | -- | 15,325 bytes | 7 KB of it the four endpoint arrays, `BYTE` where the BASIC has integers |
-| MANDEL, the whole set to the key wait | 2,126,100,169 | 298,434,837 | **7.1×** -- the same Q6 iteration and the same Mariani-Silver rectangles; 4 min 14 s of machine time against 36 s |
-| TRIANGLES, MAZE, PLASMA, WAVE, SYNTH, INTRO | | | exact against their originals -- VRAM, palette, text map, voices, registers -- at the point the gate parks them ([14-demos.md §4](14-demos.md)); not timed, because they wait for the frame or the random number, not the CPU |
+| RAINBOW, 40 frames | 6,722,811 | 5,738,090 | 1.2× -- both sit in `VSYNC` most of the frame, so the wall clock is the same 60 Hz |
+| COBRA, start-up: 2,016 projections and 1,772 table gathers | 50,538,504 | 1,391,498 | **36×** (18.7× before §4a) |
+| COBRA, a frame's drawing, the wait excluded (mean of frames 2-10) | 578,058 | 238,810 | 2.4× (2.0× before) |
+| COBRA, the PRG | -- | 15,009 bytes | 7 KB of it the four endpoint arrays, `BYTE` where the BASIC has integers |
+| MANDEL, the whole set to the key wait | 2,126,100,169 | 60,530,720 | **35×** (7.1× before §4a) -- the same Q6 iteration and the same Mariani-Silver rectangles; 4 min 14 s of machine time against 7 s |
+| TRIANGLES, MAZE, PLASMA, WAVE, SYNTH, INTRO | | | exact against their originals -- VRAM, palette, text map, voices, registers -- at the point the gate parks them; not timed, because they wait for the frame or the random number, not the CPU |
 
-**That is the first real answer to "how much faster".** Where the work
-is arithmetic and array traffic -- the start-up -- the compiler is
-eighteen times the interpreter, because an interpreted statement's
-cost is parsing it. Where the work is `Line`, it is twice, because
-`Line` and `LINE` are the same algorithm at the same 128 clocks a
-pixel and the compiler only saves the statements *around* each call.
-A frame is 139,583 clocks, so neither COBRA holds 60 Hz: the
-interpreted one draws a frame in four, the compiled one in two. The
-next clock to find is inside `Line`, and the profile says it is the
-stack-frame traffic the sieve's profile already named -- the second
-piece of evidence [D97](01-decisions.md#d97--coolaction-a-compiled-language-for-games-cross-compiled-in-rust)
-said to wait for before keeping variables in registers.
+**What the numbers say.** Where the work is arithmetic and array
+traffic -- COBRA's start-up, MANDEL's whole run -- the compiler is now
+thirty-five times the interpreter, because an interpreted statement's
+cost is parsing it and a compiled one's is its loads and stores. Where
+the work is `Line`, it is 2.4×, because `Line` and `LINE` are the same
+algorithm and the compiled one only just overtook it. A frame is
+139,583 clocks, so neither COBRA holds 60 Hz: the interpreted one draws
+a frame in four, the compiled one in two. The next clock to find is
+inside `Line` and it is the stack-frame traffic the sieve's profile
+already named -- the second piece of evidence
+[D97](01-decisions.md#d97--coolaction-a-compiled-language-for-games-cross-compiled-in-rust)
+said to wait for before keeping variables in registers, and
+[D100](01-decisions.md#d100--an-optimiser-before-a-register-allocator)
+is the round that took it as far as a peephole goes.
 
 ---
 
