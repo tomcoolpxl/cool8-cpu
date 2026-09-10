@@ -15,6 +15,14 @@
 ; VRAM's, a byte a pass; and at the next frame the picture's own palette
 ; goes in, inside the vertical blank, so it appears whole.
 ;
+; **And more than 256 of them (D104).** A version-2 picture's palette
+; changes between rows. NAME.RPL beside it lists the entries to rewrite
+; before each row, and Raster() rewrites them every frame, locked to
+; VID_RASTER: two in the blanking before a row, to entries the row above
+; used, and up to fourteen while a row is drawn, to entries that row does
+; not use. No entry ever changes under a pixel that is showing it, and
+; every row is drawn in a palette of its own.
+;
 ; The pictures are the old image-processing test set -- the USC-SIPI
 ; Mandrill and Peppers, Kodak's parrots and painted face -- which
 ; `python tools/mkpics.py --fetch` downloads and converts. They are not
@@ -26,16 +34,28 @@ CONST PIC_SIZE = 61960               ; mkpics.SIZE: 8 of header, 512 of palette,
 CONST MAX_PICS = 32
 CONST KEY_SPACE = $29
 CONST KEY_ESC = $76
+; a change list, less its header, at an address of its own: 240 records
+; of at most 2 + 1 + 14 three-byte slots, so $6000-$8DEF -- clear of
+; this program and of the text map at $9800 that Nothing() writes
+CONST RPL_AT = $6000
+CONST RPL_MAX = 11768                ; 8 + 240 * (6 + 1 + 42)
+CONST HOT = 2                        ; mkpics.HOT: Raster() writes exactly this many a row
+CONST FREE = 14                      ; mkpics.FREE: the most Raster() has the clocks for
 
 CARD ARRAY pic_page(32)              ; where each picture starts, in pages from the volume base
+BYTE ARRAY pic_stem(256)             ; and its name, eight characters a picture, for its NAME.RPL
 BYTE npics
 BYTE ARRAY pic_head(8)
 BYTE ARRAY pic_pal(512)
+BYTE pic_raster                      ; the picture on the screen changes its palette by row
+BYTE ARRAY rpl_head(8)
+BYTE ARRAY rpl_name = "        RPL"  ; eleven characters: the stem goes in the first eight
+BYTE POINTER rpl
 
 ; Scan() -- every file on the drive called *.PIC and long enough to be
-; a picture, in catalogue order
+; a picture, in catalogue order, with its name
 PROC Scan()
-  BYTE st
+  BYTE st, i
   npics = 0
   DiskDir(pic_vol)
   DO
@@ -43,6 +63,7 @@ PROC Scan()
     IF st == $FF THEN EXIT FI
     IF st == 1 AND disk_ent(8) == 'P' AND disk_ent(9) == 'I' AND disk_ent(10) == 'C' AND disk_len >= PIC_SIZE AND npics < MAX_PICS THEN
       pic_page(npics) = disk_page
+      FOR i = 0 TO 7 DO pic_stem(npics * 8 + i) = disk_ent(i) OD
       npics += 1
     FI
   OD
@@ -71,7 +92,9 @@ PROC Black()
   ENDASM
 RETURN
 
-; Commit() -- the picture's own palette, and its border
+; Commit() -- the picture's own palette, and its border; row 0's, for a
+; picture whose palette changes by row, which is why Main calls it
+; every frame for one
 PROC Commit()
   WaitVBlank()
   VID_BORDER = pic_head(5)
@@ -90,21 +113,48 @@ PROC Commit()
   ENDASM
 RETURN
 
-; Show(k) -- picture k on the screen: 1, or 0 if its header is not one
-; this knows
+; LoadRpl(k) -- picture k's change list, NAME.RPL beside it, into
+; memory: 1, or 0 if there is none or it asks for more than Raster()
+; has the clocks to write
+FUNC BYTE LoadRpl(BYTE k)
+  BYTE i
+  FOR i = 0 TO 7 DO rpl_name(i + 1) = pic_stem(k * 8 + i) OD
+  IF NOT DiskFind(pic_vol, rpl_name) THEN RETURN (0) FI
+  IF disk_len > RPL_MAX OR disk_len < 8 THEN RETURN (0) FI
+  DiskOpen(pic_vol)
+  FlashRead(rpl_head, 8)
+  rpl = RPL_AT
+  FlashRead(rpl, disk_len - 8)
+  FlashClose()
+  IF rpl_head(0) <> 'R' OR rpl_head(1) <> 'P' OR rpl_head(2) <> 'L' OR rpl_head(3) <> 1 OR rpl_head(4) <> 240 OR rpl_head(5) <> HOT OR rpl_head(6) > FREE THEN
+    RETURN (0)
+  FI
+RETURN (1)
+
+; Show(k) -- picture k on the screen: 1, or 0 if it is not one this
+; knows how to show
 FUNC BYTE Show(BYTE k)
+  pic_raster = 0
   disk_page = pic_page(k)
   DiskOpen(pic_vol)
   FlashRead(pic_head, 8)
-  IF pic_head(0) <> 'P' OR pic_head(1) <> 'I' OR pic_head(2) <> 'C' OR pic_head(3) <> 1 OR pic_head(4) <> 6 THEN
-    FlashClose()
+  FlashClose()
+  IF pic_head(0) <> 'P' OR pic_head(1) <> 'I' OR pic_head(2) <> 'C' OR pic_head(4) <> 6 THEN
     RETURN (0)
   FI
+  IF pic_head(3) == 2 THEN
+    IF NOT LoadRpl(k) THEN RETURN (0) FI
+  ELSEIF pic_head(3) <> 1 THEN
+    RETURN (0)
+  FI
+  disk_page = pic_page(k)
+  DiskOpen(pic_vol)
+  FlashRead(pic_head, 8)
   FlashRead(pic_pal, 512)
   Black()
   ; the pixels, port to port: 240 rows of 256. A compiled WHILE took 37
-  ; clocks a byte, 92 % of a picture's time; the flash delivers one in
-  ; 16, and FLS_DATA stalls until it has, so this loop needs no poll
+  ; clocks a byte; the loop is 14, and FLS_DATA holds each read off
+  ; until the flash has the byte, 34 clocks after the last
   VRAM_ADDR = VID_BASE
   VRAM_STEP = 1
   ASM
@@ -119,7 +169,74 @@ FUNC BYTE Show(BYTE k)
   ENDASM
   FlashClose()
   Commit()
+  pic_raster = pic_head(3) == 2
 RETURN (1)
+
+; Raster() -- one frame of a version-2 picture's palette, from the top.
+;
+; VID_RASTER is the low eight bits of the line *about* to be drawn, and
+; it changes 71 clocks before the palette is read for that line's first
+; picture pixel -- cool8_video's crossing puts the change at pixel 648
+; to 650 of the line before, and cool8_pixel reads the palette a pixel
+; ahead of the pins (04-system.md section 5.9). So each row's two slots
+; go the moment its first line is named: the poll sees the change at
+; most 8 clocks late, and the second slot commits 52 clocks after that
+; read -- 60 of the 71 at worst. The next row's changes follow, written
+; while this row is drawn: they are to entries this row does not use,
+; so they may land anywhere in its two lines, and fourteen at 30 clocks
+; leave 34 of the 532 to spare. Row 0's palette is Commit's, in the
+; blank; the wait is for line 524, whose low byte is 12, and then line
+; 0, because line 512's low byte is 0 as well.
+PROC Raster()
+  ASM
+    LDW  X,#c_RPL_AT
+    MOV  R3,#12
+.wv: LD   R0,[v_VID_RASTER]
+    CMP  R0,R3
+    BNE  .wv
+    CLR  R3
+    MOV  R1,#240
+.wr: LD   R0,[v_VID_RASTER]
+    CMP  R0,R3
+    BNE  .wr
+    LD   R0,[X]
+    INCW X
+    ST   [v_PAL_IDX],R0
+    LD   R0,[X]
+    INCW X
+    ST   [v_PAL_DATA],R0
+    LD   R0,[X]
+    INCW X
+    ST   [v_PAL_DATA],R0
+    LD   R0,[X]
+    INCW X
+    ST   [v_PAL_IDX],R0
+    LD   R0,[X]
+    INCW X
+    ST   [v_PAL_DATA],R0
+    LD   R0,[X]
+    INCW X
+    ST   [v_PAL_DATA],R0
+    LD   R2,[X]
+    INCW X
+    CMP  R2,#0
+    BEQ  .nf
+.fr: LD   R0,[X]
+    INCW X
+    ST   [v_PAL_IDX],R0
+    LD   R0,[X]
+    INCW X
+    ST   [v_PAL_DATA],R0
+    LD   R0,[X]
+    INCW X
+    ST   [v_PAL_DATA],R0
+    SUB  R2,#1
+    BNE  .fr
+.nf: ADD  R3,#2
+    SUB  R1,#1
+    BNE  .wr
+  ENDASM
+RETURN
 
 ; Advance(k) -- the first picture from k on, round the drive, that
 ; shows: its number, or $FF when none will
@@ -159,10 +276,13 @@ PROC Main()
   Graphics(6)
   k = Advance(0)
   IF k == $FF THEN Nothing() FI
+  ; a frame: row 0's palette in the blank for a picture that changes it
+  ; by row, the keys, and the rows
   DO
-    WaitVBlank()
+    IF pic_raster THEN Commit() ELSE WaitVBlank() FI
     KeyPoll()
     IF KeyHit(KEY_ESC) THEN Reset() FI
     IF KeyHit(KEY_SPACE) THEN k = Advance(k + 1) FI
+    IF pic_raster THEN Raster() FI
   OD
 RETURN

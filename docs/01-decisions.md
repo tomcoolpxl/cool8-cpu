@@ -6334,12 +6334,81 @@ to check, and the gate proves the format and the viewer on two made-up
 pictures. Lena is not among them: its subject asked for it to be
 retired, and USC-SIPI has removed it.
 
-**Not done: more than 256 colours.** A palette write takes effect at
-once ([04-system.md §5.9](04-system.md)), so a program rewriting
-entries in every line's horizontal blank could show more colours than
-the palette holds -- the Atari ST's Spectrum 512 trick. The budget is
-tight -- a line is 266 clocks, about 96 of them outside mode 6's 512
-columns, and an entry is two stores -- it needs the CPU locked to the
-raster, and the emulator renders a scanline at a time, so where within
-a line a write lands is something only the RTL or the board can show.
-It is the next step if the owner wants it, not something this does.
+**More than 256 colours was left as the next step, and D104 took it**:
+the palette rewritten between rows, and the four pictures replaced by
+pictures that do.
+
+## D104 -- More than 256 colours: the palette changes between rows
+
+**The owner asked for the step D103 left** -- more colours on the screen
+than the palette holds, by rewriting it between scanlines -- and chose
+the between-lines budget over clock-timed mid-line writes, and the new
+pictures in place of the old rather than beside them.
+
+**What the hardware allows, read out of the Verilog.** A palette write
+commits to the block RAM at once, and the pixel stage reads a pixel's
+entry one clock before the pixel goes out (`cool8_pal.v`,
+`cool8_pixel.v`), so a write changes every pixel drawn after it.
+`VID_RASTER` names the line *about* to be drawn and changes at pixel
+648-650 of the line before -- `cool8_video.v`'s toggle crossing, three
+system clocks after the prefetch pulse at 640 -- and mode 6's picture
+starts at pixel 64, because `cool8_vregs.v` centres 256 in 320. So
+after `VID_RASTER` changes there are 71 system clocks before the palette
+is read for the line's first picture pixel, and a commit by the 70th
+lands before it ([04-system.md §5.9](04-system.md)). That window is
+the only time an entry a row *uses* can change. An entry a row does not
+use can change whenever it likes while the row is drawn, and nothing on
+the screen moves.
+
+**The budget is the viewer's clocks against that.** A slot -- entry,
+red, green-blue -- is three loads and three stores, 24 clocks. The poll
+sees `VID_RASTER` change at most 8 clocks late, so two slots commit by
+the 60th: **HOT = 2**, entries the row above used, written in the
+blanking. The rest of a row's two lines, 532 clocks, takes fourteen
+more at 30 with the loop: **FREE = 14**, entries it did not use, written
+while it is drawn. Row 0's palette goes back in every vertical blank,
+5,669 clocks. Each row's palette is up to sixteen entries from the last.
+
+**The planner is this project's, because no standard tool plans for
+this budget.** png2amiga plans per-line swaps for the Amiga's 16- and
+32-colour modes -- a command line with Amiga outputs, not a library --
+and the Spectrum 512 converters target the ST's fixed three palettes a
+line. `tools/mkpics.py` keeps libimagequant for row 0's palette, then
+row by row replaces the entries the next eight rows need least with
+the colours they miss most, by OKLab distance weighted towards the
+nearer rows, and dithers the row -- Floyd-Steinberg in OKLab -- against
+its own palette. **Measured**: the machine's frame shows 446 to 822
+colours for the four against 252 to 256, and they sit 22 to 48 % closer to their
+originals once both are blurred as the eye blurs dithering -- the
+Mandrill 0.0036 against 0.0069. They use 647 to 2,100 of the 3,824
+changes a frame allows; a row stops changing when a change would cost
+more than it gains. Planning all four takes 38 s.
+
+**Two files a picture.** The pixels are 61,440 bytes and the catalogue
+caps a file at 65,535, so the change list -- up to 11,768 bytes -- is
+`NAME.RPL` beside `NAME.PIC`, and a version-2 picture without one is
+refused. SLIDES reads it to `$6000`, clear of itself and of the text map.
+
+**The emulator was a line wrong, and the gate needed it right.** The
+renderer coloured a line when it was fetched, the moment `VID_RASTER`
+named it, so every write made in the blanking before a line -- exactly
+the writes that make this work -- landed a line late there and not on
+the board. A line is coloured now when it has been drawn
+(`rust/src/render.rs`): exact for everything this does. A mid-line write
+to an entry the line uses colours the whole line there, where the
+hardware splits it; the gate refuses those, and `test_vm` still matches
+the RTL's frames pixel for pixel.
+
+**The gate cannot be a round trip, so the machine keeps a log.** Where
+in a line a write lands is invisible to a client stepping the machine
+an instruction at a time, so the machine records every palette commit
+with the clocks since `VID_RASTER` changed and the line (`pallog`,
+`m.pal_log()`). `test_slides` holds a made-up picture and the four real
+ones to it: no commit to an entry a row shows lands after that row's
+first line is under way, and the frame is every row through its own
+palette, pixel for pixel.
+
+**Rejected: mid-line writes.** Timing a write to a pixel needs
+clock-exact code against a raster the CPU can only poll to within 8
+clocks, and only the RTL or the board could show where it landed. The
+between-lines budget is the one the emulator can hold exactly.

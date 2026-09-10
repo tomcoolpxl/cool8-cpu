@@ -68,6 +68,7 @@ RUN
 | `m.profile_start()` → `m.profile_cycles()` | cycles by PC; `dbg.Profile` rolls them up by routine |
 | `m.sp_clear()` → `m.sp_min()` | the stack's low-water mark |
 | `m.watch(lo, hi)` → `m.hits` | every write into that range, as `(pc, addr, value)`. **The one to reach for when something is corrupting memory** — it answers "who wrote this" in one run, where bisecting by re-running variants takes five |
+| `m.pal_log_start()` → `m.pal_log()` | every palette entry committed, as `(clocks since VID_RASTER changed, that line, entry, $0RGB)` — **where in a line a write lands**, which no client stepping an instruction at a time can see. Hold it to [04-system.md §5.9](04-system.md)'s table; `sim/test_action.py`'s `raster_faults` is the rule written down ([D104](01-decisions.md)) |
 | `m.fb()` | the rendered frame, with `Machine(render=True)` |
 | `m.palette()`, `m.sprites()`, `m.sound()`, `m.samples()` | the programmed peripheral state |
 

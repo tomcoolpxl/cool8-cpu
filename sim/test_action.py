@@ -237,6 +237,9 @@ PROC Main()
   out(33) = b           ; still 3: zero passes
   c = 258
   IF c == 0 THEN out(34) = 1 ELSE out(34) = 2 FI    ; 2: both bytes count
+  i = 1
+  out(i + 34) = tab(i * 2 + 1)   ; 4: a value pushed and an index computed, kept apart
+  out(i + 35) = 9                ; 9: and the value need not be complex, only the index
 RETURN
 '''
 
@@ -271,6 +274,8 @@ def test_features():
         (30 + 0, 2, "ELSE"),
         (32, 3, "WHILE on a word counting down"), (33, 3, "WHILE false runs zero times"),
         (34, 2, "a word against zero tests both bytes"),
+        (35, 4, "arr(expr) = arr(expr): the index is not the value -- SLIDES' LoadRpl found it"),
+        (36, 9, "arr(expr) = constant"),
     ]:
         check(out[i] == want, "  %s" % what, "out(%d) = %d, want %d" % (i, out[i], want))
     check(out[40:43] == b"\x09\x09\x09" and out[43] == 0,
@@ -1444,20 +1449,89 @@ def shown(m, blob):
     return ", ".join(bad)
 
 
-def on_glass(m, blob):
+def on_glass(m, blob, rpl=None):
     """How many of the rendered frame's 640 x 480 raster pixels are not
     picture file `blob` as mode 6 shows it: a pixel 2 x 2, the 512
-    columns centred, the border's colour either side."""
+    columns centred, the border's colour either side -- and with its
+    change list `rpl`, every row through its own palette."""
     import mkpics
     pal, pix, border = mkpics.unpack(blob)
+    changes = mkpics.unpack_rpl(rpl) if rpl else None
+    pal = list(pal)
     fb = m.fb()
-    edge = [pal[border]] * ((640 - 2 * mkpics.W) // 2)
+    side = (640 - 2 * mkpics.W) // 2
     bad = 0
-    for y in range(480):
-        row = pix[(y // 2) * mkpics.W:(y // 2 + 1) * mkpics.W]
-        want = edge + [pal[row[x // 2]] for x in range(2 * mkpics.W)] + edge
-        bad += sum(a != b for a, b in zip(fb[y * 640:(y + 1) * 640], want))
+    for r in range(mkpics.H):
+        if changes:
+            for e, c in changes[r][0] + changes[r][1]:
+                pal[e] = c
+        row = pix[r * mkpics.W:(r + 1) * mkpics.W]
+        want = ([pal[border]] * side + [pal[row[x // 2]] for x in range(2 * mkpics.W)]
+                + [pal[border]] * side)
+        for y in (2 * r, 2 * r + 1):
+            bad += sum(a != b for a, b in zip(fb[y * 640:(y + 1) * 640], want))
     return bad
+
+
+# The last clock after VID_RASTER names a line at which a palette commit
+# still lands before the palette is read for that line's first mode-6
+# picture pixel: the change reaches VID_RASTER at pixel 648-650 of the
+# line before (cool8_video's crossing, three system clocks after the
+# prefetch pulse at 640), and cool8_pixel reads the palette for pixel 64
+# one clock before it goes out -- 213 pixel clocks at worst, 71 system
+# clocks, so a commit must be in by the 70th. 04-system.md section 5.9.
+SLIDES_WINDOW = 70
+
+
+def raster_faults(log, blob):
+    """The commits in a palette-write log that a pixel on the screen would
+    have seen: one to an entry a row shows, landing after that row's first
+    line is under way -- or the border's entry made anything but black."""
+    import mkpics
+    _, pix, border = mkpics.unpack(blob)
+    used = [set(pix[r * mkpics.W:(r + 1) * mkpics.W]) for r in range(mkpics.H)]
+    bad = []
+    for off, line, e, rgb in log:
+        if e == border:
+            if rgb != 0:
+                bad.append((off, line, e, rgb))
+        elif line < 2 * mkpics.H:
+            before = line % 2 == 0 and off <= SLIDES_WINDOW
+            if not before and e in used[line // 2]:
+                bad.append((off, line, e, rgb))
+    return bad
+
+
+def in_vram(m, blob):
+    """Whether VRAM from VID_BASE holds picture file `blob`'s pixels, in
+    mode 6 -- the part of `shown` that holds whichever version it is."""
+    import ioregs
+    import mkpics
+    _, pix, _ = mkpics.unpack(blob)
+    reg = lambda n: m.bus.read(ioregs.addr_of(n))   # noqa: E731
+    base = reg("VID_BASE_L") | (reg("VID_BASE_H") << 8)
+    return reg("VID_MODE") == 0x86 and bytes(m.video.vram[base:base + len(pix)]) == pix
+
+
+def raster_picture():
+    """A made-up version-2 picture and its change list, `(pic, rpl)`.
+
+    Row r shows 32 entries, a window stepping three a row round 1..200,
+    so each row brings three entries the row above did not show --
+    changed while that row is drawn -- and two it keeps are recoloured,
+    which can only be done in the blanking before it. Every row's palette
+    is five entries away from the last."""
+    import mkpics
+    ent = lambda r, k: 1 + (k + 3 * r) % 200                # noqa: E731
+    pal = [0] + [((i * 0x2B7) & 0xFFF) | 0x111 for i in range(1, 256)]
+    pix = bytes(ent(r, x // 8) for r in range(mkpics.H) for x in range(mkpics.W))
+    changes = [([], [])]
+    for r in range(1, mkpics.H):
+        hot = [(ent(r, 5), (r * 0x35 + 0x480) & 0xFFF | 0x100),
+               (ent(r, 17), (r * 0x61 + 0x0C4) & 0xFFF | 0x001)]
+        free = [(ent(r, 29 + j), (r * 0x25 + j * 0x5B + 0x303) & 0xFFF | 0x010) for j in range(3)]
+        changes.append((hot, free))
+    return mkpics.pack(pal, pix, 0, version=2), mkpics.pack_rpl(changes, 0)
 
 
 def space(m, frames=60):
@@ -1517,12 +1591,16 @@ def test_slides():
         pix = bytes((x * seed + y * 7) & 0xFF for y in range(mkpics.H) for x in range(mkpics.W))
         return mkpics.pack(pal, pix, border)
     one, two = picture(0x131, 0), picture(0x2C7, 77)
+    ras, rpl = raster_picture()
     img = slides_image("slides_test", [
         ("ONE.PIC", one),
         ("NOTES.TXT", b"not a picture\r\n"),
-        ("BAD.PIC", one[:3] + b"\x02" + one[4:]),     # a version this viewer does not know
+        ("BAD.PIC", one[:3] + b"\x03" + one[4:]),     # a version this viewer does not know
         ("SHORT.PIC", one[:4096]),                    # too short to be a picture at all
-        ("TWO.PIC", two)])
+        ("TWO.PIC", two),
+        ("LONE.PIC", ras),                            # version 2, and no LONE.RPL beside it
+        ("RAS.PIC", ras),
+        ("RAS.RPL", rpl)])
     m = vm.Machine(flash_path=img, render=True)
     org, end = H.load_act(m, prg)
     # the cursor on in the middle of the screen, as BASIC leaves it at a
@@ -1565,6 +1643,25 @@ def test_slides():
     check(not diff, "slides: a space shows the next -- BAD.PIC's header refused, "
           "SHORT.PIC and NOTES.TXT never listed", diff)
     space(m)
+    bad = on_glass(m, ras, rpl)
+    check(in_vram(m, ras) and not bad,
+          "slides: the next is RAS.PIC -- LONE.PIC, version 2 with no change list, refused -- "
+          "and every row of a frame is drawn in its own palette",
+          "%d of 307,200 raster pixels differ" % bad)
+    m.pal_log_start()
+    m.run_frame(2)
+    log = m.pal_log()
+    faults = raster_faults(log, ras)
+    check(len(log) > 2 * 239 * 5 and not faults,
+          "slides: %d palette writes in two frames, and not one lands under a pixel showing its entry"
+          % len(log), "%d do; the first: %s" % (len(faults), faults[:1]))
+    _, rpix, _ = mkpics.unpack(ras)
+    early = [off for off, line, e, _ in log if e and line < 480 and line % 2 == 0
+             and e in set(rpix[(line // 2) * 256:(line // 2 + 1) * 256])]
+    if early:
+        print("    a row's blanking writes land %d to %d clocks after VID_RASTER names its line;"
+              " %d is the last that beats its first pixel" % (min(early), max(early), SLIDES_WINDOW))
+    space(m)
     diff = shown(m, one)
     check(not diff, "slides: and after the last, the first again", diff)
 
@@ -1575,28 +1672,46 @@ def test_slides():
           "slides: an empty picture drive says so on the text screen and waits for a key", why)
 
     demos = os.path.join(H.BUILD, "demos.img")
-    here = mkpics.present()
+    files = mkpics.present()
     if not os.path.exists(demos):
         print("    SKIPPED the disc: %s is not built (poe demos)" % demos)
-    elif not here:
+    elif not files:
         print("    SKIPPED the disc: no pictures here -- python tools/mkpics.py --fetch")
     else:
         v10 = disk.Volume(disk.Image(demos), disk.PICTURE_VOL)
-        blobs = [open(path, "rb").read() for _, path in here]
-        on = [v10.get(nm) if v10.find(nm) else None for nm, _ in here]
-        check(on == blobs, "slides from flash: drive %d holds the %d pictures tools/mkpics.py wrote"
-              % (disk.PICTURE_VOL, len(here)), "not the same: poe demos")
+        blobs = {nm: open(path, "rb").read() for nm, path in files}
+        on = {nm: v10.get(nm) if v10.find(nm) else None for nm in blobs}
+        check(on == blobs, "slides from flash: drive %d holds the %d files tools/mkpics.py wrote"
+              % (disk.PICTURE_VOL, len(blobs)), "not the same: poe demos")
+        pics = [nm for nm, _ in files if nm.endswith(".PIC")]
         m, why = slides_from_disc(demos)
         check(m is not None, 'slides from flash: SYS "SLIDES.BIN" from drive 11 of the booted disc', why)
+
+        def looks(nm):
+            """What is wrong with picture `nm` on the screen, or ''."""
+            pic, rpl = blobs[nm], blobs.get(nm[:-4] + ".RPL")
+            if rpl is None:
+                return shown(m, pic)
+            m.pal_log_start()
+            m.run_frame(1)
+            faults = raster_faults(m.pal_log(), pic)
+            bad = on_glass(m, pic, rpl)
+            return ", ".join(s for s in (
+                "" if in_vram(m, pic) else "VRAM is not its pixels",
+                "%d of 307,200 raster pixels differ" % bad if bad else "",
+                "%d palette writes land under a pixel showing the entry" % len(faults) if faults else "")
+                if s)
+
         if m is not None:
             check(not m.bus.read(ioregs.addr_of("CUR_CTRL")) & 1,
                   "slides from flash: BASIC's cursor is off over the pictures")
-            for k, (nm, _) in enumerate(here):
-                diff = shown(m, blobs[k])
-                check(not diff, "slides from flash: %s on the screen" % nm, diff)
+            for nm in pics:
+                diff = looks(nm)
+                check(not diff, "slides from flash: %s on the screen, %d colours in the frame"
+                      % (nm, len(set(m.fb()))), diff)
                 space(m)
-            diff = shown(m, blobs[0])
-            check(not diff, "slides from flash: and round again to %s" % here[0][0], diff)
+            diff = looks(pics[0])
+            check(not diff, "slides from flash: and round again to %s" % pics[0], diff)
     print()
 
 
@@ -1608,7 +1723,7 @@ def shoot_slides():
     if m is None:
         print("  " + why)
         return 1
-    for nm, _ in mkpics.present():
+    for nm in [n for n, _ in mkpics.present() if n.endswith(".PIC")]:
         path = os.path.join(H.BUILD, "slides_%s.png" % nm.split(".")[0].lower())
         print("  %d colours on screen -> %s" % (H.shot(m, path), os.path.relpath(path, H.ROOT)))
         space(m)

@@ -1369,6 +1369,28 @@ no shadowing and no next-line/next-frame queue — one policy, one bank of
 flip-flops. The exception is `VID_BASE`, latched at vblank so page flips
 do not tear.
 
+**When a palette write shows, read out of the Verilog**
+([D104](01-decisions.md)). `VID_RASTER` names the line *about* to be
+drawn: `cool8_vga` pulses `o_prefetch` at the first pixel of the front
+porch, and `cool8_video`'s toggle crossing puts the new value in
+`VID_RASTER` three system clocks later -- at pixel 648 to 650 of the
+line before, the spread being a line's 800 pixels against a clock of
+three. The palette is read one pixel ahead of the pins (`cool8_pixel`'s
+third stage of lookahead, `cool8_pal` one clock behind its index), and a
+write commits at once. So, counting from the clock `VID_RASTER` changes:
+
+| before the line's first | pixel clocks | a commit must be in by |
+|---|---|---|
+| visible pixel (`hstart` 0: modes 0-4) | 149-151 | the 49th system clock |
+| mode 6 picture pixel (`hstart` 32, pixel 64) | 213-215 | the 70th |
+
+An entry the line does not use can change at any time while it is
+drawn. The machine models palette writes a line at a time -- a line is
+coloured when it has been drawn -- which is exact for both of those and
+for nothing finer; `m.pal_log()` records every commit with its line and
+its clocks since the change, which is how SLIDES' raster palette is held
+to this table.
+
 ### 5.10 Bandwidth
 
 Per scanline, because that is the unit a line buffer works in. A line is

@@ -451,10 +451,12 @@ shell that has not set that up says "no" and means nothing.
 the ones that verify a generated table still matches what generated
 it. The last two are the CoolAction! ports' tables against their BASIC
 originals' `DATA`, and the library's keyboard tables against
-`sw/keymap.asm`. `mkpics --check` holds the picture drive's `.pic`
-files to the originals they were made from, and passes with a message
-when none has been fetched -- the originals are downloaded, not
-committed ([D103](01-decisions.md)). `ioregs --check` is
+`sw/keymap.asm`. `mkpics --check` holds the picture drive's `.pic` and
+`.rpl` files to the originals they were made from, and passes with a
+message when none has been fetched -- the originals are downloaded, not
+committed ([D103](01-decisions.md)). It plans every row's palette again
+to do it, about 40 s for the four, so it is marked `slow`
+([D104](01-decisions.md)). `ioregs --check` is
 in the same group and reads every dialect in `sw/` — `.asm`, `.bas`
 and `.act` — because the one it did not read shipped a library with
 seventeen wrong addresses ([D98](01-decisions.md#d98--the-register-check-reads-every-dialect-and-the-library-names-no-address)).

@@ -29,9 +29,12 @@
 //                   non-zero background
 //
 // So a raster split lands on the exact line the write preceded, a
-// palette change mid-frame colours only the lines below it, and a
 // VID_BASE change mid-frame behaves as the accumulator does in
-// hardware — partially, which is the true behaviour.
+// hardware — partially, which is the true behaviour — and a palette
+// write colours the line being drawn and every one below it, because a
+// line is coloured when it has been drawn (`resolve`): exact for a
+// write in the blanking before a line, and for one mid-line to an entry
+// the line does not use.
 //
 // What is not modeled: fetch and sprite-render *bandwidth*. A line
 // here always completes, where eight 16x16 sprites on the RTL run out
@@ -117,6 +120,10 @@ pub struct Renderer {
     cur_lit: bool,
     pub font: [u8; 4096],
     pub fb: Vec<u16>,      // 12-bit palette colours, row-major
+    // The line drawn last, as palette indices, and which it was: given
+    // its colours at the next line event -- see `resolve`.
+    pend: [u8; H_VIS],
+    pend_line: u32,
 }
 
 impl Renderer {
@@ -133,6 +140,44 @@ impl Renderer {
             cur_lit: false,
             font,
             fb: vec![0; H_VIS * V_VIS],
+            pend: [0; H_VIS],
+            pend_line: u32::MAX,
+        }
+    }
+
+    /// The line drawn last, coloured through the palette as it stands
+    /// now -- when the raster has finished drawing it.
+    ///
+    /// **A palette entry is looked up as its pixel goes out.** cool8_pixel
+    /// runs three pixels ahead so the colour for `x` is on the pins at
+    /// `x`, and cool8_pal answers one clock behind its index, so a line
+    /// is drawn in the palette standing while it is drawn -- not the one
+    /// standing when it was fetched. This coloured a line at its fetch,
+    /// the moment VID_RASTER names it, which put every write made in the
+    /// blanking before a line (70 clocks of it in mode 6) one line late;
+    /// SLIDES' raster palette found it (D104). The next line event is the
+    /// RTL's next prefetch, after the line's last pixel, so colouring
+    /// here is exact for a write in the blanking and for one mid-line to
+    /// an entry the line does not use. A mid-line write to an entry the
+    /// line does use colours all of it here, where the hardware splits
+    /// the line at the write; nothing on the disc makes one, and SLIDES'
+    /// gate refuses them.
+    fn resolve(&mut self, bus: &MachineBus) {
+        self.peek(bus);
+        self.pend_line = u32::MAX;
+    }
+
+    /// The line under way, into the frame as the palette stands now, and
+    /// left to be coloured again when it finishes. So a frame read in
+    /// mid-scan shows the line being drawn, as `fb` always has -- WAVE's
+    /// gate samples the frame parked mid-scan and counts one white row --
+    /// and a finished frame is still the exact one `resolve` makes.
+    pub fn peek(&mut self, bus: &MachineBus) {
+        if (self.pend_line as usize) < V_VIS {
+            let row = &mut self.fb[self.pend_line as usize * H_VIS..][..H_VIS];
+            for (px, &idx) in row.iter_mut().zip(self.pend.iter()) {
+                *px = bus.video.pal[idx as usize] & 0x0FFF;
+            }
         }
     }
 
@@ -141,6 +186,7 @@ impl Renderer {
     /// cool8_vga's `frame_start` — where the next frame's first two
     /// rows are primed and sprite line 0 is prepared.
     pub fn line_event(&mut self, line: u32, bus: &MachineBus) {
+        self.resolve(bus);
         let vv = view(bus);
 
         if line == 480 {
@@ -340,7 +386,6 @@ impl Renderer {
         let vrel = line.wrapping_sub(vv.vstart);
         let vborder = line < vv.vstart || vrel >= vv.vactive;
         let sline = &self.sline[(line & 1) as usize];
-        let row = &mut self.fb[line as usize * H_VIS..][..H_VIS];
 
         for gx in 0..H_VIS {
             let xl = if vv.hdouble { gx as u32 >> 1 } else { gx as u32 };
@@ -440,7 +485,8 @@ impl Renderer {
             {
                 idx ^= 0x0F;
             }
-            row[gx] = v.pal[idx as usize] & 0x0FFF;
+            self.pend[gx] = idx;
         }
+        self.pend_line = line;
     }
 }

@@ -270,6 +270,13 @@ assembly that CoolAction! calls.
 - `/` and `%` on words use two bytes of scratch (`__dv`, and `__sg`
   for `INT`), so **16-bit division is not reentrant from an interrupt
   handler**.
+- **A store into a byte array at a computed byte index keeps the index
+  in R0 and pops the value into R2** (`ST [Y+R0],R2`). It popped the
+  value into R0, over the index, so `arr(i + 1) = v` stored `v` at
+  `arr + v` -- 82 bytes past SLIDES' `rpl_name` for an `R`, which is how
+  it was found ([D104](01-decisions.md)). A read at such an index, and a
+  store at a simple or a word one, never took that path;
+  `test_features` holds both shapes now.
 
 ---
 

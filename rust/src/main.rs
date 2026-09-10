@@ -713,6 +713,8 @@ fn text_bytes(m: &machine::Machine) -> Vec<u8> {
 ///     fb                               -> ok <hex of 640x480 u16 LE pixels>
 ///     profon                           start (or restart) the cycle profile
 ///     profdump                         -> ok pc:cycles ... (nonzero only)
+///     pallogon                         start (or restart) the palette-write log
+///     pallog                           -> ok off:line:entry:rgb ... since pallogon
 ///     spmin / spclr                    the SP low-water mark; reset it
 ///     watch <lo> <hi>                  shadow that range; clears hits
 ///     hits                             -> ok pc:addr:value ...
@@ -1093,8 +1095,9 @@ fn run_serve() {
             "text" => format!("ok {}", hex_of(&text_bytes(&s.m))),
             // The frame the renderer has drawn: 640x480 of 12-bit
             // palette colours, two hex bytes per pixel, little-endian.
-            "fb" => match s.m.renderer.as_ref() {
+            "fb" => match s.m.renderer.as_mut() {
                 Some(r) => {
+                    r.peek(&s.m.bus);
                     let mut bytes = Vec::with_capacity(r.fb.len() * 2);
                     for px in r.fb.iter() {
                         bytes.extend_from_slice(&px.to_le_bytes());
@@ -1118,6 +1121,23 @@ fn run_serve() {
                         if c != 0 {
                             r.push_str(&format!(" {}:{}", pc, c));
                         }
+                    }
+                }
+                r
+            }
+            // The palette-write log: every entry committed, with the
+            // clocks since the raster line last changed and that line --
+            // where in a line a write lands, which a round trip per
+            // instruction cannot see (SLIDES' raster palette, D104).
+            "pallogon" => {
+                s.m.bus.video.pal_log = Some(Vec::new());
+                "ok".to_string()
+            }
+            "pallog" => {
+                let mut r = String::from("ok");
+                if let Some(l) = s.m.bus.video.pal_log.as_ref() {
+                    for (off, ln, e, v) in l.iter() {
+                        r.push_str(&format!(" {}:{}:{}:{}", off, ln, e, v));
                     }
                 }
                 r

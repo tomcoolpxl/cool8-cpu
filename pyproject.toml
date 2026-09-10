@@ -321,7 +321,8 @@ about = "Ms. Cool-Man's generated art against the ripped sheets"
 id = "pics"
 run = "tools/mkpics.py"
 args = ["--check"]
-about = "the picture drive's .pic files against the originals they were made from -- and says so, passing, when no original has been fetched"
+about = "the picture drive's .pic and .rpl files against the originals they were made from -- about 40 s, the row-by-row palette planner run again; passes, saying so, when no original has been fetched"
+slow = true
 
 [[tool.cool8.jobs.check]]
 id = "memmap"

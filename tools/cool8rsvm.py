@@ -687,6 +687,21 @@ class SessionMachine(_Trace):
             out[int(pc)] = int(c)
         return out
 
+    def pal_log_start(self):
+        """Record every palette entry committed from here on, with when."""
+        self._cmd("pallogon")
+
+    def pal_log(self):
+        """`[(clocks since the raster line changed, that line, entry,
+        $0RGB)]` since `pal_log_start` -- recorded by the machine as it
+        runs, because where in a line a write lands is exactly what a
+        round trip per instruction cannot see."""
+        out = []
+        for tok in self._cmd("pallog"):
+            off, ln, e, v = tok.split(":")
+            out.append((int(off), int(ln), int(e), int(v)))
+        return out
+
     def watch(self, lo, hi):
         """Record every write into [lo, hi], with the PC that did it.
 

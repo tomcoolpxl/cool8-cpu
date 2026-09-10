@@ -19,7 +19,7 @@ that volume until the next `DRIVE`.
 | **0** | `SYSTEM` | **the ROM's**: `BOOT.BIN`, and nothing a user should write |
 | **1** | `COOL8` | **where a cold machine comes up** — the user's, empty |
 | 2–9 | `COOL8` | the user's, formatted and empty |
-| **10** | **`PICTURES`** | **the picture drive**: the `.PIC` files SLIDES shows, a screen of mode 6 each -- §4, `SLIDES` |
+| **10** | **`PICTURES`** | **the picture drive**: the `.PIC` files SLIDES shows, a screen of mode 6 each, and beside each the `.RPL` that changes its palette row by row -- §4, `SLIDES` |
 | **11** | **`ACTION`** | **the CoolAction! disc**: every `demos/*.act`, compiled, as a bare `.BIN` — the Demos menu's twin |
 | **12** | `BAPPLE` | Bad Apple's stream, capped to this one drive — §4 |
 | **13** | **`DEMOS`** | **the demo disc**: everything written in BASIC, games included |
@@ -1274,8 +1274,13 @@ the screen's 16:15 about the centre.
 **The file is the hardware's own bytes**: `PIC`, a version, the mode,
 the border's palette index and two reserved, then 512 bytes of palette
 in the form `PAL_DATA` takes, then 61,440 pixels as VRAM holds them --
-61,960 bytes, seven to a drive. `tools/mkpics.py`'s docstring is the
-layout; `pack` and `unpack` there are its one implementation on the host.
+61,960 bytes. `tools/mkpics.py`'s docstring is the layout; `pack` and
+`unpack` there are its one implementation on the host. **Version 2 adds
+a second file**, `NAME.RPL`: row by row, the entries to rewrite -- two
+slots written in the blanking before a row, then up to fourteen for the
+row after, written while the row is drawn
+([D104](01-decisions.md)). A picture and its list are under 74 KB, so
+the drive holds six.
 
 **Showing one is two streams and two vertical blanks.** The header and
 the palette come into memory, 33,832 clocks through `FlashRead`; at the
@@ -1323,18 +1328,49 @@ its 256. `mkpics.py` now gives the distinct ones back to it as fixed
 colours and lets it place the freed slots again, until all differ or a
 pass frees none.
 
+**And more than 256 colours: the palette changes between rows**
+([D104](01-decisions.md)). The four pictures are version 2: every row
+is drawn in a palette of its own, up to sixteen entries from the row
+above's -- two rewritten in the blanking before the row, to entries the
+row above used, and up to fourteen while the row above is drawn, to
+entries it does not use. `Raster()` does it every frame, locked to
+`VID_RASTER`, after `Commit` has put row 0's palette back in the blank.
+**The machine's frame shows 822, 523, 628 and 446 different colours**
+for the Mandrill, the Peppers, the parrots and the painted face, where
+one palette showed 256, 254, 254 and 252, and each sits 22 to 48 %
+closer to its original once both are blurred as the eye blurs
+dithering. SLIDES is 5,525 bytes with it.
+
+**Finding it cost a compiler bug.** Every version-2 picture was refused
+at first: `LoadRpl` builds its change list's name with `rpl_name(i + 1)
+= pic_stem(k * 8 + i)`, and a store into a byte array at a computed
+byte index popped its value over its index, so the stem went 82 bytes
+past the array and the catalogue was searched for a blank name. The
+compiler is fixed ([15-action.md §3](15-action.md)), `test_features`
+holds the shape, and every other program on the disc compiled
+byte-for-byte the same with the fix -- none had used it.
+
 **Gate-enforced** (`test_slides` in `sim/test_action.py`). On a flash
 image of its own -- two made-up pictures, with a text file, a `.PIC`
-too short to be one and a `.PIC` of an unknown version between them:
-the first picture's pixels in VRAM from `VID_BASE`, its 256 entries
-committed and its border; every raster pixel of a frame the picture's or
-the border's; the palette black and back each inside a blank; a space
-skipping the bad file to the second, another round again to the first;
-and an empty drive saying so on the text screen. Then, once `poe demos`
-has put the real pictures on the disc, the path a person takes: the ROM
-booting it, `DRIVE 11`, `SYS "SLIDES.BIN"`, all four in turn and round
-again. `python sim/test_action.py --slides` writes each picture as the
-machine shows it to `sim/build/slides_<name>.png`.
+too short to be one, a `.PIC` of an unknown version, a version-2 `.PIC`
+with no change list, and a made-up version-2 picture whose rows each
+bring three entries and recolour two: the first picture's pixels in
+VRAM from `VID_BASE`, its 256 entries committed and its border; every
+raster pixel of a frame the picture's or the border's; the palette black
+and back each inside a blank; a space skipping the bad file to the
+second; the next skipping the list-less picture to the made-up raster
+one, its frame every row through its own palette, pixel for pixel, and
+**the machine's log of every palette write held to
+[04-system.md §5.9](04-system.md)** -- of 2,906 writes in two frames,
+none lands under a pixel showing its entry, and the blanking writes land
+33 to 61 clocks after `VID_RASTER` names their line, where 70 is the
+last that beats its first pixel; round again to the first; and an empty
+drive saying so on the text screen. Then, once `poe demos` has put the
+real pictures on the disc, the path a person takes: the ROM booting it,
+`DRIVE 11`, `SYS "SLIDES.BIN"`, all four in turn -- each exact against
+its own rows' palettes, its log clean -- and round again. `python
+sim/test_action.py --slides` writes each picture as the machine shows
+it to `sim/build/slides_<name>.png`.
 
 **Adding a picture** is an entry in `SOURCES` -- the file, where it came
 from, its SHA-256 -- then `--fetch` and `poe demos`. SLIDES reads the

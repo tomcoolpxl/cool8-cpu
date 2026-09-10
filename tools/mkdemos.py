@@ -292,8 +292,9 @@ def main():
     vol10 = disk.Volume(im, disk.PICTURE_VOL)
     for nm, p in pics:
         vol10.add(p, nm)
-    print("  %d pictures on drive %d%s" % (len(pics), disk.PICTURE_VOL,
-          ", %s" % ", ".join(nm for nm, _ in pics) if pics else
+    print("  %d pictures on drive %d%s" % (
+          sum(nm.endswith(".PIC") for nm, _ in pics), disk.PICTURE_VOL,
+          ", with their change lists: %s" % ", ".join(nm for nm, _ in pics) if pics else
           " -- python tools/mkpics.py --fetch makes them"))
 
     im.save()

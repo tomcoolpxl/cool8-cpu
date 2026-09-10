@@ -12,10 +12,12 @@ python tools/mkdemos.py --no-shots
 ```
 
 The first downloads whichever originals are missing, checks each against
-the SHA-256 in `tools/mkpics.py`, and writes a `.pic` beside it: 256 of
-the palette's 4,096 colours, mode 6's own bytes. The second builds the
-disc with them on drive 10. Without them SLIDES still runs, and says on
-the screen that the drive is empty.
+the SHA-256 in `tools/mkpics.py`, and writes two files beside it: a
+`.pic`, mode 6's own bytes, and a `.rpl`, the palette entries to rewrite
+before each row -- so a picture shows several hundred of the palette's
+4,096 colours rather than 256 ([D104](../../docs/01-decisions.md)). The
+second builds the disc with them on drive 10. Without them SLIDES still
+runs, and says on the screen that the drive is empty.
 
 | On the disc | Original | From | Rights |
 |---|---|---|---|

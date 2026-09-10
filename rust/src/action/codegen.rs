@@ -968,6 +968,16 @@ impl Codegen {
             self.gen_expr_w(&value, w)?;
             self.push_pair(w);
             let (lv, _) = self.lvalue(target, true)?;
+            if let LVal::YR(0) = lv {
+                // A byte at a computed byte index: the index is in R0, so
+                // the value comes off the stack beside it and not over it.
+                // Popped into R0 it was, and `arr(i + 1) = v` stored v at
+                // arr + v -- until SLIDES' LoadRpl wrote a file name 82
+                // bytes past its array (D104).
+                self.pop("R2");
+                self.emit("ST      [Y+R0],R2");
+                return Ok(());
+            }
             self.pop_pair(w);
             self.store_lval(&lv, w)
         }

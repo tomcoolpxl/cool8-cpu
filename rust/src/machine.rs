@@ -471,6 +471,11 @@ pub struct Video {
     pub irq_fl: u8,
     pub vactive: u16,
     pub raster: u32,
+    /// The clock `raster` last changed on: the machine's end of a line.
+    pub raster_at: u64,
+    /// With the log on, every palette entry committed: (clocks since
+    /// `raster_at`, `raster`, the entry, its $0RGB). `pallog`'s.
+    pub pal_log: Option<Vec<(u64, u32, u8, u16)>>,
     pub blink: u32, // frames; the phase restarts on a move
     /// Frames since reset, free-running, 24 bits — the machine's clock.
     /// Counted here and not by a handler, so nothing can miss a tick.
@@ -533,6 +538,8 @@ impl Video {
             irq_fl: 0,
             vactive: 480,
             raster: 0,
+            raster_at: 0,
+            pal_log: None,
             blink: 0,
             tmr: 0,
             pal_idx: 0,
@@ -704,6 +711,29 @@ impl Video {
         }
     }
 
+    /// PAL_DATA: the first write holds the red, the second commits the
+    /// entry and advances PAL_IDX, as cool8_pal does. With the log on, a
+    /// commit is recorded with `t`, the clock of the store that made it,
+    /// as clocks since the raster line last changed.
+    fn pal_data(&mut self, v: u8, t: Option<u64>) {
+        if self.pal_half {
+            let rgb = (self.pal_red as u16) << 8 | v as u16;
+            self.pal[self.pal_idx as usize] = rgb;
+            if let Some(t) = t {
+                let rec = (t.saturating_sub(self.raster_at), self.raster,
+                           self.pal_idx, rgb);
+                if let Some(log) = self.pal_log.as_mut() {
+                    log.push(rec);
+                }
+            }
+            self.pal_idx = self.pal_idx.wrapping_add(1);
+            self.pal_half = false;
+        } else {
+            self.pal_red = v & 0x0F;
+            self.pal_half = true;
+        }
+    }
+
     fn write(&mut self, a: u8, v: u8) {
         match a {
             0x10 => {
@@ -736,17 +766,7 @@ impl Video {
                 self.pal_idx = v;
                 self.pal_half = false;
             }
-            0x1F => {
-                if self.pal_half {
-                    self.pal[self.pal_idx as usize] =
-                        (self.pal_red as u16) << 8 | v as u16;
-                    self.pal_idx = self.pal_idx.wrapping_add(1);
-                    self.pal_half = false;
-                } else {
-                    self.pal_red = v & 0x0F;
-                    self.pal_half = true;
-                }
-            }
+            0x1F => self.pal_data(v, None),
             0x20 => self.pat_base = (self.pat_base & 0xFF00) | v as u16,
             0x21 => self.pat_base = (self.pat_base & 0x00FF) | (v as u16) << 8,
             0x22 => {
@@ -872,6 +892,9 @@ impl MachineBus {
         match a {
             0x00 => self.romen = v & 1 != 0,
             0x03 => self.led = v & 7,
+            // ahead of the video block: a palette commit is logged with
+            // the clock of the store that made it
+            0x1F => self.video.pal_data(v, Some(self.now + self.wait + ACCESS)),
             0x10..=0x3F | 0xC0..=0xFF => self.video.write(a, v),
             0x40..=0x44 => self.kbd.write(a, v),
             0x50..=0x51 => self.sound.write(a, v),
@@ -1002,6 +1025,9 @@ impl Machine {
             self.bus.video.irq_fl |= 0x02; // vblank
         }
         self.bus.video.raster = self.line;
+        // the clock the line changed on: `tick` has just taken the line's
+        // clocks off what it owes
+        self.bus.video.raster_at = self.cpu.cycles - self.tick_owed;
         if self.line & 0xFF == self.bus.video.rcmp as u32 {
             self.bus.video.irq_fl |= 0x01; // raster compare
         }
