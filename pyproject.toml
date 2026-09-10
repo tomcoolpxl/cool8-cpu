@@ -344,10 +344,16 @@ args = ["--check"]
 about = "rust/src/optab.rs is current"
 
 [[tool.cool8.jobs.check]]
-id = "cobra"
-run = "tools/mkcobra.py"
+id = "actdata"
+run = "tools/mkactdata.py"
 args = ["--check"]
-about = "demos/cobra.act carries demos/cobra.bas's DATA -- the port's 2,264 table entries are copied by machine, and a change to the BASIC's model fails here rather than in the framebuffer"
+about = "every CoolAction! port carries its BASIC original's DATA -- the tables are copied by machine, and a change to a model, a palette or a tune fails here rather than in the framebuffer"
+
+[[tool.cool8.jobs.check]]
+id = "keymap"
+run = "tools/cool8kbd.py"
+args = ["--check"]
+about = "sw/libaction.act carries sw/keymap.asm's three tables, so a compiled program decodes the keyboard the interpreter's way"
 
 [[tool.cool8.jobs.build]]
 id = "rom"

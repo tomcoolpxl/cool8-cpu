@@ -155,3 +155,73 @@ def encode_keys(text):
         if shifted:
             out += bytes((0xF0, 0x12))
     return bytes(out)
+
+
+# --------------------------------------------------- the tables, for CoolAction!
+#
+# A compiled program decodes the keyboard itself -- there is no
+# interpreter under it -- so sw/libaction.act carries the same three
+# tables sw/kbd.asm reads, in a marked block this writes from
+# sw/keymap.asm. `poe check` fails if the block is stale, which is the
+# same bargain tools/ioregs.py makes for the register names: one
+# spelling of the keyboard, in the file the hardware's decoder uses.
+
+LIB = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                   "sw", "libaction.act")
+BEGIN = "; ---- generated from sw/keymap.asm by tools/cool8kbd.py: do not edit ----"
+END = "; ---- end of the generated block ----"
+
+
+def act_block():
+    here = os.path.dirname(os.path.abspath(__file__))
+    with open(os.path.join(os.path.dirname(here), "sw", "keymap.asm"),
+              encoding="utf-8") as fh:
+        text = fh.read()
+    keymap = _table(text, "keymap")
+    shiftmap = _table(text, "shiftmap")
+    extmap = _table(text, "extmap")
+    assert len(keymap) == 128 and shiftmap[-1] == 0 and extmap[-1] == 0
+
+    def rows(vals, per=16):
+        return "\n".join("  " + " ".join(str(v) for v in vals[i:i + per])
+                         for i in range(0, len(vals), per))
+    o = [BEGIN,
+         "; Set 2 scancode to unshifted character, 0 for a key with none",
+         "BYTE ARRAY kb_map(128) = [", rows(keymap) + "]",
+         "; the keys shift does something to that is not a case change:",
+         "; unshifted, shifted pairs, ending in 0",
+         "BYTE ARRAY kb_shift(%d) = [" % len(shiftmap), rows(shiftmap) + "]",
+         "; the keys with an $E0 in front and no character: scancode,",
+         "; $80+n pairs, ending in 0 -- $80+n is K_UP.. at 256+n",
+         "BYTE ARRAY kb_ext(%d) = [" % len(extmap), rows(extmap) + "]",
+         END]
+    return "\n".join(o) + "\n"
+
+
+def act_emit(check=False):
+    with open(LIB, encoding="utf-8") as fh:
+        have = fh.read()
+    a = have.index(BEGIN)
+    b = have.index(END, a) + len(END) + 1
+    want = have[:a] + act_block() + have[b:]
+    if check:
+        if want != have:
+            print("  sw/libaction.act's keyboard tables are stale against "
+                  "sw/keymap.asm: run python tools/cool8kbd.py --emit")
+            return 1
+        print("ok -- sw/libaction.act carries sw/keymap.asm's tables")
+        return 0
+    if want != have:
+        with open(LIB, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(want)
+        print("wrote the keyboard tables into sw/libaction.act")
+    return 0
+
+
+if __name__ == "__main__":
+    import sys
+    if "--emit" in sys.argv:
+        sys.exit(act_emit())
+    if "--check" in sys.argv:
+        sys.exit(act_emit(check=True))
+    print(__doc__)

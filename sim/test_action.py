@@ -332,8 +332,17 @@ HARDWARE = r'''
 ; registers themselves, and the UART
 CARD ARRAY pal(2) = [$0F0 $00F]
 BYTE ARRAY out(8)
+CARD ARRAY wout(8)
 
 PROC Main()
+  out(2) = Key()                  ; the bare make code queued first
+  wout(0) = Rnd(0)
+  wout(1) = Rnd(0)
+  wout(2) = Rnd(100)
+  wout(3) = ReadKey()             ; shift C, from the queue
+  wout(4) = ReadKey()             ; d
+  wout(5) = ReadKey()             ; the right arrow
+  wout(6) = ReadKey()             ; nothing left: 0
   Graphics(4)
   Cursor(0)
   Clg(3)                        ; 4 bpp: every byte $33
@@ -348,8 +357,7 @@ PROC Main()
   Border(7)
   SetSprite(3, 100, 200, $8020, 1, $40)
   SpritesOn(2)
-  out(2) = Key()
-  out(3) = Key()
+  out(3) = Key()                  ; nothing left: 0
   out(0) = Frame()
   WaitVBlank()
   out(1) = Frame()
@@ -374,7 +382,10 @@ def test_hardware():
     prg, syms = H.build_act(H.ACT_LIB + [HARDWARE], "act_hw")
     same_bytes("act_hw", prg)
     m = H.session()
-    m.scancode([0x1C])                     # one make code queued
+    # shift-C, d and the right arrow for ReadKey, then a bare make code
+    # for Key() -- all queued before the program starts
+    m.scancode([0x1C, 0x12, 0x21, 0xF0, 0x21, 0xF0, 0x12, 0x23, 0xF0, 0x23,
+                0xE0, 0x74, 0xE0, 0xF0, 0x74])
     why = H.run_act(m, prg, budget=4_000_000)
     check(why == "halt", "hardware: ran to the HALT (WaitVBlank returned)", why)
     check(m.cpu.sp == 0x0200, "hardware: stack neutral", "SP $%04X" % m.cpu.sp)
@@ -414,6 +425,21 @@ def test_hardware():
     out = m.bus.mem[syms["v_out"]:syms["v_out"] + 8]
     check(out[2] == 0x1C and out[3] == 0, "Key(): the queued scancode, then 0",
           "%02X %02X" % (out[2], out[3]))
+    wo = m.bus.mem[syms["v_wout"]:syms["v_wout"] + 16]
+    w = [wo[2 * i] | (wo[2 * i + 1] << 8) for i in range(8)]
+    # the interpreter's xorshift from seed 1: s ^= s<<7, s ^= s>>9, s ^= s<<8
+    s, ref = 1, []
+    for _ in range(3):
+        s ^= (s << 7) & 0xFFFF
+        s ^= s >> 9
+        s ^= (s << 8) & 0xFFFF
+        ref.append(s)
+    check(w[0] == ref[0] and w[1] == ref[1] and w[2] == ref[2] % 100,
+          "Rnd(): the interpreter's xorshift from seed 1, and RND(n) is the remainder",
+          "%d %d %d, want %d %d %d" % (w[0], w[1], w[2], ref[0], ref[1], ref[2] % 100))
+    check(w[3:7] == [ord("C"), ord("d"), 259, 0],
+          "ReadKey(): shift-C is C, d is d, the right arrow is K_RIGHT, then 0",
+          "%s" % w[3:7])
     check(out[1] == (out[0] + 1) & 0xFF,
           "WaitVBlank(): returned on the very next frame",
           "frame %d before, %d after" % (out[0], out[1]))
@@ -615,6 +641,192 @@ def test_cobra():
     print()
 
 
+# ------------------------------------------------- the ports, as pairs
+#
+# Every port is held to its original the same way: the BASIC typed at
+# the interpreter and the .act compiled behind the library, each run
+# to the K-th entry of a chosen routine -- a frame wait, an RND call,
+# the key wait at the end -- and then what the machine holds compared:
+# VRAM, the palette, the text map, the sound array, the registers.
+# The stop is a routine *entry* on both sides, so the two machines are
+# at the same point of the same algorithm whatever the clock says.
+
+_BASIC = []
+
+
+def basic_image():
+    """The interpreter, built once for every pair."""
+    import test_basic as B
+    if not _BASIC:
+        _BASIC.append(B.build())
+    return _BASIC[0]
+
+
+def to_kth(m, addr, k, budget):
+    """Run to the k-th arrival at `addr`: a tick between stops, because
+    `run(until=)` from the address it stopped at returns at once."""
+    why = None
+    for i in range(k):
+        if i:
+            m.tick()
+        why = m.run(until=addr, budget=budget)
+        if why != "until":
+            break
+    return why
+
+
+def pair(name, stop_bas, stop_act, k, budget_bas=900_000_000, budget_act=100_000_000):
+    """Both machines parked at the k-th `stop`: `(M, m, bsyms, syms, prg)`."""
+    import test_basic as B
+    code, bsyms = basic_image()
+    M = B.Machine(code, bsyms)
+    M.settle()
+    for ln in open(os.path.join(H.ROOT, "demos", name + ".bas"), encoding="utf-8"):
+        if ln.strip():
+            H.line(M.m, bsyms, ln.rstrip("\r\n"))
+    M.m.type("RUN\r")
+    why = to_kth(M.m, bsyms[stop_bas], k, budget_bas)
+    check(why == "until", "%s: the BASIC reached %s %d times" % (name, stop_bas, k), why)
+
+    prg, syms = H.build_act(H.ACT_LIB + ["demos/%s.act" % name], "act_" + name)
+    same_bytes("act_" + name, prg)
+    m = H.session()
+    H.load_act(m, prg)
+    why = to_kth(m, syms[stop_act], k, budget_act)
+    check(why == "until", "%s: the port reached %s %d times" % (name, stop_act, k), why)
+    return M.m, m, bsyms, syms, prg
+
+
+def same_bytes_of(name, what, a, b):
+    bad = [i for i in range(min(len(a), len(b))) if a[i] != b[i]]
+    check(not bad and len(a) == len(b), "%s: the same %s" % (name, what),
+          "%d bytes differ; first at %d: port %02X BASIC %02X"
+          % (len(bad), bad[0] if bad else 0, a[bad[0]] if bad else 0, b[bad[0]] if bad else 0))
+
+
+def same_vram(name, mb, ma, n, what):
+    same_bytes_of(name, what, bytes(ma.video.vram[0:n]), bytes(mb.video.vram[0:n]))
+
+
+def same_palette(name, mb, ma, lo=0, hi=256):
+    pa, pb = ma.palette()[lo:hi], mb.palette()[lo:hi]
+    bad = [i for i in range(hi - lo) if pa[i] != pb[i]]
+    check(not bad, "%s: the same palette entries %d-%d" % (name, lo, hi - 1),
+          "%d differ; entry %d is %03X, BASIC %03X"
+          % (len(bad), lo + bad[0] if bad else 0, pa[bad[0]] if bad else 0, pb[bad[0]] if bad else 0))
+
+
+def same_regs(name, mb, ma, regs):
+    import ioregs
+    got = [(r, ma.bus.read(ioregs.addr_of(r)), mb.bus.read(ioregs.addr_of(r))) for r in regs]
+    bad = [g for g in got if g[1] != g[2]]
+    check(not bad, "%s: the same %s" % (name, ", ".join(regs)),
+          "; ".join("%s port %02X BASIC %02X" % g for g in bad))
+
+
+def text_map(m):
+    """The 32-row text map of modes 0 and 1, all 5,120 bytes.
+
+    At the machine's map, not at VID_BASE: a scroller has slid the base
+    up to 78 bytes into the map, and reading 5,120 bytes from there
+    ran off its end into the interpreter's workspace, where one byte
+    of editor state failed the INTRO gate. memmap.SCREEN is where the
+    machine keeps its map, derived from the same claims the image is
+    built from."""
+    import memmap
+    return bytes(m.bus.mem[memmap.SCREEN:memmap.SCREEN + 160 * 32])
+
+
+def voices(m):
+    """The programmed bytes of the eight voices: pitch, volume, the
+    noise and enable bits. Not bytes 2 and 3, the engine's own phase
+    accumulator, which two machines that wrote the same pitch at
+    different clocks within a frame will never agree on."""
+    s = m.sound()
+    return bytes(b for v in range(8) for b in (s[8 * v], s[8 * v + 1], s[8 * v + 4], s[8 * v + 5]))
+
+
+def test_ports():
+    """The seven ports of this round, each against its original."""
+    print("  TRIANGLES: to the 281st Rnd -- forty triangles, same random numbers")
+    mb, ma, bs, s, prg = pair("triangles", "irnd", "Rnd", 7 * 40 + 1, 400_000_000, 60_000_000)
+    same_vram("triangles", mb, ma, 38400, "38,400 bytes of mode 4 VRAM")
+    print("    %d bytes of PRG" % len(prg))
+    print()
+
+    print("  MAZE: to the 1341st Rnd -- the map, twelve scroll steps in")
+    mb, ma, bs, s, prg = pair("maze", "irnd", "Rnd", 1280 + 5 * 12 + 1, 400_000_000, 60_000_000)
+    same_vram("maze", mb, ma, 0x4040, "map and tile in VRAM")
+    same_palette("maze", mb, ma, 0, 16)
+    same_regs("maze", mb, ma, ["VID_BASE_L", "VID_BASE_H", "VID_SCY_L", "VID_PAT_L", "VID_PAT_H", "VID_MODE"])
+    print("    %d bytes of PRG" % len(prg))
+    print()
+
+    print("  PLASMA: to the 5th frame wait -- painted, four rotations in")
+    mb, ma, bs, s, prg = pair("plasma", "h_vsync", "WaitVBlank", 5, 900_000_000, 60_000_000)
+    same_vram("plasma", mb, ma, 61440, "61,440 bytes of mode 6 VRAM")
+    same_palette("plasma", mb, ma, 0, 48)
+    print("    %d bytes of PRG" % len(prg))
+    print()
+
+    print("  WAVE: to the 120th frame wait")
+    mb, ma, bs, s, prg = pair("wave", "h_vsync", "WaitVBlank", 120, 400_000_000, 60_000_000)
+    same_vram("wave", mb, ma, 61440, "61,440 bytes of mode 6 VRAM")
+    same_palette("wave", mb, ma)
+    print("    %d bytes of PRG" % len(prg))
+    print()
+
+    print("  SYNTH: to the 120th frame wait -- thirteen steps of the tune")
+    mb, ma, bs, s, prg = pair("synth", "h_vsync", "WaitVBlank", 120, 400_000_000, 60_000_000)
+    same_bytes_of("synth", "5,120-byte text map", text_map(ma), text_map(mb))
+    same_bytes_of("synth", "eight voices: pitch, volume, noise, enable", voices(ma), voices(mb))
+    same_palette("synth", mb, ma, 0, 16)
+    same_regs("synth", mb, ma, ["VID_BORDER", "VID_MODE", "CUR_CTRL"])
+    # the editor, on the compiled one alone: 4 mutes the drums, an
+    # arrow moves the cursor, a letter lands in the screen the player
+    # reads, and a lowercase one upcases -- synth_screen's cases
+    import ioregs
+    base = ma.bus.read(ioregs.addr_of("VID_BASE_L")) | (ma.bus.read(ioregs.addr_of("VID_BASE_H")) << 8)
+    ma.key("4")
+    to_kth(ma, s["WaitVBlank"], 12, 20_000_000)
+    check(ma.bus.mem[base + 6 * 160 + 1] == 107, "synth: pressing 4 mutes the drums, digit dim",
+          "label attr %02X" % ma.bus.mem[base + 6 * 160 + 1])
+    ma.key(["K_RIGHT"])
+    to_kth(ma, s["WaitVBlank"], 6, 20_000_000)
+    cur = base + 3 * 160 + 8 * 2
+    check(ma.bus.mem[cur + 1] == 22, "synth: the cursor moved right and shows",
+          "attr at col 8 is %02X" % ma.bus.mem[cur + 1])
+    ma.key("C")
+    to_kth(ma, s["WaitVBlank"], 6, 20_000_000)
+    check(ma.bus.mem[cur] == 67, "synth: typing C writes the note into the screen the player reads",
+          "cell holds %02X" % ma.bus.mem[cur])
+    ma.key(["K_RIGHT"])
+    to_kth(ma, s["WaitVBlank"], 6, 20_000_000)
+    ma.key("d")
+    to_kth(ma, s["WaitVBlank"], 6, 20_000_000)
+    check(ma.bus.mem[cur + 2] == 68, "synth: a lowercase keypress lands as its uppercase note",
+          "cell holds %02X" % ma.bus.mem[cur + 2])
+    print("    %d bytes of PRG" % len(prg))
+    print()
+
+    print("  INTRO: to the 120th frame wait")
+    mb, ma, bs, s, prg = pair("intro", "h_vsync", "WaitVBlank", 120, 400_000_000, 60_000_000)
+    same_bytes_of("intro", "5,120-byte text map", text_map(ma), text_map(mb))
+    same_bytes_of("intro", "eight voices: pitch, volume, noise, enable", voices(ma), voices(mb))
+    same_regs("intro", mb, ma, ["VID_BASE_L", "VID_BASE_H", "VID_SCX_L", "VID_SCY_L", "VID_BORDER", "VID_MODE"])
+    print("    %d bytes of PRG" % len(prg))
+    print()
+
+    print("  MANDEL: to the key wait at the end -- the whole set")
+    c0 = None
+    mb, ma, bs, s, prg = pair("mandel", "inkey", "ReadKey", 1, 6_000_000_000, 200_000_000)
+    same_vram("mandel", mb, ma, 61440, "61,440 bytes of mode 6 VRAM")
+    same_palette("mandel", mb, ma)
+    print("    %s clocks compiled against %s interpreted to the finished set; %d bytes of PRG"
+          % (f"{ma.cpu.cycles:,}", f"{mb.cpu.cycles:,}", len(prg)))
+    print()
+
+
 def test_refusals():
     print("  what the compiler refuses, and how it says so")
     cases = [
@@ -725,6 +937,7 @@ def main():
     test_line()
     test_rainbow()
     test_cobra()
+    test_ports()
     test_refusals()
     return H.report()
 

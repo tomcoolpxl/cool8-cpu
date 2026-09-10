@@ -1,0 +1,84 @@
+; MAZE -- 10 PRINT CHR$(205.5+RND(1)); : GOTO 10, in CoolAction!
+;
+; demos/maze.bas: mode 2, the C64's diagonal as one 32-byte tile with
+; attribute bit 6 for its mirror, a 40x32 map filled at random and
+; then scrolled upward for ever by the hardware -- the fine step in
+; VID_SCY, the coarse step one stride onto VID_BASE, a fifth of the
+; next row drawn each frame, two vblanks a step. Nothing moves in
+; memory.
+;
+; **Exact, random numbers included**: Rnd is the interpreter's own
+; generator from its seed, and every cell is asked for in the BASIC's
+; order, so sim/test_action.py can run both to the same Rnd call and
+; require the same map, the same tile, the same base and scroll.
+; What the port keeps that a free rewrite would drop: the vblank flag
+; polled twice a step through VID_IRQ, because that is the pacing the
+; picture has.
+;
+; Any key quits; the BASIC has no way out but Break.
+
+; ---- generated from demos/maze.bas by tools/mkactdata.py: do not edit ----
+; the Commodore 64 palette, $0RGB
+CARD ARRAY pal(16) = [
+  $000 $FFF $800 $AFE $C4C $0C5 $00A $EE7 $D85 $640 $F77 $333
+  $777 $AF6 $08F $BBB]
+; C64 screen code 77 at 4 bpp: paper 6, ink 14
+BYTE ARRAY tile(32) = [
+  238 102 102 102 238 230 102 102 110 238 102 102 102 238 230 102 102 110 238 102 102 102 238 230
+  102 102 110 238 102 102 102 238]
+; ---- end of the generated block ----
+
+CARD mbase, mstride, w, p, b
+
+; one map entry: tile 1, and the mirror bit from Rnd -- RND(2)*64
+PROC Cell(CARD addr)
+  VRAM_ADDR = addr
+  VRAM_DATA = 1
+  VRAM_DATA = Rnd(2) << 6
+RETURN
+
+PROC Main()
+  BYTE n, f, v, c
+
+  Graphics(2)
+  CUR_CTRL = 0
+  SetPalette(pal, 0, 16)
+  ; patterns at $4000; tile 1 is at $4020
+  VID_PAT = $4000
+  VWrite($4020, tile, 32)
+  mbase = VID_BASE
+  mstride = VID_STRIDE
+  w = mstride * 32
+  p = mbase
+  b = mbase
+  n = 0
+  DO
+    FOR c = 0 TO 39 DO Cell(p + c * 2) OD
+    p += mstride
+    IF p >= mbase + w THEN p -= w FI
+    n += 1
+  UNTIL n >= 32 OD
+  DO
+    FOR f = 0 TO 7 DO
+      ; two ticks a step: clear the vblank flag, then wait for it
+      FOR v = 0 TO 1 DO
+        VID_IRQ = 2
+        WHILE (VID_IRQ & 2) == 0 DO OD
+      OD
+      ; the base goes with fine step 0, not with 7 -- both are
+      ; sampled at frame start, and pairing it with 7 is the shudder
+      IF f == 0 THEN
+        b += mstride
+        IF b >= mbase + w THEN b -= w FI
+        VID_BASE = b
+      FI
+      VID_SCY_L = f
+      ; a fifth of the next row per frame
+      FOR c = f * 5 TO f * 5 + 4 DO Cell(p + c * 2) OD
+    OD
+    p += mstride
+    IF p >= mbase + w THEN p -= w FI
+  UNTIL ReadKey() OD
+  Graphics(0)
+  Cursor(1)
+RETURN

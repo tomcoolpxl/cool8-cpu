@@ -1,0 +1,193 @@
+; INTRO -- the scroller, hardware doing the work, in CoolAction!
+;
+; demos/intro.bas: mode 1 stores 80 columns and shows 40, so every
+; banner row is written twice, 40-column periodic, and the motion is
+; four register writes a frame -- the fine step in VID_SCX walking the
+; eight logical pixels of a cell, the coarse step two bytes onto
+; VID_BASE, and the base snapping home when the window has slid the
+; whole way, invisibly. The screen bobs on VID_SCY's sine, the border
+; flashes white on every snare, and the music is SYNTH's top three
+; voices carried as arrays.
+;
+; **Exact**: the map, the scroll registers, the border and the eight
+; voices must match the BASIC's at the same frame wait, and
+; sim/test_action.py requires it. Cell addresses are the machine's
+; own base plus the BASIC's row offsets.
+;
+; Any key quits.
+
+; ---- generated from demos/intro.bas by tools/mkactdata.py: do not edit ----
+; pitch increments, SYNTH's
+CARD ARRAY zt(78) = [
+  $239 $25B $27F $2A5 $2CD $2F8 $325 $355 $388 $3BE $3F7 $433
+  $473 $4B7 $4FF $54B $59B $5F1 $64B $6AB $710 $77C $7EE $867
+  $8E7 $96E $11D $12D $13F $152 $166 $17C $192 $1AA $1C4 $1DF
+  $1FB $219 $239 $25B $27F $2A5 $2CD $2F8 $325 $355 $388 $3BE
+  $3F7 $433 $473 $4B7 $047 $04B $050 $055 $05A $05F $065 $06B
+  $071 $078 $07F $086 $08E $097 $0A0 $0A9 $0B3 $0BE $0C9 $0D5
+  $0E2 $0EF $0FD $10D $11D $12D]
+; the bob: 64 of sine for VID_SCY
+BYTE ARRAY wob(64) = [
+  8 8 9 10 10 11 12 12 13 13 14 14 14 15 15 15 15 15 15 15 14 14 14 13
+  13 12 12 11 10 10 9 8 8 7 6 5 5 4 3 3 2 2 1 1 1 0 0 0
+  0 0 0 0 1 1 1 2 2 3 3 4 5 5 6 7]
+; three tracks of 32 steps: lead, arpeggio, bass
+BYTE ARRAY trk(96) = [
+  17 0 0 0 0 0 0 0 0 0 0 0 18 0 0 0 17 0 0 0 0 0 0 0
+  0 0 0 0 13 0 15 0 20 0 22 20 0 18 17 13 15 0 20 0 24 22 20 17
+  0 13 0 25 24 22 20 17 0 13 0 17 18 17 15 0 1 13 0 1 13 1 0 13
+  8 20 0 8 20 8 0 20 10 22 0 10 22 10 0 22 6 18 0 6 18 6 0 18]
+; the banner, row 8
+BYTE ARRAY msg1(40) = [
+  67 79 79 76 56 32 77 69 71 65 68 69 77 79 32 42 32 84 72 69 32 83 67 82
+  69 69 78 32 73 83 32 65 76 73 86 69 32 42 32 32]
+; its attributes, a static rainbow
+BYTE ARRAY atr1(40) = [
+  12 14 10 11 9 13 15 11 12 14 10 11 9 13 15 11 12 14 10 11 9 13 15 11
+  12 14 10 11 9 13 15 11 12 14 10 11 9 13 15 11]
+; the banner, row 20
+BYTE ARRAY msg2(40) = [
+  87 65 86 69 32 67 79 66 82 65 32 83 89 78 84 72 32 80 76 65 83 77 65 32
+  77 65 90 69 32 82 65 73 78 66 79 87 32 42 32 32]
+; ---- end of the generated block ----
+
+CARD base, t, p, q, u
+BYTE k, f, a, o, e, b, g
+INT v, h, x
+
+PROC PokeB(CARD addr, BYTE val)
+  BYTE POINTER tp
+  tp = addr
+  *tp = val
+RETURN
+
+; one beat of the tune: lead, arpeggio, bass -- and the snare's flash
+PROC Beat()
+  BYTE n
+  a += 1
+  IF a > 31 THEN a = 0 FI
+  n = trk(a)
+  IF n > 0 THEN
+    p = zt(n - 1)
+    v = 10
+    o = 0
+    Sound(0, p, v, 0)
+  FI
+  IF n < 1 THEN o = 1 FI
+  n = trk(a + 32)
+  IF n > 0 THEN
+    q = zt(n + 25)
+    h = 7
+    e = 0
+    Sound(1, q, 7, 0)
+  FI
+  IF n < 1 THEN
+    e = 1
+    h = 7
+  FI
+  n = trk(a + 64)
+  IF n > 0 THEN
+    Sound(2, zt(n + 51), 9, 0)
+    b = 0
+  FI
+  IF n < 1 THEN
+    b = 1
+    x = 13
+    VID_BORDER = 1
+  FI
+RETURN
+
+PROC Main()
+  BYTE i, dd
+
+  Graphics(1)
+  TextFill(32, $07)
+  Cursor(0)
+  base = VID_BASE
+  ; the rules, rows 4 and 12, all eighty cells
+  FOR i = 0 TO 79 DO
+    PokeB(base + 640 + i + i, 61)
+    PokeB(base + 1920 + i + i, 61)
+  OD
+  ; the banners, rows 8 and 20, each written twice
+  FOR i = 0 TO 39 DO
+    PokeB(base + 1280 + i + i, msg1(i))
+    PokeB(base + 1360 + i + i, msg1(i))
+    PokeB(base + 1281 + i + i, atr1(i))
+    PokeB(base + 1361 + i + i, atr1(i))
+    PokeB(base + 3200 + i + i, msg2(i))
+    PokeB(base + 3280 + i + i, msg2(i))
+  OD
+  t = 0
+  k = 0
+  f = 0
+  a = 31
+  o = 1
+  e = 1
+  b = 1
+  v = 0
+  h = 0
+  x = 0
+  g = 0
+  DO
+    WaitVBlank()
+    t += 1
+    IF t > 319 THEN t = 0 FI
+    dd = t / 8
+    VID_SCX_L = t - dd * 8
+    ; **The base is written a frame ahead.** Text fine scroll is live
+    ; -- the pixel stage reads VID_SCX as the raster goes -- while
+    ; VID_BASE is latched at the start of vertical blanking, so a
+    ; base written now shows next frame and a fine step written now
+    ; shows now. Written together for the same t, every eighth frame
+    ; showed fine step 0 against the old base: one cell to the right
+    ; for one frame, then back -- the shudder the original had. So
+    ; the base written here is the one t + 1 wants (04-system.md 5.5).
+    u = t + 1
+    IF u > 319 THEN u = 0 FI
+    dd = u / 8
+    VID_BASE_L = dd + dd
+    k += 1
+    IF k > 63 THEN k = 0 FI
+    VID_SCY_L = wob(k)
+    VID_BORDER = 14
+    f += 1
+    IF f == 9 THEN
+      f = 0
+      Beat()
+    FI
+    IF o == 1 AND v > 0 THEN
+      g += 1
+      IF g > 3 THEN
+        g = 0
+        v -= 1
+        Sound(0, p, v, 0)
+      FI
+    FI
+    IF e == 1 AND h > 0 THEN
+      h -= 3
+      IF h < 0 THEN h = 0 FI
+    FI
+    IF e == 1 AND h > 0 THEN Sound(1, q, h, 0) FI
+    IF e == 1 AND h == 0 THEN
+      Sound(1, q, 0, 0)
+      e = 0
+    FI
+    IF b == 1 AND x > 0 THEN
+      x -= 2
+      IF x < 0 THEN x = 0 FI
+    FI
+    IF b == 1 AND x > 0 THEN Sound(2, 3000, x, 1) FI
+    IF b == 1 AND x == 0 THEN
+      Sound(2, 3000, 0, 1)
+      b = 0
+    FI
+  UNTIL ReadKey() OD
+  Sound(0, 0, 0, 0)
+  Sound(1, 0, 0, 0)
+  Sound(2, 0, 0, 0)
+  VID_SCX_L = 0
+  VID_SCY_L = 0
+  Graphics(0)
+  Cursor(1)
+RETURN

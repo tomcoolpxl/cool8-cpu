@@ -1,0 +1,108 @@
+; WAVE -- a sine sweep with a gradient trail, in CoolAction!
+;
+; demos/wave.bas: a full-width horizontal line sweeps a sine over
+; mode 6's 256x240, and every row it vacates takes the next of 253
+; palette entries, wrapping -- lines and colours in lockstep. Entry 0
+; is the black border, 255 the white head, 254 parked at black, 1..253
+; one turn of the hue circle. The two spans that matter -- the vacated
+; row, then the new head -- go first, inside vblank; the fill rows
+; follow while the raster scans.
+;
+; **Exact**: the quarter sine is mirrored three ways at start as the
+; BASIC does it, the palette is its DATA word for word, and
+; sim/test_action.py runs both to the same frame wait and requires the
+; same VRAM and the same 256 palette entries. The two counters are INT
+; so that `o < y - 1` at the top of the screen means what the BASIC's
+; integers mean; a BYTE would wrap and fill the wrong way.
+;
+; Any key quits.
+
+; ---- generated from demos/wave.bas by tools/mkactdata.py: do not edit ----
+; a quarter sine, rows 0..239; mirrored three ways at start
+BYTE ARRAY sq(181) = [
+  120 121 122 123 124 125 126 127 128 129 130 131 132 133 135 136 137 138 139 140 141 142 143 144
+  145 146 147 148 149 150 151 152 153 154 155 156 157 158 159 160 161 162 163 164 165 166 166 167
+  168 169 170 171 172 173 174 175 176 177 178 179 180 180 181 182 183 184 185 186 187 187 188 189
+  190 191 192 192 193 194 195 196 196 197 198 199 200 200 201 202 203 203 204 205 206 206 207 208
+  208 209 210 210 211 212 212 213 214 214 215 216 216 217 217 218 219 219 220 220 221 221 222 223
+  223 224 224 225 225 226 226 226 227 227 228 228 229 229 230 230 230 231 231 231 232 232 233 233
+  233 233 234 234 234 235 235 235 235 236 236 236 236 237 237 237 237 237 238 238 238 238 238 238
+  238 238 239 239 239 239 239 239 239 239 239 239 239]
+; entries 1..253: one turn of the hue circle, $0RGB, a word each
+CARD ARRAY pal(253) = [
+  $F00 $F01 $F10 $F11 $F20 $E21 $F21 $F30 $E31 $F31 $F40 $F41
+  $F42 $F51 $F50 $E60 $F60 $F61 $F70 $E71 $F71 $F80 $E81 $F81
+  $F90 $F91 $F92 $FA1 $FA0 $EB0 $FB0 $FB1 $FB2 $FC1 $FC0 $ED0
+  $FD0 $FD1 $FE0 $FE1 $FE2 $FF1 $FF0 $EF0 $EF1 $DF1 $DF0 $DF2
+  $CF1 $CF0 $BF1 $BF0 $BF2 $AF1 $AF0 $AF2 $9F1 $9F0 $9F2 $8F1
+  $8F0 $8F2 $7F1 $7F0 $6F1 $6F0 $6F2 $5F1 $5F0 $5F2 $4F1 $4F0
+  $4F2 $3F1 $3F0 $3F2 $2F1 $2F0 $2F2 $1F1 $1F0 $0F1 $0F0 $0F2
+  $1E2 $1E1 $2E1 $2E0 $2E2 $1F2 $0F3 $0F4 $1F3 $2E3 $1E4 $1F4
+  $0F5 $0F6 $1F5 $2E5 $1E6 $1F6 $0F7 $0F8 $1F7 $2E7 $2E8 $1F8
+  $0F9 $0FA $1F9 $1EA $1FA $0FB $0FC $1FB $2EB $1EC $1FC $0FD
+  $0FE $1FD $2ED $2EE $1FE $0FF $1FF $1EF $0EF $0EE $0ED $0DE
+  $0DF $1CF $0CF $0CE $0CD $0BE $0BF $1AF $0AF $0AE $09F $09E
+  $09D $08E $08F $17F $07F $07E $07D $06E $06F $15F $05F $05E
+  $04F $14E $04E $03F $03E $03D $02E $02F $11F $01F $01E $00F
+  $10E $00E $10F $20E $20F $20D $30E $30F $30D $40E $40F $40D
+  $50E $50F $50D $60E $60F $70E $70F $70D $80E $80F $80D $90E
+  $90F $90D $A0E $A0F $A0D $B0E $B0F $C0E $C0F $C0D $D0E $D0F
+  $D0D $E0E $E0F $E0D $F0E $F0F $F0D $E1D $E1E $D1E $D1D $E1C
+  $F0C $F0B $E0C $D1C $E1B $E0B $F0A $E1A $E0A $F09 $F08 $E09
+  $D19 $E18 $E08 $F07 $F06 $E07 $D17 $E16 $E06 $F05 $F04 $E05
+  $D15 $D14 $E04 $F03 $F02 $E03 $E12 $E02 $D12 $E11 $E01 $D11
+  $E10]
+; ---- end of the generated block ----
+
+BYTE ARRAY sn(720)
+CARD a = [0]
+INT o = [120]
+BYTE e = [1]
+
+; a row the head has left: the next colour of the ramp
+PROC Vacate(BYTE r)
+  Line(0, r, 255, r, e)
+  e += 1
+  IF e > 253 THEN e = 1 FI
+RETURN
+
+PROC Main()
+  BYTE i
+  INT y, k
+
+  Graphics(6)
+  Cursor(0)
+  FOR i = 0 TO 180 DO sn(i) = sq(i) OD
+  FOR i = 1 TO 179 DO
+    sn(360 - i) = sn(i)
+    sn(360 + i) = 239 - sn(i)
+    sn(720 - i) = 239 - sn(i)
+  OD
+  sn(360) = 120
+  sn(540) = 0
+  SetPalette(pal, 1, 253)
+  SetColor(0, 0)
+  SetColor(254, 0)
+  SetColor(255, $FFF)
+  Clg(0)
+  a = 0
+  o = 120
+  e = 1
+  DO
+    a += 3
+    IF a > 719 THEN a -= 720 FI
+    y = sn(a)
+    WaitVBlank()
+    IF o <> y THEN Vacate(o) FI
+    Line(0, y, 255, y, 255)
+    IF o < y - 1 THEN
+      FOR k = o + 1 TO y - 1 DO Vacate(k) OD
+    FI
+    IF o > y + 1 THEN
+      FOR k = 1 TO o - y - 1 DO Vacate(o - k) OD
+    FI
+    o = y
+  UNTIL ReadKey() OD
+  Graphics(0)
+  Cursor(1)
+RETURN

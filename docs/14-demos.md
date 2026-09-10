@@ -50,7 +50,7 @@ compared on the same picture.
 |---|---|---|
 | **Demos** | 13 | MAZE, RAINBOW, WAVE, PLASMA, INTRO, BOING, TRIANGLES, MANDEL, COBRA, SYNTH, BENCH, MINIBNCH, BAPPLE, TAIPAN, COOLTRS1, COOLTRS2 |
 | **Software** | 14 | HHGG, ZORK1, PLANET, LGOP, PASCAL |
-| **CoolAction** | 11 | PRIMES, RAINBOW, COBRA — see §4 |
+| **CoolAction** | 11 | RAINBOW, COBRA, TRIANGLE, MAZE, PLASMA, WAVE, MANDEL, SYNTH, INTRO, PRIMES — the compiled twins, §4 |
 
 **Volume 0 is not the user's, and that is the ROM's decision.**
 `sw/boot.asm` walks volume 0's directory for `BOOT.BIN`; it is the 4 KB
@@ -675,6 +675,21 @@ whole screen bobs on `VID_SCRL_Y`'s sine, the border flashes white on
 every snare, and the message letters carry a static rainbow of
 attributes.
 
+**It shuddered once every eight frames, and the port is what found
+it.** The banner stepped left two pixels a frame, then on the frame
+where the fine step wrapped to 0 it jumped a whole cell to the right
+and came back the frame after — "some of the text is shifted", seen
+on the glass and not by any gate. Measured on the renderer by writing
+the demo's register pair by hand at the frame boundary and reading a
+glyph's x back: −2, −2, … +14, −18, −2. The cause is in
+[04-system.md §5.5](04-system.md): text fine scroll is live while
+`VID_BASE` is latched at vblank, so a fine step and a base written
+together after the frame wait land a frame apart, and the tile idiom
+of "coarse step with fine step 0" is exactly wrong for text. The base
+is now written a frame ahead, in the BASIC and in `intro.act` alike,
+and the pair gate holds the two to the same registers on the same
+frame.
+
 **The music is SYNTH's top three voices, verbatim** — lead, arpeggio,
 bass-with-snare, same pitch tables and envelopes, 9 frames a step —
 with the tracks carried as arrays: this screen belongs to the
@@ -989,35 +1004,72 @@ Classic arcade Tetris re-engineered for **Mode 2 (40×30 Tile Mode, 320×240 dou
 - **Audio & Timing**:
   - Crisp noise-free multi-voice square wave sound effects (`noise = 0`), anti-hover hardware timer synchronization (`TIMER`), pause (`P`), game over restart (`N`), and clean exit (`Q`).
 
-### `RAINBOW` and `COBRA`, compiled — the CoolAction menu
+### The CoolAction menu — nine of the demos, compiled
 
-The same two demos, in CoolAction! ([15-action.md](15-action.md)), on
-drive 11 as bare `.BIN`s: `demos/rainbow.act` and `demos/cobra.act`
-are the BASIC sources statement for statement, and `sim/test_action.py`
-holds each to its original by running both to the same frame wait and
-comparing VRAM byte for byte — both pages, for COBRA. They matched on
-the first run, because the library's `Line` is `LINE` pixel for pixel
-and was gated on the same fan first.
+The same demos in CoolAction! ([15-action.md](15-action.md)), on
+drive 11 as bare `.BIN`s: RAINBOW, COBRA, TRIANGLES, MAZE, PLASMA,
+WAVE, MANDEL, SYNTH and INTRO, each a `demos/name.act` beside its
+`demos/name.bas`. **The picture is the contract, not the code.** A port
+may do the work any way the language allows -- and mostly does it the
+BASIC's way, because the BASIC's way was measured -- but
+`sim/test_action.py` runs every pair to the same point and requires
+what the machine holds to be identical: VRAM, palette, the text map,
+the programmed voices, the registers. Every one of the nine matched
+on its first run against its original, which is what the library's
+`Line` being `LINE` pixel for pixel and `Rnd` being `RND` from the
+same seed bought.
 
-**What a port changes.** `READ`/`DATA` becomes an initialised array,
-`DIM` a declaration, `0-Q` is `-q`, and `POKE $FF30,P` is
-`VID_DBASE_H = p` through the generated register names. COBRA's 2,264
-table entries are not typed twice: `tools/mkcobra.py` copies them out
-of the BASIC's `DATA` into a marked block of the `.act`, and `poe
-check` fails if the block is stale — a change to the model in
-`cobra.bas` fails there rather than in the framebuffer. Its four
-endpoint arrays and its projection table are `BYTE` where the BASIC
-has integers, because a mode 5 coordinate is 0–255 by construction;
-7 KB of PRG instead of 14, the same picture.
+**Where each pair is parked, and what must agree:**
 
-**What the pair measures.** COBRA's start-up — 2,016 projections and
-1,772 table gathers — is **18.7× faster** compiled (2.7 M clocks
-against 50.5 M), and a frame's drawing is 2.0× (290 K against 578 K),
+| port | parked at | identical |
+|---|---|---|
+| RAINBOW | the 40th frame wait | 38,400 bytes of mode 4, 16 palette entries |
+| COBRA | the 10th frame wait | both mode 5 pages, the display and drawing bases |
+| TRIANGLES | the 281st `RND` -- forty triangles in | 38,400 bytes of mode 4 |
+| MAZE | the 1,341st `RND` -- the map and twelve scroll steps | the map and the tile, the palette, `VID_BASE`, `VID_SCY` |
+| PLASMA | the 5th frame wait -- painted, four rotations in | 61,440 bytes of mode 6, 47 palette entries |
+| WAVE | the 120th frame wait | 61,440 bytes, all 256 palette entries |
+| MANDEL | the key wait at the end -- the whole set | 61,440 bytes, all 256 palette entries |
+| SYNTH | the 120th frame wait -- thirteen steps of the tune | the 5,120-byte text map, eight voices' pitch, volume and bits, the palette, the border; then the editor typed at |
+| INTRO | the 120th frame wait | the text map, the voices, `VID_BASE`, `VID_SCX`, `VID_SCY`, the border |
+
+A frame wait is a routine entry on both sides -- `h_vsync` in the
+interpreter, `WaitVBlank` in the library -- and so is an `RND`, so the
+two machines are at the same point of the same algorithm whatever the
+clock says. Where the demo has no frame wait, the count of random
+numbers *is* the clock.
+
+**What a port changes.** `READ`/`DATA` becomes an initialised array;
+`tools/mkactdata.py` copies every BASIC's `DATA` into a marked block
+of its `.act` -- COBRA's 2,264 table entries, PLASMA's tables and
+rainbow, WAVE's sine and 253-entry ramp, SYNTH's and INTRO's tunes,
+MAZE's palette and tile -- and `poe check` fails if a block is stale,
+so a change to a model or a palette in the BASIC fails there rather
+than in the framebuffer. `DIM` is a declaration, `0-Q` is `-q`, a
+`POKE` to a register is the register's generated name, a `POKE` to the
+text map is the machine's own base plus the BASIC's offset, `INKEY` is
+`ReadKey()` on the interpreter's own keyboard tables, and `RND` is
+`Rnd()`, the interpreter's xorshift from its seed -- which is why
+TRIANGLES and MAZE, pictures made of nothing but random numbers, match.
+COBRA's endpoint arrays and MANDEL's coordinates are `BYTE` where the
+BASIC has integers, because a screen coordinate is 0-255 by
+construction; the arithmetic that must not be narrowed -- MANDEL's Q6
+iteration, WAVE's `o < y - 1` at the top of the screen, TRIANGLES' edge
+accumulators -- is `INT`, and every divide truncates towards zero as
+the BASIC's does.
+
+**What the pairs measure.** COBRA's start-up -- 2,016 projections and
+1,772 table gathers -- is **18.7× faster** compiled (2.7 M clocks
+against 50.5 M), and a frame's drawing 2.0× (290 K against 578 K),
 because `Line` and `LINE` cost the same 128 clocks a pixel and the
-compiler only saves the statements around each call. Neither holds
-60 Hz: a frame is 139,583 clocks, so the interpreted ship draws in
-four and the compiled one in two. RAINBOW is 1.2× and does not matter,
-because both sit in the frame wait. The full table is in
+compiler only saves the statements around each call; neither holds
+60 Hz. **MANDEL is 7.1×**: the whole set in 298 M clocks against
+2,126 M -- 36 s against 4 min 14 s of machine time -- with the same
+Mariani-Silver rectangles and the same Q6 iteration, which is the
+arithmetic-and-array-traffic case the sieve profile predicted. PLASMA's
+25 s of visible top-down paint is a fraction of a second. RAINBOW,
+WAVE, SYNTH and INTRO sit in the frame wait either way and gain
+nothing a viewer can see. The full table is in
 [15-action.md §5](15-action.md).
 
 **`PRIMES` is on the same menu**, because it is `demos/primes.act` and
@@ -1026,13 +1078,17 @@ and says so on the serial port, which the page does not show. A
 demonstration that a compiled program reaches the hardware, not a
 picture.
 
-**One thing the port made visible**: `CLG` clears 240 rows of the
+**Two things the ports made visible.** `CLG` clears 240 rows of the
 stride in every mode (`h_clg`), which in mode 5 is 30,720 bytes from
-`VID_BASE` — 6,144 past the page — so COBRA's second clearing frame
-wipes the top 48 rows of the page then on show. It lasts one frame,
+`VID_BASE` -- 6,144 past the page -- so COBRA's second clearing frame
+wipes the top 48 rows of the page then on show; it lasts one frame,
 the library's `Clg` does exactly the same, and the two framebuffers
-agree; it is recorded here because it is the kind of thing a port
-finds and a viewer does not.
+agree. And a voice's phase accumulator, bytes 2 and 3 of its eight,
+can never be compared between two machines: the engine advances it
+every 256 clocks from the moment the pitch lands, and two programs
+that write the same pitch in the same frame write it at different
+clocks. The gate compares pitch, volume and the mode bits, which is
+what the program wrote.
 
 ### `HHGG`, `ZORK1`, `PLANET`, `LGOP` — Infocom Text Adventure Suite (Native Z3 Interpreter)
 

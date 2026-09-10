@@ -1,0 +1,88 @@
+; TRIANGLES -- the BBC Micro's filled triangles, in CoolAction!
+;
+; demos/triangles.bas: three random points, sorted by y, two edges
+; walked down the shape in sixteenths of a pixel and joined by one
+; horizontal Line a row, in one of fifteen random colours, for ever.
+; Mode 4, 320x240, 16 colours.
+;
+; **Exact, random numbers included.** The picture is nothing but the
+; random numbers, so the port draws them from the library's Rnd, which
+; is the interpreter's own xorshift from the same seed, in the same
+; order the BASIC asks for them: x, y, p, q, r, s, then the colour.
+; sim/test_action.py runs both to the same Rnd call and requires the
+; same 38,400 bytes of VRAM. The edge arithmetic is INT where the
+; BASIC has integers -- and where the BASIC's `>>` is a logical shift
+; the accumulators here are never negative either, for the same reason:
+; they hold a screen x between two on-screen points.
+;
+; Any key quits; the BASIC has no way out but Break.
+
+PROC Main()
+  INT x, y, p, q, r, s, t, h, u, v, e, f, g, a, b
+  BYTE c, i
+
+  Graphics(4)
+  Cursor(0)
+  Clg(0)
+  DO
+    x = Rnd(320)
+    y = Rnd(240)
+    p = Rnd(320)
+    q = Rnd(240)
+    r = Rnd(320)
+    s = Rnd(240)
+    IF y > q THEN
+      t = x
+      x = p
+      p = t
+      t = y
+      y = q
+      q = t
+    FI
+    IF q > s THEN
+      t = p
+      p = r
+      r = t
+      t = q
+      q = s
+      s = t
+    FI
+    IF y > q THEN
+      t = x
+      x = p
+      p = t
+      t = y
+      y = q
+      q = t
+    FI
+    h = s - y
+    IF h <> 0 THEN
+      ; 1 to 15: colour 0 is the paper, and a triangle painted in it
+      ; is a triangle nobody sees
+      c = Rnd(15) + 1
+      e = (r - x) * 16 / h
+      a = x * 16
+      b = a
+      u = q - y
+      IF u <> 0 THEN
+        f = (p - x) * 16 / u
+        FOR i = y TO q - 1 DO
+          Line(a >> 4, i, b >> 4, i, c)
+          a += e
+          b += f
+        OD
+      FI
+      v = s - q
+      g = 0
+      IF v > 0 THEN g = (r - p) * 16 / v FI
+      b = p * 16
+      FOR i = q TO s DO
+        Line(a >> 4, i, b >> 4, i, c)
+        a += e
+        b += g
+      OD
+    FI
+  UNTIL ReadKey() OD
+  Graphics(0)
+  Cursor(1)
+RETURN

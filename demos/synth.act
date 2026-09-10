@@ -1,0 +1,295 @@
+; SYNTH -- the screen is the sequencer, in CoolAction!
+;
+; demos/synth.bas, and the c64-synth's trick kept whole: there is no
+; note array. The play loop reads the characters on the mode 1 text
+; screen -- a letter is a note, A=1..Z=26, anything else a rest, `:` a
+; rest that draws the beat -- and the editor types straight into the
+; memory the sequencer reads. Eight voices, keys 1-8 toggling them,
+; arrows moving a cursor in the grid, letters and space typed into
+; it, Esc quitting. A step is nine frames, staged across three: F=0
+; reads the melodic rows, F=1 the echoes and drums, F=2 moves the
+; playhead.
+;
+; **Exact**: the screen is built as the BASIC builds it -- CLS's fill,
+; the twelve printed lines, the attribute sweep, the labels and the
+; cursor -- and every cell address is the machine's own base and
+; stride plus the BASIC's offsets, so sim/test_action.py can run both
+; to the same frame wait with nothing typed and require the same
+; 5,120-byte map and the same eight voices, then type at the compiled
+; one and require the editor to answer as the BASIC's does.
+
+; ---- generated from demos/synth.bas by tools/mkactdata.py: do not edit ----
+; pitch increments: the c64-synth's SID arithmetic, precomputed
+CARD ARRAY zt(104) = [
+  $239 $25B $27F $2A5 $2CD $2F8 $325 $355 $388 $3BE $3F7 $433
+  $473 $4B7 $4FF $54B $59B $5F1 $64B $6AB $710 $77C $7EE $867
+  $8E7 $96E $11D $12D $13F $152 $166 $17C $192 $1AA $1C4 $1DF
+  $1FB $219 $239 $25B $27F $2A5 $2CD $2F8 $325 $355 $388 $3BE
+  $3F7 $433 $473 $4B7 $047 $04B $050 $055 $05A $05F $065 $06B
+  $071 $078 $07F $086 $08E $097 $0A0 $0A9 $0B3 $0BE $0C9 $0D5
+  $0E2 $0EF $0FD $10D $11D $12D $473 $4B7 $4FF $54B $59B $5F1
+  $64B $6AB $710 $77C $7EE $867 $8E7 $96E $9FE $A96 $B38 $BE2
+  $C97 $D57 $E22 $EFA $FDE $10D0 $11D0 $12DF]
+; the Commodore 64 palette, $0RGB
+CARD ARRAY pal(16) = [
+  $000 $FFF $800 $AFE $C4C $0C5 $00A $EE7 $D85 $640 $F77 $333
+  $777 $AF6 $08F $BBB]
+; ---- end of the generated block ----
+
+BYTE ARRAY mv(8)                 ; a voice on or off
+CARD base                        ; the text map
+CARD c                           ; the cell of the current step, row 3
+CARD r                           ; the cursor's cell
+BYTE s, a, f, d, e, o            ; step, previous step, frame phase, flags
+BYTE v, w, y, u                  ; envelope levels
+CARD p, q, j, k                  ; pitches
+
+BYTE ARRAY l0 = "  COOL8 SYNTH  1-8 VOICES  ESC QUITS"
+BYTE ARRAY l2 = "       +---+---+---+---+---+---+---+---"
+BYTE ARRAY l3 = "1 LEAD Q   :   :   R   Q   :   :   M O "
+BYTE ARRAY l4 = "2 ARP  T VT:RQMO T XVTQ:M YXVTQ:M QRQO "
+BYTE ARRAY l5 = "3 BASS AM AMA MHT HTH TJV JVJ VFR FRF R"
+BYTE ARRAY l6 = "4 DRUM : S : S : S : S : S : S : S : S "
+BYTE ARRAY l7 = "5 PAD  A   :   H   :   J   :   F   :   "
+BYTE ARRAY l8 = "6 FLUTE:   :VT :   :XV :   :YV : QR:   "
+BYTE ARRAY l9 = "7 PLUCK:   :   :   :  J:   :  F:   :  A"
+BYTE ARRAY l10 = "8 HORN :   H   :   O   :   Q   :   M   "
+BYTE ARRAY l12 = "       TYPE IN THE GRID - IT PLAYS IT"
+
+; a note read off the screen: the character less 64, so A is 1 and a
+; rest -- a space, a colon -- is negative, which is why this is an INT:
+; a BYTE made ':' into 250 and the pad played the pitch at table entry
+; 250 + 25, wrapped to 19
+FUNC INT Note(CARD cell)
+  BYTE POINTER t
+  INT n
+  t = cell
+  n = *t
+RETURN (n - 64)
+
+PROC PokeB(CARD addr, BYTE val)
+  BYTE POINTER t
+  t = addr
+  *t = val
+RETURN
+
+; F=0: the melodic rows -- lead, arpeggio, bass
+PROC Melodic()
+  INT n
+  s += 1
+  IF s > 31 THEN s = 0 FI
+  c = base + 494 + s + s
+  n = Note(c)
+  IF n > 0 AND mv(0) == 1 THEN
+    p = zt(n - 1)
+    v = 10
+    d = 0
+    Sound(0, p, v, 0)
+  FI
+  IF n < 1 THEN d = 1 FI
+  n = Note(c + 160)
+  IF n > 0 AND mv(1) == 1 THEN
+    q = zt(n + 25)
+    w = 7
+    e = 0
+    Sound(1, q, 7, 0)
+  FI
+  IF n < 1 THEN
+    e = 1
+    w = 7
+  FI
+  n = Note(c + 320)
+  IF n > 0 AND mv(2) == 1 THEN Sound(2, zt(n + 51), 9, 0) FI
+  IF n < 1 AND mv(2) == 1 THEN Sound(2, 100, 0, 0) FI
+RETURN
+
+; F=1: the echoes, the drums, the pad, the flute, the pluck, the horn
+PROC Echoes()
+  INT n
+  n = Note(c + 800)
+  IF n > 0 AND mv(5) == 1 THEN
+    k = zt(n + 77)
+    u = 6
+    Sound(5, k, 6, 0)
+  FI
+  n = Note(c + 640)
+  IF n > 0 AND mv(4) == 1 THEN Sound(4, zt(n + 25), 4, 0) FI
+  n = Note(c + 960)
+  IF n > 0 AND mv(6) == 1 THEN Sound(6, zt(n + 25), 6, 0) FI
+  IF n < 1 AND mv(6) == 1 THEN Sound(6, 100, 0, 0) FI
+  n = Note(c + 1120)
+  IF n > 0 AND mv(7) == 1 THEN Sound(7, zt(n + 25), 8, 0) FI
+  IF n < 1 AND mv(7) == 1 THEN Sound(7, 100, 0, 0) FI
+  n = Note(c + 480)
+  IF n == 19 AND mv(3) == 1 THEN
+    y = 11
+    j = 2500
+    o = 1
+    Sound(3, 2500, 11, 1)
+  FI
+  IF n == 11 AND mv(3) == 1 THEN
+    y = 11
+    j = 120
+    o = 0
+    Sound(3, 120, 11, 0)
+  FI
+  IF n == 8 AND mv(3) == 1 THEN
+    y = 6
+    j = 9000
+    o = 1
+    Sound(3, 9000, 6, 1)
+  FI
+RETURN
+
+; a voice toggled from the keyboard: the digit lights or dims
+PROC Toggle(BYTE t)
+  IF mv(t) == 1 THEN
+    mv(t) = 0
+    PokeB(base + 481 + t * 160, 107)
+    Sound(t, 100, 0, 0)
+    RETURN
+  FI
+  mv(t) = 1
+  PokeB(base + 481 + t * 160, 97)
+RETURN
+
+; F=2: the playhead, an inverted column moved pairwise
+PROC Playhead()
+  CARD n, t
+  BYTE i
+  n = base + 495 + a + a
+  t = base + 495 + s + s
+  FOR i = 0 TO 7 DO
+    PokeB(n + i * 160, 110)
+    PokeB(t + i * 160, 230)
+  OD
+  a = s
+  PokeB(r + 1, 22)
+RETURN
+
+; an arrow: the cursor, clamped to the grid
+PROC Arrow(CARD t)
+  CARD bb, x
+  PokeB(r + 1, 110)
+  bb = (r - base) / 160
+  x = (r - base - bb * 160) / 2
+  IF t == K_LEFT THEN x -= 1 FI
+  IF t == K_RIGHT THEN x += 1 FI
+  IF t == K_UP THEN bb -= 1 FI
+  IF t == K_DOWN THEN bb += 1 FI
+  IF x < 7 THEN x = 7 FI
+  IF x > 38 THEN x = 38 FI
+  IF bb < 3 THEN bb = 3 FI
+  IF bb > 10 THEN bb = 10 FI
+  r = base + bb * 160 + x + x
+  PokeB(r + 1, 22)
+RETURN
+
+; space: the bar mark on a beat column, a plain rest elsewhere
+PROC Space()
+  CARD bb, x
+  bb = (r - base) / 160
+  x = (r - base - bb * 160) / 2 - 7
+  IF x - x / 4 * 4 == 0 THEN
+    PokeB(r, 58)
+  ELSE
+    PokeB(r, 32)
+  FI
+RETURN
+
+PROC Main()
+  BYTE i, rr
+  CARD t, g
+
+  Graphics(1)
+  TextFill(32, $07)
+  Cursor(0)
+  VID_BORDER = 14
+  base = VID_BASE
+  SetPalette(pal, 0, 16)
+  TextAt(0, 0, l0, $07)
+  TextAt(0, 2, l2, $07)
+  TextAt(0, 3, l3, $07)
+  TextAt(0, 4, l4, $07)
+  TextAt(0, 5, l5, $07)
+  TextAt(0, 6, l6, $07)
+  TextAt(0, 7, l7, $07)
+  TextAt(0, 8, l8, $07)
+  TextAt(0, 9, l9, $07)
+  TextAt(0, 10, l10, $07)
+  TextAt(0, 12, l12, $07)
+  ; every visible cell light blue on blue
+  FOR rr = 0 TO 29 DO
+    FOR i = 0 TO 39 DO PokeB(base + 1 + rr * 160 + i + i, 110) OD
+  OD
+  FOR i = 0 TO 7 DO
+    mv(i) = 1
+    PokeB(base + 481 + i * 160, 97)
+  OD
+  c = base + 494
+  s = 31
+  a = 31
+  f = 0
+  d = 1
+  e = 1
+  v = 0
+  w = 0
+  y = 0
+  u = 0
+  g = 0
+  r = base + 494
+  PokeB(r + 1, 22)
+  DO
+    WaitVBlank()
+    f += 1
+    IF f == 9 THEN
+      f = 0
+      Melodic()
+    FI
+    IF f == 1 THEN Echoes() FI
+    IF f == 2 THEN Playhead() FI
+    IF d == 1 AND v > 0 AND mv(0) == 1 THEN
+      g += 1
+      IF g > 3 THEN
+        g = 0
+        v -= 1
+        Sound(0, p, v, 0)
+      FI
+    FI
+    IF e == 1 AND w > 0 AND mv(1) == 1 THEN
+      IF w < 3 THEN w = 0 ELSE w -= 3 FI
+    FI
+    IF e == 1 AND w > 0 AND mv(1) == 1 THEN Sound(1, q, w, 0) FI
+    IF e == 1 AND w == 0 AND mv(1) == 1 THEN
+      Sound(1, q, 0, 0)
+      e = 0
+    FI
+    IF y > 0 AND mv(3) == 1 THEN
+      IF y < 3 THEN y = 0 ELSE y -= 3 FI
+    FI
+    IF y > 0 AND mv(3) == 1 THEN Sound(3, j, y, o) FI
+    IF u > 0 AND mv(5) == 1 THEN
+      u -= 1
+      Sound(5, k, u, 0)
+    FI
+    t = ReadKey()
+    IF t == 0 THEN
+      ; nothing typed
+    ELSEIF t > 48 AND t < 57 THEN
+      Toggle(t - 49)
+    ELSEIF t > 255 THEN
+      Arrow(t)
+    ELSEIF t == 32 THEN
+      Space()
+    ELSEIF t > 64 AND t < 91 THEN
+      PokeB(r, t)
+    ELSEIF t > 96 AND t < 123 THEN
+      PokeB(r, t - 32)
+    ELSEIF t == 27 THEN
+      EXIT
+    FI
+  OD
+  FOR i = 0 TO 7 DO Sound(i, 100, 0, 0) OD
+  Graphics(0)
+  Cursor(1)
+RETURN

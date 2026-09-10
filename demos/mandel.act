@@ -1,0 +1,215 @@
+; MANDEL -- the set, in fixed point, in CoolAction!
+;
+; demos/mandel.bas: mode 6, a 256-entry gradient of four ramps with
+; entry 0 forced black, and the iteration in Q6 fixed point -- 64
+; units to 1.0, the largest scale whose products fit a signed word.
+; `a*b/32` rather than `2*a*b/64`, the escape tested before the
+; squares, both as the BASIC has them and for the reasons its
+; document gives. Mariani-Silver does the rest: a rectangle whose
+; border is one colour is filled, not computed, on a four-array stack
+; rather than recursion; the symmetric pixel is written with its
+; twin. The BASIC keeps its escape counts in a 7,680-byte cache it
+; PEEKs; this keeps them in an array.
+;
+; **Exact**: sim/test_action.py runs both to the key wait at the end
+; and requires the same 61,440 bytes of VRAM and the same 256 palette
+; entries. Every divide is an INT divide truncating towards zero, as
+; the BASIC's does; a shift would floor the negative halves of the
+; picture one unit off.
+;
+; When it is done, any key quits.
+
+BYTE ARRAY kc(7680)                  ; escape counts, 128 x 60, 255 = not yet
+BYTE ARRAY sl(64), st(64), sv(64), sw(64)   ; the rectangle stack
+BYTE cc                              ; the last pixel's colour
+
+; the escape count at (i, j), cached; then its colour
+PROC Compute(BYTE i, BYTE j)
+  CARD r, c
+  BYTE k, n
+  INT x, y, a, b, d, e
+  r = j * 128 + i
+  k = kc(r)
+  IF k == 255 THEN
+    x = i * 5
+    x = x / 4 - 128
+    y = j * 5
+    y = y / 4 - 75
+    a = 0
+    b = 0
+    d = 0
+    e = 0
+    k = 0
+    n = 1
+    WHILE n <= 64 DO
+      b = a * b / 32 + y
+      a = d - e + x
+      IF a > 128 OR a < -128 OR b > 128 OR b < -128 THEN
+        k = n
+        EXIT
+      FI
+      d = a * a / 64
+      e = b * b / 64
+      n += 1
+    OD
+    kc(r) = k
+  FI
+  cc = 0
+  IF k > 0 THEN
+    c = k * 4
+    IF c > 255 THEN c = 255 FI
+    cc = c
+  FI
+RETURN
+
+; compute (i, j) and plot it doubled, with its mirror below the axis
+PROC Pixel(BYTE i, BYTE j)
+  Compute(i, j)
+  VRAM_ADDR_L = i * 2
+  VRAM_ADDR_H = j * 2
+  VRAM_DATA = cc
+  VRAM_DATA = cc
+  VRAM_ADDR_L = i * 2
+  VRAM_ADDR_H = j * 2 + 1
+  VRAM_DATA = cc
+  VRAM_DATA = cc
+  VRAM_ADDR_L = i * 2
+  VRAM_ADDR_H = 239 - j * 2
+  VRAM_DATA = cc
+  VRAM_DATA = cc
+  VRAM_ADDR_L = i * 2
+  VRAM_ADDR_H = 238 - j * 2
+  VRAM_DATA = cc
+  VRAM_DATA = cc
+RETURN
+
+; a run of doubled pixels from column o to q on the row the port is at
+PROC Run(BYTE o, BYTE q, BYTE u)
+  BYTE i
+  FOR i = o TO q DO
+    VRAM_DATA = u
+    VRAM_DATA = u
+  OD
+RETURN
+
+PROC Main()
+  CARD n
+  BYTE k, s, q, r, g, e
+  BYTE z, o, p, qq, ss, u, f, i, j, gg, h
+
+  Graphics(6)
+  Cursor(0)
+  VRAM_STEP = 1
+  SetColor(0, 0)
+  n = 0
+  WHILE n < 7680 DO
+    kc(n) = 255
+    n += 1
+  OD
+  ; the gradient: four ramps of 64
+  n = 0
+  WHILE n < 256 DO
+    k = n
+    s = k / 64
+    q = (k - s * 64) / 4
+    IF s == 0 THEN
+      r = 0
+      g = q
+      e = 15
+    ELSEIF s == 1 THEN
+      r = q
+      g = 15
+      e = 15 - q
+    ELSEIF s == 2 THEN
+      r = 15
+      g = 15 - q
+      e = 0
+    ELSE
+      r = 15
+      g = q
+      e = q
+    FI
+    PAL_IDX = k
+    PAL_DATA = r
+    PAL_DATA = g * 16 + e
+    n += 1
+  OD
+  SetColor(0, 0)
+
+  ; Mariani-Silver over the top half, 128 x 60; the bottom is the mirror
+  z = 1
+  sl(0) = 0
+  st(0) = 0
+  sv(0) = 127
+  sw(0) = 59
+  WHILE z > 0 DO
+    z -= 1
+    o = sl(z)
+    p = st(z)
+    qq = sv(z)
+    ss = sw(z)
+    Pixel(o, p)
+    u = cc
+    f = 1
+    FOR i = o TO qq DO
+      Pixel(i, p)
+      IF cc <> u THEN f = 0 FI
+      Pixel(i, ss)
+      IF cc <> u THEN f = 0 FI
+    OD
+    FOR j = p TO ss DO
+      Pixel(o, j)
+      IF cc <> u THEN f = 0 FI
+      Pixel(qq, j)
+      IF cc <> u THEN f = 0 FI
+    OD
+    IF f THEN
+      ; one colour all round: fill it, and its mirror
+      FOR j = p TO ss DO
+        VRAM_ADDR_L = o * 2
+        VRAM_ADDR_H = j * 2
+        Run(o, qq, u)
+        VRAM_ADDR_L = o * 2
+        VRAM_ADDR_H = j * 2 + 1
+        Run(o, qq, u)
+        VRAM_ADDR_L = o * 2
+        VRAM_ADDR_H = 239 - j * 2
+        Run(o, qq, u)
+        VRAM_ADDR_L = o * 2
+        VRAM_ADDR_H = 238 - j * 2
+        Run(o, qq, u)
+      OD
+    ELSEIF qq - o <= 7 AND ss - p <= 7 THEN
+      ; small: every pixel
+      FOR j = p TO ss DO
+        FOR i = o TO qq DO Pixel(i, j) OD
+      OD
+    ELSE
+      ; split in four
+      gg = (o + qq) / 2
+      h = (p + ss) / 2
+      sl(z) = o
+      st(z) = p
+      sv(z) = gg
+      sw(z) = h
+      z += 1
+      sl(z) = gg + 1
+      st(z) = p
+      sv(z) = qq
+      sw(z) = h
+      z += 1
+      sl(z) = o
+      st(z) = h + 1
+      sv(z) = gg
+      sw(z) = ss
+      z += 1
+      sl(z) = gg + 1
+      st(z) = h + 1
+      sv(z) = qq
+      sw(z) = ss
+      z += 1
+    FI
+  OD
+  WHILE ReadKey() == 0 DO OD
+  Cursor(1)
+RETURN

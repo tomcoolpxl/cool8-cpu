@@ -415,16 +415,173 @@ FUNC BYTE Frame()
 RETURN (TMR_L)
 
 ; ---------------------------------------------------------------------
+; Random numbers: RND, exactly. The interpreter's 16-bit xorshift
+; (7, 9, 8 -- full period), seeded 1 at a cold start as `irnd` is,
+; and RND(n) is the raw word modulo n, unsigned; Rnd(0) is the word
+; itself. A port of a demo that draws its picture from RND -- the
+; triangles, the maze -- can only match the BASIC's picture if it
+; draws the same numbers in the same order, so this is not a random
+; number generator: it is that one.
+; ---------------------------------------------------------------------
+CARD rseed = [1]
+
+FUNC CARD Rnd(CARD n)
+  CARD s
+  s = rseed
+  s = s ^ (s << 7)
+  s = s ^ (s >> 9)
+  s = s ^ (s << 8)
+  rseed = s
+  IF n == 0 THEN RETURN (s) FI
+RETURN (s % n)
+
+; ---------------------------------------------------------------------
+; The text screen. Modes 0 and 1 draw from main RAM at VID_BASE: a
+; cell is a character then an attribute (paper in the high nibble, ink
+; in the low), VID_STRIDE bytes a row, 80 cells stored whatever the
+; mode shows -- mode 1 shows 40 of them and scrolls across the rest.
+; ---------------------------------------------------------------------
+
+; TextCell(col, row) -- the address of a cell, through the machine's
+; own base and stride: never a number.
+FUNC CARD TextCell(BYTE col, BYTE row)
+RETURN (VID_BASE + row * VID_STRIDE + col * 2)
+
+; TextFill(ch, attr) -- every cell of all 32 map rows, which is what
+; CLS does with the console's attribute ($07, white on black): rows 30
+; and 31 are what a scroll wraps through, and left dirty they come up
+; from under the screen.
+PROC TextFill(BYTE ch, BYTE attr)
+  CARD n
+  BYTE POINTER p
+  p = VID_BASE
+  n = VID_STRIDE * 32
+  WHILE n > 0 DO
+    *p = ch
+    p += 1
+    *p = attr
+    p += 1
+    n -= 2
+  OD
+RETURN
+
+; TextAt(col, row, s, attr) -- a string, one attribute for every cell.
+PROC TextAt(BYTE col, BYTE row, BYTE POINTER s, BYTE attr)
+  BYTE n
+  BYTE POINTER p
+  p = TextCell(col, row)
+  n = *s
+  WHILE n > 0 DO
+    s += 1
+    *p = *s
+    p += 1
+    *p = attr
+    p += 1
+    n -= 1
+  OD
+RETURN
+
+; ---------------------------------------------------------------------
 ; Input and the UART
 ; ---------------------------------------------------------------------
 
 ; Key() -- the next raw Set 2 scancode, or 0 when none is queued. A
 ; break code arrives as $F0 then the key, so "any key" is any nonzero
-; answer and a specific key is a small state machine on the caller's
-; side; KBD_STAT bit 0 is read first, as 04-system.md section 4.3
-; requires, because KBD_DATA means nothing without it.
+; answer; KBD_STAT bit 0 is read first, as 04-system.md section 4.3
+; requires, because KBD_DATA means nothing without it. ReadKey below
+; is the decoded form.
 FUNC BYTE Key()
   IF KBD_STAT & 1 THEN RETURN (KBD_DATA) FI
+RETURN (0)
+
+; ReadKey() -- the next key as INKEY gives it: ASCII for an ordinary
+; key, 256 + n for the eight named keys (K_UP .. K_INS), 0 when nothing
+; is waiting. This is sw/kbd.asm's `scancode` in CoolAction!, on the
+; same three tables -- $F0 marks the release that follows it, $E0 the
+; named keys that share their codes with the keypad, either shift held
+; upcases a letter and looks a symbol up in the shift pairs -- so a
+; port's editor takes the keys the interpreter's would.
+BYTE kb_brk = [0], kb_e = [0], kb_sh = [0]
+CONST K_UP = 256
+CONST K_DOWN = 257
+CONST K_LEFT = 258
+CONST K_RIGHT = 259
+CONST K_HOME = 260
+CONST K_END = 261
+CONST K_DEL = 262
+CONST K_INS = 263
+
+; ---- generated from sw/keymap.asm by tools/cool8kbd.py: do not edit ----
+; Set 2 scancode to unshifted character, 0 for a key with none
+BYTE ARRAY kb_map(128) = [
+  0 0 0 0 0 0 0 0 0 0 0 0 0 9 96 0
+  0 0 0 0 0 113 49 0 0 0 122 115 97 119 50 0
+  0 99 120 100 101 52 51 0 0 32 118 102 116 114 53 0
+  0 110 98 104 103 121 54 0 0 0 109 106 117 55 56 0
+  0 44 107 105 111 48 57 0 0 46 47 108 59 112 45 0
+  0 0 39 0 91 61 0 0 0 0 13 93 0 92 0 0
+  0 0 0 0 0 0 8 0 0 49 0 52 55 0 0 0
+  48 46 50 53 54 56 27 0 0 43 51 45 42 57 0 0]
+; the keys shift does something to that is not a case change:
+; unshifted, shifted pairs, ending in 0
+BYTE ARRAY kb_shift(43) = [
+  96 126 49 33 50 64 51 35 52 36 53 37 54 94 55 38
+  56 42 57 40 48 41 45 95 61 43 91 123 93 125 92 124
+  59 58 39 34 44 60 46 62 47 63 0]
+; the keys with an $E0 in front and no character: scancode,
+; $80+n pairs, ending in 0 -- $80+n is K_UP.. at 256+n
+BYTE ARRAY kb_ext(19) = [
+  117 128 114 129 107 130 116 131 108 132 105 133 113 134 112 135
+  126 3 0]
+; ---- end of the generated block ----
+
+FUNC CARD ReadKey()
+  BYTE c, i, p
+  CARD k
+  WHILE KBD_STAT & 1 DO
+    c = KBD_DATA
+    IF kb_brk THEN
+      kb_brk = 0
+      kb_e = 0
+      IF c == $12 OR c == $59 THEN kb_sh = 0 FI
+    ELSEIF c == $F0 THEN
+      kb_brk = 1
+    ELSEIF c == $E0 THEN
+      kb_e = 1
+    ELSEIF c == $12 OR c == $59 THEN
+      kb_sh = 1
+    ELSEIF kb_e THEN
+      kb_e = 0
+      i = 0
+      WHILE kb_ext(i) DO
+        IF kb_ext(i) == c THEN
+          k = kb_ext(i + 1)
+          RETURN (k + 128)
+        FI
+        i += 2
+      OD
+    ELSEIF c < 128 THEN
+      p = kb_map(c)
+      IF p THEN
+        IF kb_sh THEN
+          IF p >= 'a' AND p <= 'z' THEN
+            p = p & $DF
+          ELSE
+            i = 0
+            WHILE kb_shift(i) DO
+              IF kb_shift(i) == p THEN
+                p = kb_shift(i + 1)
+                EXIT
+              FI
+              i += 2
+            OD
+          FI
+        FI
+        k = p
+        RETURN (k)
+      FI
+    FI
+  OD
 RETURN (0)
 
 ; PutChar(c) -- one byte out of the serial port, waiting for the

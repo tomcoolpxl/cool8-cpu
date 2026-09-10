@@ -346,7 +346,9 @@ The numbers, the interpreter's beside the compiler's:
 | RAINBOW, 40 frames | 6,722,811 | 5,745,642 | 1.2× -- both sit in `VSYNC` most of the frame, so the wall clock is the same 60 Hz |
 | COBRA, start-up: 2,016 projections and 1,772 table gathers | 50,538,504 | 2,708,535 | **18.7×** |
 | COBRA, a frame's drawing, the wait excluded (mean of frames 2-10) | 578,058 | 290,435 | 2.0× |
-| COBRA, the PRG | -- | 14,433 bytes | 7 KB of it the four endpoint arrays, `BYTE` where the BASIC has integers |
+| COBRA, the PRG | -- | 15,325 bytes | 7 KB of it the four endpoint arrays, `BYTE` where the BASIC has integers |
+| MANDEL, the whole set to the key wait | 2,126,100,169 | 298,434,837 | **7.1×** -- the same Q6 iteration and the same Mariani-Silver rectangles; 4 min 14 s of machine time against 36 s |
+| TRIANGLES, MAZE, PLASMA, WAVE, SYNTH, INTRO | | | exact against their originals -- VRAM, palette, text map, voices, registers -- at the point the gate parks them ([14-demos.md §4](14-demos.md)); not timed, because they wait for the frame or the random number, not the CPU |
 
 **That is the first real answer to "how much faster".** Where the work
 is arithmetic and array traffic -- the start-up -- the compiler is
@@ -393,8 +395,12 @@ the wrong register fails by name.
 | `Sound(v, inc, vol, noise)`, `Silence(v)` | `SOUND`, and a voice off |
 | `WaitVBlank()`, `Frame()` | `VSYNC`: hold until `TMR_L` moves, bounded by one frame; and the counter's low byte |
 | `Key()` | the next raw Set 2 scancode or 0, `KBD_STAT` read first |
+| `ReadKey()` | `INKEY`: the next key as ASCII, `K_UP`..`K_INS` at 256 up, 0 for none -- `sw/kbd.asm`'s decoder on the same three tables, which `tools/cool8kbd.py --emit` copies out of `sw/keymap.asm` into a marked block here and `poe check` holds current |
+| `Rnd(n)` | `RND(n)`, **exactly**: the interpreter's 16-bit xorshift from seed 1, the raw word modulo `n`, `Rnd(0)` the word -- so a port that draws its picture from random numbers can draw the BASIC's |
+| `TextCell(col, row)`, `TextFill(ch, attr)`, `TextAt(col, row, s, attr)` | the text map of modes 0 and 1 through the machine's own base and stride: a cell's address, `CLS`'s fill of all 32 rows, a string with one attribute |
 | `PutChar(c)`, `Print(s)`, `PrintE(s)` | the UART, waiting for the holding register; a string is a length byte and the characters |
 
-Not there: `READ`/`DATA` (an initialised array is the same bytes),
-`INKEY` (the interpreter's decoder is 128 bytes of table the library
-does not carry -- `Key()` is the raw code), and a number printer.
+Not there: `READ`/`DATA` (an initialised array is the same bytes,
+and `tools/mkactdata.py` copies a BASIC's `DATA` into a port's marked
+block so they are the same numbers too), `PRINT`'s cursor and
+scrolling (a port writes cells), and a number printer.

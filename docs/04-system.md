@@ -1069,11 +1069,28 @@ not.
 **And `VID_IRQ`'s vblank flag sets at that same instant, which decides
 how a scroll must be written.** By the time software sees the flag the
 latch has already happened, so *everything written after it lands on the
-next frame* — base and tile offset alike. A smooth scroll therefore
+next frame* — base and tile offset alike. A smooth tile scroll therefore
 writes, into one gap, the pair of values that belong to one frame: the
 coarse step goes with **fine step 0**, not with fine step 7. Pair the
 base with 7 and one frame shows a row and seven pixels at once and the
 next comes back, which reads as a shudder with an odd frame in it.
+
+**In text the rule is the other way round, because text fine scroll is
+live in both axes.** `c_scrx`/`c_scry` in `cool8_pixel.v` follow the
+registers clock by clock, with no frame latch, so a fine step written
+after the flag shows *this* frame while the base written beside it
+shows the *next*. A text scroller that writes the pair for one frame
+together shows, on every frame where the fine step wraps to 0, the new
+fine step against the old base — one whole cell out, for one frame,
+then back. That was the INTRO demo's "shifted text", in the BASIC and
+in its CoolAction! port alike, and it was found by writing the pair
+by hand on the renderer and reading the glyph's x back: smooth at −2 a
+frame, then +14, then −18. The idiom for text is to write the **base a
+frame ahead** — the base that frame `t+1` wants, beside the fine step
+frame `t` wants — which `demos/intro.bas` and `demos/intro.act` do
+now, and which makes the coarse step land with fine step 0 as it must.
+A base written with fine step 0 for the *same* frame is the tile idiom
+misapplied.
 
 **A fine scroll makes the window touch 31 rows, not 30.** Thirty rows
 of 16 are the whole 480 lines, so any non-zero `VID_SCRL_Y` shows the
