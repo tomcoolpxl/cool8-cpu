@@ -106,6 +106,19 @@ def session(render=False):
     return _vm.Machine(render=render) if render else _vm.Machine()
 
 
+def shot(m, path):
+    """The rendered frame as a PNG -- `fb()`'s 640 x 480 twelve-bit
+    colours, a nibble times 17 each -- and how many distinct colours
+    were on the screen. Needs a machine made with `render=True`."""
+    import test_video as TV
+    fb = m.fb()
+    rgb = bytearray()
+    for v in fb:
+        rgb += bytes((((v >> 8) & 15) * 17, ((v >> 4) & 15) * 17, (v & 15) * 17))
+    TV.write_png(path, 640, 480, rgb)
+    return len(set(fb))
+
+
 def settle(m, syms, budget=40_000_000):
     """Wait for the editor to go idle -- the machine's own idle test.
 

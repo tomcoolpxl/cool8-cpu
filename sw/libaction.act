@@ -492,8 +492,9 @@ RETURN
 ; starts on, the length in bytes -- then the files on 256-byte pages.
 ; ---------------------------------------------------------------------
 
-CARD disk_page = [0]                 ; the file DiskFind found
+CARD disk_page = [0]                 ; the file DiskFind found, or the entry DiskEntry read
 CARD disk_len = [0]
+CARD disk_left = [0]                 ; the catalogue entries DiskEntry has still to read
 BYTE ARRAY disk_ent(16)
 
 ; FlashOpen(lo, hi) -- a stream open at 24-bit address hi:lo
@@ -520,20 +521,36 @@ PROC FlashRead(BYTE POINTER dest, CARD n)
   OD
 RETURN
 
+; DiskDir(drive) -- the drive's catalogue open as a stream, for
+; DiskEntry to read an entry at a time; FlashClose ends it. Listing a
+; drive (SLIDES, every .PIC on the picture drive) and DiskFind are the
+; same walk, so there is one of it.
+PROC DiskDir(BYTE drive)
+  FlashOpen(0, $10 + drive * 7)
+  disk_left = 256
+RETURN
+
+; DiskEntry() -- the catalogue's next entry into disk_ent, disk_page and
+; disk_len, answering its status: 1 a file, 0 deleted, $80 the label,
+; and $FF at the end -- the first free entry, or after the 256th
+FUNC BYTE DiskEntry()
+  IF disk_left == 0 THEN RETURN ($FF) FI
+  disk_left -= 1
+  FlashRead(disk_ent, 16)
+  disk_page = disk_ent(12) + disk_ent(13) * 256
+  disk_len = disk_ent(14) + disk_ent(15) * 256
+RETURN (disk_ent(11))
+
 ; DiskFind(drive, name) -- name is the eleven padded characters, as a
 ; string; 1 and disk_page/disk_len set when the file is on the drive
 FUNC BYTE DiskFind(BYTE drive, BYTE POINTER name)
   BYTE i, k, st
-  CARD e
   BYTE POINTER q
-  FlashOpen(0, $10 + drive * 7)
-  e = 0
-  WHILE e < 256 DO
-    FlashRead(disk_ent, 16)
-    st = disk_ent(11)
-    IF st == $FF THEN
-      e = 256
-    ELSEIF st == 1 THEN
+  DiskDir(drive)
+  DO
+    st = DiskEntry()
+    IF st == $FF THEN EXIT FI
+    IF st == 1 THEN
       k = 1
       q = name + 1
       FOR i = 0 TO 10 DO
@@ -541,13 +558,10 @@ FUNC BYTE DiskFind(BYTE drive, BYTE POINTER name)
         q += 1
       OD
       IF k THEN
-        disk_page = disk_ent(12) + disk_ent(13) * 256
-        disk_len = disk_ent(14) + disk_ent(15) * 256
         FlashClose()
         RETURN (1)
       FI
     FI
-    e += 1
   OD
   FlashClose()
 RETURN (0)

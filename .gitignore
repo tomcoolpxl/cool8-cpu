@@ -56,6 +56,14 @@ web/*.json
 # it is 8 MB of flash image with the Infocom stories inside it.
 /demos.img
 
+# The picture drive's originals, and what tools/mkpics.py makes of them.
+# USC-SIPI does not hold the copyright on its images and cannot say who
+# does, so they are downloaded, not committed: `python tools/mkpics.py
+# --fetch` gets each one and holds it to its SHA-256. The README says
+# which and why.
+/assets/pictures/*
+!/assets/pictures/README.md
+
 # `pip install -e .` leaves this behind.
 *.egg-info/
 

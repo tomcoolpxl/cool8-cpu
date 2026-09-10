@@ -6261,3 +6261,85 @@ for the rules, and the pair from the disc is what the flash-booted
 gates run: `test_loader` watches RAINBOW.PRG land at `$1400` byte for
 byte, the vectors point at the stub's `RETI`, mode 4 come up, and the
 machine reboot to its banner after the key.
+
+## D103 -- Pictures: a file is the hardware's own bytes, on a drive of their own
+
+**The owner asked for the old test images -- the baboon, the parrot --
+at the fullest the machine can show them, a picture at a time on a
+key.** That is mode 6: 256 × 240, a byte a pixel, all 256 palette
+entries on the screen at once, each any of 4,096 colours. SLIDES
+(`demos/slides.act`) shows every `.PIC` on drive 10 in catalogue order,
+the space bar for the next; `tools/mkpics.py` makes them.
+
+**A picture is the hardware's own bytes, and nothing on the machine
+decodes it.** Eight bytes of header -- `PIC`, a version, the mode, the
+palette index the border takes, two reserved -- then the 256 entries in
+the order and form `PAL_DATA` takes them, `0000RRRR` then `GGGGBBBB`,
+then the 61,440 pixels as mode 6 lays them out from `VID_BASE`. The
+viewer reads the header and the palette into memory and streams the
+pixels from `FLS_DATA` to `VRAM_DATA` with nothing between the ports, so
+a picture costs what the flash costs to read. 61,960 bytes is 243
+pages; a drive holds seven.
+
+**Compression was measured, not guessed, and declined for now.**
+Deflate at its hardest saves 20 % of the Mandrill, 37 % of the Peppers,
+45 % of the parrots and 48 % of the painted face (`mkpics.py` prints
+it). That is a ceiling -- an LZ the machine could run at speed does
+worse -- and the dithering that keeps the Mandrill's fur is exactly what
+keeps it from compressing. At best it is nine to twelve pictures a drive
+instead of seven, and the price is a decoder on the machine and an
+encoder on the host that must agree for ever, the second-implementation
+shape this project keeps paying for. Four pictures fit with room for
+three. If the drive fills, compression is the lever and these figures
+are the evidence to reopen it with.
+
+**Twelve bits decide the quantiser.** Pillow chooses 256 colours in 24
+bits and would have to be rounded afterwards, which merges entries and
+dithers against colours the screen cannot show. libimagequant with
+`min_posterization = 4` chooses among the 4,096 the palette holds and
+dithers against exactly those -- its documentation names the setting
+for RGB444 screens. It is GPL-3 and runs on the host only: an optional
+dependency, `pip install -e ".[pictures]"`, that nobody needs who is not
+making pictures. Black is a fixed colour of every palette, so the
+border is black whatever the picture. **One pass of it was not enough,
+and the screen said so**: it places colours at full precision and
+posterises after, so neighbours round onto one 12-bit colour, and the
+painted face's first palette showed 163 colours for 256 entries. The
+distinct ones go back in as fixed colours and it places the freed
+slots again, until all differ -- 252 to 256 in the machine's frame for
+the four, the border included.
+A palette that only grows cannot fit worse.
+
+**The screen's frame, not the picture's.** Mode 6's pixels are square
+and its screen is 16:15, so an original is cropped to that about its
+centre: a USC-SIPI square loses 16 of its 512 rows at the top and at
+the bottom, a Kodak 3:2 frame about a seventh of its width at each
+side. Letterboxing was offered and not chosen; a version-2 header can
+carry a rectangle if one is ever wanted.
+
+**Drive 10, claimed.** Seven pictures is most of a drive, and a drive of
+their own is where a user will not overwrite them and where one more
+is added with `cool8disk.py add`. Ten is the highest of the user's
+drives, beside the claimed block; it is in `cool8disk.CLAIMED`, so Bad
+Apple's planner refuses it, and the user's drives are now 2 to 9.
+
+**The originals are downloaded, not committed.** The repository is
+public; USC-SIPI says it does not hold the copyright on most of its
+images and cannot say who does, and Kodak's set is only reported
+released. `mkpics.py --fetch` gets each from its source and refuses one
+whose SHA-256 has moved, so the build is reproducible without the tree
+holding them -- the Bad Apple video's arrangement. Without them SLIDES
+says so on the screen, `mkpics --check` passes saying there is nothing
+to check, and the gate proves the format and the viewer on two made-up
+pictures. Lena is not among them: its subject asked for it to be
+retired, and USC-SIPI has removed it.
+
+**Not done: more than 256 colours.** A palette write takes effect at
+once ([04-system.md §5.9](04-system.md)), so a program rewriting
+entries in every line's horizontal blank could show more colours than
+the palette holds -- the Atari ST's Spectrum 512 trick. The budget is
+tight -- a line is 266 clocks, about 96 of them outside mode 6's 512
+columns, and an entry is two stores -- it needs the CPU locked to the
+raster, and the emulator renders a scanline at a time, so where within
+a line a write lands is something only the RTL or the board can show.
+It is the next step if the owner wants it, not something this does.

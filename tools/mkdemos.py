@@ -282,6 +282,20 @@ def main():
         print("  compiled %-16s %6d bytes at $%04X -> drive %d as %s.PRG, with %s.BIN to load it"
               % (f, len(prg) - 2, H.PAYLOAD_ORG, disk.ACTION_VOL, nm, nm))
 
+    # **The pictures onto their own drive** (D103): every .pic
+    # tools/mkpics.py has written, in its order, which is the order
+    # SLIDES shows them -- placed before the machine boots, for the
+    # reason Bad Apple's chunks are. None is not an error: the originals
+    # are downloaded, not committed, and SLIDES says so on the screen.
+    import mkpics
+    pics = mkpics.present()
+    vol10 = disk.Volume(im, disk.PICTURE_VOL)
+    for nm, p in pics:
+        vol10.add(p, nm)
+    print("  %d pictures on drive %d%s" % (len(pics), disk.PICTURE_VOL,
+          ", %s" % ", ".join(nm for nm, _ in pics) if pics else
+          " -- python tools/mkpics.py --fetch makes them"))
+
     im.save()
 
     m = vm.boot(flash_path=args.img, render=True)
@@ -415,16 +429,10 @@ def main():
         for _ in range(12):
             m.run(cycles=500_000_000)
         m.run_frame(2)
-        import test_video as TV
-        rgb = bytearray()
-        for p in m.fb():
-            rgb += bytes((((p >> 8) & 15) * 17, ((p >> 4) & 15) * 17,
-                          (p & 15) * 17))
         out = os.path.join(ROOT, "docs", "img",
                            "demo-%s.png" % want.lower())
-        TV.write_png(out, 640, 480, rgb)
         print("  %d colours on screen -> %s"
-              % (len(set(m.fb())), os.path.relpath(out, ROOT)))
+              % (H.shot(m, out), os.path.relpath(out, ROOT)))
     print("  %s" % os.path.relpath(args.img, ROOT))
 
 

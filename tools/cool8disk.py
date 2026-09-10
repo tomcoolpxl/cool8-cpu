@@ -271,6 +271,7 @@ class Volume:
 
 BOOT_VOL = 0                    # the ROM's; BOOT.BIN lives here
 USER_VOL = 1                    # where a cold machine comes up
+PICTURE_VOL = 10                # the picture drive: every .PIC on it is a slide (demos/slides.act)
 ACTION_VOL = 11                 # the CoolAction! disc: compiled .BIN demos
 BAPPLE_VOL = 12                 # Bad Apple, capped to this one drive
 DEMO_VOL = 13                   # the demo disc: everything written in BASIC
@@ -282,7 +283,7 @@ PASCAL_VOL = 15                 # UCSD Pascal p-System II.0's own volume
 # places them: the full film once reached drive 1, which is where a
 # cold machine comes up, and nothing in the tree said so until a
 # rebuild from the mp4 walked over it.
-CLAIMED = {BOOT_VOL, USER_VOL, ACTION_VOL, DEMO_VOL, SOFTWARE_VOL, PASCAL_VOL}
+CLAIMED = {BOOT_VOL, USER_VOL, PICTURE_VOL, ACTION_VOL, DEMO_VOL, SOFTWARE_VOL, PASCAL_VOL}
 
 # **A menu is a drive, and this is the whole rule.** The emulators group
 # the catalogue by the volume an entry came from and title the group
@@ -299,6 +300,7 @@ MENUS = [(DEMO_VOL, "Demos"), (SOFTWARE_VOL, "Software"),
 def labels():
     """The label for every volume, by number."""
     return {n: "SYSTEM" if n == BOOT_VOL else
+               "PICTURES" if n == PICTURE_VOL else
                "ACTION" if n == ACTION_VOL else
                "BAPPLE" if n == BAPPLE_VOL else
                "DEMOS" if n == DEMO_VOL else

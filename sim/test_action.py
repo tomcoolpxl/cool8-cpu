@@ -1400,9 +1400,222 @@ def profile_sieve():
     return 0
 
 
+# ---------------------------------------------------------------- SLIDES
+
+SLIDES_BLANK = 45 * 266     # the vertical blank in clocks: lines 480-524, 266 clocks a line
+
+
+def slides_image(name, files):
+    """A flash image, every volume formatted, with `files` -- (8.3 name,
+    bytes) -- on the picture drive in that order."""
+    import cool8disk as disk
+    img = os.path.join(H.BUILD, name + ".img")
+    disk.make_image(img)
+    im = disk.Image(img)
+    vol = disk.Volume(im, disk.PICTURE_VOL)
+    for nm, blob in files:
+        p = os.path.join(H.BUILD, "%s_%s" % (name, nm))
+        with open(p, "wb") as fh:
+            fh.write(blob)
+        vol.add(p, nm)
+    im.save()
+    return img
+
+
+def shown(m, blob):
+    """What differs between the screen and picture file `blob` -- mode 6,
+    its pixels in VRAM from VID_BASE, its palette, its border -- or ''."""
+    import ioregs
+    import mkpics
+    pal, pix, border = mkpics.unpack(blob)
+    reg = lambda n: m.bus.read(ioregs.addr_of(n))   # noqa: E731
+    base = reg("VID_BASE_L") | (reg("VID_BASE_H") << 8)
+    bad = []
+    if reg("VID_MODE") != 0x86:
+        bad.append("VID_MODE %02X" % reg("VID_MODE"))
+    v = bytes(m.video.vram[base:base + len(pix)])
+    if v != pix:
+        bad.append("%d of %d pixels differ" % (sum(a != b for a, b in zip(v, pix)), len(pix)))
+    p = m.palette()
+    if p != pal:
+        bad.append("%d palette entries differ" % sum(a != b for a, b in zip(p, pal)))
+    if reg("VID_BORDER") != border:
+        bad.append("border %d, not %d" % (reg("VID_BORDER"), border))
+    return ", ".join(bad)
+
+
+def on_glass(m, blob):
+    """How many of the rendered frame's 640 x 480 raster pixels are not
+    picture file `blob` as mode 6 shows it: a pixel 2 x 2, the 512
+    columns centred, the border's colour either side."""
+    import mkpics
+    pal, pix, border = mkpics.unpack(blob)
+    fb = m.fb()
+    edge = [pal[border]] * ((640 - 2 * mkpics.W) // 2)
+    bad = 0
+    for y in range(480):
+        row = pix[(y // 2) * mkpics.W:(y // 2 + 1) * mkpics.W]
+        want = edge + [pal[row[x // 2]] for x in range(2 * mkpics.W)] + edge
+        bad += sum(a != b for a, b in zip(fb[y * 640:(y + 1) * 640], want))
+    return bad
+
+
+def space(m, frames=60):
+    """The space bar as the window types it, make and break in one
+    burst, and time for the next picture to arrive."""
+    m.kbd.feed([0x29, 0xF0, 0x29])
+    m.run_frame(frames)
+
+
+def slides_from_disc(demos):
+    """The path a person takes: the ROM booting the disc, the launcher's
+    `DRIVE 11` and `SYS "SLIDES.BIN"`, and time for the first picture.
+    `(machine, '')`, or `(None, why not)`."""
+    import cool8disk as disk
+    v11 = disk.Volume(disk.Image(demos), disk.ACTION_VOL)
+    payload, _ = H.build_act(H.ACT_LIB + ["demos/slides.act"], "slides_payload", org=H.PAYLOAD_ORG)
+    if not v11.find("SLIDES.PRG") or v11.get("SLIDES.PRG") != bytes(payload):
+        return None, "SLIDES.PRG on %s is not this build: poe demos" % demos
+    code, bsyms = basic_image()
+    m = vm.boot(flash_path=demos, render=True)
+    for _ in range(90):
+        m.run_frame()
+    if not m.settle(bsyms["in_raw.rk0"], bsyms["irhead"], bsyms["irtail"], 80_000_000):
+        return None, "BASIC did not boot from %s" % demos
+    H.key(m, bsyms, 'DRIVE %d\r' % disk.ACTION_VOL)
+    H.key(m, bsyms, 'SYS "SLIDES.BIN"')
+    m.key(["\r"])
+    m.run_frame(60)
+    return m, ""
+
+
+def test_slides():
+    """SLIDES (demos/slides.act, D103): every .PIC on the picture drive
+    in catalogue order, the next at a space, round again after the last.
+    Held first to two made-up pictures on a flash image of its own, with
+    a file that is not a picture, a .PIC too short to be one and a .PIC
+    whose header says otherwise among them -- so the format and the
+    viewer are proved without the photographs, which the repository does
+    not hold -- then, when `poe demos` has put the real ones on the disc,
+    from there as a person runs it."""
+    import cool8disk as disk
+    import ioregs
+    import mkpics
+    print("  SLIDES")
+    prg, syms = H.build_act(H.ACT_LIB + ["demos/slides.act"], "slides")
+    same_bytes("slides", prg)
+    print("    %d bytes of PRG" % (len(prg) - 2))
+    org = prg[0] | (prg[1] << 8)
+    vol = prg[2 + syms["v_pic_vol"] - org]
+    check(vol == disk.PICTURE_VOL,
+          "slides: it reads drive %d, the one cool8disk.PICTURE_VOL names" % disk.PICTURE_VOL,
+          "pic_vol is %d" % vol)
+
+    def picture(seed, border):
+        pal = [(i * seed) & 0xFFF for i in range(256)]
+        pal[border] = 0
+        pix = bytes((x * seed + y * 7) & 0xFF for y in range(mkpics.H) for x in range(mkpics.W))
+        return mkpics.pack(pal, pix, border)
+    one, two = picture(0x131, 0), picture(0x2C7, 77)
+    img = slides_image("slides_test", [
+        ("ONE.PIC", one),
+        ("NOTES.TXT", b"not a picture\r\n"),
+        ("BAD.PIC", one[:3] + b"\x02" + one[4:]),     # a version this viewer does not know
+        ("SHORT.PIC", one[:4096]),                    # too short to be a picture at all
+        ("TWO.PIC", two)])
+    m = vm.Machine(flash_path=img, render=True)
+    org, end = H.load_act(m, prg)
+    # the cursor on in the middle of the screen, as BASIC leaves it at a
+    # SYS: the owner saw it blinking over the first version's pictures,
+    # which this machine, cursor off from reset, never showed
+    for reg, v in (("CUR_X", 40), ("CUR_Y", 15), ("CUR_CTRL", 0x11)):
+        m.bus.write(ioregs.addr_of(reg), v)
+    why = m.run(until=syms["Show"], budget=20_000_000)
+    p = dbg.Profile(syms, org, end)
+    p.start(m)
+    why2 = m.run(until=syms["KeyPoll"], budget=20_000_000)
+    p.collect(m)
+    check(why == "until" and why2 == "until",
+          "slides: the drive scanned, the first picture shown, the keys asked", "%s, %s" % (why, why2))
+    diff = shown(m, one)
+    check(not diff, "slides: ONE.PIC on the screen -- mode 6, its 61,440 pixels, its 256 entries, its border", diff)
+    print("    a picture in %s clocks, %d ms: %s streaming the pixels, %s the header and palette,"
+          " %s waiting for frames, %s blacking out, %s committing the palette"
+          % tuple(["{:,}".format(p.total), p.total // 8375] +
+                  ["{:,}".format(p.of(r)) for r in ("Show", "FlashRead", "WaitVBlank", "Black", "Commit")]))
+    check(p.of("Black") < SLIDES_BLANK and p.of("Commit") < SLIDES_BLANK,
+          "slides: the palette goes black, and comes back, inside a vertical blank each",
+          "%d and %d clocks of %d" % (p.of("Black"), p.of("Commit"), SLIDES_BLANK))
+    m.run_frame(2)
+    bad = on_glass(m, one)
+    check(not bad, "slides: and on the glass -- every raster pixel of a frame the picture's, or the border's",
+          "%d of 307,200 differ" % bad)
+    check(not m.bus.read(ioregs.addr_of("CUR_CTRL")) & 1,
+          "slides: the text cursor off -- BASIC leaves it on, and it blinks over a bitmap too")
+    m.run_frame(32)
+    bad = on_glass(m, one)
+    check(not bad, "slides: and 32 frames on, the blink's other phase, still only the picture",
+          "%d of 307,200 differ" % bad)
+    space(m)
+    diff = shown(m, two)
+    check(not diff, "slides: a space shows the next -- BAD.PIC's header refused, "
+          "SHORT.PIC and NOTES.TXT never listed", diff)
+    space(m)
+    diff = shown(m, one)
+    check(not diff, "slides: and after the last, the first again", diff)
+
+    m = vm.Machine(flash_path=slides_image("slides_empty", []), render=True)
+    H.load_act(m, prg)
+    why = m.run(until=syms["ReadKey"], budget=20_000_000)
+    check(why == "until" and any("NO PICTURES" in r for r in m.text()),
+          "slides: an empty picture drive says so on the text screen and waits for a key", why)
+
+    demos = os.path.join(H.BUILD, "demos.img")
+    here = mkpics.present()
+    if not os.path.exists(demos):
+        print("    SKIPPED the disc: %s is not built (poe demos)" % demos)
+    elif not here:
+        print("    SKIPPED the disc: no pictures here -- python tools/mkpics.py --fetch")
+    else:
+        v10 = disk.Volume(disk.Image(demos), disk.PICTURE_VOL)
+        blobs = [open(path, "rb").read() for _, path in here]
+        on = [v10.get(nm) if v10.find(nm) else None for nm, _ in here]
+        check(on == blobs, "slides from flash: drive %d holds the %d pictures tools/mkpics.py wrote"
+              % (disk.PICTURE_VOL, len(here)), "not the same: poe demos")
+        m, why = slides_from_disc(demos)
+        check(m is not None, 'slides from flash: SYS "SLIDES.BIN" from drive 11 of the booted disc', why)
+        if m is not None:
+            check(not m.bus.read(ioregs.addr_of("CUR_CTRL")) & 1,
+                  "slides from flash: BASIC's cursor is off over the pictures")
+            for k, (nm, _) in enumerate(here):
+                diff = shown(m, blobs[k])
+                check(not diff, "slides from flash: %s on the screen" % nm, diff)
+                space(m)
+            diff = shown(m, blobs[0])
+            check(not diff, "slides from flash: and round again to %s" % here[0][0], diff)
+    print()
+
+
+def shoot_slides():
+    """`python sim/test_action.py --slides`: every picture on the built
+    disc, from the machine's own frame, into sim/build/slides_<name>.png."""
+    import mkpics
+    m, why = slides_from_disc(os.path.join(H.BUILD, "demos.img"))
+    if m is None:
+        print("  " + why)
+        return 1
+    for nm, _ in mkpics.present():
+        path = os.path.join(H.BUILD, "slides_%s.png" % nm.split(".")[0].lower())
+        print("  %d colours on screen -> %s" % (H.shot(m, path), os.path.relpath(path, H.ROOT)))
+        space(m)
+    return 0
+
+
 def main():
     if "--profile" in sys.argv:
         return profile_sieve()
+    if "--slides" in sys.argv:
+        return shoot_slides()
     print("  A2 -- CoolAction! on the machine")
     print()
     test_every_encoding()
@@ -1419,6 +1632,7 @@ def main():
     test_keytest()
     test_loader()
     test_mscoolman()
+    test_slides()
     test_refusals()
     return H.report()
 

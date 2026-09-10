@@ -18,7 +18,8 @@ that volume until the next `DRIVE`.
 |---|---|---|
 | **0** | `SYSTEM` | **the ROM's**: `BOOT.BIN`, and nothing a user should write |
 | **1** | `COOL8` | **where a cold machine comes up** — the user's, empty |
-| 2–10 | `COOL8` | the user's, formatted and empty |
+| 2–9 | `COOL8` | the user's, formatted and empty |
+| **10** | **`PICTURES`** | **the picture drive**: the `.PIC` files SLIDES shows, a screen of mode 6 each -- §4, `SLIDES` |
 | **11** | **`ACTION`** | **the CoolAction! disc**: every `demos/*.act`, compiled, as a bare `.BIN` — the Demos menu's twin |
 | **12** | `BAPPLE` | Bad Apple's stream, capped to this one drive — §4 |
 | **13** | **`DEMOS`** | **the demo disc**: everything written in BASIC, games included |
@@ -50,7 +51,7 @@ compared on the same picture.
 |---|---|---|
 | **Demos** | 13 | MAZE, RAINBOW, WAVE, PLASMA, INTRO, BOING, TRIANGLES, MANDEL, COBRA, SYNTH, BENCH, MINIBNCH, BAPPLE, TAIPAN, COOLTRS1, COOLTRS2 |
 | **Software** | 14 | HHGG, ZORK1, PLANET, LGOP, PASCAL |
-| **CoolAction** | 11 | RAINBOW, COBRA, TRIANGLE, MAZE, PLASMA, WAVE, MANDEL, SYNTH, INTRO, PRIMES — the compiled twins, §4 |
+| **CoolAction** | 11 | RAINBOW, COBRA, TRIANGLE, MAZE, PLASMA, WAVE, MANDEL, SYNTH, INTRO, PRIMES — the compiled twins, §4 — and MSCOOLMN, KEYTEST and SLIDES, which have no BASIC |
 
 **Volume 0 is not the user's, and that is the ROM's decision.**
 `sw/boot.asm` walks volume 0's directory for `BOOT.BIN`; it is the 4 KB
@@ -71,7 +72,7 @@ looked fine.
 
 13 for the demos so a demo disc is somewhere a user will not overwrite
 by accident on the first afternoon. `CLAIMED` in the same file is the
-set of volumes something owns — 0, 1, 11, 13, 14, 15 — and Bad Apple's
+set of volumes something owns — 0, 1, 10, 11, 13, 14, 15 — and Bad Apple's
 planner may not put a chunk on one of them (§4, `BAPPLE`).
 
 ## 2. The sources are the truth, the disc is derived
@@ -879,7 +880,10 @@ every chunk it places, so a manifest from before the cap fails the
 build rather than the user. Rebuild the shipping cut with
 `python tools/mkbadapple.py badapple.mp4` — the stream stops when the
 drive is full, which is the 344 frames — or `--frames N` for fewer;
-the full film is `--drives 12,10,9,8,7,6,5,4,3,2` and it is not in
+the full film is `--drives 12,9,8,7,6,5,4,3,2` -- drive 10 is the
+picture drive now ([D103](01-decisions.md)), claimed, and the planner
+says so if it is asked for, as it says when the stream outgrows the
+drives it was given -- and it is not in
 the tree because the full build's directory is kept beside the cut,
 unused, with a `README.md` saying which half is live. The mp4 stays
 out of the repository.
@@ -1246,6 +1250,89 @@ pill` (or `title`, `death`, `clear`, `fruit`) -- which is how every
 picture above was checked, and how the two bugs of the first frame
 were found: every cell in row 0 because `row << 7` on a `BYTE` is a
 byte, and the fruit one column off the sheet.
+
+### `SLIDES` — the old test pictures, as fully as mode 6 can show them
+
+`demos/slides.act`, on drive 11, reading drive 10: every `.PIC` there in
+catalogue order, the space bar for the next, round again after the last,
+Esc to reset the machine. The pictures are image processing's old test
+set -- the USC-SIPI Mandrill and Peppers, Kodak's parrots (`kodim23`) and
+painted face (`kodim15`) -- which `python tools/mkpics.py --fetch`
+downloads and converts. **They are not in the repository**, and neither
+is a screenshot of them ([D103](01-decisions.md);
+[`assets/pictures/README.md`](../assets/pictures/README.md) says why,
+and why Lena is not among them).
+
+**Mode 6 is the machine at its most colourful**: 256 × 240, a byte a
+pixel, all 256 palette entries on the screen at once, each any of 4,096.
+Each picture brings its own 256 -- the machine's frame shows 256, 254,
+254 and 252 different colours for the four, the black border included
+-- chosen by libimagequant among the
+4,096 the palette holds, dithered against exactly those, and cropped to
+the screen's 16:15 about the centre.
+
+**The file is the hardware's own bytes**: `PIC`, a version, the mode,
+the border's palette index and two reserved, then 512 bytes of palette
+in the form `PAL_DATA` takes, then 61,440 pixels as VRAM holds them --
+61,960 bytes, seven to a drive. `tools/mkpics.py`'s docstring is the
+layout; `pack` and `unpack` there are its one implementation on the host.
+
+**Showing one is two streams and two vertical blanks.** The header and
+the palette come into memory, 33,832 clocks through `FlashRead`; at the
+next frame the palette goes black -- 3,603 clocks, inside the blank's
+11,970, so the old picture goes all at once; the pixels stream from
+`FLS_DATA` to `VRAM_DATA` in an `ASM` loop; at the next frame the new
+palette goes in, 5,669 clocks, so the new picture arrives whole.
+Measured on the machine model, from `Show` to the next key poll:
+1,253,165 clocks, 149 ms, 41 ms of it three frame waits and 862,312
+clocks the stream -- 14 a byte, which is the loop's own cost, **because
+the model hands `FLS_DATA` over at once**. The hardware's flash delivers
+a byte in 16 clocks and stalls the read until it has
+([04-system.md §4.8](04-system.md)), so on the board the stream is
+983,040 clocks and a picture some 15 ms slower than the model says.
+
+**The compiled version was measured first, and failed its own gate.** A
+`FOR` over the palette took 53 clocks a byte -- 27,201 for the 512, more
+than twice the blank -- and the gate reported the top 57 lines of a
+frame drawn under a palette half written. The pixel `WHILE` took 37
+clocks a byte, 92 % of a picture's time. Both loops are assembly now,
+and they took SLIDES from 4,791 bytes to 4,711; turning the cursor off
+put it at 4,719.
+
+**The cursor was on over the first version's pictures, and no gate saw
+it.** The text cursor is its own overlay, drawn in every mode, and BASIC
+leaves it on through `SYS` and the loader, so it blinked in the middle
+of the Mandrill -- where the owner saw it. The gate's bare machine has
+the cursor off from reset, so it could not: it now turns the cursor on
+in mid-screen first, as BASIC leaves it, and looks at the frame again
+half a blink later.
+
+**The screen found the waste in the palette.** The first conversion
+counted palette indices -- 254, 252, 255 and 201 -- while the frame
+showed 242, 227, 232 and 163 different colours: libimagequant places
+its colours at full precision and posterises after, so neighbours
+round onto one 12-bit colour, and the painted face threw away 93 of
+its 256. `mkpics.py` now gives the distinct ones back to it as fixed
+colours and lets it place the freed slots again, until all differ or a
+pass frees none.
+
+**Gate-enforced** (`test_slides` in `sim/test_action.py`). On a flash
+image of its own -- two made-up pictures, with a text file, a `.PIC`
+too short to be one and a `.PIC` of an unknown version between them:
+the first picture's pixels in VRAM from `VID_BASE`, its 256 entries
+committed and its border; every raster pixel of a frame the picture's or
+the border's; the palette black and back each inside a blank; a space
+skipping the bad file to the second, another round again to the first;
+and an empty drive saying so on the text screen. Then, once `poe demos`
+has put the real pictures on the disc, the path a person takes: the ROM
+booting it, `DRIVE 11`, `SYS "SLIDES.BIN"`, all four in turn and round
+again. `python sim/test_action.py --slides` writes each picture as the
+machine shows it to `sim/build/slides_<name>.png`.
+
+**Adding a picture** is an entry in `SOURCES` -- the file, where it came
+from, its SHA-256 -- then `--fetch` and `poe demos`. SLIDES reads the
+catalogue, not a list of names, so any version-1 `.PIC` on drive 10 is
+a slide.
 
 ### `HHGG`, `ZORK1`, `PLANET`, `LGOP` — Infocom Text Adventure Suite (Native Z3 Interpreter)
 

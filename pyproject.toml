@@ -20,6 +20,10 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest", "pytest-xdist", "poethepoet"]
+# tools/mkpics.py, and nothing else: the picture drive's quantiser.
+# libimagequant is GPL-3 and runs on the host only; nothing it touches
+# ships except the picture bytes it writes.
+pictures = ["pillow", "libimagequant"]
 
 [tool.setuptools]
 packages = []
@@ -312,6 +316,12 @@ id = "mscool"
 run = "tools/mkmscool.py"
 args = ["--check"]
 about = "Ms. Cool-Man's generated art against the ripped sheets"
+
+[[tool.cool8.jobs.check]]
+id = "pics"
+run = "tools/mkpics.py"
+args = ["--check"]
+about = "the picture drive's .pic files against the originals they were made from -- and says so, passing, when no original has been fetched"
 
 [[tool.cool8.jobs.check]]
 id = "memmap"

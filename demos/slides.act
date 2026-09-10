@@ -1,0 +1,168 @@
+; SLIDES -- the picture drive, a picture at a time, in mode 6
+;
+; Every file on the picture drive (tools/cool8disk.py's PICTURE_VOL)
+; whose name ends in .PIC, in the order the catalogue holds them: the
+; space bar for the next, round again after the last, Esc to reset the
+; machine -- the way out of a program the loader put in charge (D102).
+;
+; **Mode 6 is the machine at its most colourful**: 256 x 240, a byte a
+; pixel, and all 256 palette entries on the screen at once, each any of
+; 4,096 colours. A picture is the hardware's own bytes (tools/mkpics.py,
+; D103) -- an eight-byte header, the palette as PAL_DATA takes it, the
+; pixels as VRAM holds them -- so showing one decodes nothing. The header
+; and the palette come into memory; the palette goes black, so nothing
+; is seen arriving; the 61,440 pixels go from the flash's data port to
+; VRAM's, a byte a pass; and at the next frame the picture's own palette
+; goes in, inside the vertical blank, so it appears whole.
+;
+; The pictures are the old image-processing test set -- the USC-SIPI
+; Mandrill and Peppers, Kodak's parrots and painted face -- which
+; `python tools/mkpics.py --fetch` downloads and converts. They are not
+; in the repository (assets/pictures/README.md says why), so a drive
+; with none on it is expected, and this says so on the text screen.
+
+BYTE pic_vol = [10]                  ; cool8disk.PICTURE_VOL -- the gate holds the two together
+CONST PIC_SIZE = 61960               ; mkpics.SIZE: 8 of header, 512 of palette, 61,440 of pixels
+CONST MAX_PICS = 32
+CONST KEY_SPACE = $29
+CONST KEY_ESC = $76
+
+CARD ARRAY pic_page(32)              ; where each picture starts, in pages from the volume base
+BYTE npics
+BYTE ARRAY pic_head(8)
+BYTE ARRAY pic_pal(512)
+
+; Scan() -- every file on the drive called *.PIC and long enough to be
+; a picture, in catalogue order
+PROC Scan()
+  BYTE st
+  npics = 0
+  DiskDir(pic_vol)
+  DO
+    st = DiskEntry()
+    IF st == $FF THEN EXIT FI
+    IF st == 1 AND disk_ent(8) == 'P' AND disk_ent(9) == 'I' AND disk_ent(10) == 'C' AND disk_len >= PIC_SIZE AND npics < MAX_PICS THEN
+      pic_page(npics) = disk_page
+      npics += 1
+    FI
+  OD
+  FlashClose()
+RETURN
+
+; **The palette changes inside a vertical blank, both ways**: 45 lines,
+; 11,970 clocks, before the raster wants an entry again. A palette half
+; written while the raster runs is a frame whose top is one picture and
+; whose bottom is another. The compiled FOR these were first took 53
+; clocks a byte, 27,201 for Commit's 512, and the gate caught the top 57
+; lines of a frame drawn under a palette being written; so the two
+; loops are assembly, a pair of PAL_DATA stores and a count.
+
+; Black() -- every palette entry black, the border's among them
+PROC Black()
+  WaitVBlank()
+  PAL_IDX = 0
+  ASM
+    CLR  R0
+    MOV  R3,#0
+.blk: ST   [v_PAL_DATA],R0
+    ST   [v_PAL_DATA],R0
+    SUB  R3,#1
+    BNE  .blk
+  ENDASM
+RETURN
+
+; Commit() -- the picture's own palette, and its border
+PROC Commit()
+  WaitVBlank()
+  VID_BORDER = pic_head(5)
+  PAL_IDX = 0
+  ASM
+    LDW  X,#v_pic_pal
+    MOV  R3,#0
+.pal: LD   R0,[X]
+    INCW X
+    ST   [v_PAL_DATA],R0
+    LD   R0,[X]
+    INCW X
+    ST   [v_PAL_DATA],R0
+    SUB  R3,#1
+    BNE  .pal
+  ENDASM
+RETURN
+
+; Show(k) -- picture k on the screen: 1, or 0 if its header is not one
+; this knows
+FUNC BYTE Show(BYTE k)
+  disk_page = pic_page(k)
+  DiskOpen(pic_vol)
+  FlashRead(pic_head, 8)
+  IF pic_head(0) <> 'P' OR pic_head(1) <> 'I' OR pic_head(2) <> 'C' OR pic_head(3) <> 1 OR pic_head(4) <> 6 THEN
+    FlashClose()
+    RETURN (0)
+  FI
+  FlashRead(pic_pal, 512)
+  Black()
+  ; the pixels, port to port: 240 rows of 256. A compiled WHILE took 37
+  ; clocks a byte, 92 % of a picture's time; the flash delivers one in
+  ; 16, and FLS_DATA stalls until it has, so this loop needs no poll
+  VRAM_ADDR = VID_BASE
+  VRAM_STEP = 1
+  ASM
+    MOV  R3,#240
+.row: MOV  R2,#0
+.px:  LD   R0,[v_FLS_DATA]
+    ST   [v_VRAM_DATA],R0
+    SUB  R2,#1
+    BNE  .px
+    SUB  R3,#1
+    BNE  .row
+  ENDASM
+  FlashClose()
+  Commit()
+RETURN (1)
+
+; Advance(k) -- the first picture from k on, round the drive, that
+; shows: its number, or $FF when none will
+FUNC BYTE Advance(BYTE k)
+  BYTE tries
+  FOR tries = 1 TO npics DO
+    IF k >= npics THEN k = 0 FI
+    IF Show(k) THEN RETURN (k) FI
+    k += 1
+  OD
+RETURN ($FF)
+
+; Nothing() -- no picture on the drive: say so where a person is
+; looking, in colours of its own, and restart the machine at a key
+PROC Nothing()
+  Graphics(0)
+  SetColor(0, $000)
+  SetColor(15, $FFF)
+  Border(0)
+  TextFill(' ', $0F)
+  TextAt(2, 2, "SLIDES: NO PICTURES ON THE PICTURE DRIVE", $0F)
+  TextAt(2, 4, "python tools/mkpics.py --fetch downloads them, poe demos puts them there", $0F)
+  TextAt(2, 6, "PRESS A KEY", $0F)
+  WHILE ReadKey() == 0 DO OD
+  Reset()
+RETURN
+
+PROC Main()
+  BYTE k
+  ; the text cursor is its own overlay, drawn in every mode, and BASIC
+  ; leaves it on through SYS and the loader: without this it blinks in
+  ; the middle of the picture
+  Cursor(0)
+  Scan()
+  IF npics == 0 THEN Nothing() FI
+  Black()
+  Graphics(6)
+  k = Advance(0)
+  IF k == $FF THEN Nothing() FI
+  DO
+    WaitVBlank()
+    KeyPoll()
+    IF KeyHit(KEY_ESC) THEN Reset() FI
+    IF KeyHit(KEY_SPACE) THEN k = Advance(k + 1) FI
+  OD
+RETURN

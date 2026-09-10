@@ -406,7 +406,10 @@ or the compare was the cost, which it was not.
 `demos/primes.act` counts the primes to 1000 recursively printing the
 answer to the UART, and the session machine's `said()` is its check:
 `Primes: 168`. The library, `sw/io.act` and `sw/libaction.act`
-together, compiles to about 2,300 bytes with the keyboard tables in it.
+together, compiles to 3,348 bytes with the keyboard tables in it --
+3,338 before `DiskDir` and `DiskEntry`, which cost ten
+([D103](01-decisions.md)), and the loader stub, which carries the
+library, went from 3,533 to 3,543.
 
 **`Line` is 97 clocks a pixel** over `sim/test_run.py`'s fifteen-line
 fan (2,735 pixels, profiled by routine), against the interpreter's
@@ -483,6 +486,7 @@ the wrong register fails by name.
 | `TakeKeys()` | the FIFO becomes the program's: `DI`, once. **Under BASIC the interrupt handler drains the keyboard FIFO every frame into a ring of decoded keys** (`sw/main.asm`, `sw/input.asm`), so a raw read there sees nothing -- every port's final "press a key" waited for ever on the web page and in the window while the same programs answered the harness, which runs them without the ROM. `Key`, `ReadKey` and `KeyPoll` call it; the start-up stub's `EI` gives the interrupts back when `Main` returns ([D101](01-decisions.md#d101--a-program-that-reads-the-keyboard-owns-it)). From then on Ctrl+Pause does not break the program: leaving is the program's own key |
 | `FlashOpen(lo, hi)`, `FlashByte()`, `FlashRead(dest, n)`, `FlashClose()` | the SPI flash as a stream ([04-system.md §4.8](04-system.md)): open at a 24-bit address, a byte, `n` bytes into memory, close |
 | `DiskFind(drive, name)`, `DiskOpen(drive)` | a file on a volume by its eleven padded characters (`"MSCOOLMNPRG"`), in `tools/cool8disk.py`'s format read by the library itself -- `disk_page` and `disk_len` answer, and `DiskOpen` puts the stream on its first byte. What the loader is built on |
+| `DiskDir(drive)`, `DiskEntry()` | a drive's catalogue as a stream, an entry at a time: `DiskEntry` reads the next into `disk_ent`, `disk_page` and `disk_len` and answers its status -- 1 a file, 0 deleted, `$80` the label, `$FF` at the end, which is the first free entry or the 257th; `FlashClose` ends the walk. `DiskFind` is these two and a name compare, so there is one walk; SLIDES lists the picture drive with them |
 | `Reset()` | the boot ROM back over the top of memory and the machine restarted from its reset entry -- the Ctrl+Shift+Esc chord, from software. The way out of a program the loader put in charge |
 | `Key()` | the next raw Set 2 scancode or 0, `KBD_STAT` read first |
 | `ReadKey()` | `INKEY`: the next key as ASCII, `K_UP`..`K_INS` at 256 up, 0 for none -- `sw/kbd.asm`'s decoder on the same three tables, which `tools/cool8kbd.py --emit` copies out of `sw/keymap.asm` into a marked block here and `poe check` holds current |

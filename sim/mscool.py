@@ -229,13 +229,8 @@ class Game:
 
     # ------------------------------------------------------------ looking
     def png(self, name):
-        import test_video as TV
-        fb = self.m.fb()
-        out = bytearray()
-        for v in fb:
-            out += bytes((((v >> 8) & 0xF) * 17, ((v >> 4) & 0xF) * 17, (v & 0xF) * 17))
         path = os.path.join(H.BUILD, name + ".png")
-        TV.write_png(path, 640, 480, out)
+        H.shot(self.m, path)
         return path
 
 
