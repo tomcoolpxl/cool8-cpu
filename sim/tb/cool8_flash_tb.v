@@ -42,6 +42,7 @@ module cool8_flash_tb;
     reg          rst_n = 1'b0;
 
     integer      errors, checks, i, guard, stalls;
+    integer      t_open, t_prev, first, period, pmin, pmax;
     reg          verbose;
     reg [1023:0] vcdfile;
 
@@ -405,10 +406,43 @@ module cool8_flash_tb;
         io_read(A_ADDR_M); check_eq(got, 8'h00, "ADDR_M wrapped");
         io_read(A_ADDR_H); check_eq(got, 8'h01, "and ADDR_H carried");
 
+        // ------------------------------------------------------ the rate
+        //
+        // **Measured, because the comments and the shifter disagreed.**
+        // The shifter spends four system clocks a bit -- raise SCK, sample
+        // MISO mid-high, lower it, shift -- where two comments said two.
+        // So a byte is 32 clocks of shifting and two more that hand it over
+        // and arm the next, and a reader asking again at once is answered
+        // every 34; the first arrives behind the 32-bit command. These two
+        // numbers are the ones 04-system.md section 4.8 and the machine's
+        // model of the stall (rust/src/machine.rs) carry, and this is
+        // where they come from. A 10 ns clock, so a time over ten is clocks.
+        io_write(A_ADDR_L, 8'h00);
+        io_write(A_ADDR_M, 8'h20);
+        io_write(A_ADDR_H, 8'h00);
+        io_write(A_CTRL, 8'h01);
+        t_open = $time;
+        io_read_data;
+        first = ($time - t_open) / 10;
+        t_prev = $time;
+        pmin = 1000; pmax = 0;
+        for (i = 0; i < 8; i = i + 1) begin
+            io_read_data;
+            period = ($time - t_prev) / 10;
+            if (period < pmin) pmin = period;
+            if (period > pmax) pmax = period;
+            t_prev = $time;
+        end
+        io_write(A_CTRL, 8'h00);
+        $display("  rate: the first byte %0d clocks after the open, then one every %0d to %0d",
+                 first, pmin, pmax);
+        check(first == 161, "the first byte comes 161 clocks after the open");
+        check(pmin == 34 && pmax == 34, "and each after it 34 clocks after the last");
+
         // ------------------------------------------------- the stalling
         //
-        // A byte is sixteen system clocks and the CPU can ask for one in
-        // two, so a tight copy loop has to be held off. If nothing ever
+        // A byte is 34 system clocks and the CPU can ask for one in two,
+        // so a tight copy loop has to be held off. If nothing ever
         // stalled, the prefetch would be doing something impossible.
         check(stalls > 100, "reads really did stall");
 

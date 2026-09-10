@@ -1546,6 +1546,10 @@ def test_slides():
     check(p.of("Black") < SLIDES_BLANK and p.of("Commit") < SLIDES_BLANK,
           "slides: the palette goes black, and comes back, inside a vertical blank each",
           "%d and %d clocks of %d" % (p.of("Black"), p.of("Commit"), SLIDES_BLANK))
+    check(34 * 61440 <= p.of("Show") < 35 * 61440,
+          "slides: the pixels stream at the flash's own rate, 34 clocks a byte -- "
+          "what sim/tb/cool8_flash_tb.v measures on the RTL",
+          "%s clocks for 61,440 bytes" % "{:,}".format(p.of("Show")))
     m.run_frame(2)
     bad = on_glass(m, one)
     check(not bad, "slides: and on the glass -- every raster pixel of a frame the picture's, or the border's",

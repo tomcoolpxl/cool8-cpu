@@ -209,6 +209,10 @@ pub struct Flash {
     pub mem: Vec<u8>,
     addr: u32,
     open_r: bool,
+    /// When the prefetched byte is there: cool8_flash's `pf_valid`, kept
+    /// as a clock. A read of FLS_DATA before it is held off until it,
+    /// which is `o_stall` holding mem_ready low -- `MachineBus::wait`.
+    ready_at: u64,
     wdata: u8,
     denied: bool,
     /// A program or erase landed: the emulator writes the image back
@@ -221,6 +225,15 @@ impl Flash {
     const SIZE: usize = 8 << 20;
     const FLOOR: u32 = 0x100000;
     const SECTOR: usize = 4096;
+    /// cool8_flash's shifter in system clocks, as sim/tb/cool8_flash_tb.v
+    /// measures it on the RTL: four clocks a bit, so the first byte is
+    /// there 161 after the stream opens -- the 32-bit command, then a
+    /// byte -- and each one after it 34 after the read before, 32 on the
+    /// wire and two to hand it over and arm the next. Until SLIDES timed
+    /// its picture stream this model handed every byte over at once, and
+    /// a loop the board runs at 34 clocks a byte measured 14 here.
+    const FIRST: u64 = 161;
+    const BYTE: u64 = 34;
 
     fn new(image: Option<Vec<u8>>) -> Flash {
         let mut mem = vec![0xFFu8; Flash::SIZE];
@@ -228,32 +241,40 @@ impl Flash {
             let n = d.len().min(Flash::SIZE);
             mem[..n].copy_from_slice(&d[..n]);
         }
-        Flash { mem, addr: 0, open_r: false, wdata: 0, denied: false,
-                dirty: false }
+        Flash { mem, addr: 0, open_r: false, ready_at: 0, wdata: 0,
+                denied: false, dirty: false }
     }
 
-    fn read(&mut self, a: u8) -> u8 {
+    /// A read at clock `t`: the value, and the clocks it was held off.
+    fn read(&mut self, a: u8, t: u64) -> (u8, u64) {
         match a {
-            0x88 => self.addr as u8,
-            0x89 => (self.addr >> 8) as u8,
-            0x8A => (self.addr >> 16) as u8,
+            0x88 => (self.addr as u8, 0),
+            0x89 => ((self.addr >> 8) as u8, 0),
+            0x8A => ((self.addr >> 16) as u8, 0),
             0x8B => {
-                // a read advances the stream
+                // a read advances the stream; with none open nothing is
+                // on its way, and there is nothing to wait for
                 if !self.open_r {
-                    return 0xFF;
+                    return (0xFF, 0);
                 }
+                let held = self.ready_at.saturating_sub(t);
                 let b = self.mem[self.addr as usize % Flash::SIZE];
                 self.addr = (self.addr + 1) & 0xFFFFFF;
-                b
+                self.ready_at = t + held + Flash::BYTE;
+                (b, held)
             }
-            0x8C => if self.open_r { 0x01 } else { 0x00 },
-            0x8D => if self.open_r { 0x02 } else { 0x00 },
-            0x8F => if self.denied { 0x04 } else { 0x00 },
-            _ => 0xFF,
+            0x8C => (if self.open_r { 0x01 } else { 0x00 }, 0),
+            // bit 1 the stream open, bit 0 the shifter still at the next
+            // byte -- a read that never stalls, as the RTL's does not
+            0x8D => (if !self.open_r { 0x00 }
+                     else if t < self.ready_at { 0x03 } else { 0x02 }, 0),
+            0x8F => (if self.denied { 0x04 } else { 0x00 }, 0),
+            _ => (0xFF, 0),
         }
     }
 
-    fn write(&mut self, a: u8, v: u8) {
+    /// A write at clock `t`.
+    fn write(&mut self, a: u8, v: u8, t: u64) {
         match a {
             0x88 | 0x89 | 0x8A if !self.open_r => {
                 let sh = match a {
@@ -263,7 +284,14 @@ impl Flash {
                 };
                 self.addr = (self.addr & !(0xFF << sh)) | (v as u32) << sh;
             }
-            0x8C => self.open_r = v & 1 != 0,
+            0x8C => {
+                // opening sends the command and fetches the first byte
+                // behind it; a 1 written to an open stream opens nothing
+                if v & 1 != 0 && !self.open_r {
+                    self.ready_at = t + Flash::FIRST;
+                }
+                self.open_r = v & 1 != 0;
+            }
             0x8E => self.wdata = v,
             0x8F => {
                 if v & 0x04 != 0 {
@@ -805,7 +833,21 @@ pub struct MachineBus {
     pub sound: Sound,
     pub video: Video,
     pub flash: Flash,
+    /// The clock the instruction being executed began on, and the clocks
+    /// a peripheral has held it off so far -- mem_ready low. The CPU's
+    /// cycle table knows nothing of wait states, so `Machine::tick` adds
+    /// these after the step, and they count for the raster, the profile
+    /// and everything else a clock is counted for.
+    pub now: u64,
+    pub wait: u64,
 }
+
+/// Where in an instruction an I/O access falls: the data cycle of
+/// `LD`/`ST [abs16]`, the last of its four, the form every streaming
+/// loop uses. A read through `[X]` falls a cycle or two earlier, which
+/// moves the phase of a read that is not held off and never the rate of
+/// one that is.
+const ACCESS: u64 = 3;
 
 impl MachineBus {
     fn io_read(&mut self, a: u8) -> u8 {
@@ -817,7 +859,11 @@ impl MachineBus {
             0x40..=0x44 => self.kbd.read(a),
             0x50..=0x51 => 0xFF, // sound is write-only, as the hardware is
             0x70..=0x73 => self.uart.read(a),
-            0x88..=0x8F => self.flash.read(a),
+            0x88..=0x8F => {
+                let (v, held) = self.flash.read(a, self.now + self.wait + ACCESS);
+                self.wait += held;
+                v
+            }
             _ => 0xFF, // as a bus nobody is driving reads
         }
     }
@@ -830,7 +876,7 @@ impl MachineBus {
             0x40..=0x44 => self.kbd.write(a, v),
             0x50..=0x51 => self.sound.write(a, v),
             0x70..=0x73 => self.uart.write(a, v),
-            0x88..=0x8F => self.flash.write(a, v),
+            0x88..=0x8F => self.flash.write(a, v, self.now + self.wait + ACCESS),
             _ => {}
         }
     }
@@ -919,6 +965,8 @@ impl Machine {
                 sound: Sound::new(),
                 video: Video::new(),
                 flash: Flash::new(flash_image),
+                now: 0,
+                wait: 0,
             },
             line: 0,
             frames: 0,
@@ -1011,7 +1059,12 @@ impl Machine {
         }
         self.cpu.irq_line = self.irq();
         let before = self.cpu.cycles;
+        self.bus.now = before;
+        self.bus.wait = 0;
         self.cpu.step(&mut self.bus);
+        // the clocks a peripheral held an access off are clocks the
+        // instruction took, as they are when mem_ready is low
+        self.cpu.cycles += self.bus.wait;
         self.tick_owed += self.cpu.cycles - before;
         while self.tick_owed >= CYCLES_PER_LINE {
             self.tick_owed -= CYCLES_PER_LINE;

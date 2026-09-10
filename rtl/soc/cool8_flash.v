@@ -23,11 +23,11 @@
 //
 // ## Why a read stalls instead of reporting busy
 //
-// A byte off the wire is sixteen system clocks and the CPU can ask for
-// one in two, so something has to give. The documented shape of the copy
-// loop (04-system.md section 4.8) has no status poll in it — it is a
-// `LD` and a `ST` and nothing else, because that is what makes 64 KB
-// take 125 ms instead of twice that. So `o_stall` holds mem_ready low
+// A byte is 34 system clocks from one read to the next and the CPU can
+// ask for one in two, so something has to give. The documented shape of
+// the copy loop (04-system.md section 4.8) has no status poll in it — it
+// is a `LD` and a `ST` and nothing else, because a poll would add its own
+// clocks to every byte. So `o_stall` holds mem_ready low
 // until the byte is there, exactly as cool8_vport does for VRAM, and the
 // core's tolerance of arbitrary wait states is what pays for it.
 //
@@ -43,8 +43,11 @@
 //
 // Mode 0 — the clock idles low, the device samples MOSI on the rising
 // edge and presents MISO on the falling one. SCK is the system clock
-// divided by two, which is 4.19 MHz at D32's 8.375: about 500 KB/s, and
-// 64 KB of program in 125 ms. Opcode $03 has no dummy cycles and no
+// divided by four, which is 2.09 MHz at D32's 8.375: a byte is 32 clocks
+// on the wire and 34 from one read to the next, about 246 KB/s, and
+// 64 KB of program in 266 ms -- cool8_flash_tb measures both figures.
+// This said "divided by two, 4.19 MHz" for the life of the file while
+// the shifter below spent four clocks a bit. Opcode $03 has no dummy cycles and no
 // upper frequency worth chasing here — it is specified to 50 MHz on
 // these parts and the system clock is the limit long before the flash
 // is.
@@ -346,7 +349,7 @@ module cool8_flash (
                 addr     <= addr + 24'd1;
             end
 
-            // ---- the shifter. Two system clocks a bit: MOSI is set up
+            // ---- the shifter. Four system clocks a bit: MOSI is set up
             //      with SCK low, then SCK rises and the device samples
             //      it. MISO changes on the falling edge and is read back
             //      in the high half, which is mode 0 exactly. The

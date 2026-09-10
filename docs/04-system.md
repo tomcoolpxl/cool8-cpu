@@ -270,7 +270,7 @@ what you want at M4 when there isn't any.
 
 | Source | When | Notes |
 |---|---|---|
-| SPI flash (§4.8) | **The usual way.** `icesprog -o 0x100000 -w prog.bin`, then the monitor's `L` — or as a named file on a volume (§8) | 7.9 MB above the bitstream, ~125 ms to load 64 KB |
+| SPI flash (§4.8) | **The usual way.** `icesprog -o 0x100000 -w prog.bin`, then the monitor's `L` — or as a named file on a volume (§8) | 7.9 MB above the bitstream, ~266 ms to load 64 KB |
 | The machine's own flash writes (§4.8) | Anything it made itself | `FLS_WDATA`/`FLS_WCTRL`, above the `$100000` floor |
 | Hardware loader over USB serial | Only in a `LOADER(1)` build | No bitstream rebuild, no working ROM required |
 | Baked into the boot ROM image | Bring-up only | The ROM is 4 KB and the monitor is 3029 bytes of it |
@@ -677,8 +677,8 @@ slot and its disk. This section is the raw device; the filesystem
 | `$FF8E` | `FLS_WDATA` | W | The byte a program will write |
 | `$FF8F` | `FLS_WCTRL` | R/W | Write `1` to program `FLS_WDATA` at `FLS_ADDR`, `2` to erase its 4 KB sector, `4` to acknowledge a refusal. Reads `0` write running, `2` the last request was refused |
 
-**A read of `FLS_DATA` stalls until the byte is there.** A byte off the
-wire is sixteen system clocks and the CPU can ask for one in two, so
+**A read of `FLS_DATA` stalls until the byte is there.** A byte is 34
+system clocks from one read to the next and the CPU can ask for one in two, so
 something has to give, and it is the same choice `VRAM_DATA` makes for
 the same reason ([§5.8](#58-reaching-vram-from-the-cpu-and-from-the-debugger)):
 the copy loop below has no status poll in it because it does not need
@@ -711,13 +711,27 @@ Typical use — copy 8 KB from flash offset `$100000` to `$4000`:
         ST   [$FF8C],R0        ; close
 ```
 
-SPI mode 0, and the clock is the system clock divided by two — **4.19 MHz
-at [D32](01-decisions.md#d32--the-system-clock-is-8375-mhz-a-third-of-the-pixel-clock)'s
-8.375**, which is about 500 KB/s and 64 KB in 125 ms. This section used
-to say 12.5 MHz and 40 ms, from before the system clock was known.
-Opcode `$03` is specified to 50 MHz on these parts, so the limit here is
-the system clock and not the flash; a double-rate shifter would buy
-back the factor of two and nothing in the plan is waiting on it.
+SPI mode 0, and the clock is the system clock divided by **four** —
+**2.09 MHz at [D32](01-decisions.md#d32--the-system-clock-is-8375-mhz-a-third-of-the-pixel-clock)'s
+8.375**. The shifter spends four clocks a bit: raise SCK, sample MISO
+in the middle of the high half, lower it, shift. So a byte is 32 clocks
+on the wire and **34 from one read to the next** -- the two more hand
+it over and arm the next fetch -- and **the first byte is there 161
+clocks after the stream opens**, behind the 32-bit command. That is
+about 246 KB/s, and 64 KB in 266 ms. **Measured, not derived:**
+`sim/tb/cool8_flash_tb.v` times a back-to-back stream on the RTL and
+fails on any other figure, and the machine model stalls `FLS_DATA` the
+same way.
+
+This section said "divided by two, 4.19 MHz, 500 KB/s, 125 ms" until
+SLIDES timed its picture stream: the machine model, which then handed
+`FLS_DATA` over at once, showed 14 clocks a byte for a loop the board
+runs at 34, and the RTL's own comments said two clocks a bit where its
+shifter has four. Before that it said 12.5 MHz and 40 ms, from before
+the system clock was known. Opcode `$03` is specified to 50 MHz on these
+parts, so the limit here is the shifter and not the flash; two phases a
+bit instead of four would halve a byte, and nothing in the plan is
+waiting on it.
 
 **Writes, above a floor that is checked in gates.** The machine can
 program a byte and erase a 4 KB sector, which is what makes it a computer

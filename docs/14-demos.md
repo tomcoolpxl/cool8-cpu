@@ -1283,13 +1283,20 @@ next frame the palette goes black -- 3,603 clocks, inside the blank's
 11,970, so the old picture goes all at once; the pixels stream from
 `FLS_DATA` to `VRAM_DATA` in an `ASM` loop; at the next frame the new
 palette goes in, 5,669 clocks, so the new picture arrives whole.
-Measured on the machine model, from `Show` to the next key poll:
-1,253,165 clocks, 149 ms, 41 ms of it three frame waits and 862,312
-clocks the stream -- 14 a byte, which is the loop's own cost, **because
-the model hands `FLS_DATA` over at once**. The hardware's flash delivers
-a byte in 16 clocks and stalls the read until it has
-([04-system.md §4.8](04-system.md)), so on the board the stream is
-983,040 clocks and a picture some 15 ms slower than the model says.
+Measured on the machine, from `Show` to the next key poll: 2,370,373
+clocks, 283 ms -- 2,089,180 of them the stream, **34 clocks a byte,
+which is the flash's own rate and not the loop's**, and 237,804 three
+frame waits. The loop itself is 14 clocks a byte, and `FLS_DATA` holds
+every read off until the shifter has the next byte
+([04-system.md §4.8](04-system.md)).
+
+**This paragraph said 149 ms, and the machine was wrong.** It then
+handed `FLS_DATA` over at once, so the stream measured 14 clocks a byte;
+the documents said the flash delivered one in 16; and the RTL's shifter
+takes 34, which `sim/tb/cool8_flash_tb.v` now measures and the machine
+now models. SLIDES was the first program fast enough for the
+difference to show: every earlier reader of the flash was a compiled
+loop slower than the wire.
 
 **The compiled version was measured first, and failed its own gate.** A
 `FOR` over the palette took 53 clocks a byte -- 27,201 for the 512, more
