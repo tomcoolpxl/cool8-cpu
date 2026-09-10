@@ -485,12 +485,33 @@ RETURN
 ; Input and the UART
 ; ---------------------------------------------------------------------
 
+; TakeKeys() -- the FIFO becomes the program's. Under BASIC, which is
+; where a SYS'd program runs, the interrupt handler drains the
+; keyboard FIFO every frame into a ring of *decoded* keys (sw/main.asm
+; iisr, sw/input.asm), so a raw read from the FIFO sees nothing, ever:
+; every port sat at its final "press a key" for ever on the web page
+; and in the window, while the same programs answered the harness,
+; which runs them without the ROM. So the first raw read disables
+; interrupts, once, and the compiler's start-up stub (`_start`: CALL
+; Main, EI, RET) gives them back when the program returns. The cost:
+; Ctrl+Pause no longer breaks a program that has read a key, Esc is the
+; program's own business; and on a bare machine DI is nothing at all.
+BYTE kb_mine = [0]
+PROC TakeKeys()
+  IF kb_mine THEN RETURN FI
+  kb_mine = 1
+  ASM
+        DI
+  ENDASM
+RETURN
+
 ; Key() -- the next raw Set 2 scancode, or 0 when none is queued. A
 ; break code arrives as $F0 then the key, so "any key" is any nonzero
 ; answer; KBD_STAT bit 0 is read first, as 04-system.md section 4.3
 ; requires, because KBD_DATA means nothing without it. ReadKey below
 ; is the decoded form.
 FUNC BYTE Key()
+  TakeKeys()
   IF KBD_STAT & 1 THEN RETURN (KBD_DATA) FI
 RETURN (0)
 
@@ -535,9 +556,68 @@ BYTE ARRAY kb_ext(19) = [
   126 3 0]
 ; ---- end of the generated block ----
 
+; KeyPoll() and KeyHeld(sc) -- KEY(): which keys are down right now.
+; KeyPoll drains the FIFO into a bitmap of held scancodes, one bit a
+; code, an $E0-prefixed code at $80 + code (so the cursor keys, which
+; share their codes with the keypad, are $F5, $F2, $EB, $F4); KeyHeld
+; answers for one. A game calls KeyPoll once a frame and asks about
+; the keys it steers by, as many at once as it likes -- INKEY's queue
+; cannot say what is held. Shares the $F0/$E0 state with ReadKey, so
+; use one or the other on a given FIFO, not both.
+; kb_hit is the second bitmap: a key's bit is set by its make code and
+; cleared only by KeyHit asking about it, so a press that came and
+; went between two polls -- a tap shorter than a frame, or a front end
+; that types a character as make-then-break in one burst -- is still
+; seen once. KeyHeld is for steering; KeyHit is for space, pause and
+; escape, the keys a game wants once a press however short.
+BYTE ARRAY kb_down(32)
+BYTE ARRAY kb_hit(32)
+
+; KeyFeed(c) -- one byte of the stream into the two bitmaps; KeyPoll
+; is the FIFO drained through it, and a program that wants to see the
+; bytes as well (KEYTEST) reads the FIFO itself and hands them here
+PROC KeyFeed(BYTE c)
+  BYTE i, b
+  IF c == $F0 THEN
+    kb_brk = 1
+  ELSEIF c == $E0 THEN
+    kb_e = 1
+  ELSE
+    IF kb_e THEN c = c | $80 FI
+    i = c >> 3
+    b = 1 << (c & 7)
+    IF kb_brk THEN
+      kb_down(i) = kb_down(i) & ($FF ^ b)
+    ELSE
+      kb_down(i) = kb_down(i) | b
+      kb_hit(i) = kb_hit(i) | b
+    FI
+    kb_brk = 0
+    kb_e = 0
+  FI
+RETURN
+
+PROC KeyPoll()
+  TakeKeys()
+  WHILE KBD_STAT & 1 DO KeyFeed(KBD_DATA) OD
+RETURN
+
+FUNC BYTE KeyHeld(BYTE sc)
+RETURN (kb_down(sc >> 3) & (1 << (sc & 7)))
+
+; KeyHit(sc) -- pressed since the last time this asked: the answer,
+; and the latch cleared
+FUNC BYTE KeyHit(BYTE sc)
+  BYTE i, b
+  i = sc >> 3
+  b = kb_hit(i) & (1 << (sc & 7))
+  kb_hit(i) = kb_hit(i) & ($FF ^ b)
+RETURN (b)
+
 FUNC CARD ReadKey()
   BYTE c, i, p
   CARD k
+  TakeKeys()
   WHILE KBD_STAT & 1 DO
     c = KBD_DATA
     IF kb_brk THEN

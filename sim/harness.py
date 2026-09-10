@@ -339,6 +339,32 @@ _ACT_BUILT = [False]
 ACT_LIB = ["sw/io.act", "sw/libaction.act"]
 
 
+def act_sources(path):
+    """The files that compile a CoolAction! program: the library, then
+    the parts its `.parts` manifest names, then itself -- or None when
+    a part is missing.
+
+    A manifest is one path a line, relative to ROOT, and it exists for
+    a program whose data is not in the repository: Ms. Cool-Man's art
+    is ripped from the arcade sheets and lives, with the `.act` the
+    generator writes from it, in a directory `.gitignore` excludes. The
+    manifest is committed, the part is not, and a machine without the
+    part gets None here and says so rather than a compile error.
+    """
+    rel = path if not os.path.isabs(path) else os.path.relpath(path, ROOT)
+    parts = []
+    manifest = os.path.join(ROOT, os.path.splitext(rel)[0] + ".parts")
+    if os.path.exists(manifest):
+        for line in open(manifest, encoding="utf-8"):
+            line = line.split("#")[0].strip()
+            if not line:
+                continue
+            if not os.path.exists(os.path.join(ROOT, line)):
+                return None
+            parts.append(line)
+    return ACT_LIB + parts + [rel]
+
+
 def _act_exe():
     """The compiler binary, built once per process. `cargo build` on an
     up-to-date tree is a tenth of a second, and running it every time
@@ -347,11 +373,19 @@ def _act_exe():
     import shutil
     import subprocess
     if not _ACT_BUILT[0]:
-        if not shutil.which("cargo"):
+        # cargo is on PowerShell's PATH and not always on a Git Bash
+        # one; %USERPROFILE%/.cargo/bin is where AGENTS.md says it
+        # lives, and a stale binary used in silence is the trap this
+        # function exists to avoid -- it cost a round of D101.
+        cargo = shutil.which("cargo") or next(
+            (c for c in [os.path.join(os.environ.get("USERPROFILE", ""), ".cargo", "bin", "cargo.exe"),
+                         os.path.expanduser("~/.cargo/bin/cargo")] if os.path.exists(c)), None)
+        if not cargo:
             if not os.path.exists(ACT_EXE):
                 raise SystemExit("coolaction needs cargo; none on PATH")
+            sys.stderr.write("harness: cargo not found, using the coolaction binary as it is\n")
         else:
-            r = subprocess.run(["cargo", "build", "--release", "--bin",
+            r = subprocess.run([cargo, "build", "--release", "--bin",
                                 "coolaction", "--quiet"],
                                cwd=os.path.join(ROOT, "rust"),
                                capture_output=True, text=True)

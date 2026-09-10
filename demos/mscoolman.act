@@ -1,0 +1,1315 @@
+; MS. COOL-MAN -- the arcade Ms. Pac-Man on COOL8, in CoolAction!
+;
+; The picture is the original's: the two mazes, her, the four ghosts,
+; the fruit and the font are the arcade's own pixels, ripped from the
+; board's sprite sheet by tools/mkmscool.py into
+; assets/misscool/mscoolman_art.act, which this file compiles behind
+; (demos/mscoolman.parts names it). That art is private and never
+; committed; this file is the game, and it is.
+;
+; **Mode 2, because the arcade board is a tile map and sprites too.**
+; The maze is 28 x 31 tiles of 8 x 8 drawn by the hardware from the
+; map at VRAM 0; a dot is a tile and eating one is one map write. The
+; screen scrolls four lines (VID_SCY = 4) so that all 31 rows fit in
+; 240 lines, the generator having rolled the outer walls into the
+; visible halves of their tiles. The score, lives and level fruit sit
+; beside the maze, columns 28-39. A character is 16 x 16 logical
+; pixels, which over a doubled mode is four 16 x 16 raster sprites --
+; 24 of the 32 for her, the four ghosts and the fruit, all in palette
+; bank 15, the one bank the sprite engine gives them. The engine
+; draws eight sprites a scanline and no more, and a sprite costs it
+; two lines of trail after its last row, so the seam between a
+; character's halves is where three characters abreast at one height
+; lose a line of one of them (04-system.md section 5.6). Which one is
+; the lowest-numbered, so the five movers take turns at the low
+; numbers, a frame each, and a loss flickers instead of sticking.
+;
+; **The rules are the Pac-Man Dossier's**, which Ms. Pac-Man inherits:
+; speeds as a percentage of 1.25 px a frame, scatter and chase by the
+; timetable, each ghost's own target -- Blinky her tile, Pinky four
+; ahead (with the upward bug), Inky's vector from Blinky, Sue's coward
+; radius -- the frightened random walk, the dot counters that let the
+; ghosts out, Cruise Elroy, the tunnel slowdown, and the frame a dot
+; costs her. What is Ms. Pac-Man's own: the ghosts wander at random
+; through the first two scatters, so no pattern works twice, and the
+; fruit walks the maze instead of waiting under the house.
+;
+; Keys: the cursor keys steer, space starts, P pauses, Esc quits.
+
+; --------------------------------------------------------------- layout
+CONST HUD_COL = 28                   ; the first map column beside the maze
+
+; tile pattern indices (VID_PAT = $4000, 32 bytes a tile)
+CONST T_FONT = 64                    ; the 41 glyphs, in fontmap's order
+CONST T_SPACE = 104                  ; T_FONT + 40
+CONST T_LIFE = 112                   ; her, as four tiles
+CONST T_FRUIT = 116                  ; seven fruits, four tiles each
+CONST PAT_BASE = $4000
+CONST SPR_BASE = $8000               ; 512 bytes a frame
+
+; VRAM frame slots: hers, each ghost's recoloured, then the rest
+CONST S_MSPAC = 0                    ; 9 frames: right 0-2, down 3-5, up 6-8
+CONST S_GHOST = 9                    ; 4 ghosts x 8 frames: right left up down, two each
+CONST S_FRIGHT = 41                  ; 2 blue, 2 flashing, 4 eyes, 7 fruit
+CONST S_FLASH = 43
+CONST S_EYES = 45
+CONST S_FRUITS = 49
+
+; palette banks
+CONST B_MAZE = 0
+CONST B_WHITE = 1
+CONST B_YELLOW = 2
+CONST B_RED = 3
+CONST B_CYAN = 4
+CONST B_PEACH = 5
+CONST B_SPRITES = 15
+
+; cell kinds, as tools/mkmscool.py writes them
+CONST K_WALL = 0
+CONST K_PATH = 1
+CONST K_DOT = 2
+CONST K_PILL = 3
+CONST K_DOOR = 4
+CONST K_HOUSE = 5
+
+; directions: opposite pairs differ in bit 0
+CONST D_RIGHT = 0
+CONST D_LEFT = 1
+CONST D_UP = 2
+CONST D_DOWN = 3
+
+; characters
+CONST C_HER = 0
+CONST C_BLINKY = 1
+CONST C_PINKY = 2
+CONST C_INKY = 3
+CONST C_SUE = 4
+CONST C_FRUIT = 5
+
+; ghost states
+CONST G_HOME = 0                     ; in the house, bobbing
+CONST G_LEAVE = 1                    ; on the way out through the door
+CONST G_OUT = 2                      ; loose: scatter or chase by the clock
+CONST G_FRIGHT = 3
+CONST G_EYES = 4                     ; eaten, going home
+CONST G_ENTER = 5                    ; through the door, down into the house
+
+; keys, as KeyHeld wants them: $80 + the $E0-prefixed code
+CONST KEY_UP = $F5
+CONST KEY_DOWN = $F2
+CONST KEY_LEFT = $EB
+CONST KEY_RIGHT = $F4
+CONST KEY_SPACE = $29
+CONST KEY_ESC = $76
+CONST KEY_P = $4D
+
+; the house: the door is row 12, columns 13-14; the home row is 14
+CONST DOOR_X = 112
+CONST DOOR_Y = 92                    ; the tile above the door, row 11
+CONST HOME_Y = 116
+
+; ------------------------------------------------------------- the world
+BYTE ARRAY kind(868)                 ; the maze as it is now: eaten dots are paths
+BYTE ARRAY fontmap = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ-.!/ "
+BYTE maze                            ; 1 or 2
+BYTE level                           ; 1 up
+CARD score, hiscore
+BYTE lives
+CARD dots_left, dots_start
+CARD dots_eaten                      ; this life, for the house counters
+BYTE died                            ; a life lost this level: the global counters
+CARD idle                            ; frames since a dot, for the house timeout
+BYTE freeze                          ; frames she stands still after a dot
+BYTE pause_all                       ; frames everything stands still
+BYTE her_moved
+BYTE want                            ; the direction she is asked for
+
+; the five movers and the fruit: centre in maze pixels, so x runs
+; -8..232 through the tunnels and y 4..244
+INT ARRAY cx(6), cy(6)
+BYTE ARRAY cdir(6)                   ; the way it faces and moves
+BYTE ARRAY cspd(6)                   ; sixteenths of a pixel a frame
+BYTE ARRAY csub(6)                   ; the fraction carried
+BYTE ARRAY canim(6)                  ; animation phase
+BYTE ARRAY gstate(6)                 ; the ghosts' states, and the fruit's
+INT ARRAY gtx(6), gty(6)             ; a ghost's target tile
+BYTE ARRAY ghome_x(6)                ; each ghost's house column, pixels
+BYTE gmode                           ; 0 scatter, 1 chase
+BYTE gphase                          ; which entry of the timetable
+CARD gclock                          ; frames left in this phase
+CARD fright_left                     ; frames of blue left
+BYTE ghosts_eaten                    ; this pill: 200, 400, 800, 1600
+BYTE elroy                           ; 0, 1, 2
+CARD fruit_left                      ; frames the fruit has been walking
+BYTE fruit_shown                     ; this level: 0, 1, 2
+BYTE fruit_kind
+BYTE pill_phase
+BYTE waka_phase, waka_left, siren_phase, fx_left
+BYTE rot                             ; which mover has sprites 0-3 this frame
+BYTE quit                            ; Esc on the title
+
+; each ghost's scatter corner
+INT ARRAY scat_x(6) = [0 25 2 27 0 0]
+INT ARRAY scat_y(6) = [0 0 0 30 30 0]
+; Choose's tie order: up, left, down, right
+BYTE ARRAY order(4) = [2 1 3 0]
+INT ARRAY stepx(4) = [1 $FFFF 0 0]
+INT ARRAY stepy(4) = [0 0 $FFFF 1]
+
+; the house counters: dots she eats before Pinky, Inky, Sue leave,
+; level 1, 2, 3 and up; and the counts after a death
+BYTE ARRAY limit1(5) = [0 0 0 30 90]
+BYTE ARRAY limit2(5) = [0 0 0 0 50]
+BYTE ARRAY limit3(5) = [0 0 0 0 0]
+BYTE ARRAY limit_d(5) = [0 0 7 17 32]
+
+; speeds as sixteenths a frame, by level band: 1, 2-4, 5+
+BYTE ARRAY her_spd(3) = [16 18 20]
+BYTE ARRAY her_fright_spd(3) = [18 19 20]
+BYTE ARRAY ghost_spd(3) = [15 17 19]
+BYTE ARRAY ghost_fright_spd(3) = [10 11 12]
+BYTE ARRAY tunnel_spd(3) = [8 9 10]
+; scatter/chase, in seconds, level 1 and 2 up: s c s c s c s
+BYTE ARRAY sched1(7) = [7 20 7 20 5 20 5]
+BYTE ARRAY sched2(7) = [7 20 7 20 5 255 0]
+BYTE ARRAY fright_secs(19) = [6 5 4 3 2 5 2 2 1 5 2 1 1 3 1 1 0 1 0]
+BYTE ARRAY elroy_dots(8) = [20 30 40 40 40 50 50 60]
+CARD ARRAY fruit_score(7) = [100 200 500 700 1000 2000 5000]
+CARD ARRAY ghost_score(4) = [200 400 800 1600]
+
+; the opening jingle, the arcade's level intro: melody and bass from
+; the VGMusic transcription (mspacman.mid, sequenced by Oedipus,
+; 106 bpm), a pitch as the engine's 0.5 Hz steps (2 x Hz, 0 a rest)
+; and a length in frames -- 256 frames, four and a quarter seconds
+CARD ARRAY jm_inc(24) = [1109 1245 1397 1480 1865 1661 1976 1865 1976 2217 1865 1661 1976 1865 1976 2217 1865 1976 2217 2489 2794 2960 2794 2960]
+BYTE ARRAY jm_len(24) = [4 4 8 16 16 16 16 8 8 8 8 16 16 8 8 8 8 8 8 8 8 16 16 16]
+CARD ARRAY jb_inc(19) = [0 185 139 185 208 233 247 208 233 208 185 233 208 185 175 208 185 175 185]
+BYTE ARRAY jb_len(19) = [16 32 32 32 8 8 8 8 8 8 8 8 8 8 8 8 16 16 16]
+
+; ------------------------------------------------------------- the screen
+
+PROC Cell(BYTE col, BYTE row, BYTE t, BYTE bank)
+  CARD a
+  a = row                            ; a shift keeps its left side's width
+  VRAM_ADDR = (a << 7) + (col << 1)
+  VRAM_STEP = 1
+  VRAM_DATA = t
+  VRAM_DATA = bank
+RETURN
+
+; Text(col, row, s, bank): a string in the arcade font
+PROC Text(BYTE col, BYTE row, BYTE POINTER s, BYTE bank)
+  BYTE n, i, ch, g
+  n = *s
+  WHILE n > 0 DO
+    s += 1
+    ch = *s
+    g = 40                             ; a space for anything unknown
+    i = 0
+    WHILE i < 41 DO
+      IF fontmap(i + 1) == ch THEN
+        g = i
+        i = 41
+      FI
+      i += 1
+    OD
+    Cell(col, row, T_FONT + g, bank)
+    col += 1
+    n -= 1
+  OD
+RETURN
+
+; Number(col, row, v, bank): right-aligned at col, at least two digits
+PROC Number(BYTE col, BYTE row, CARD v, BYTE bank)
+  BYTE d
+  d = 0
+  DO
+    Cell(col, row, T_FONT + v % 10, bank)
+    v = v / 10
+    col -= 1
+    d += 1
+  UNTIL v == 0 AND d >= 2 OD
+RETURN
+
+PROC LoadTiles(BYTE POINTER src, CARD first, CARD n)
+  VWrite(PAT_BASE + (first << 5), src, n << 5)
+RETURN
+
+; a 16x16 character frame as four 8x8 tiles: the sprite quadrants,
+; undoubled, mirrored when asked -- for the lives and the level fruit
+; beside the maze
+BYTE ARRAY rowbuf(8)
+PROC FrameToTiles(BYTE POINTER src, CARD first, BYTE mirror)
+  BYTE q, y, x, a, b
+  BYTE POINTER p
+  VRAM_ADDR = PAT_BASE + (first << 5)
+  VRAM_STEP = 1
+  FOR q = 0 TO 3 DO
+    p = src + q * 128                ; a multiply widens; a shift would not
+    IF mirror THEN p = src + (q ^ 1) * 128 FI
+    FOR y = 0 TO 7 DO
+      ; a doubled row: two raster pixels a logical one, so the high
+      ; nibble of every byte, and the next raster row is a copy
+      FOR x = 0 TO 7 DO
+        rowbuf(x) = *p
+        p += 1
+      OD
+      p += 8
+      FOR x = 0 TO 3 DO
+        IF mirror THEN
+          a = rowbuf(7 - x - x)
+          b = rowbuf(6 - x - x)
+        ELSE
+          a = rowbuf(x + x)
+          b = rowbuf(x + x + 1)
+        FI
+        VRAM_DATA = (a & $F0) | (b >> 4)
+      OD
+    OD
+  OD
+RETURN
+
+; the sprite frames into VRAM: hers as they are, each ghost's eight
+; with the body colour (index 1) replaced by its own, then the rest
+PROC LoadSprites()
+  BYTE g, b, hi, lo
+  CARD i, slot
+  BYTE POINTER p
+  VWrite(SPR_BASE, spr, 9 * 512)
+  FOR g = 0 TO 3 DO
+    IF g == 0 THEN b = BODY_BLINKY
+    ELSEIF g == 1 THEN b = BODY_PINKY
+    ELSEIF g == 2 THEN b = BODY_INKY
+    ELSE b = BODY_SUE FI
+    slot = S_GHOST + (g << 3)
+    VRAM_ADDR = SPR_BASE + (slot << 9)
+    VRAM_STEP = 1
+    p = spr + (9 * 512)
+    i = 0
+    WHILE i < 8 * 512 DO
+      hi = *p >> 4
+      lo = *p & 15
+      IF hi == 1 THEN hi = b FI
+      IF lo == 1 THEN lo = b FI
+      VRAM_DATA = (hi << 4) | lo
+      p += 1
+      i += 1
+    OD
+  OD
+  VWrite(SPR_BASE + (S_FRIGHT << 9), spr + (17 * 512), 15 * 512)
+RETURN
+
+; the first of a character's four sprites: the fruit's are 20-23, the
+; movers' turn round the other twenty
+FUNC BYTE Slot(BYTE c)
+  IF c == C_FRUIT THEN RETURN (20) FI
+  c += rot
+  IF c >= 5 THEN c -= 5 FI
+RETURN (c << 2)
+
+; a character as four sprites: centre (x, y) in maze pixels, a frame
+; slot, and a flip -- $40 mirrors it, $80 turns it over
+PROC DrawChar(BYTE c, INT x, INT y, BYTE slot, BYTE flip)
+  CARD base, sx, sy, tl, tr, bl, br
+  BYTE s
+  s = Slot(c)
+  IF x < 8 OR x > 216 OR y < 12 THEN
+    HideChar(c)
+    RETURN
+  FI
+  base = slot
+  base = SPR_BASE + (base << 9)
+  sx = (x - 8) << 1
+  sy = (y - 12) << 1
+  tl = base
+  tr = base + 128
+  bl = base + 256
+  br = base + 384
+  IF flip & $40 THEN
+    tl = base + 128
+    tr = base
+    bl = base + 384
+    br = base + 256
+  FI
+  IF flip & $80 THEN
+    tl = tl ^ 256
+    tr = tr ^ 256
+    bl = bl ^ 256
+    br = br ^ 256
+  FI
+  SetSprite(s, sx, sy, tl, 1, flip)
+  SetSprite(s + 1, sx + 16, sy, tr, 1, flip)
+  SetSprite(s + 2, sx, sy + 16, bl, 1, flip)
+  SetSprite(s + 3, sx + 16, sy + 16, br, 1, flip)
+RETURN
+
+PROC HideChar(BYTE c)
+  BYTE s
+  s = Slot(c)
+  SpriteHide(s)
+  SpriteHide(s + 1)
+  SpriteHide(s + 2)
+  SpriteHide(s + 3)
+RETURN
+
+; ------------------------------------------------------------ the maze
+
+FUNC BYTE KindAt(INT tx, INT ty)
+  IF tx < 0 OR tx > 27 THEN RETURN (K_PATH) FI    ; the tunnels run off the map
+  IF ty < 0 OR ty > 30 THEN RETURN (K_WALL) FI
+RETURN (kind(ty * 28 + tx))
+
+FUNC BYTE Walkable(INT tx, INT ty)
+  BYTE k
+  k = KindAt(tx, ty)
+  IF k == K_WALL OR k == K_HOUSE OR k == K_DOOR THEN RETURN (0) FI
+RETURN (1)
+
+FUNC BYTE Tunnel(INT ty)
+RETURN (KindAt(0, ty) == K_PATH)
+
+PROC DrawMaze()
+  BYTE r, c, t, k
+  CARD i
+  i = 0
+  FOR r = 0 TO 30 DO
+    FOR c = 0 TO 27 DO
+      k = kind(i)
+      IF maze == 1 THEN
+        t = mz1_map(i)
+        IF t == MZ1_DOT OR t == MZ1_PILL THEN t = MZ1_BLANK FI
+        IF k == K_DOT THEN t = MZ1_DOT FI
+        IF k == K_PILL THEN t = MZ1_PILL FI
+      ELSE
+        t = mz2_map(i)
+        IF t == MZ2_DOT OR t == MZ2_PILL THEN t = MZ2_BLANK FI
+        IF k == K_DOT THEN t = MZ2_DOT FI
+        IF k == K_PILL THEN t = MZ2_PILL FI
+      FI
+      Cell(c, r, t, B_MAZE)
+      i += 1
+    OD
+  OD
+RETURN
+
+; the maze and its palette, dots restored, for a new level
+PROC LoadMaze()
+  CARD i
+  IF maze == 1 THEN
+    LoadTiles(mz1_tiles, 0, MZ1_NTILES)
+    SetPalette(mz1_pal, 0, 16)
+  ELSE
+    LoadTiles(mz2_tiles, 0, MZ2_NTILES)
+    SetPalette(mz2_pal, 0, 16)
+  FI
+  dots_left = 0
+  i = 0
+  WHILE i < 868 DO
+    IF maze == 1 THEN kind(i) = mz1_kind(i) ELSE kind(i) = mz2_kind(i) FI
+    IF kind(i) == K_DOT OR kind(i) == K_PILL THEN dots_left += 1 FI
+    i += 1
+  OD
+  dots_start = dots_left
+  DrawMaze()
+RETURN
+
+; the maze without its dots, behind the title
+PROC BareMaze()
+  CARD i
+  i = 0
+  WHILE i < 868 DO
+    kind(i) = K_PATH
+    i += 1
+  OD
+  DrawMaze()
+RETURN
+
+PROC BlankCell(BYTE c, BYTE r)
+  IF maze == 1 THEN Cell(c, r, MZ1_BLANK, B_MAZE) ELSE Cell(c, r, MZ2_BLANK, B_MAZE) FI
+RETURN
+
+; the four pills wink: on for 16 frames, off for 16
+PROC Pills()
+  BYTE r, c
+  CARD i
+  pill_phase += 1
+  IF (pill_phase & 15) <> 0 THEN RETURN FI
+  i = 0
+  FOR r = 0 TO 30 DO
+    FOR c = 0 TO 27 DO
+      IF kind(i) == K_PILL THEN
+        IF pill_phase & 16 THEN
+          BlankCell(c, r)
+        ELSEIF maze == 1 THEN
+          Cell(c, r, MZ1_PILL, B_MAZE)
+        ELSE
+          Cell(c, r, MZ2_PILL, B_MAZE)
+        FI
+      FI
+      i += 1
+    OD
+  OD
+RETURN
+
+; --------------------------------------------------------------- the HUD
+
+; the columns beside the maze, blank: a cell never written is tile 0
+PROC ClearHud()
+  BYTE r, c
+  FOR r = 0 TO 31 DO
+    FOR c = HUD_COL TO 39 DO Cell(c, r, T_SPACE, B_WHITE) OD
+  OD
+RETURN
+
+PROC Hud()
+  BYTE i, f
+  Text(HUD_COL + 1, 1, "1UP", B_WHITE)
+  Number(HUD_COL + 11, 2, score, B_WHITE)
+  Text(HUD_COL + 1, 4, "HIGH SCORE", B_WHITE)
+  Number(HUD_COL + 11, 5, hiscore, B_WHITE)
+  Text(HUD_COL + 1, 8, "MS.COOL-MAN", B_YELLOW)
+  Text(HUD_COL + 1, 11, "LEVEL", B_WHITE)
+  Number(HUD_COL + 11, 11, level, B_WHITE)
+  ; the lives in hand, her as tiles, two rows high
+  FOR i = 0 TO 4 DO
+    IF i < lives - 1 THEN
+      Cell(HUD_COL + 1 + i + i, 24, T_LIFE, B_SPRITES)
+      Cell(HUD_COL + 2 + i + i, 24, T_LIFE + 1, B_SPRITES)
+      Cell(HUD_COL + 1 + i + i, 25, T_LIFE + 2, B_SPRITES)
+      Cell(HUD_COL + 2 + i + i, 25, T_LIFE + 3, B_SPRITES)
+    ELSE
+      Cell(HUD_COL + 1 + i + i, 24, T_SPACE, B_WHITE)
+      Cell(HUD_COL + 2 + i + i, 24, T_SPACE, B_WHITE)
+      Cell(HUD_COL + 1 + i + i, 25, T_SPACE, B_WHITE)
+      Cell(HUD_COL + 2 + i + i, 25, T_SPACE, B_WHITE)
+    FI
+  OD
+  ; the level's fruit
+  f = level - 1
+  IF f > 6 THEN f = 6 FI
+  Cell(HUD_COL + 1, 27, T_FRUIT + (f << 2), B_SPRITES)
+  Cell(HUD_COL + 2, 27, T_FRUIT + (f << 2) + 1, B_SPRITES)
+  Cell(HUD_COL + 1, 28, T_FRUIT + (f << 2) + 2, B_SPRITES)
+  Cell(HUD_COL + 2, 28, T_FRUIT + (f << 2) + 3, B_SPRITES)
+RETURN
+
+PROC Score(CARD n)
+  score += n
+  IF score > hiscore THEN hiscore = score FI
+  Number(HUD_COL + 11, 2, score, B_WHITE)
+  Number(HUD_COL + 11, 5, hiscore, B_WHITE)
+RETURN
+
+; ---------------------------------------------------------- the movers
+
+FUNC BYTE Band()
+  IF level == 1 THEN RETURN (0) FI
+  IF level < 5 THEN RETURN (1) FI
+RETURN (2)
+
+; everyone to the start
+PROC Place()
+  BYTE g
+  cx(C_HER) = 112
+  cy(C_HER) = 188
+  cdir(C_HER) = D_LEFT
+  want = D_LEFT
+  cx(C_BLINKY) = DOOR_X
+  cy(C_BLINKY) = DOOR_Y
+  cdir(C_BLINKY) = D_LEFT
+  gstate(C_BLINKY) = G_OUT
+  cx(C_PINKY) = 112
+  cy(C_PINKY) = HOME_Y
+  cdir(C_PINKY) = D_DOWN
+  gstate(C_PINKY) = G_HOME
+  cx(C_INKY) = 96
+  cy(C_INKY) = HOME_Y - 3
+  cdir(C_INKY) = D_UP
+  gstate(C_INKY) = G_HOME
+  cx(C_SUE) = 128
+  cy(C_SUE) = HOME_Y + 3
+  cdir(C_SUE) = D_DOWN
+  gstate(C_SUE) = G_HOME
+  ghome_x(C_BLINKY) = 112
+  ghome_x(C_PINKY) = 112
+  ghome_x(C_INKY) = 96
+  ghome_x(C_SUE) = 128
+  FOR g = 0 TO 5 DO
+    csub(g) = 0
+    canim(g) = 0
+  OD
+  cspd(C_HER) = her_spd(Band())
+  FOR g = 1 TO 4 DO cspd(g) = ghost_spd(Band()) OD
+  gmode = 0
+  gphase = 0
+  IF level == 1 THEN gclock = sched1(0) * 60 ELSE gclock = sched2(0) * 60 FI
+  fright_left = 0
+  elroy = 0
+  freeze = 0
+  pause_all = 0
+  idle = 0
+  fruit_left = 0
+  HideChar(C_FRUIT)
+RETURN
+
+; is (x, y) the centre of its tile on the axis of travel?
+FUNC BYTE AtCentreX(INT x)
+RETURN ((x & 7) == 4)
+
+FUNC BYTE AtCentreY(INT y)
+RETURN ((y & 7) == 4)
+
+; a dot under her: eaten, scored, and the frame it costs
+PROC Eat(INT x, INT y)
+  CARD i
+  BYTE k
+  IF x < 0 OR x >= 224 THEN RETURN FI
+  i = (y >> 3) * 28 + (x >> 3)
+  k = kind(i)
+  IF k <> K_DOT AND k <> K_PILL THEN RETURN FI
+  kind(i) = K_PATH
+  BlankCell(x >> 3, y >> 3)
+  dots_left -= 1
+  dots_eaten += 1
+  idle = 0
+  IF k == K_DOT THEN
+    Score(10)
+    freeze = 1
+  ELSE
+    Score(50)
+    freeze = 3
+    Frighten()
+  FI
+  Waka()
+RETURN
+
+; her: the asked direction, cornering, walls, tunnels, dots
+PROC MoveHer()
+  INT x, y, tx, ty
+  BYTE d, spd
+  her_moved = 0
+  IF freeze THEN
+    freeze -= 1
+    RETURN
+  FI
+  spd = cspd(C_HER)
+  IF fright_left THEN spd = her_fright_spd(Band()) FI
+  csub(C_HER) += spd
+  WHILE csub(C_HER) >= 16 DO
+    csub(C_HER) -= 16
+    x = cx(C_HER)
+    y = cy(C_HER)
+    d = cdir(C_HER)
+    tx = x >> 3
+    ty = y >> 3
+    ; a turn she asked for, taken anywhere in the tile it leaves from
+    ; and snapped to the lane she turns into -- cornering
+    IF want <> d THEN
+      IF want == D_LEFT OR want == D_RIGHT THEN
+        IF x >= 0 AND x < 224 AND Walkable(tx + stepx(want), ty) THEN
+          y = (ty << 3) + 4
+          d = want
+        FI
+      ELSE
+        IF Walkable(tx, ty + stepy(want)) THEN
+          x = (tx << 3) + 4
+          d = want
+        FI
+      FI
+      cdir(C_HER) = d
+    FI
+    ; the step, unless she is centred and the next tile is a wall
+    IF d == D_RIGHT THEN
+      IF NOT (AtCentreX(x) AND NOT Walkable(tx + 1, ty)) THEN
+        x += 1
+        her_moved = 1
+      FI
+    ELSEIF d == D_LEFT THEN
+      IF NOT (AtCentreX(x) AND NOT Walkable(tx - 1, ty)) THEN
+        x -= 1
+        her_moved = 1
+      FI
+    ELSEIF d == D_UP THEN
+      IF NOT (AtCentreY(y) AND NOT Walkable(tx, ty - 1)) THEN
+        y -= 1
+        her_moved = 1
+      FI
+    ELSE
+      IF NOT (AtCentreY(y) AND NOT Walkable(tx, ty + 1)) THEN
+        y += 1
+        her_moved = 1
+      FI
+    FI
+    ; the tunnels: off one side, on at the other
+    IF x < -8 THEN x = 232 FI
+    IF x > 232 THEN x = -8 FI
+    cx(C_HER) = x
+    cy(C_HER) = y
+    Eat(x, y)
+  OD
+RETURN
+
+; the direction from tile (tx, ty) that brings a ghost nearest its
+; target, never back the way it came; up, left, down, right on a tie.
+; Frightened ghosts, and every ghost through the first two scatters
+; (Ms. Pac-Man's own rule), choose at random.
+FUNC BYTE Choose(BYTE g, INT tx, INT ty)
+  BYTE i, d, best, back, s, random
+  INT nx, ny, ddx, ddy
+  CARD dist, bestd
+  s = gstate(g)
+  back = cdir(g) ^ 1
+  random = 0
+  IF s == G_FRIGHT THEN random = 1 FI
+  IF g <= C_SUE AND s == G_OUT AND gmode == 0 AND gphase < 3 THEN random = 1 FI
+  best = 255
+  bestd = 65535
+  FOR i = 0 TO 3 DO
+    d = order(i)
+    IF d <> back THEN
+      nx = tx + stepx(d)
+      ny = ty + stepy(d)
+      IF Walkable(nx, ny) OR (s == G_EYES AND KindAt(nx, ny) == K_DOOR) THEN
+        IF random THEN
+          dist = Rnd(1000)
+        ELSE
+          ddx = nx - gtx(g)
+          ddy = ny - gty(g)
+          dist = ddx * ddx + ddy * ddy
+        FI
+        IF dist < bestd THEN
+          bestd = dist
+          best = d
+        FI
+      FI
+    FI
+  OD
+  IF best == 255 THEN best = back FI
+RETURN (best)
+
+; where a loose ghost is going this frame
+PROC Target(BYTE g)
+  INT hx, hy, bx, by
+  BYTE hd
+  IF gstate(g) == G_EYES THEN
+    gtx(g) = 13
+    gty(g) = 11
+    RETURN
+  FI
+  IF gmode == 0 AND (g <> C_BLINKY OR elroy == 0) THEN
+    gtx(g) = scat_x(g)
+    gty(g) = scat_y(g)
+    RETURN
+  FI
+  hx = cx(C_HER) >> 3
+  hy = cy(C_HER) >> 3
+  hd = cdir(C_HER)
+  IF g == C_BLINKY THEN
+    gtx(g) = hx
+    gty(g) = hy
+  ELSEIF g == C_PINKY THEN
+    ; four ahead of her -- and four left as well when she faces up,
+    ; the arcade's own overflow
+    hx += stepx(hd) * 4
+    hy += stepy(hd) * 4
+    IF hd == D_UP THEN hx -= 4 FI
+    gtx(g) = hx
+    gty(g) = hy
+  ELSEIF g == C_INKY THEN
+    hx += stepx(hd) * 2
+    hy += stepy(hd) * 2
+    IF hd == D_UP THEN hx -= 2 FI
+    bx = cx(C_BLINKY) >> 3
+    by = cy(C_BLINKY) >> 3
+    gtx(g) = hx + (hx - bx)
+    gty(g) = hy + (hy - by)
+  ELSE
+    ; Sue: her tile while more than eight tiles off, her corner nearer
+    bx = (cx(C_SUE) >> 3) - hx
+    by = (cy(C_SUE) >> 3) - hy
+    IF bx * bx + by * by > 64 THEN
+      gtx(g) = hx
+      gty(g) = hy
+    ELSE
+      gtx(g) = scat_x(g)
+      gty(g) = scat_y(g)
+    FI
+  FI
+RETURN
+
+; one pixel of a loose mover in its direction, through the tunnels
+PROC Walk(BYTE g)
+  BYTE d
+  d = cdir(g)
+  cx(g) += stepx(d)
+  cy(g) += stepy(d)
+  IF cx(g) < -8 THEN cx(g) = 232 FI
+  IF cx(g) > 232 THEN cx(g) = -8 FI
+RETURN
+
+PROC MoveGhost(BYTE g)
+  INT x, y
+  BYTE s, spd
+  s = gstate(g)
+  x = cx(g)
+  y = cy(g)
+  spd = cspd(g)
+  IF s == G_FRIGHT THEN spd = ghost_fright_spd(Band())
+  ELSEIF s == G_EYES OR s == G_ENTER THEN spd = 32
+  ELSEIF s == G_HOME THEN spd = 8
+  ELSEIF (x < 40 OR x > 184) AND Tunnel(y >> 3) THEN spd = tunnel_spd(Band())
+  FI
+  csub(g) += spd
+  WHILE csub(g) >= 16 DO
+    csub(g) -= 16
+    s = gstate(g)
+    x = cx(g)
+    y = cy(g)
+    IF s == G_HOME THEN
+      ; bobbing between the house's rows
+      IF cdir(g) == D_UP THEN
+        cy(g) = y - 1
+        IF y <= HOME_Y - 6 THEN cdir(g) = D_DOWN FI
+      ELSE
+        cy(g) = y + 1
+        IF y >= HOME_Y + 6 THEN cdir(g) = D_UP FI
+      FI
+    ELSEIF s == G_LEAVE THEN
+      ; to the door's column, then up and out
+      IF x < DOOR_X THEN
+        cx(g) = x + 1
+        cdir(g) = D_RIGHT
+      ELSEIF x > DOOR_X THEN
+        cx(g) = x - 1
+        cdir(g) = D_LEFT
+      ELSE
+        cy(g) = y - 1
+        cdir(g) = D_UP
+        IF y - 1 == DOOR_Y THEN
+          gstate(g) = G_OUT
+          cdir(g) = D_LEFT
+        FI
+      FI
+    ELSEIF s == G_ENTER THEN
+      ; down through the door to the home row, then to this ghost's slot
+      IF y < HOME_Y THEN
+        cy(g) = y + 1
+        cdir(g) = D_DOWN
+      ELSEIF x < ghome_x(g) THEN
+        cx(g) = x + 1
+        cdir(g) = D_RIGHT
+      ELSEIF x > ghome_x(g) THEN
+        cx(g) = x - 1
+        cdir(g) = D_LEFT
+      ELSE
+        gstate(g) = G_LEAVE
+      FI
+    ELSE
+      ; loose: at a tile's centre choose, then step
+      IF AtCentreX(x) AND AtCentreY(y) AND x >= 0 AND x < 224 THEN
+        IF s == G_EYES AND x == DOOR_X - 4 AND y == DOOR_Y THEN
+          cx(g) = DOOR_X
+          cdir(g) = D_DOWN
+          gstate(g) = G_ENTER
+        ELSE
+          Target(g)
+          cdir(g) = Choose(g, x >> 3, y >> 3)
+          Walk(g)
+        FI
+      ELSE
+        Walk(g)
+      FI
+    FI
+  OD
+RETURN
+
+; the fruit: in by a tunnel after 70 dots and again after 170, a
+; random walk for ten seconds, then out by the nearest tunnel
+PROC MoveFruit()
+  INT x, y
+  BYTE r
+  IF fruit_left == 0 THEN
+    IF fruit_shown == 0 AND dots_start - dots_left >= 70 THEN
+    ELSEIF fruit_shown == 1 AND dots_start - dots_left >= 170 THEN
+    ELSE RETURN FI
+    fruit_shown += 1
+    fruit_kind = level - 1
+    IF fruit_kind > 6 THEN fruit_kind = 6 FI
+    ; a tunnel row, from the side she is not on
+    r = 0
+    WHILE NOT Tunnel(r) OR (Rnd(2) == 0 AND r < 25) DO r += 1 OD
+    cy(C_FRUIT) = (r << 3) + 4
+    IF cx(C_HER) < 112 THEN
+      cx(C_FRUIT) = 232
+      cdir(C_FRUIT) = D_LEFT
+    ELSE
+      cx(C_FRUIT) = -8
+      cdir(C_FRUIT) = D_RIGHT
+    FI
+    gstate(C_FRUIT) = G_FRIGHT
+    cspd(C_FRUIT) = ghost_spd(Band())
+    csub(C_FRUIT) = 0
+    fruit_left = 1
+    RETURN
+  FI
+  fruit_left += 1
+  IF fruit_left == 600 THEN
+    ; time to go: the nearest tunnel's mouth is the target
+    gstate(C_FRUIT) = G_OUT
+    r = 0
+    WHILE NOT Tunnel(r) DO r += 1 OD
+    IF cy(C_FRUIT) > 124 THEN
+      r = 30
+      WHILE NOT Tunnel(r) DO r -= 1 OD
+    FI
+    gty(C_FRUIT) = r
+    IF cx(C_FRUIT) < 112 THEN gtx(C_FRUIT) = 0 ELSE gtx(C_FRUIT) = 27 FI
+  FI
+  csub(C_FRUIT) += cspd(C_FRUIT)
+  WHILE csub(C_FRUIT) >= 16 DO
+    csub(C_FRUIT) -= 16
+    x = cx(C_FRUIT)
+    y = cy(C_FRUIT)
+    IF AtCentreX(x) AND AtCentreY(y) AND x >= 0 AND x < 224 THEN
+      cdir(C_FRUIT) = Choose(C_FRUIT, x >> 3, y >> 3)
+    FI
+    cx(C_FRUIT) = x + stepx(cdir(C_FRUIT))
+    cy(C_FRUIT) = y + stepy(cdir(C_FRUIT))
+    IF fruit_left > 600 AND (cx(C_FRUIT) < -8 OR cx(C_FRUIT) > 232) THEN
+      fruit_left = 0
+      HideChar(C_FRUIT)
+      RETURN
+    FI
+    IF cx(C_FRUIT) < -8 THEN cx(C_FRUIT) = 232 FI
+    IF cx(C_FRUIT) > 232 THEN cx(C_FRUIT) = -8 FI
+  OD
+RETURN
+
+; a pill: every loose ghost turns blue and about, for the level's while
+PROC Frighten()
+  BYTE g, secs
+  secs = 0
+  IF level <= 19 THEN secs = fright_secs(level - 1) FI
+  IF secs == 0 THEN
+    FOR g = 1 TO 4 DO
+      IF gstate(g) == G_OUT THEN cdir(g) = cdir(g) ^ 1 FI
+    OD
+    RETURN
+  FI
+  fright_left = secs * 60
+  ghosts_eaten = 0
+  FOR g = 1 TO 4 DO
+    IF gstate(g) == G_OUT THEN
+      gstate(g) = G_FRIGHT
+      cdir(g) = cdir(g) ^ 1
+    ELSEIF gstate(g) == G_FRIGHT THEN
+      cdir(g) = cdir(g) ^ 1
+    FI
+  OD
+RETURN
+
+; the scatter/chase clock, which stands still while the ghosts are
+; blue; every loose ghost turns about when the mode flips
+PROC Clock()
+  BYTE g
+  IF fright_left THEN
+    fright_left -= 1
+    IF fright_left == 0 THEN
+      FOR g = 1 TO 4 DO
+        IF gstate(g) == G_FRIGHT THEN gstate(g) = G_OUT FI
+      OD
+    FI
+    RETURN
+  FI
+  IF gclock == 0 THEN RETURN FI
+  gclock -= 1
+  IF gclock == 0 THEN
+    gphase += 1
+    gmode = gphase & 1
+    IF gphase < 7 THEN
+      IF level == 1 THEN gclock = sched1(gphase) * 60 ELSE gclock = sched2(gphase) * 60 FI
+    FI
+    FOR g = 1 TO 4 DO
+      IF gstate(g) == G_OUT THEN cdir(g) = cdir(g) ^ 1 FI
+    OD
+  FI
+RETURN
+
+; the house: the next ghost leaves when the dots she has eaten this
+; life pass its count, or when she has eaten none for four seconds
+PROC Release()
+  BYTE g, lim, timeout
+  timeout = 240
+  IF level >= 5 THEN timeout = 180 FI
+  FOR g = 2 TO 4 DO
+    IF gstate(g) == G_HOME THEN
+      IF died THEN lim = limit_d(g)
+      ELSEIF level == 1 THEN lim = limit1(g)
+      ELSEIF level == 2 THEN lim = limit2(g)
+      ELSE lim = limit3(g) FI
+      IF dots_eaten >= lim OR idle >= timeout THEN
+        gstate(g) = G_LEAVE
+        idle = 0
+      FI
+      RETURN
+    FI
+  OD
+RETURN
+
+; Cruise Elroy: Blinky quickens as the dots run out
+PROC Elroy()
+  BYTE t
+  IF level > 8 THEN t = 60 ELSE t = elroy_dots(level - 1) FI
+  elroy = 0
+  IF dots_left <= t THEN elroy = 1 FI
+  IF dots_left <= (t >> 1) THEN elroy = 2 FI
+  cspd(C_BLINKY) = ghost_spd(Band()) + elroy
+RETURN
+
+; ------------------------------------------------------------- drawing
+
+PROC DrawHer()
+  BYTE f, d, slot, flip
+  d = cdir(C_HER)
+  ; three mouth frames, 0 1 2 1, stepped every two pixels she moves
+  f = (canim(C_HER) >> 1) & 3
+  IF f == 3 THEN f = 1 FI
+  flip = 0
+  IF d == D_RIGHT THEN slot = S_MSPAC + f
+  ELSEIF d == D_LEFT THEN
+    slot = S_MSPAC + f
+    flip = $40
+  ELSEIF d == D_DOWN THEN slot = S_MSPAC + 3 + f
+  ELSE slot = S_MSPAC + 6 + f FI
+  DrawChar(C_HER, cx(C_HER), cy(C_HER), slot, flip)
+RETURN
+
+PROC DrawGhost(BYTE g)
+  BYTE s, f, slot
+  s = gstate(g)
+  f = (canim(g) >> 3) & 1
+  IF s == G_FRIGHT THEN
+    slot = S_FRIGHT + f
+    IF fright_left < 120 AND (fright_left & 8) THEN slot = S_FLASH + f FI
+  ELSEIF s == G_EYES OR s == G_ENTER THEN
+    slot = S_EYES + cdir(g)
+  ELSE
+    slot = S_GHOST + ((g - 1) << 3) + (cdir(g) << 1) + f
+  FI
+  DrawChar(g, cx(g), cy(g), slot, 0)
+RETURN
+
+PROC DrawAll()
+  BYTE g
+  rot += 1
+  IF rot == 5 THEN rot = 0 FI
+  DrawHer()
+  FOR g = 1 TO 4 DO DrawGhost(g) OD
+  IF fruit_left THEN
+    DrawChar(C_FRUIT, cx(C_FRUIT), cy(C_FRUIT), S_FRUITS + fruit_kind, 0)
+  FI
+RETURN
+
+; ---------------------------------------------------------------- sound
+
+PROC Waka()
+  waka_phase += 1
+  IF waka_phase & 1 THEN Sound(1, 500, 8, 0) ELSE Sound(1, 800, 8, 0) FI
+  waka_left = 4
+RETURN
+
+PROC Fx(CARD inc, BYTE frames)
+  Sound(2, inc, 10, 0)
+  fx_left = frames
+RETURN
+
+; the siren, rising and falling; quick and high while the ghosts are
+; blue; and the short sounds ending
+PROC Siren()
+  CARD p
+  siren_phase += 1
+  IF fright_left THEN
+    p = 600 + ((siren_phase & 15) << 4)
+  ELSE
+    p = 300 + ((siren_phase & 63) << 2)
+    IF elroy THEN p += 100 * elroy FI
+  FI
+  Sound(0, p, 4, 0)
+  IF waka_left THEN
+    waka_left -= 1
+    IF waka_left == 0 THEN Silence(1) FI
+  FI
+  IF fx_left THEN
+    fx_left -= 1
+    IF fx_left == 0 THEN Silence(2) FI
+  FI
+RETURN
+
+PROC Quiet()
+  BYTE v
+  FOR v = 0 TO 7 DO Silence(v) OD
+RETURN
+
+; the jingle: melody on voice 0, bass on voice 1, each note released
+; on its last frame so a repeated pitch is heard twice
+PROC Jingle()
+  BYTE im, ib, tm, tb
+  im = 0
+  ib = 0
+  tm = 0
+  tb = 0
+  WHILE im < 24 OR ib < 19 DO
+    IF tm == 0 AND im < 24 THEN
+      Sound(0, jm_inc(im), 9, 0)
+      tm = jm_len(im)
+      im += 1
+    FI
+    IF tb == 0 AND ib < 19 THEN
+      IF jb_inc(ib) == 0 THEN Silence(1) ELSE Sound(1, jb_inc(ib), 7, 0) FI
+      tb = jb_len(ib)
+      ib += 1
+    FI
+    WaitVBlank()
+    KeyPoll()
+    tm -= 1
+    tb -= 1
+    IF tm == 1 THEN Silence(0) FI
+    IF tb == 1 THEN Silence(1) FI
+  OD
+  Silence(0)
+  Silence(1)
+RETURN
+
+; --------------------------------------------------------------- events
+
+; she and a ghost on one tile: a meal, or a life. 1 when she is caught.
+FUNC BYTE Meet()
+  BYTE g
+  INT ddx, ddy
+  FOR g = 1 TO 5 DO
+    ddx = cx(g) - cx(C_HER)
+    ddy = cy(g) - cy(C_HER)
+    IF ddx < 0 THEN ddx = -ddx FI
+    IF ddy < 0 THEN ddy = -ddy FI
+    IF ddx < 8 AND ddy < 8 THEN
+      IF g == C_FRUIT THEN
+        IF fruit_left THEN
+          Score(fruit_score(fruit_kind))
+          fruit_left = 0
+          HideChar(C_FRUIT)
+          Fx(1500, 12)
+        FI
+      ELSEIF gstate(g) == G_FRIGHT THEN
+        gstate(g) = G_EYES
+        Score(ghost_score(ghosts_eaten))
+        ghosts_eaten += 1
+        Fx(2000, 20)
+        pause_all = 45
+      ELSEIF gstate(g) == G_OUT THEN
+        RETURN (1)
+      FI
+    FI
+  OD
+RETURN (0)
+
+; her death: a spin through the four directions, mouth wide
+PROC Die()
+  BYTE i, d
+  Quiet()
+  FOR i = 0 TO 45 DO WaitVBlank() OD
+  FOR i = 1 TO 5 DO HideChar(i) OD
+  FOR i = 0 TO 23 DO
+    d = i & 3
+    IF d == 0 THEN DrawChar(C_HER, cx(C_HER), cy(C_HER), S_MSPAC, 0)
+    ELSEIF d == 1 THEN DrawChar(C_HER, cx(C_HER), cy(C_HER), S_MSPAC + 6, 0)
+    ELSEIF d == 2 THEN DrawChar(C_HER, cx(C_HER), cy(C_HER), S_MSPAC, $40)
+    ELSE DrawChar(C_HER, cx(C_HER), cy(C_HER), S_MSPAC + 3, 0) FI
+    Sound(2, 900 - i * 32, 8, 0)
+    WaitVBlank()
+    WaitVBlank()
+    WaitVBlank()
+  OD
+  HideChar(C_HER)
+  Silence(2)
+  FOR i = 0 TO 30 DO WaitVBlank() OD
+RETURN
+
+; READY!: with the jingle at a game's start, as the arcade has it;
+; two seconds of silence after a life or a level
+PROC Ready(BYTE jingle)
+  BYTE i
+  Text(11, 17, "READY!", B_YELLOW)
+  Place()
+  DrawAll()
+  IF jingle THEN
+    Jingle()
+  ELSE
+    FOR i = 0 TO 120 DO
+      WaitVBlank()
+      KeyPoll()
+    OD
+  FI
+  Text(11, 17, "      ", B_YELLOW)
+RETURN
+
+; ----------------------------------------------------------------- game
+
+; a new level: the pink maze twice, the blue three times, then turns
+PROC Level()
+  IF level <= 2 THEN maze = 1
+  ELSEIF level <= 5 THEN maze = 2
+  ELSE maze = 2 - (((level - 6) >> 2) & 1) FI
+  LoadMaze()
+  dots_eaten = 0
+  died = 0
+  fruit_shown = 0
+  Hud()
+RETURN
+
+; one frame of play: 0 to go on, 1 when she is caught, 2 when the
+; maze is clear, 3 to quit
+FUNC BYTE Tick()
+  BYTE g
+  KeyPoll()
+  IF KeyHit(KEY_ESC) THEN RETURN (3) FI
+  IF KeyHit(KEY_P) THEN
+    Quiet()
+    DO
+      WaitVBlank()
+      KeyPoll()
+    UNTIL KeyHit(KEY_P) OD
+  FI
+  IF KeyHeld(KEY_UP) THEN want = D_UP
+  ELSEIF KeyHeld(KEY_DOWN) THEN want = D_DOWN
+  ELSEIF KeyHeld(KEY_LEFT) THEN want = D_LEFT
+  ELSEIF KeyHeld(KEY_RIGHT) THEN want = D_RIGHT FI
+  IF pause_all THEN
+    pause_all -= 1
+    Siren()
+    RETURN (0)
+  FI
+  idle += 1
+  Clock()
+  Release()
+  Elroy()
+  MoveHer()
+  FOR g = 1 TO 4 DO MoveGhost(g) OD
+  MoveFruit()
+  IF Meet() THEN RETURN (1) FI
+  IF her_moved THEN canim(C_HER) += 1 FI
+  FOR g = 1 TO 4 DO canim(g) += 1 OD
+  DrawAll()
+  Pills()
+  Siren()
+  IF dots_left == 0 THEN RETURN (2) FI
+RETURN (0)
+
+PROC Play()
+  BYTE r, i, first
+  lives = 3
+  score = 0
+  level = 1
+  Level()
+  first = 1
+  DO
+    Ready(first)
+    first = 0
+    DO
+      WaitVBlank()
+      r = Tick()
+    UNTIL r OD
+    IF r == 1 THEN
+      Die()
+      lives -= 1
+      dots_eaten = 0
+      died = 1
+      Hud()
+      IF lives == 0 THEN
+        Text(9, 17, "GAME OVER", B_RED)
+        FOR i = 0 TO 180 DO WaitVBlank() OD
+        EXIT
+      FI
+    ELSEIF r == 2 THEN
+      Quiet()
+      FOR i = 1 TO 5 DO HideChar(i) OD
+      FOR i = 0 TO 90 DO WaitVBlank() OD
+      level += 1
+      Level()
+    ELSE
+      EXIT
+    FI
+  OD
+RETURN
+
+PROC Title()
+  CARD i
+  BareMaze()
+  Text(9, 7, "MS.COOL-MAN", B_YELLOW)
+  Text(4, 19, "PRESS SPACE TO START", B_WHITE)
+  Text(6, 22, "CURSOR KEYS MOVE", B_CYAN)
+  Text(9, 24, "P PAUSES", B_CYAN)
+  i = 0
+  quit = 0
+  DO
+    WaitVBlank()
+    KeyPoll()
+    i += 1
+    ; two ghosts to a row, her between: more abreast at one height
+    ; than the engine draws whole (the seam, in the header)
+    DrawChar(C_HER, 112, 108, S_MSPAC + ((i >> 3) & 1), 0)
+    DrawChar(C_BLINKY, 72, 84, S_GHOST + ((i >> 4) & 1), 0)
+    DrawChar(C_INKY, 152, 84, S_GHOST + 16 + 2 + ((i >> 4) & 1), 0)
+    DrawChar(C_PINKY, 72, 132, S_GHOST + 8 + ((i >> 4) & 1), 0)
+    DrawChar(C_SUE, 152, 132, S_GHOST + 24 + 2 + ((i >> 4) & 1), 0)
+    IF KeyHit(KEY_ESC) THEN quit = 1 FI
+  UNTIL quit OR KeyHit(KEY_SPACE) OD
+  rseed = (TMR_L * 256 + TMR_M) | 1
+  Text(9, 7, "           ", B_YELLOW)
+  Text(4, 19, "                    ", B_WHITE)
+  Text(6, 22, "                ", B_CYAN)
+  Text(9, 24, "        ", B_CYAN)
+RETURN
+
+PROC Main()
+  BYTE g
+  Graphics(2)
+  Cursor(0)
+  VID_SCY = 4
+  VID_BORDER = 0
+  VID_PAT = PAT_BASE
+  SpritesOff()
+  ; the font's banks: black, and one ink each; the maze's comes with
+  ; the maze, the sprites' with the art
+  FOR g = 1 TO 5 DO SetColor(g << 4, 0) OD
+  SetColor(B_WHITE * 16 + 1, $DDF)
+  SetColor(B_YELLOW * 16 + 1, $FF0)
+  SetColor(B_RED * 16 + 1, $F00)
+  SetColor(B_CYAN * 16 + 1, $0FF)
+  SetColor(B_PEACH * 16 + 1, $FBA)
+  SetPalette(spr_pal, B_SPRITES * 16, 16)
+  LoadTiles(font, T_FONT, 41)
+  FrameToTiles(spr + ((S_MSPAC + 1) * 512), T_LIFE, 1)
+  FOR g = 0 TO 6 DO
+    FrameToTiles(spr + ((25 + g) * 512), T_FRUIT + (g << 2), 0)
+  OD
+  LoadSprites()
+  FOR g = 0 TO 31 DO SpriteHide(g) OD
+  SpritesOn(B_SPRITES)
+  hiscore = 10000
+  maze = 1
+  ClearHud()
+  LoadTiles(mz1_tiles, 0, MZ1_NTILES)
+  SetPalette(mz1_pal, 0, 16)
+  DO
+    Title()
+    IF quit THEN EXIT FI
+    Play()
+    FOR g = 0 TO 31 DO SpriteHide(g) OD
+    Quiet()
+  OD
+  Quiet()
+  SpritesOff()
+  VID_SCY = 0
+  Graphics(0)
+  Cursor(1)
+RETURN

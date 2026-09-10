@@ -6152,3 +6152,66 @@ text map before anything else could.
   in a loop is read for a reason; anything the generator writes as
   `[$FFxx]` stays uncached, and so does a variable bound to a RAM
   address, which costs nothing because no port has one.
+
+## D101 -- A program that reads the keyboard owns it
+
+**Every CoolAction! program that waited for a key waited for ever on
+the web page and in the window, and every gate passed.** The gates run
+a program on the bare machine, where the PS/2 FIFO is the program's to
+poll. `SYS "NAME.BIN"` runs it under BASIC, and BASIC's interrupt
+handler (`iisr` in `sw/main.asm`) drains that FIFO on every vblank and
+every UART byte into a 16-byte ring of *decoded* keys -- ASCII, or
+`$80 + n` for a named key, releases and prefixes dropped (D51's
+`scancode`). A library routine polling `KBD_STAT` under BASIC sees an
+empty FIFO for as long as it cares to look, and the ring is no use to
+`KeyPoll`, which needs the make and break codes the decoder throws
+away.
+
+**The library takes the interrupts off, once, the first time a
+program reads the keyboard** (`TakeKeys`, called by `Key`, `ReadKey`
+and `KeyPoll`), **and the compiler's start-up stub turns them back on
+when `Main` returns**: `_start` is `CALL Main`, `EI`, `RET`. Nothing a
+program has to know; nothing that changes on the bare machine, where
+`DI` and `EI` change nothing. What it costs: while the program runs,
+`frames` stands still (the hardware counter `TMR_L` does not, and that
+is what `WaitVBlank` reads), the UART is not drained, and Ctrl+Pause
+-- decoded by the handler into the break flag -- cannot stop the
+program; Ctrl+Esc is an NMI and still restarts. A game that reads keys
+leaves by its own key, which is how the ports and Ms. Cool-Man are
+written.
+
+**The second half of the same day: the window.** With the interrupts
+out of the way the space bar still did nothing in the window, and the
+arrows worked. The window's default keyboard mode takes a printable
+key as SDL text input -- so a Belgian keyboard's characters are its
+own -- and typed it through the machine's keymap as make, `$F0`, make
+**in one burst**; a program that polls once a frame saw the key go
+down and up between two looks. The cursor keys are not characters and
+went the physical way, make on key-down and break on key-up, which is
+why steering worked and starting did not. Now a typed character is a
+press of the key that produced it: the make when the text arrives,
+the break when that key comes up, the make again on repeat as PS/2
+typematic does; pasted text, which has no key to pair with, gets its
+break a frame after its make (`rust/src/emu.rs`, the header). And the
+library gained `KeyHit`, a pressed-since-asked latch, so a tap
+shorter than a frame counts once whatever the front end -- the gate
+now starts the game from the flash-booted disc with the space bar's
+make and break in one burst, and `KEYTEST` on drive 11 shows the raw
+stream for any keyboard in doubt.
+
+**Rejected:** reading BASIC's ring instead. It holds decoded keys, so
+`Key()` could not answer with a scancode and `KeyHeld` could not exist;
+and a program booted without BASIC has no ring at all. That is the
+standing rule, said by the owner the day this was found: **CoolAction!
+and its library depend on nothing of BASIC's** -- not its ring, its
+frame counter, its tables or its handler -- because BASIC is being
+replaced. The library reads the hardware: the FIFO, `TMR_L`, the
+UART, the video and sound registers, and nothing below `$FF00` that
+it did not declare itself. Rejected: a
+handler of the program's own on the IRQ vector, acknowledging the
+vblank and leaving the keyboard alone -- more state to restore than
+one instruction, for the same result. The gate that would have caught
+this now exists: `test_keys` and the Ms. Cool-Man gate in
+`sim/test_action.py` also `SYS` the program from a booted BASIC, press
+keys at the PS/2 port through the running handler, and ask BASIC a
+question afterwards.

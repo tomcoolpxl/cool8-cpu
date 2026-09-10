@@ -43,10 +43,14 @@ rust/target/release/coolaction sw/io.act sw/libaction.act game.act -o GAME.BIN
 | `--assemble file.asm` | the compiler's assembler on its own; the output is the raw image |
 
 **Running it.** From BASIC, `SYS "GAME.BIN"` loads the file where its
-header says and jumps in; the program's entry is `CALL Main` then
-`RET`, so a program that finishes comes back to the prompt. The entry
-routine is `Main` if there is one, otherwise the last `PROC` in the
-source, which is Action!'s rule.
+header says and jumps in; the program's entry is `CALL Main`, `EI`,
+`RET`, so a program that finishes comes back to the prompt with
+interrupts on -- the library turns them off the first time a program
+reads the keyboard (§6, `TakeKeys`,
+[D101](01-decisions.md#d101--a-program-that-reads-the-keyboard-owns-it)),
+because under BASIC the interrupt handler would otherwise have every
+scancode first. The entry routine is `Main` if there is one, otherwise
+the last `PROC` in the source, which is Action!'s rule.
 
 **Where it lives.** The default origin is `$0200`, the byte above the
 CPU stack, because a game does not need BASIC and BASIC is the only
@@ -214,7 +218,7 @@ decides. `&`, `|`, `^` are bitwise.
 | Comparison | unsigned, unless either side is `INT`; the result is 0 or 1 |
 | `*` | two bytes multiply on the hardware `MUL` and give a `CARD`; a word operand calls the 16-bit routine, low 16 bits |
 | `/` `%` | unsigned unless either side is `INT`, then C's truncation and sign rules; a constant power of two is a shift or a mask |
-| `<<` `>>` | the count is a byte; `INT >>` is arithmetic |
+| `<<` `>>` | the count is a byte; `INT >>` is arithmetic; **the result has the left side's width**, so `row << 7` on a `BYTE` is a byte -- widen first (`CARD a; a = row`), or multiply, which always gives a word. Ms. Cool-Man's first frame put every cell in row 0 this way |
 | `-x` | a two-byte `INT` |
 | `arr`, `&x`, `"s"` | an address, as a `POINTER` |
 | `p + n` | **in bytes**, whatever `p` points at -- Action!'s rule, and the one to remember with a `CARD POINTER` |
@@ -466,8 +470,10 @@ the wrong register fails by name.
 | `SetSprite(id, x, y, pat, big, flags)`, `SpriteMove(id, x, y, big)`, `SpriteHide(id)`, `SpritesOn(bank)`, `SpritesOff()` | the descriptor port, [04-system.md §5.6](04-system.md)'s layout: `pat` is a VRAM address, `big` is 16×16, `flags` is byte 6 |
 | `Sound(v, inc, vol, noise)`, `Silence(v)` | `SOUND`, and a voice off |
 | `WaitVBlank()`, `Frame()` | `VSYNC`: hold until `TMR_L` moves, bounded by one frame; and the counter's low byte |
+| `TakeKeys()` | the FIFO becomes the program's: `DI`, once. **Under BASIC the interrupt handler drains the keyboard FIFO every frame into a ring of decoded keys** (`sw/main.asm`, `sw/input.asm`), so a raw read there sees nothing -- every port's final "press a key" waited for ever on the web page and in the window while the same programs answered the harness, which runs them without the ROM. `Key`, `ReadKey` and `KeyPoll` call it; the start-up stub's `EI` gives the interrupts back when `Main` returns ([D101](01-decisions.md#d101--a-program-that-reads-the-keyboard-owns-it)). From then on Ctrl+Pause does not break the program: leaving is the program's own key |
 | `Key()` | the next raw Set 2 scancode or 0, `KBD_STAT` read first |
 | `ReadKey()` | `INKEY`: the next key as ASCII, `K_UP`..`K_INS` at 256 up, 0 for none -- `sw/kbd.asm`'s decoder on the same three tables, which `tools/cool8kbd.py --emit` copies out of `sw/keymap.asm` into a marked block here and `poe check` holds current |
+| `KeyPoll()`, `KeyHeld(sc)`, `KeyHit(sc)`, `KeyFeed(c)` | what a game wants and `INKEY` cannot say: a bitmap of every key down, kept from the same FIFO -- call `KeyPoll` once a frame, ask `KeyHeld` about as many keys as you like. `sc` is the Set 2 make code, an `$E0`-prefixed one at `$80 + code`: the cursor keys are `$F5` `$F2` `$EB` `$F4`. `KeyHit` answers whether a key was *pressed* since it last asked, from a second bitmap that only its asking clears -- so a tap shorter than a frame, or a front end that types a character as make-then-break in one burst, still counts once: space, pause and escape want this, steering wants `KeyHeld`. `KeyFeed` is one byte of the stream into those bitmaps, for a program that reads the FIFO itself (KEYTEST). Shares the break/extended state with `ReadKey`, so a program uses one or the other on a FIFO |
 | `Rnd(n)` | `RND(n)`, **exactly**: the interpreter's 16-bit xorshift from seed 1, the raw word modulo `n`, `Rnd(0)` the word -- so a port that draws its picture from random numbers can draw the BASIC's |
 | `TextCell(col, row)`, `TextFill(ch, attr)`, `TextAt(col, row, s, attr)` | the text map of modes 0 and 1 through the machine's own base and stride: a cell's address, `CLS`'s fill of all 32 rows, a string with one attribute |
 | `PutChar(c)`, `Print(s)`, `PrintE(s)` | the UART, waiting for the holding register; a string is a length byte and the characters |

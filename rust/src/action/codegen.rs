@@ -548,9 +548,14 @@ impl Codegen {
         }
         self.raw("");
 
-        // The entry: run the program, come back to whoever loaded it.
+        // The entry: run the program, come back to whoever loaded it --
+        // with interrupts on, because the library's TakeKeys turns them
+        // off to own the keyboard FIFO (sw/libaction.act), and BASIC,
+        // the usual loader, needs them back. Harmless where they were
+        // never off.
         self.label("_start");
         self.emit(&format!("CALL    {}", entry));
+        self.emit("EI");
         self.emit("RET");
         self.raw("");
 

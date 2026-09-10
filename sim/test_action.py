@@ -851,6 +851,349 @@ def test_ports():
     print()
 
 
+KEYS = r"""
+; KeyPoll and KeyHeld: the bitmap of what is down, from the FIFO
+BYTE ARRAY out(8)
+
+PROC Main()
+  DO KeyPoll() UNTIL KeyHeld($F5) OD   ; until the up arrow is down
+  out(0) = KeyHeld($F5)           ; the up arrow, $E0 75: held
+  out(1) = KeyHeld($1C)           ; A: pressed and released
+  out(2) = KeyHeld($29)           ; space: held
+  out(3) = KeyHeld($F2)           ; the down arrow: never touched
+  out(4) = KeyHeld($74)           ; $74 alone is the keypad's right, not the arrow's $F4
+  KeyPoll()                       ; the FIFO is empty: nothing changes
+  out(5) = KeyHeld($F5)
+  out(6) = KeyHit($1C)            ; A was pressed since we last asked: yes, once
+  out(7) = KeyHit($1C)            ; and now it was not
+RETURN
+"""
+
+
+def test_keys():
+    """KeyPoll/KeyHeld: what is held, as a game asks, from the same FIFO."""
+    print("  KeyPoll and KeyHeld")
+    prg, syms = H.build_act(H.ACT_LIB + [KEYS], "act_keys")
+    m = H.session()
+    # up pressed, A pressed and released, space pressed
+    m.scancode([0xE0, 0x75, 0x1C, 0xF0, 0x1C, 0x29])
+    why = H.run_act(m, prg, budget=2_000_000)
+    check(why == "halt", "keys: ran to the HALT", why)
+    out = bytes(m.bus.mem[syms["v_out"]:syms["v_out"] + 6])
+    check(out[0] != 0 and out[2] != 0, "keys: the up arrow and space are held", out.hex())
+    check(out[1] == 0 and out[3] == 0, "keys: a released key and an untouched one are not", out.hex())
+    check(out[4] == 0, "keys: the arrow's E0-prefixed code is $80 apart from the keypad's", out.hex())
+    check(out[5] != 0, "keys: a poll of an empty FIFO changes nothing", out.hex())
+    out = bytes(m.bus.mem[syms["v_out"]:syms["v_out"] + 8])
+    check(out[6] != 0 and out[7] == 0,
+          "keys: KeyHit sees a make-and-break that came in one poll, once -- a tap, or a typed character",
+          out.hex())
+
+    # The same, SYS'd from BASIC -- whose interrupt handler drains the
+    # FIFO into its own ring every frame, which is where every port's
+    # "press a key" hung on the web page while the bare-machine gates
+    # above passed. TakeKeys turns interrupts off; the stub's EI hands
+    # them back, and BASIC must still be listening afterwards.
+    import test_basic as B
+    code, bsyms = basic_image()
+    M = B.Machine(code, bsyms)
+    M.settle()
+    org = prg[0] | (prg[1] << 8)
+    M.m.bus.mem[org:org + len(prg) - 2] = prg[2:]
+    M.m.type("SYS %d\r" % org)
+    M.m.run_frame(3)
+    check(M.m.cpu.pc >= org and M.m.cpu.pc < org + len(prg),
+          "keys under BASIC: SYS is in the program, waiting", "PC $%04X" % M.m.cpu.pc)
+    M.m.scancode([0xE0, 0x75, 0x1C, 0xF0, 0x1C, 0x29])
+    M.m.run_frame(3)
+    out = bytes(M.m.bus.mem[syms["v_out"]:syms["v_out"] + 6])
+    check(out[0] != 0 and out[2] != 0 and out[1] == 0 and out[3] == 0 and out[5] != 0,
+          "keys under BASIC: the raw FIFO reaches the program past the interrupt handler", out.hex())
+    M.m.scancode([0xF0, 0x29, 0xE0, 0xF0, 0x75])
+    M.type("PRINT 6*7\r")
+    check(M.m.shows("42"), "keys under BASIC: the program returned and BASIC hears its keyboard again")
+    print()
+
+
+def test_keytest():
+    """KEYTEST from the flash-booted disc: the raw stream on the screen
+    and down the serial port, the library's reading under it, Esc
+    twice back to BASIC."""
+    import cool8rsvm as vm
+    import test_basic as B
+    print("  KEYTEST, from the demos disc")
+    img = os.path.join(H.BUILD, "demos.img")
+    if not os.path.exists(img):
+        print("    SKIPPED: %s is not built (poe demos)" % img)
+        print()
+        return
+    code, bsyms = basic_image()
+    m = vm.boot(flash_path=img, render=True)
+    for _ in range(90):
+        m.run_frame()
+    check(m.settle(bsyms["in_raw.rk0"], bsyms["irhead"], bsyms["irtail"], 80_000_000),
+          "keytest: BASIC booted from the demos disc")
+    H.key(m, bsyms, 'DRIVE 11\r')
+    H.key(m, bsyms, 'SYS "KEYTEST.BIN"')
+    m.key(["\r"])
+    m.run_frame(30)
+    m.uart.take()
+    m.kbd.feed([0xE0, 0x75])
+    m.run_frame(3)
+    m.kbd.feed([0x29])
+    m.run_frame(3)
+    row = m.text()[2].rstrip()
+    check(row == "E0 75 29", "keytest: the stream on the screen, byte by byte", repr(row))
+    check(m.text()[24].rstrip() == "HIT: SPACE", "keytest: KeyHit saw the space bar", repr(m.text()[24].rstrip()))
+    m.kbd.feed([0xF0, 0x29, 0xE0, 0xF0, 0x75])
+    m.run_frame(3)
+    said = m.uart.take()
+    check(said == b"E0 75 29 F0 29 E0 F0 75 ", "keytest: the same stream down the serial port", repr(said))
+    m.kbd.feed([0x76, 0xF0, 0x76])
+    m.run_frame(3)
+    m.kbd.feed([0x76, 0xF0, 0x76])
+    m.run_frame(3)
+    check(m.settle(bsyms["in_raw.rk0"], bsyms["irhead"], bsyms["irtail"], 20_000_000),
+          "keytest: Esc twice, and BASIC is back at its prompt with its interrupts")
+    print()
+
+
+def test_mscoolman():
+    """Ms. Cool-Man, on the machine: the picture the map holds, and the
+    rules -- dots, the pill, a ghost eaten and home again, a death, two
+    levels cleared into the blue maze. Skips, loudly, without the art."""
+    import subprocess
+    import ioregs
+    import mscool
+    print("  MS. COOL-MAN")
+    if mscool.sources() is None:
+        print("    SKIPPED: the art is not here -- assets/misscool/ is private, "
+              "tools/mkmscool.py makes it from the ripped sheets")
+        print()
+        return
+    r = subprocess.run([sys.executable, os.path.join(H.ROOT, "tools", "mkmscool.py"), "--check"],
+                       capture_output=True, text=True)
+    check(r.returncode == 0, "mscoolman: the art file is what the generator writes",
+          (r.stdout + r.stderr).strip()[-200:])
+    g = mscool.Game()
+    same_bytes("mscoolman", g.prg)
+    print("    %d bytes of PRG" % len(g.prg))
+    reg = lambda n: g.m.bus.read(ioregs.addr_of(n))   # noqa: E731
+    sym = g.syms
+    mem = g.m.bus.mem
+
+    # the title: mode 2, scrolled four lines, the pink maze's own tile
+    # in the corner, her name in yellow, the sprite engine on bank 15
+    g.m.run_frame(30)
+    check(reg("VID_MODE") == 0x82 and reg("VID_SCY_L") == 4 and reg("VID_PAT_H") == 0x40,
+          "mscoolman: mode 2, VID_SCY 4, patterns at $4000",
+          "MODE %02X SCY %d PAT_H %02X" % (reg("VID_MODE"), reg("VID_SCY_L"), reg("VID_PAT_H")))
+    check(reg("SPR_CTRL") & 0xF1 == 0xF1, "mscoolman: sprites on, palette bank 15",
+          "SPR_CTRL %02X" % reg("SPR_CTRL"))
+    check(g.cell(0, 0) == (mem[sym["v_mz1_map"]], 0), "mscoolman: the corner cell is maze 1's own tile",
+          str(g.cell(0, 0)))
+    check(g.cell(9, 7) == (64 + 22, 2), "mscoolman: the M of the title, yellow, at (9, 7)",
+          str(g.cell(9, 7)))
+
+    # and the same title SYS'd from BASIC, space pressed at the
+    # keyboard: READY! -- the web page's path, interrupts and all
+    import test_basic as B
+    code, bsyms = basic_image()
+    M = B.Machine(code, bsyms, render=True)
+    M.settle()
+    org = g.prg[0] | (g.prg[1] << 8)
+    M.m.bus.mem[org:org + len(g.prg) - 2] = g.prg[2:]
+    M.m.type("SYS %d\r" % org)
+    M.m.run_frame(30)
+    v = M.m.video.vram
+    check((v[9 * 2 + 7 * 128], v[9 * 2 + 7 * 128 + 1]) == (64 + 22, 2),
+          "mscoolman under BASIC: the title is up", str((v[9 * 2 + 7 * 128], v[9 * 2 + 7 * 128 + 1])))
+    M.m.scancode([0x29])
+    M.m.run_frame(2)
+    M.m.scancode([0xF0, 0x29])
+    M.m.run_frame(60)
+    v = M.m.video.vram
+    check((v[11 * 2 + 17 * 128], v[11 * 2 + 17 * 128 + 1]) == (64 + 27, 2),
+          "mscoolman under BASIC: space starts the game, READY! is on",
+          str((v[11 * 2 + 17 * 128], v[11 * 2 + 17 * 128 + 1])))
+    del M
+
+    # And the path a person takes: the real ROM booting the demos disc,
+    # the launcher's DRIVE 11 / SYS "MSCOOLMN.BIN" typed at the
+    # keyboard, and the space bar -- the same bytes the web page and
+    # the window send. Nothing poked, nothing bare. The disc is
+    # `poe demos`' output; its absence is said, not passed over.
+    import cool8rsvm as vm
+    import cool8disk
+    img = os.path.join(H.BUILD, "demos.img")
+    if not os.path.exists(img):
+        print("    SKIPPED the flash boot: %s is not built (poe demos)" % img)
+    elif cool8disk.Volume(cool8disk.Image(img), 11).get("MSCOOLMN.BIN") != bytes(g.prg):
+        # a disc from before this build is not this build: the flash
+        # path once passed a stale game and failed a fresh one, and
+        # neither answer meant anything
+        check(False, "mscoolman from flash: the demos disc holds this build",
+              "MSCOOLMN.BIN on %s differs from the PRG just compiled: poe demos" % img)
+    else:
+        m = vm.boot(flash_path=img, render=True)
+        for _ in range(90):
+            m.run_frame()
+        check(m.settle(bsyms["in_raw.rk0"], bsyms["irhead"], bsyms["irtail"], 80_000_000),
+              "mscoolman from flash: BASIC booted from the demos disc and went idle")
+        H.key(m, bsyms, 'DRIVE 11\r')
+        H.key(m, bsyms, 'SYS "MSCOOLMN.BIN"')
+        m.key(["\r"])
+        up = None
+        for i in range(60):
+            m.run_frame(5)
+            v = m.video.vram
+            if (v[9 * 2 + 7 * 128], v[9 * 2 + 7 * 128 + 1]) == (64 + 22, 2):
+                up = (i + 1) * 5
+                break
+        check(up is not None, "mscoolman from flash: SYS loads the game from drive 11 and the title is up",
+              "PC $%04X after 300 frames" % m.cpu.pc)
+        # the space bar as a tap: make and break in one burst, the way
+        # the window typed a character until D101's day and a fast
+        # finger still can -- KeyHit must catch it
+        m.kbd.feed([0x29, 0xF0, 0x29])
+        m.run_frame(60)
+        v = m.video.vram
+        check((v[11 * 2 + 17 * 128], v[11 * 2 + 17 * 128 + 1]) == (64 + 27, 2),
+              "mscoolman from flash: a tap of the space bar starts the game, READY! is on",
+              str((v[11 * 2 + 17 * 128], v[11 * 2 + 17 * 128 + 1])))
+        m.kbd.feed([0xE0, 0x75])
+        m.run_frame(360)
+        m.kbd.feed([0xE0, 0xF0, 0x75])
+        v = m.video.vram
+        HUDC = 39                      # the score's last digit
+        sc = v[HUDC * 2 + 2 * 128] - 64
+        check(0 <= sc <= 9 and (v[(HUDC - 1) * 2 + 2 * 128] - 64) in range(1, 10),
+              "mscoolman from flash: she has walked and scored; the arrow key reached her",
+              "score cells %s" % [v[(HUDC - k) * 2 + 2 * 128] - 64 for k in range(3)])
+        del m
+    pal = g.m.palette()
+    want = [mem[sym["v_mz1_pal"] + 2 * i] | (mem[sym["v_mz1_pal"] + 2 * i + 1] << 8) for i in range(16)]
+    check(pal[:16] == want, "mscoolman: palette bank 0 is the pink maze's", str(pal[:5]))
+
+    # READY!, then she walks left eating dots
+    g.m.kbd.feed([0x29])
+    g.m.run_frame(2)
+    g.m.kbd.feed([0xF0, 0x29])
+    g.m.run_frame(60)
+    check(g.cell(11, 17) == (64 + 27, 2), "mscoolman: READY! in yellow at (11, 17)", str(g.cell(11, 17)))
+    check(g.word("dots_left") == 224 and g.byte("lives") == 3 and g.word("score") == 0,
+          "mscoolman: 224 dots and pills, three lives, no score",
+          "%d %d %d" % (g.word("dots_left"), g.byte("lives"), g.word("score")))
+    check(g.cell(29, 1) == (64 + 1, 1), "mscoolman: 1UP beside the maze", str(g.cell(29, 1)))
+    v = voices(g.m)
+    check(v[0:2] != b"\x00\x00" and (v[2] & 15) != 0, "mscoolman: the jingle is playing on voice 0",
+          v.hex())
+    g.m.run_frame(200)
+    x0, y0 = g.her()
+    g.poke("want", 1)
+    g.m.run_frame(40)
+    x1, y1 = g.her()
+    n = 224 - g.word("dots_left")
+    check(x1 < x0 and y1 == y0 == 188 and n > 0, "mscoolman: she walks left along row 23 and eats",
+          "(%d,%d) -> (%d,%d), %d dots" % (x0, y0, x1, y1, n))
+    check(g.word("score") == 10 * n, "mscoolman: ten a dot", "%d for %d dots" % (g.word("score"), n))
+    # her start tile has no dot; the first she ate is two to the left
+    ate = (x0 >> 3) - 2
+    check(g.cell(ate, 23) == (sym["c_MZ1_BLANK"], 0) and g.kind()[23 * 28 + ate] == mscool.K_PATH,
+          "mscoolman: an eaten dot is a path and a blank cell", str(g.cell(ate, 23)))
+    states = [s for _, _, s in g.ghosts()]
+    check(states[0] == mscool.G_OUT and states[1] == mscool.G_OUT and states[2] == mscool.G_HOME,
+          "mscoolman: Blinky and Pinky are loose, Inky waits for 30 dots", str(states))
+
+    # the pill at (1, 2): she is put on the dot above it, walks down
+    # onto it -- that dot, then the pill
+    g.pokew("cx", 12)
+    g.pokew("cy", 12)
+    g.poke("cdir", 3)
+    g.poke("want", 3)
+    s0 = g.word("score")
+    g.m.run_frame(14)
+    check(g.word("fright_left") > 300 and g.word("score") == s0 + 60,
+          "mscoolman: the pill: fifty points and six seconds of blue",
+          "fright %d score %d" % (g.word("fright_left"), g.word("score")))
+    states = [s for _, _, s in g.ghosts()]
+    check(states[0] == mscool.G_FRIGHT and states[1] == mscool.G_FRIGHT,
+          "mscoolman: the loose ghosts are frightened", str(states))
+
+    # Blinky, blue, is put just under her on the pill's tile, which
+    # is bare now: eaten, eyes, home, out again. Everything pauses
+    # while the score shows, so no dot is eaten meanwhile.
+    g.pokew("cx", 12, mscool.BLINKY)
+    g.pokew("cy", 26, mscool.BLINKY)
+    g.pokew("cx", 12)
+    g.pokew("cy", 20)
+    s0 = g.word("score")
+    g.m.run_frame(4)
+    check(g.byte("gstate", mscool.BLINKY) == mscool.G_EYES and g.word("score") == s0 + 200,
+          "mscoolman: a blue ghost eaten is 200 and a pair of eyes",
+          "state %d score %d" % (g.byte("gstate", mscool.BLINKY), g.word("score")))
+    for t in range(200):
+        g.m.run_frame(5)
+        if g.byte("gstate", mscool.BLINKY) == mscool.G_ENTER:
+            break
+    bx, by, bs = g.ghosts()[0]
+    check(bs == mscool.G_ENTER and bx == 112, "mscoolman: the eyes find the door", "(%d,%d) state %d" % (bx, by, bs))
+    for t in range(200):
+        g.m.run_frame(5)
+        if g.byte("gstate", mscool.BLINKY) == mscool.G_OUT:
+            break
+    bx, by, bs = g.ghosts()[0]
+    check(bs == mscool.G_OUT and by <= 92, "mscoolman: and Blinky is out again", "(%d,%d) state %d" % (bx, by, bs))
+
+    # a red ghost under her: a life
+    g.pokew("fright_left", 0)
+    for gh in range(1, 5):
+        if g.byte("gstate", gh) == mscool.G_FRIGHT:
+            g.poke("gstate", mscool.G_OUT, gh)
+    g.pokew("cx", g.word("cx"), mscool.PINKY)
+    g.pokew("cy", g.word("cy"), mscool.PINKY)
+    g.poke("gstate", mscool.G_OUT, mscool.PINKY)
+    g.m.run_frame(160)
+    check(g.byte("lives") == 2 and g.byte("died") == 1, "mscoolman: caught: a life gone",
+          "lives %d" % g.byte("lives"))
+    g.m.run_frame(10)
+    check(g.her() == (112, 188) and g.ghosts()[0][:2] == (112, 92),
+          "mscoolman: everyone back at the start", "%s %s" % (g.her(), g.ghosts()[0]))
+    check(g.cell(29, 24) == (112, 15), "mscoolman: one life in hand, her icon beside the maze",
+          str(g.cell(29, 24)))
+
+    # two levels cleared: the pink maze again, then the blue one
+    g.m.run_frame(125)
+    check(g.clear_but_one(), "mscoolman: the last dot eaten, the next level's READY! on")
+    check(g.byte("level") == 2 and g.byte("maze") == 1 and g.word("dots_left") == 224,
+          "mscoolman: level 2 is the pink maze, refilled",
+          "level %d maze %d dots %d" % (g.byte("level"), g.byte("maze"), g.word("dots_left")))
+    check(g.clear_but_one(), "mscoolman: and again")
+    want = [mem[sym["v_mz2_pal"] + 2 * i] | (mem[sym["v_mz2_pal"] + 2 * i + 1] << 8) for i in range(16)]
+    check(g.byte("level") == 3 and g.byte("maze") == 2 and g.word("dots_left") == 244
+          and g.m.palette()[:16] == want and g.cell(0, 0) == (mem[sym["v_mz2_map"]], 0),
+          "mscoolman: level 3 is the blue maze: 244 dots, its palette, its tiles",
+          "level %d maze %d dots %d" % (g.byte("level"), g.byte("maze"), g.word("dots_left")))
+    check(g.cell(29, 27) == (116 + 8, 15), "mscoolman: the orange, level 3's fruit, beside the maze",
+          str(g.cell(29, 27)))
+
+    # the fruit walks in after 70 dots; and the sprite engine's line
+    # budget through 240 frames of play
+    g.m.run_frame(3)
+    g.pokew("dots_left", g.word("dots_start") - 69)
+    over = g.eat(240)
+    fx = g.word("cx", mscool.FRUIT)
+    check(g.word("fruit_left") > 0 and 0 <= fx < 224, "mscoolman: the fruit came in and is walking the maze",
+          "fruit_left %d x %d" % (g.word("fruit_left"), fx))
+    # how many depends on where the four loose ghosts happen to be --
+    # 32 to 165 of 240 seen -- so the number is reported, not gated
+    print("    %d of 240 frames overran the sprite engine's line budget" % over)
+    check(over < 240, "mscoolman: the engine is not overrun on every frame", "%d of 240" % over)
+    check(0x100 < g.m.cpu.sp <= 0x200, "mscoolman: the stack is where it should be",
+          "SP $%04X" % g.m.cpu.sp)
+    print()
+
+
 def test_refusals():
     print("  what the compiler refuses, and how it says so")
     cases = [
@@ -973,6 +1316,9 @@ def main():
     test_rainbow()
     test_cobra()
     test_ports()
+    test_keys()
+    test_keytest()
+    test_mscoolman()
     test_refusals()
     return H.report()
 

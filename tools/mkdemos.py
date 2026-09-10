@@ -82,6 +82,8 @@ def discname(f):
         return "COOLTRS1"
     if name == "COOLTRIS2":
         return "COOLTRS2"
+    if name == "MSCOOLMAN":
+        return "MSCOOLMN"
     return name[:8]
 
 
@@ -247,7 +249,14 @@ def main():
     vol11 = disk.Volume(im, disk.ACTION_VOL)
     for f in actions():
         nm = discname(f)
-        prg, _ = H.build_act(H.ACT_LIB + [os.path.join(DEMOS, f)], "disc_" + nm.lower())
+        srcs = H.act_sources(os.path.join("demos", f))
+        if srcs is None:
+            # a program whose parts are private and not on this machine
+            # (Ms. Cool-Man's ripped art): the manifest says which
+            print("  %s: a part named in demos/%s.parts is not here, so it is not on the disc"
+                  % (f, os.path.splitext(f)[0]))
+            continue
+        prg, _ = H.build_act(srcs, "disc_" + nm.lower())
         p = os.path.join(H.BUILD, nm + ".BIN")
         with open(p, "wb") as fh:
             fh.write(prg)

@@ -1004,12 +1004,13 @@ Classic arcade Tetris re-engineered for **Mode 2 (40×30 Tile Mode, 320×240 dou
 - **Audio & Timing**:
   - Crisp noise-free multi-voice square wave sound effects (`noise = 0`), anti-hover hardware timer synchronization (`TIMER`), pause (`P`), game over restart (`N`), and clean exit (`Q`).
 
-### The CoolAction menu — nine of the demos, compiled
+### The CoolAction menu — nine of the demos, compiled, and a game
 
 The same demos in CoolAction! ([15-action.md](15-action.md)), on
 drive 11 as bare `.BIN`s: RAINBOW, COBRA, TRIANGLES, MAZE, PLASMA,
 WAVE, MANDEL, SYNTH and INTRO, each a `demos/name.act` beside its
-`demos/name.bas`. **The picture is the contract, not the code.** A port
+`demos/name.bas` -- and MSCOOLMN, which has no BASIC and is the next
+section. **The picture is the contract, not the code.** A port
 may do the work any way the language allows -- and mostly does it the
 BASIC's way, because the BASIC's way was measured -- but
 `sim/test_action.py` runs every pair to the same point and requires
@@ -1093,6 +1094,130 @@ that write the same pitch in the same frame write it at different
 clocks. The gate compares pitch, volume and the mode bits, which is
 what the program wrote.
 
+### `KEYTEST` — what the keyboard sends
+
+`demos/keytest.act`: every byte the PS/2 FIFO delivers, on the screen
+as hex as it arrives and echoed to the serial port -- the raw Set 2
+stream, a make code, `$F0` then the code for a release, `$E0` before
+an extended key -- and under it what the library makes of the same
+bytes: the keys `KeyHeld` says are down and the last one `KeyHit`
+saw. Esc twice quits. Written the day the space bar did nothing in
+Ms. Cool-Man ([D101](01-decisions.md#d101--a-program-that-reads-the-keyboard-owns-it)):
+the window typed a character as make-then-break in one burst, and
+this shows that in one line, where a real press is a make, a pause,
+then the break. The program to run first when a keyboard, a front end
+or a board is in doubt; the serial log is the record.
+
+### `MSCOOLMN` — Ms. Cool-Man: the arcade's first two mazes, in mode 2
+
+`demos/mscoolman.act`, 39 KB of PRG, the whole of Ms. Pac-Man's first
+mazes with the arcade's rules: the pink maze for levels 1 and 2, the
+light blue one from level 3, the four ghosts with their own targets,
+the pills, the fruit, the house, the tunnels, the score beside the
+maze. A hobby port for the machine's owner; **its art is the arcade's
+own pixels and is not in the repository.** `tools/mkmscool.py` rips
+the two mazes, her nine frames, the ghosts', the fruit and the font
+from sheet images in `assets/misscool/`, which `.gitignore` excludes,
+and writes `assets/misscool/mscoolman_art.act` beside them;
+`demos/mscoolman.parts` names that file as the part the game compiles
+behind, and `sim/harness.py`'s `act_sources()` reads the manifest.
+Without the part, `poe demos` leaves the game off the disc and says
+so, and the gate skips, loudly. The game logic, the generator and the
+manifest are committed; the sheets and the generated art never are.
+
+**Mode 2, because the arcade board is a tile map with sprites.** The
+maze is 28 × 31 tiles of 8 × 8 in the map at VRAM 0, a dot is a tile
+and eating one is one map write; the screen holds 30 rows, so
+`VID_SCY` is 4 and the generator rolls the outer walls four pixel
+rows into the visible halves of their tiles -- the top wall shows in
+lines 0-3, the bottom in 236-239, all 31 rows on 240 lines. The score,
+high score, level, lives and level fruit sit beside the maze in
+columns 28-39, where the arcade's 224-wide picture leaves 96 pixels
+of a 320-wide screen: the arcade's HUD rows above and below the maze
+are what the height does not allow, and the side is where it goes.
+The font is the arcade's, the maze tiles and palette are the sheet's
+(33 tiles for the pink maze, 35 for the blue, five colours each), the
+lives and the fruit beside the maze are her sprite and the fruit
+sprites undoubled into tiles.
+
+**A character is four hardware sprites.** Sixteen logical pixels over
+a doubled mode is 32 raster lines, and a sprite is 16 × 16 raster, so
+each of her, the four ghosts and the fruit is a 2 × 2 block -- 24 of
+the 32 descriptors, all from palette bank 15, the one bank the engine
+gives sprites (`SPR_CTRL[7:4]`). Her left-facing frames are the
+right-facing ones H-flipped with the quadrants swapped; the ghosts'
+eight frames are stored once with the body as colour index 1 and
+written to VRAM four times at load with index 1 replaced by each
+ghost's colour -- 16 KB of VRAM for 2 KB of program. The engine draws
+eight sprites a line and trails every sprite two lines to clear its
+span ([04-system.md §5.6](04-system.md)), so the seam between a
+character's halves, where its top sprites' trailing lines meet its
+bottom sprites' first, is where three characters abreast at exactly
+one height cost more than a line has and the lowest-numbered loses
+a line. The five movers therefore take the low descriptor numbers in
+turn, a frame each, so a loss flickers between them instead of
+sticking to one; Inky and Sue bob out of step with Pinky in the
+house. Measured with `sim/mscool.py`'s autopilot eating its way round
+the pink maze with `SPR_CTRL`'s overrun flag cleared every frame:
+32 of 390 frames overran before a death, 75 before the rotation;
+at level 3 with all four ghosts loose the gate's 240-frame stretch
+has measured anywhere from 68 to 165, depending on where they are --
+the count is printed, not gated, because a ghost train in a corridor
+is the game and not a fault.
+
+**The rules are the Pac-Man Dossier's**, which Ms. Pac-Man keeps:
+speeds as sixteenths of a pixel a frame from the percentages of
+1.25 px (her 80 %, ghosts 75 %, frightened 90 and 50, the tunnel 40,
+by level band), the scatter/chase timetable (7, 20, 7, 20, 5, 20, 5
+seconds at level 1, the sixth chase endless from level 2), Blinky at
+her tile, Pinky four tiles ahead with the upward overflow (four left
+as well), Inky's vector doubled from Blinky, Sue's eight-tile coward
+radius, up-left-down-right on a tie, no reversing except when the
+mode flips, the house counters (Inky at 30 dots, Sue at 60 more;
+after a death 7, 17, 32; four seconds without a dot lets the next
+out), Cruise Elroy at 20 and 10 dots, the fright lengths by level
+with the flashing, 200-400-800-1600 for the ghosts on one pill, a
+frame of freeze a dot and three for a pill, the eaten ghost's eyes
+home through the door and out again. Ms. Pac-Man's own: the ghosts
+wander at random through the first two scatters so no pattern works
+twice, and the fruit walks in through a tunnel after 70 dots and
+again after 170, wanders, and leaves by a tunnel -- cherry,
+strawberry, orange, pretzel, apple, pear, banana by level, 100 to
+5,000. The opening jingle plays under READY! at a game's start, as
+the arcade's does: melody and bass on two voices from the VGMusic
+transcription of the level intro (mspacman.mid, Oedipus, 106 bpm),
+its pitches as the engine's 0.5 Hz steps and its lengths in frames.
+Not there: the intermissions and their tunes, the ghosts' score sprites (the
+number appears in the score only), a second player, and the third
+and fourth mazes, whose tiles the generator could cut from the same
+sheet.
+
+**The gate** (`sim/test_action.py`, on `sim/mscool.py`) runs the game
+three ways: on the bare machine for the rules; `SYS`'d from a booted
+BASIC with its interrupt handler running; and booted from the demos
+disc by the real ROM, the launcher's `DRIVE 11` and `SYS "MSCOOLMN.BIN"`
+typed at the keyboard, the space bar as a make-and-break burst, an
+arrow key held -- the path a person takes, and the one that found
+[D101](01-decisions.md#d101--a-program-that-reads-the-keyboard-owns-it)
+twice. On the bare machine: the art file is what the generator writes; the compiled bytes agree with
+`tools/cool8asm.py`'s; the title frame is mode 2 scrolled four lines
+with the pink maze's own tile in the corner and her name in yellow;
+READY!; 224 dots, three lives; she walks left along row 23 and each
+dot is ten and a blank cell; Blinky and Pinky loose, Inky waiting;
+the pill is fifty and six seconds of blue and the loose ghosts turn;
+a blue ghost eaten is 200, eyes, the door, the house, out again; a
+red one is a life and everyone back at the start with one icon fewer
+beside the maze; the level cleared is the pink maze again, and again
+is the blue one with 244 dots, its palette, its tiles and the orange
+beside it; the fruit walks in after 70 dots; and the sprite engine's
+overrun flag over 240 frames of play. An autopilot in `sim/mscool.py`
+pokes her wanted direction each frame along a shortest path, and the
+same file run by hand writes the frames as PNG: `python sim/mscool.py
+pill` (or `title`, `death`, `clear`, `fruit`) -- which is how every
+picture above was checked, and how the two bugs of the first frame
+were found: every cell in row 0 because `row << 7` on a `BYTE` is a
+byte, and the fruit one column off the sheet.
+
 ### `HHGG`, `ZORK1`, `PLANET`, `LGOP` — Infocom Text Adventure Suite (Native Z3 Interpreter)
 
 Infocom's celebrated interactive fiction text adventure games, running natively on COOL8's pure assembly Z-Machine Version 3 (Z3) interpreter on Drive 13 (`DEMOS`) and Drive 14 (`ADVENTUR`):
@@ -1141,7 +1266,11 @@ A complete, native port of the UCSD Pascal p-System II.0 virtual machine (P-Mach
 behind the library and places `NAME.BIN` on drive 11 — nothing else to
 do. Its gate is in `sim/test_action.py`, not here: a port of a BASIC
 demo is held to the BASIC one's framebuffer, and a new one to whatever
-it claims. A stub is not wanted and not listed.
+it claims. A stub is not wanted and not listed. Data the repository
+must not hold -- Ms. Cool-Man's ripped art -- goes in a file a
+`demos/name.parts` manifest names (one path a line, `#` comments),
+compiled between the library and the program; a missing part leaves
+the program off the disc with a message rather than a compile error.
 
 **A Software one** — a machine-code system — is a `.BIN` on drive 14
 and a `demos/name.bas` stub that sets `DRIVE 14` and `SYS`es it; add

@@ -58,3 +58,6 @@ web/*.json
 
 # `pip install -e .` leaves this behind.
 *.egg-info/
+
+# Miss Coolman: ripped reference art, private -- never committed
+assets/misscool/

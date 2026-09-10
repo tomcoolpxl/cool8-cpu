@@ -1,0 +1,104 @@
+; KEYTEST -- what the keyboard sends, as the program sees it.
+;
+; Every byte the PS/2 FIFO delivers is written on the screen as it
+; arrives -- the raw Set 2 stream: a make code, $F0 then the code for a
+; release, $E0 before an extended key -- and echoed to the serial port
+; as hex, so a press in the window, on the board or in the browser
+; leaves a record to read. Below the stream, what the library makes of
+; it: the keys KeyHeld says are down right now, and the last key
+; KeyHit saw. Space, P, Esc and the cursor keys are the ones a game
+; steers by; Esc twice quits.
+;
+; Written the day the space bar did nothing in Ms. Cool-Man: the
+; window typed a character as make-then-break in one burst, which a
+; program polling once a frame never saw as held. This shows that in
+; one line: a real press is a make, a pause, then $F0 and the code.
+
+BYTE ARRAY hexd = "0123456789ABCDEF"
+BYTE ARRAY cell(4)                   ; a length byte, two hex digits and a space
+BYTE col, row
+BYTE esc                             ; Esc presses so far
+
+PROC Hex(BYTE b)
+  cell(0) = 3
+  cell(1) = hexd(1 + (b >> 4))
+  cell(2) = hexd(1 + (b & 15))
+  cell(3) = 32
+RETURN
+
+; a byte of the stream: on the screen, wrapping through rows 2-19,
+; and down the serial port
+PROC Show(BYTE b)
+  Hex(b)
+  TextAt(col, row, cell, $0F)
+  PutChar(cell(1))
+  PutChar(cell(2))
+  PutChar(32)
+  col += 3
+  IF col >= 78 THEN
+    col = 0
+    row += 1
+    IF row > 19 THEN row = 2 FI
+    PutChar(13)
+    PutChar(10)
+    TextAt(0, row, "                                                                                ", $0F)
+  FI
+RETURN
+
+; the held keys the game cares about, and the last hit
+PROC Status()
+  BYTE i
+  TextAt(0, 22, "HELD:", $0E)
+  TextAt(6, 22, "UP   ", $0E)
+  IF KeyHeld($F5) THEN TextAt(6, 22, "UP   ", $F0) FI
+  TextAt(12, 22, "DOWN ", $0E)
+  IF KeyHeld($F2) THEN TextAt(12, 22, "DOWN ", $F0) FI
+  TextAt(18, 22, "LEFT ", $0E)
+  IF KeyHeld($EB) THEN TextAt(18, 22, "LEFT ", $F0) FI
+  TextAt(24, 22, "RIGHT", $0E)
+  IF KeyHeld($F4) THEN TextAt(24, 22, "RIGHT", $F0) FI
+  TextAt(30, 22, "SPACE", $0E)
+  IF KeyHeld($29) THEN TextAt(30, 22, "SPACE", $F0) FI
+  TextAt(36, 22, "P", $0E)
+  IF KeyHeld($4D) THEN TextAt(36, 22, "P", $F0) FI
+  TextAt(38, 22, "ESC", $0E)
+  IF KeyHeld($76) THEN TextAt(38, 22, "ESC", $F0) FI
+  IF KeyHit($29) THEN TextAt(0, 24, "HIT: SPACE ", $0A) FI
+  IF KeyHit($4D) THEN TextAt(0, 24, "HIT: P     ", $0A) FI
+  IF KeyHit($F5) THEN TextAt(0, 24, "HIT: UP    ", $0A) FI
+  IF KeyHit($F2) THEN TextAt(0, 24, "HIT: DOWN  ", $0A) FI
+  IF KeyHit($EB) THEN TextAt(0, 24, "HIT: LEFT  ", $0A) FI
+  IF KeyHit($F4) THEN TextAt(0, 24, "HIT: RIGHT ", $0A) FI
+  IF KeyHit($76) THEN
+    TextAt(0, 24, "HIT: ESC   ", $0A)
+    esc += 1
+  FI
+RETURN
+
+PROC Main()
+  BYTE c
+  Graphics(0)
+  Cursor(0)
+  TakeKeys()                         ; the FIFO is ours, not the interrupt's
+  TextFill(32, $0F)
+  TextAt(0, 0, "KEYTEST: THE PS/2 STREAM, RAW. PRESS KEYS. ESC TWICE QUITS.", $0E)
+  PrintE("KEYTEST: scancodes as they arrive")
+  col = 0
+  row = 2
+  esc = 0
+  DO
+    WaitVBlank()
+    ; the stream first, byte by byte, then what the library made of it
+    ; -- KeyPoll reads the same FIFO, so the bytes are shown here and
+    ; then handed to it through the library's own reading
+    WHILE KBD_STAT & 1 DO
+      c = KBD_DATA
+      Show(c)
+      KeyFeed(c)
+    OD
+    Status()
+  UNTIL esc >= 2 OD
+  PrintE("")
+  PrintE("KEYTEST: done")
+  Cursor(1)
+RETURN

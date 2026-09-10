@@ -27,7 +27,15 @@
 // `text`, the default: printable characters arrive as SDL text input —
 // the user's layout applies, so a Belgian keyboard's quote is a quote —
 // and are typed through the machine's own keymap, derived from
-// sw/keymap.asm by the launcher. The keys that produce no character
+// sw/keymap.asm by the launcher. **A typed character is still a key
+// press**: its make code goes out when the text arrives (paired with
+// the key-down that produced it), its break when that key comes up,
+// and a held key re-sends the make as PS/2 typematic does. It used to
+// go out as make-then-break in one burst, which a program that polls
+// the keyboard once a frame -- every game -- never saw as held: the
+// space bar did nothing in Ms. Cool-Man and the arrows, physical,
+// worked. Pasted text has no key-down to pair with, so its break
+// follows its make a frame later. The keys that produce no character
 // (cursors, Home and friends, the F-keys, the modifiers, and
 // Return/Backspace/Tab/Escape, kept physical so they cannot depend on
 // what a platform calls a character) go as physical Set 2 make/break,
@@ -447,6 +455,14 @@ pub fn run(args: &Args) {
 
     let mut events = sdl.event_pump().unwrap_or_else(|e| die(e));
     let mut typed: VecDeque<u8> = VecDeque::new();
+    // A character key that went down and has not yet produced its
+    // text, and the character keys down right now with the machine
+    // codes their text was typed as -- so the break can be sent when
+    // the key comes up, whatever character it made.
+    let mut char_down: Option<(Scancode, bool)> = None;
+    let mut char_held: HashMap<Scancode, (u8, bool)> = HashMap::new();
+    // The break for a pasted character, a frame after its make.
+    let mut typed_break: Vec<u8> = Vec::new();
     let mut wav: Vec<u8> = Vec::new();
     let mut rgb = vec![0u8; H_VIS * V_VIS * 3];
     let mut shot = 0;
@@ -530,7 +546,11 @@ pub fn run(args: &Args) {
                         }
                         (_, Some(sc)) => {
                             if keys_mode != "raw" && is_char_key(sc) {
-                                continue; // arrives as text input
+                                // arrives as text input; remember
+                                // which key, so the text can be a
+                                // press of it
+                                char_down = Some((sc, repeat));
+                                continue;
                             }
                             if let Some((code, ext)) = set2(sc) {
                                 // SDL's own key repeat: a held key
@@ -546,6 +566,18 @@ pub fn run(args: &Args) {
                 Event::KeyUp { scancode: Some(sc), .. } => {
                     if ui_keys { continue; }
                     if keys_mode != "raw" && is_char_key(sc) {
+                        // the character's key comes up: its break,
+                        // and the shift's if the text needed one
+                        if let Some((code, shifted)) = char_held.remove(&sc) {
+                            let mut b = vec![0xF0, code];
+                            if shifted {
+                                b.extend([0xF0, 0x12]);
+                            }
+                            m.bus.kbd.feed(&b);
+                        }
+                        if char_down.map(|(d, _)| d) == Some(sc) {
+                            char_down = None;
+                        }
                         continue;
                     }
                     // The keys this front end keeps for itself never
@@ -564,9 +596,33 @@ pub fn run(args: &Args) {
                 Event::TextInput { text, .. } => {
                     if ui_keys { continue; }
                     for c in text.chars() {
-                        if (c as u32) < 0x100 {
-                            typed.push_back(c as u32 as u8);
+                        if (c as u32) >= 0x100 {
+                            continue;
                         }
+                        let ch = c as u32 as u8;
+                        // text from a key that is down: a press of
+                        // that key, held until it comes up
+                        if let Some((sc, repeat)) = char_down.take() {
+                            if keys_mode == "both" {
+                                m.bus.uart.feed(&[ch]);
+                            }
+                            if let Some(&(code, shifted)) = keymap.get(&ch) {
+                                if repeat && char_held.contains_key(&sc) {
+                                    // typematic: the make again, no break
+                                    m.bus.kbd.feed(&[code]);
+                                } else {
+                                    let mut b = Vec::new();
+                                    if shifted {
+                                        b.push(0x12);
+                                    }
+                                    b.push(code);
+                                    m.bus.kbd.feed(&b);
+                                    char_held.insert(sc, (code, shifted));
+                                }
+                            }
+                            continue;
+                        }
+                        typed.push_back(ch);
                     }
                 }
 
@@ -588,10 +644,15 @@ pub fn run(args: &Args) {
             }
         }
 
-        // Typed and pasted characters share one queue, fed a character
-        // a frame through the machine's keymap so the 16-byte PS/2
-        // FIFO cannot overrun.
-        if m.bus.kbd.q.len() < 8 {
+        // Pasted characters (and text with no key-down to pair with)
+        // are fed a character a frame through the machine's keymap so
+        // the 16-byte PS/2 FIFO cannot overrun: the make this frame,
+        // the break the next, so that a program polling once a frame
+        // sees the key down.
+        if !typed_break.is_empty() {
+            m.bus.kbd.feed(&typed_break);
+            typed_break.clear();
+        } else if m.bus.kbd.q.len() < 8 {
             if let Some(ch) = typed.pop_front() {
                 if keys_mode == "both" {
                     m.bus.uart.feed(&[ch]);
@@ -601,11 +662,12 @@ pub fn run(args: &Args) {
                     if shifted {
                         b.push(0x12);
                     }
-                    b.extend([code, 0xF0, code]);
-                    if shifted {
-                        b.extend([0xF0, 0x12]);
-                    }
+                    b.push(code);
                     m.bus.kbd.feed(&b);
+                    typed_break = vec![0xF0, code];
+                    if shifted {
+                        typed_break.extend([0xF0, 0x12]);
+                    }
                 }
             }
         }
