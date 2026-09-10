@@ -45,8 +45,11 @@ CONST T_FONT = 64                    ; the 41 glyphs, in fontmap's order
 CONST T_SPACE = 104                  ; T_FONT + 40
 CONST T_LIFE = 112                   ; her, as four tiles
 CONST T_FRUIT = 116                  ; seven fruits, four tiles each
+CONST T_CLAP = 144                   ; the acts' clapperboard: three of 16 tiles
+CONST T_ACT = 192                    ; the act digits 1 2 3
+CONST T_SCORE = 195                  ; 200 400 800 1600, two tiles each
 CONST PAT_BASE = $4000
-CONST SPR_BASE = $8000               ; 512 bytes a frame
+CONST SPR_BASE = $6000               ; 512 bytes a frame, 69 of them
 
 ; VRAM frame slots: hers, each ghost's recoloured, then the rest
 CONST S_MSPAC = 0                    ; 9 frames: right 0-2, down 3-5, up 6-8
@@ -55,6 +58,11 @@ CONST S_FRIGHT = 41                  ; 2 blue, 2 flashing, 4 eyes, 7 fruit
 CONST S_FLASH = 43
 CONST S_EYES = 45
 CONST S_FRUITS = 49
+CONST S_PAC = 56                     ; Pac-Man: right 0-2, up 3-5 (left and down are flips)
+CONST S_HEART = 62
+CONST S_STORK = 63                   ; two frames, left and right halves
+CONST S_BUNDLE = 67
+CONST S_JUNIOR = 68
 
 ; palette banks
 CONST B_MAZE = 0
@@ -86,6 +94,9 @@ CONST C_PINKY = 2
 CONST C_INKY = 3
 CONST C_SUE = 4
 CONST C_FRUIT = 5
+CONST C_PAC = 5                      ; in the acts: Pac-Man has the fruit's sprites
+CONST C_X6 = 6                       ; the heart, the stork's left half, the bundle
+CONST C_X7 = 7                       ; the stork's right half, Junior
 
 ; ghost states
 CONST G_HOME = 0                     ; in the house, bobbing
@@ -149,6 +160,20 @@ BYTE waka_phase, waka_left, siren_phase, fx_left
 BYTE rot                             ; which mover has sprites 0-3 this frame
 BYTE quit                            ; Esc on the title
 
+; the maze in play: its palette, and its shape's tiles and map (mazes
+; 5 and 6 are 3 and 4 in other colours)
+BYTE POINTER mz_tiles, mz_map
+CARD POINTER mz_pal
+BYTE mz_blank, mz_dot, mz_pill, mz_door, mz_out, mz_ntiles
+
+; the ghost's score, as two tiles where it was eaten, for the pause
+BYTE score_c, score_r, score_on
+
+; the tune playing, a frame at a time: melody on voice 0, bass on 1
+CARD POINTER tn_mi, tn_bi
+BYTE POINTER tn_ml, tn_bl
+BYTE tn_nm, tn_nb, tn_im, tn_ib, tn_tm, tn_tb, tune_on
+
 ; each ghost's scatter corner
 INT ARRAY scat_x(6) = [0 25 2 27 0 0]
 INT ARRAY scat_y(6) = [0 0 0 30 30 0]
@@ -186,6 +211,23 @@ CARD ARRAY jm_inc(24) = [1109 1245 1397 1480 1865 1661 1976 1865 1976 2217 1865 
 BYTE ARRAY jm_len(24) = [4 4 8 16 16 16 16 8 8 8 8 16 16 8 8 8 8 8 8 8 8 16 16 16]
 CARD ARRAY jb_inc(19) = [0 185 139 185 208 233 247 208 233 208 185 233 208 185 175 208 185 175 185]
 BYTE ARRAY jb_len(19) = [16 32 32 32 8 8 8 8 8 8 8 8 8 8 8 8 16 16 16]
+
+; Act 1, "They Meet": the VGMusic transcription (mspacman2.mid,
+; Oedipus), three ticks a frame -- 496 frames, eight and a quarter
+; seconds. The tunes of "The Chase" and "Junior" have no transcription
+; to be found, and are not made up: those acts play to their sounds.
+CARD ARRAY a1m_inc(46) = [1319 1480 1319 1109 831 988 1047 1109 988 1109 988 831 1319 1480 1319 1109 831 988 831 1661 1976 2093 1976 2217 1976 2217 1976 1661 1480 1319 1480 1319 1480 1661 1480 1319 1109 988 1109 988 831 988 831 740 659 554]
+BYTE ARRAY a1m_len(46) = [8 8 8 16 8 8 8 32 8 8 8 8 8 8 8 16 8 16 40 8 8 8 4 12 4 12 8 8 8 8 8 8 8 16 8 8 8 8 8 8 8 8 8 8 8 48]
+CARD ARRAY a1b_inc(39) = [0 139 0 139 139 0 139 0 139 139 0 139 0 139 139 0 104 0 104 104 0 139 123 110 104 139 0 165 0 185 0 208 0 247 208 185 165 139 0]
+BYTE ARRAY a1b_len(39) = [8 8 8 8 8 32 8 8 8 8 32 8 8 8 8 32 8 8 8 8 24 32 32 32 32 8 8 8 8 8 8 8 8 8 8 8 8 8 8]
+
+; Act 1's ghosts bumping heads, the reference's own offsets, 2 for -1
+BYTE ARRAY ibx(25) = [1 0 1 0 0 1 0 1 0 1 0 0 1 0 1 0 1 0 0 1 0 1 0 1 0]
+BYTE ARRAY iby(25) = [2 0 2 0 0 0 0 0 1 0 1 0 0 0 2 0 2 0 0 0 0 0 1 0 1]
+BYTE ARRAY pbx(30) = [0 0 0 0 2 0 2 0 0 2 0 2 0 2 0 0 2 0 2 0 2 0 0 2 0 2 0 2 0 0]
+BYTE ARRAY pby(30) = [0 0 0 2 0 2 0 0 0 0 0 1 0 1 0 0 0 2 0 2 0 0 0 0 0 1 0 1 0 0]
+BYTE ARRAY rampx(7) = [0 1 1 1 1 0 0]
+BYTE ARRAY rampy(7) = [0 0 2 2 2 0 0]
 
 ; ------------------------------------------------------------- the screen
 
@@ -297,13 +339,13 @@ PROC LoadSprites()
       i += 1
     OD
   OD
-  VWrite(SPR_BASE + (S_FRIGHT << 9), spr + (17 * 512), 15 * 512)
+  VWrite(SPR_BASE + (S_FRIGHT << 9), spr + (17 * 512), 28 * 512)
 RETURN
 
 ; the first of a character's four sprites: the fruit's are 20-23, the
 ; movers' turn round the other twenty
 FUNC BYTE Slot(BYTE c)
-  IF c == C_FRUIT THEN RETURN (20) FI
+  IF c >= 5 THEN RETURN (c << 2) FI    ; the fruit's, and the acts' extras
   c += rot
   IF c >= 5 THEN c -= 5 FI
 RETURN (c << 2)
@@ -369,45 +411,126 @@ RETURN (1)
 FUNC BYTE Tunnel(INT ty)
 RETURN (KindAt(0, ty) == K_PATH)
 
+; SelectMaze(n) -- the maze's palette, and its shape's tiles and map
+PROC SelectMaze(BYTE n)
+  BYTE shape
+  IF n == 1 THEN mz_pal = mz1_pal
+  ELSEIF n == 2 THEN mz_pal = mz2_pal
+  ELSEIF n == 3 THEN mz_pal = mz3_pal
+  ELSEIF n == 4 THEN mz_pal = mz4_pal
+  ELSEIF n == 5 THEN mz_pal = mz5_pal
+  ELSE mz_pal = mz6_pal FI
+  shape = n
+  IF n == 5 THEN shape = MZ5_SHAPE FI
+  IF n == 6 THEN shape = MZ6_SHAPE FI
+  IF shape == 1 THEN
+    mz_tiles = mz1_tiles
+    mz_map = mz1_map
+    mz_blank = MZ1_BLANK
+    mz_dot = MZ1_DOT
+    mz_pill = MZ1_PILL
+    mz_door = MZ1_DOOR
+    mz_out = MZ1_OUT
+    mz_ntiles = MZ1_NTILES
+  ELSEIF shape == 2 THEN
+    mz_tiles = mz2_tiles
+    mz_map = mz2_map
+    mz_blank = MZ2_BLANK
+    mz_dot = MZ2_DOT
+    mz_pill = MZ2_PILL
+    mz_door = MZ2_DOOR
+    mz_out = MZ2_OUT
+    mz_ntiles = MZ2_NTILES
+  ELSEIF shape == 3 THEN
+    mz_tiles = mz3_tiles
+    mz_map = mz3_map
+    mz_blank = MZ3_BLANK
+    mz_dot = MZ3_DOT
+    mz_pill = MZ3_PILL
+    mz_door = MZ3_DOOR
+    mz_out = MZ3_OUT
+    mz_ntiles = MZ3_NTILES
+  ELSE
+    mz_tiles = mz4_tiles
+    mz_map = mz4_map
+    mz_blank = MZ4_BLANK
+    mz_dot = MZ4_DOT
+    mz_pill = MZ4_PILL
+    mz_door = MZ4_DOOR
+    mz_out = MZ4_OUT
+    mz_ntiles = MZ4_NTILES
+  FI
+RETURN
+
+; a cell as it is now: the map's tile, a dot or pill only while its
+; kind says so, blank once eaten
+PROC RedrawCell(BYTE c, BYTE r)
+  BYTE t, k
+  CARD i
+  BYTE POINTER q
+  i = r * 28 + c
+  q = mz_map + i
+  t = *q
+  k = kind(i)
+  IF t == mz_dot OR t == mz_pill THEN
+    IF k == K_DOT THEN t = mz_dot
+    ELSEIF k == K_PILL THEN t = mz_pill
+    ELSE t = mz_blank FI
+  FI
+  Cell(c, r, t, B_MAZE)
+RETURN
+
+; the whole maze, a row at a time through the auto-stepping port
 PROC DrawMaze()
   BYTE r, c, t, k
   CARD i
+  BYTE POINTER q
+  q = mz_map
   i = 0
   FOR r = 0 TO 30 DO
+    VRAM_ADDR = r * 128
+    VRAM_STEP = 1
     FOR c = 0 TO 27 DO
-      k = kind(i)
-      IF maze == 1 THEN
-        t = mz1_map(i)
-        IF t == MZ1_DOT OR t == MZ1_PILL THEN t = MZ1_BLANK FI
-        IF k == K_DOT THEN t = MZ1_DOT FI
-        IF k == K_PILL THEN t = MZ1_PILL FI
-      ELSE
-        t = mz2_map(i)
-        IF t == MZ2_DOT OR t == MZ2_PILL THEN t = MZ2_BLANK FI
-        IF k == K_DOT THEN t = MZ2_DOT FI
-        IF k == K_PILL THEN t = MZ2_PILL FI
+      t = *q
+      q += 1
+      IF t == mz_dot OR t == mz_pill THEN
+        k = kind(i)
+        IF k == K_DOT THEN t = mz_dot
+        ELSEIF k == K_PILL THEN t = mz_pill
+        ELSE t = mz_blank FI
       FI
-      Cell(c, r, t, B_MAZE)
+      VRAM_DATA = t
+      VRAM_DATA = B_MAZE
       i += 1
     OD
   OD
 RETURN
 
-; the maze and its palette, dots restored, for a new level
+; the maze and its palette, dots restored, for a new level; a cell's
+; kind follows from its tile
 PROC LoadMaze()
   CARD i
-  IF maze == 1 THEN
-    LoadTiles(mz1_tiles, 0, MZ1_NTILES)
-    SetPalette(mz1_pal, 0, 16)
-  ELSE
-    LoadTiles(mz2_tiles, 0, MZ2_NTILES)
-    SetPalette(mz2_pal, 0, 16)
-  FI
+  BYTE t, k
+  BYTE POINTER q
+  SelectMaze(maze)
+  LoadTiles(mz_tiles, 0, mz_ntiles)
+  SetPalette(mz_pal, 0, 16)
   dots_left = 0
+  q = mz_map
   i = 0
   WHILE i < 868 DO
-    IF maze == 1 THEN kind(i) = mz1_kind(i) ELSE kind(i) = mz2_kind(i) FI
-    IF kind(i) == K_DOT OR kind(i) == K_PILL THEN dots_left += 1 FI
+    t = *q
+    q += 1
+    IF t == mz_dot THEN
+      k = K_DOT
+      dots_left += 1
+    ELSEIF t == mz_pill THEN
+      k = K_PILL
+      dots_left += 1
+    ELSEIF t == mz_door THEN k = K_DOOR
+    ELSEIF t == mz_blank THEN k = K_PATH
+    ELSE k = K_WALL FI
+    kind(i) = k
     i += 1
   OD
   dots_start = dots_left
@@ -426,7 +549,7 @@ PROC BareMaze()
 RETURN
 
 PROC BlankCell(BYTE c, BYTE r)
-  IF maze == 1 THEN Cell(c, r, MZ1_BLANK, B_MAZE) ELSE Cell(c, r, MZ2_BLANK, B_MAZE) FI
+  Cell(c, r, mz_blank, B_MAZE)
 RETURN
 
 ; the four pills wink: on for 16 frames, off for 16
@@ -441,10 +564,8 @@ PROC Pills()
       IF kind(i) == K_PILL THEN
         IF pill_phase & 16 THEN
           BlankCell(c, r)
-        ELSEIF maze == 1 THEN
-          Cell(c, r, MZ1_PILL, B_MAZE)
         ELSE
-          Cell(c, r, MZ2_PILL, B_MAZE)
+          Cell(c, r, mz_pill, B_MAZE)
         FI
       FI
       i += 1
@@ -1051,34 +1172,66 @@ PROC Quiet()
   FOR v = 0 TO 7 DO Silence(v) OD
 RETURN
 
-; the jingle: melody on voice 0, bass on voice 1, each note released
-; on its last frame so a repeated pitch is heard twice
+; a tune, a frame at a time: TuneStart names the tables, TuneStep is
+; called once a frame and plays them -- melody on voice 0, bass on
+; voice 1, each note released on its last frame so a repeated pitch is
+; heard twice -- and tune_on falls when both have ended
+PROC TuneStart(CARD POINTER mi, BYTE POINTER ml, BYTE nm, CARD POINTER bi, BYTE POINTER bl, BYTE nb)
+  tn_mi = mi
+  tn_ml = ml
+  tn_nm = nm
+  tn_bi = bi
+  tn_bl = bl
+  tn_nb = nb
+  tn_im = 0
+  tn_ib = 0
+  tn_tm = 0
+  tn_tb = 0
+  tune_on = 1
+RETURN
+
+PROC TuneStep()
+  CARD inc
+  IF NOT tune_on THEN RETURN FI
+  IF tn_tm == 0 AND tn_im < tn_nm THEN
+    inc = *tn_mi
+    IF inc == 0 THEN Silence(0) ELSE Sound(0, inc, 9, 0) FI
+    tn_tm = *tn_ml
+    tn_mi += 2
+    tn_ml += 1
+    tn_im += 1
+  FI
+  IF tn_tb == 0 AND tn_ib < tn_nb THEN
+    inc = *tn_bi
+    IF inc == 0 THEN Silence(1) ELSE Sound(1, inc, 7, 0) FI
+    tn_tb = *tn_bl
+    tn_bi += 2
+    tn_bl += 1
+    tn_ib += 1
+  FI
+  IF tn_tm THEN
+    tn_tm -= 1
+    IF tn_tm == 1 THEN Silence(0) FI
+  FI
+  IF tn_tb THEN
+    tn_tb -= 1
+    IF tn_tb == 1 THEN Silence(1) FI
+  FI
+  IF tn_tm == 0 AND tn_tb == 0 AND tn_im >= tn_nm AND tn_ib >= tn_nb THEN
+    tune_on = 0
+    Silence(0)
+    Silence(1)
+  FI
+RETURN
+
+; the opening jingle, to its end
 PROC Jingle()
-  BYTE im, ib, tm, tb
-  im = 0
-  ib = 0
-  tm = 0
-  tb = 0
-  WHILE im < 24 OR ib < 19 DO
-    IF tm == 0 AND im < 24 THEN
-      Sound(0, jm_inc(im), 9, 0)
-      tm = jm_len(im)
-      im += 1
-    FI
-    IF tb == 0 AND ib < 19 THEN
-      IF jb_inc(ib) == 0 THEN Silence(1) ELSE Sound(1, jb_inc(ib), 7, 0) FI
-      tb = jb_len(ib)
-      ib += 1
-    FI
+  TuneStart(jm_inc, jm_len, 24, jb_inc, jb_len, 19)
+  WHILE tune_on DO
     WaitVBlank()
     KeyPoll()
-    tm -= 1
-    tb -= 1
-    IF tm == 1 THEN Silence(0) FI
-    IF tb == 1 THEN Silence(1) FI
+    TuneStep()
   OD
-  Silence(0)
-  Silence(1)
 RETURN
 
 ; --------------------------------------------------------------- events
@@ -1103,6 +1256,14 @@ FUNC BYTE Meet()
       ELSEIF gstate(g) == G_FRIGHT THEN
         gstate(g) = G_EYES
         Score(ghost_score(ghosts_eaten))
+        ; the score where the ghost was, two tiles, for the pause
+        score_c = cx(g) >> 3
+        IF cx(g) < 0 THEN score_c = 0 FI
+        IF score_c > 26 THEN score_c = 26 FI
+        score_r = cy(g) >> 3
+        Cell(score_c, score_r, T_SCORE + (ghosts_eaten << 1), B_SPRITES)
+        Cell(score_c + 1, score_r, T_SCORE + (ghosts_eaten << 1) + 1, B_SPRITES)
+        score_on = 1
         ghosts_eaten += 1
         Fx(2000, 20)
         pause_all = 45
@@ -1153,13 +1314,363 @@ PROC Ready(BYTE jingle)
   Text(11, 17, "      ", B_YELLOW)
 RETURN
 
+; ----------------------------------------------------------------- acts
+; The intermissions, on a black screen with the clapperboard: after
+; level 2 "They Meet", after level 5 "The Chase", after level 9 and
+; every fourth after "Junior". The first two move as the reference
+; implementation (masonicGIT/pacman, src/cutscenes.js) moves them,
+; frame for frame in the arcade's own pixel positions (the clapperboard
+; sits in the rows the arcade's HUD has); the third is choreographed from
+; the description, since no reference has it: the stork flies over,
+; the bundle drops and bounces, and Junior is in it.
+
+; her, Pac-Man and a ghost anywhere, for the acts
+PROC DrawHerAt(INT x, INT y, BYTE d, BYTE f)
+  IF d == D_RIGHT THEN DrawChar(C_HER, x, y, S_MSPAC + f, 0)
+  ELSEIF d == D_LEFT THEN DrawChar(C_HER, x, y, S_MSPAC + f, $40)
+  ELSEIF d == D_DOWN THEN DrawChar(C_HER, x, y, S_MSPAC + 3 + f, 0)
+  ELSE DrawChar(C_HER, x, y, S_MSPAC + 6 + f, 0) FI
+RETURN
+
+PROC DrawPacAt(INT x, INT y, BYTE d, BYTE f)
+  IF d == D_RIGHT THEN DrawChar(C_PAC, x, y, S_PAC + f, 0)
+  ELSEIF d == D_LEFT THEN DrawChar(C_PAC, x, y, S_PAC + f, $40)
+  ELSEIF d == D_UP THEN DrawChar(C_PAC, x, y, S_PAC + 3 + f, 0)
+  ELSE DrawChar(C_PAC, x, y, S_PAC + 3 + f, $80) FI
+RETURN
+
+PROC DrawGhostAt(BYTE g, INT x, INT y, BYTE d, BYTE f)
+  DrawChar(g, x, y, S_GHOST + ((g - 1) << 3) + (d << 1) + f, 0)
+RETURN
+
+; the 0 1 2 1 mouth cycle from a frame count, a step every four frames
+FUNC BYTE Mouth(CARD t)
+  BYTE f
+  f = (t >> 2) & 3
+  IF f == 3 THEN f = 1 FI
+RETURN (f)
+
+; the screen for an act: black, the clapperboard clapping its number
+PROC ActScreen(BYTE n)
+  BYTE r, c, k, i
+  FOR i = 0 TO 31 DO SpriteHide(i) OD
+  FOR r = 0 TO 30 DO
+    FOR c = 0 TO 27 DO Cell(c, r, mz_blank, B_MAZE) OD
+  OD
+  FOR k = 0 TO 5 DO
+    ; the board opens and closes: frames 0 1 2 1 0 ...
+    i = k & 3
+    IF i == 3 THEN i = 1 FI
+    FOR r = 0 TO 3 DO
+      FOR c = 0 TO 3 DO
+        Cell(12 + c, r, T_CLAP + (i << 4) + (r << 2) + c, B_SPRITES)
+      OD
+    OD
+    Cell(17, 2, T_ACT + n - 1, B_SPRITES)
+    FOR r = 0 TO 11 DO
+      WaitVBlank()
+      TuneStep()
+    OD
+  OD
+RETURN
+
+; a frame of an act: the picture shown, the tune stepped, and Esc
+; watched -- 1 when the act is to be skipped
+FUNC BYTE ActFrame()
+  WaitVBlank()
+  TuneStep()
+  KeyPoll()
+RETURN (KeyHit(KEY_ESC))
+
+; Act 1, "They Meet"
+PROC Act1()
+  INT px, py, mx, my, ix, iy, kx, ky
+  CARD t
+  BYTE f, gf, gacc, pm, rf, mf, cf, ib, pb, gm, done
+  ActScreen(1)
+  TuneStart(a1m_inc, a1m_len, 46, a1b_inc, a1b_len, 39)
+  ; scene one: Pac-Man along the upper lane to the right, Inky after
+  ; him; she along the lower lane to the left, Pinky after her; the
+  ; ghosts quicken at the middle
+  px = -10
+  py = 99
+  ix = px - 42
+  iy = 99
+  mx = 232
+  my = 180
+  kx = mx + 49
+  ky = 180
+  gacc = 0
+  gf = 16
+  FOR t = 0 TO 299 DO
+    px += 1
+    mx -= 1
+    gacc += gf
+    WHILE gacc >= 16 DO
+      gacc -= 16
+      ix += 1
+      kx -= 1
+    OD
+    IF ix == 105 THEN gf = 20 FI
+    f = Mouth(t)
+    DrawPacAt(px, py, D_RIGHT, f)
+    DrawHerAt(mx, my, D_LEFT, f)
+    DrawGhostAt(C_INKY, ix, iy, D_RIGHT, (t >> 3) & 1)
+    DrawGhostAt(C_PINKY, kx, ky, D_LEFT, (t >> 3) & 1)
+    IF ActFrame() THEN RETURN FI
+  OD
+  ; scene two: they come in from either side along the middle lane
+  ; with the ghosts behind, ramp up over them as the ghosts meet and
+  ; bump heads, climb, and meet under the heart
+  mx = -8
+  my = 143
+  kx = -81
+  ky = 143
+  px = 234
+  py = 142
+  ix = 302
+  iy = 143
+  pm = 0
+  gm = 0
+  rf = 0
+  cf = 0
+  mf = 0
+  ib = 0
+  pb = 0
+  gacc = 0
+  done = 0
+  t = 0
+  WHILE NOT done DO
+    ; the players
+    IF pm == 0 THEN
+      mx += 1
+      px -= 1
+      IF mx == 102 THEN pm = 1 FI
+    ELSEIF pm == 1 THEN
+      mx += rampx(rf)
+      px -= rampx(rf)
+      IF rampy(rf) THEN
+        my -= 1
+        py -= 1
+      FI
+      rf += 1
+      IF rf == 7 THEN pm = 2 FI
+    ELSEIF pm == 2 THEN
+      IF cf == 0 THEN
+        my -= 2
+        px -= 1
+      ELSE
+        my -= 1
+        py -= 1
+      FI
+      cf += 1
+      IF my == 91 THEN pm = 3 FI
+    ELSE
+      IF mf == 0 THEN
+        my += 1
+        py -= 1
+        px += 1
+      FI
+      IF mf == 78 THEN done = 1 FI
+      mf += 1
+    FI
+    ; the ghosts: on until they meet in the middle, then the bump
+    IF gm == 0 THEN
+      gacc += 20
+      WHILE gacc >= 16 DO
+        gacc -= 16
+        ix -= 1
+        kx += 1
+      OD
+      IF ix < 120 THEN ix = 120 FI
+      IF kx > 105 THEN kx = 105 FI
+      IF kx == 105 THEN gm = 1 FI
+    ELSE
+      IF ib < 25 THEN
+        ix += ibx(ib)
+        iy += iby(ib)
+        IF ibx(ib) == 2 THEN ix -= 3 FI
+        IF iby(ib) == 2 THEN iy -= 3 FI
+        ib += 1
+      FI
+      IF pb < 30 THEN
+        kx += pbx(pb)
+        ky += pby(pb)
+        IF pbx(pb) == 2 THEN kx -= 3 FI
+        IF pby(pb) == 2 THEN ky -= 3 FI
+        pb += 1
+      FI
+    FI
+    ; the picture
+    IF pm == 3 AND mf > 18 THEN f = Mouth(18) ELSE f = Mouth(t) FI
+    IF pm == 0 OR pm == 1 THEN
+      DrawHerAt(mx, my, D_RIGHT, f)
+      DrawPacAt(px, py, D_LEFT, f)
+    ELSEIF pm == 2 THEN
+      DrawHerAt(mx, my, D_UP, f)
+      DrawPacAt(px, py, D_UP, f)
+    ELSE
+      DrawHerAt(mx, my, D_RIGHT, f)
+      DrawPacAt(px, py, D_LEFT, f)
+      DrawChar(C_X6, 112, 73, S_HEART, 0)
+    FI
+    IF gm == 0 OR ib < 25 THEN DrawGhostAt(C_INKY, ix, iy, D_LEFT, (t >> 3) & 1) ELSE HideChar(C_INKY) FI
+    IF gm == 0 OR pb < 30 THEN DrawGhostAt(C_PINKY, kx, ky, D_RIGHT, (t >> 3) & 1) ELSE HideChar(C_PINKY) FI
+    t += 1
+    IF ActFrame() THEN RETURN FI
+  OD
+  WHILE tune_on DO
+    IF ActFrame() THEN RETURN FI
+  OD
+RETURN
+
+; a run of Act 2: two across the screen, one fleeing at two and a
+; half pixels a frame, one chasing at three; d is the way, and who
+; leads is who is in front
+PROC Chase(INT px, INT py, INT mx, INT my, BYTE d, BYTE pac_flees, CARD frames)
+  CARD t
+  BYTE f, facc, cacc
+  facc = 0
+  cacc = 0
+  FOR t = 1 TO frames DO
+    facc += 40
+    cacc += 48
+    f = Mouth(t)
+    WHILE facc >= 16 DO
+      facc -= 16
+      IF pac_flees THEN px += stepx(d) ELSE mx += stepx(d) FI
+    OD
+    WHILE cacc >= 16 DO
+      cacc -= 16
+      IF pac_flees THEN mx += stepx(d) ELSE px += stepx(d) FI
+    OD
+    DrawPacAt(px, py, d, f)
+    DrawHerAt(mx, my, d, f)
+    IF ActFrame() THEN RETURN FI
+  OD
+RETURN
+
+; Act 2, "The Chase"
+PROC Act2()
+  INT px, py, mx, my
+  CARD t
+  ActScreen(2)
+  FOR t = 0 TO 159 DO
+    IF ActFrame() THEN RETURN FI
+  OD
+  Chase(-8, 67, -106, 68, D_RIGHT, 1, 250)
+  Chase(329, 163, 231, 164, D_LEFT, 0, 260)
+  Chase(-8, 142, -106, 143, D_RIGHT, 1, 260)
+  ; the dart: seven pixels a frame to the left, then back along the
+  ; bottom lane the other way
+  px = 381
+  py = 99
+  mx = 233
+  my = 100
+  FOR t = 0 TO 209 DO
+    IF px <= 17 AND py == 99 THEN
+      px = -2
+      py = 195
+      mx = -150
+      my = 196
+    FI
+    IF py == 99 THEN
+      px -= 7
+      mx -= 7
+      DrawPacAt(px, py, D_LEFT, Mouth(t))
+      DrawHerAt(mx, my, D_LEFT, Mouth(t))
+    ELSE
+      px += 7
+      mx += 7
+      DrawPacAt(px, py, D_RIGHT, Mouth(t))
+      DrawHerAt(mx, my, D_RIGHT, Mouth(t))
+    FI
+    IF ActFrame() THEN RETURN FI
+  OD
+RETURN
+
+; Act 3, "Junior"
+PROC Act3()
+  INT sx, bx, by, vy
+  CARD t
+  BYTE sf, dropped, landed, bounces
+  ActScreen(3)
+  ; the parents at the left, the stork in from the right along the top
+  sx = 250
+  bx = 0
+  by = 0
+  vy = 0
+  dropped = 0
+  landed = 0
+  bounces = 0
+  FOR t = 0 TO 399 DO
+    sx -= 1
+    IF t & 1 THEN sx -= 1 FI          ; a pixel and a half a frame
+    sf = (t >> 3) & 1
+    DrawPacAt(40, 180, D_RIGHT, 1)
+    DrawHerAt(64, 180, D_RIGHT, 1)
+    IF sx > -24 THEN
+      DrawChar(C_X6, sx - 8, 60, S_STORK + (sf << 1), 0)
+      DrawChar(C_X7, sx + 8, 60, S_STORK + (sf << 1) + 1, 0)
+    ELSE
+      HideChar(C_X6)
+      HideChar(C_X7)
+    FI
+    ; over the middle the bundle drops, falls, bounces twice, and
+    ; Junior is in it
+    IF NOT dropped AND sx <= 112 THEN
+      dropped = 1
+      bx = sx
+      by = 72
+      vy = 0
+    FI
+    IF dropped AND NOT landed THEN
+      vy += 1
+      by += vy >> 3
+      IF by >= 176 THEN
+        by = 176
+        bounces += 1
+        IF bounces == 1 THEN vy = -24
+        ELSEIF bounces == 2 THEN vy = -12
+        ELSE landed = 1 FI
+      FI
+      IF bx > 120 THEN bx -= 1 FI
+    FI
+    IF dropped THEN
+      IF landed AND t > 300 THEN
+        DrawChar(C_X7, bx, by, S_JUNIOR, 0)
+      ELSE
+        DrawChar(C_X7, bx, by, S_BUNDLE, 0)
+      FI
+    FI
+    IF ActFrame() THEN RETURN FI
+  OD
+RETURN
+
+; an act, then the movers hidden and the screen given back
+PROC Act(BYTE n)
+  BYTE i
+  IF n == 1 THEN Act1()
+  ELSEIF n == 2 THEN Act2()
+  ELSE Act3() FI
+  tune_on = 0
+  Quiet()
+  FOR i = 0 TO 31 DO SpriteHide(i) OD
+RETURN
+
 ; ----------------------------------------------------------------- game
 
-; a new level: the pink maze twice, the blue three times, then turns
+; a new level: the arcade's schedule -- the pink maze twice, the blue
+; three times, then four each of the orange, the navy, the third in
+; magenta and the fourth in salmon, and those two in turn for ever
 PROC Level()
   IF level <= 2 THEN maze = 1
   ELSEIF level <= 5 THEN maze = 2
-  ELSE maze = 2 - (((level - 6) >> 2) & 1) FI
+  ELSEIF level <= 9 THEN maze = 3
+  ELSEIF level <= 13 THEN maze = 4
+  ELSEIF level <= 17 THEN maze = 5
+  ELSEIF level <= 21 THEN maze = 6
+  ELSE maze = 5 + (((level - 22) >> 2) & 1) FI
   LoadMaze()
   dots_eaten = 0
   died = 0
@@ -1187,6 +1698,11 @@ FUNC BYTE Tick()
   IF pause_all THEN
     pause_all -= 1
     Siren()
+    IF pause_all == 0 AND score_on THEN
+      RedrawCell(score_c, score_r)
+      RedrawCell(score_c + 1, score_r)
+      score_on = 0
+    FI
     RETURN (0)
   FI
   idle += 1
@@ -1234,6 +1750,10 @@ PROC Play()
       Quiet()
       FOR i = 1 TO 5 DO HideChar(i) OD
       FOR i = 0 TO 90 DO WaitVBlank() OD
+      ; the acts, after levels 2, 5, 9, 13, 17 ... as the arcade has them
+      IF level == 2 THEN Act(1)
+      ELSEIF level == 5 THEN Act(2)
+      ELSEIF level >= 9 AND ((level - 9) & 3) == 0 THEN Act(3) FI
       level += 1
       Level()
     ELSE
@@ -1299,8 +1819,10 @@ PROC Main()
   hiscore = 10000
   maze = 1
   ClearHud()
-  LoadTiles(mz1_tiles, 0, MZ1_NTILES)
-  SetPalette(mz1_pal, 0, 16)
+  LoadTiles(xtiles, T_CLAP, NXTILES)
+  SelectMaze(1)
+  LoadTiles(mz_tiles, 0, mz_ntiles)
+  SetPalette(mz_pal, 0, 16)
   DO
     Title()
     IF quit THEN EXIT FI

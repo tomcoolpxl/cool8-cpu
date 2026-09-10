@@ -1041,7 +1041,9 @@ def test_mscoolman():
 
     # the title: mode 2, scrolled four lines, the pink maze's own tile
     # in the corner, her name in yellow, the sprite engine on bank 15
-    g.m.run_frame(30)
+    # (the start-up -- palettes, tiles, 35 KB of sprite patterns
+    # recoloured into VRAM, the maze -- takes some thirty frames)
+    g.m.run_frame(45)
     check(reg("VID_MODE") == 0x82 and reg("VID_SCY_L") == 4 and reg("VID_PAT_H") == 0x40,
           "mscoolman: mode 2, VID_SCY 4, patterns at $4000",
           "MODE %02X SCY %d PAT_H %02X" % (reg("VID_MODE"), reg("VID_SCY_L"), reg("VID_PAT_H")))
@@ -1052,28 +1054,11 @@ def test_mscoolman():
     check(g.cell(9, 7) == (64 + 22, 2), "mscoolman: the M of the title, yellow, at (9, 7)",
           str(g.cell(9, 7)))
 
-    # and the same title SYS'd from BASIC, space pressed at the
-    # keyboard: READY! -- the web page's path, interrupts and all
+    # (a copy poked in at $0200 under a running BASIC is not tried: at
+    # 56 KB the game lies over BASIC, which is what the loader is for;
+    # the path from the disc below runs it as a person does)
     import test_basic as B
     code, bsyms = basic_image()
-    M = B.Machine(code, bsyms, render=True)
-    M.settle()
-    org = g.prg[0] | (g.prg[1] << 8)
-    M.m.bus.mem[org:org + len(g.prg) - 2] = g.prg[2:]
-    M.m.type("SYS %d\r" % org)
-    M.m.run_frame(30)
-    v = M.m.video.vram
-    check((v[9 * 2 + 7 * 128], v[9 * 2 + 7 * 128 + 1]) == (64 + 22, 2),
-          "mscoolman under BASIC: the title is up", str((v[9 * 2 + 7 * 128], v[9 * 2 + 7 * 128 + 1])))
-    M.m.scancode([0x29])
-    M.m.run_frame(2)
-    M.m.scancode([0xF0, 0x29])
-    M.m.run_frame(60)
-    v = M.m.video.vram
-    check((v[11 * 2 + 17 * 128], v[11 * 2 + 17 * 128 + 1]) == (64 + 27, 2),
-          "mscoolman under BASIC: space starts the game, READY! is on",
-          str((v[11 * 2 + 17 * 128], v[11 * 2 + 17 * 128 + 1])))
-    del M
 
     # And the path a person takes: the real ROM booting the demos disc,
     # the launcher's DRIVE 11 / SYS "MSCOOLMN.BIN" typed at the
@@ -1144,7 +1129,7 @@ def test_mscoolman():
           "%d %d %d" % (g.word("dots_left"), g.byte("lives"), g.word("score")))
     check(g.cell(29, 1) == (64 + 1, 1), "mscoolman: 1UP beside the maze", str(g.cell(29, 1)))
     v = voices(g.m)
-    check(v[0:2] != b"\x00\x00" and (v[2] & 15) != 0, "mscoolman: the jingle is playing on voice 0",
+    check(v[0:2] != b"\x00\x00" and (v[3] & 0x40) != 0, "mscoolman: the jingle is playing on voice 0",
           v.hex())
     g.m.run_frame(200)
     x0, y0 = g.her()
@@ -1234,6 +1219,62 @@ def test_mscoolman():
           "level %d maze %d dots %d" % (g.byte("level"), g.byte("maze"), g.word("dots_left")))
     check(g.cell(29, 27) == (116 + 8, 15), "mscoolman: the orange, level 3's fruit, beside the maze",
           str(g.cell(29, 27)))
+
+    # the acts: the level poked to the one before each, cleared, and the
+    # clapperboard, its digit and (for the first) the tune looked for;
+    # then the later mazes as the levels pass
+    def act_after(level, digit, frames, tune):
+        g.poke("level", level)
+        kind = bytearray(g.kind())
+        x, y = g.her()
+        best = min((abs((i % 28) - (x >> 3)) + abs((i // 28) - (y >> 3)), i)
+                   for i in range(868) if kind[i] in (mscool.K_DOT, mscool.K_PILL))
+        for i in range(868):
+            if kind[i] in (mscool.K_DOT, mscool.K_PILL) and i != best[1]:
+                kind[i] = mscool.K_PATH
+        g.set_kind(kind)
+        g.pokew("dots_left", 1)
+        for t in range(600):
+            d = g.route(best[1] % 28, best[1] // 28)
+            if d is not None:
+                g.poke("want", d)
+            g.m.run_frame(1)
+            if g.word("dots_left") == 0:
+                break
+        g.m.run_frame(200)
+        clap = g.cell(12, 0) in ((144, 15), (160, 15), (176, 15)) and g.cell(17, 2) == (192 + digit - 1, 15)
+        v = voices(g.m)
+        playing = v[0:2] != b"\x00\x00" and (v[3] & 0x40) != 0
+        check(clap, "mscoolman: after level %d the clapperboard says ACT %d" % (level, digit),
+              "%s %s" % (g.cell(12, 0), g.cell(17, 2)))
+        check(playing == tune, "mscoolman: act %d %s" % (digit, "plays its tune" if tune else "has no tune to play"),
+              v[:4].hex())
+        g.m.run_frame(frames)
+        check(g.byte("level") == level + 1 and g.cell(11, 17) == (64 + 27, 2),
+              "mscoolman: and level %d's READY! follows" % (level + 1),
+              "level %d cell %s" % (g.byte("level"), g.cell(11, 17)))
+    act_after(2, 1, 560, True)
+    g.m.run_frame(130)
+    act_after(5, 2, 1150, False)
+    g.m.run_frame(130)
+    want = [mem[sym["v_mz3_pal"] + 2 * i] | (mem[sym["v_mz3_pal"] + 2 * i + 1] << 8) for i in range(16)]
+    check(g.byte("maze") == 3 and g.m.palette()[:16] == want and g.cell(0, 0) == (mem[sym["v_mz3_map"]], 0)
+          and g.word("dots_start") == 242,
+          "mscoolman: level 6 is the orange maze, 242 dots, its palette, its tiles",
+          "maze %d dots %d" % (g.byte("maze"), g.word("dots_start")))
+    act_after(9, 3, 420, False)
+    g.m.run_frame(130)
+    want = [mem[sym["v_mz4_pal"] + 2 * i] | (mem[sym["v_mz4_pal"] + 2 * i + 1] << 8) for i in range(16)]
+    check(g.byte("maze") == 4 and g.m.palette()[:16] == want and g.cell(0, 0) == (mem[sym["v_mz4_map"]], 0)
+          and g.word("dots_start") == 238,
+          "mscoolman: level 10 is the navy maze, 238 dots",
+          "maze %d dots %d" % (g.byte("maze"), g.word("dots_start")))
+    act_after(13, 3, 420, False)
+    g.m.run_frame(130)
+    want = [mem[sym["v_mz5_pal"] + 2 * i] | (mem[sym["v_mz5_pal"] + 2 * i + 1] << 8) for i in range(16)]
+    check(g.byte("maze") == 5 and g.m.palette()[:16] == want and g.cell(0, 0) == (mem[sym["v_mz3_map"]], 0),
+          "mscoolman: level 14 is the orange maze's shape in magenta and yellow",
+          "maze %d" % g.byte("maze"))
 
     # the fruit walks in after 70 dots; and the sprite engine's line
     # budget through 240 frames of play

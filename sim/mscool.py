@@ -86,7 +86,7 @@ class Game:
     # ----------------------------------------------------------- playing
     def start(self):
         """Through the title and READY! into play."""
-        self.m.run_frame(30)
+        self.m.run_frame(45)               # the start-up takes some thirty frames
         self.m.kbd.feed([0x29])
         self.m.run_frame(2)
         self.m.kbd.feed([0xF0, 0x29])
@@ -216,7 +216,7 @@ class Game:
         self.pokew("dots_left", 1)
         level = self.byte("level")
         tx, ty = best[1] % 28, best[1] // 28
-        for t in range(600):
+        for t in range(1500):             # an act between levels is up to 1,200 frames
             if self.byte("level") != level:
                 # Level() ran; Ready() holds 121 frames
                 self.m.run_frame(118)

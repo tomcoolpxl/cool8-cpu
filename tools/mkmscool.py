@@ -53,7 +53,12 @@ OUT = os.path.join(ART, "mscoolman_art.act")
 PREVIEW = os.path.join(ART, "preview.png")
 
 # The mazes, rows 3..33 of maps.js's 36-row strings: 28 x 31. `|` wall,
-# `_` outside, `.` dot, `o` pill, ` ` path, `-` the door.
+# `_` outside, `.` dot, `o` pill, ` ` path, `-` the door. Six on the
+# sheet, 248 rows apart, each as a dotted panel at x 0 and a bare one
+# at x 228: the arcade's four shapes, then the third and fourth again
+# in the colours they wear from level 14 (magenta and yellow) and 18
+# (salmon and red) -- the colour schedule of the arcade, which cycles
+# those two thereafter.
 MAZES = [
     ("pink", 0, [
         "||||||||||||||||||||||||||||",
@@ -121,6 +126,138 @@ MAZES = [
         "|..........................|",
         "||||||||||||||||||||||||||||",
     ]),
+    ("orange", 496, [
+        "||||||||||||||||||||||||||||",
+        "|.........||....||.........|",
+        "|.|||||||.||.||.||.|||||||.|",
+        "|o|||||||.||.||.||.|||||||o|",
+        "|.||.........||.........||.|",
+        "|.||.||.||||.||.||||.||.||.|",
+        "|....||.||||.||.||||.||....|",
+        "||||.||.||||.||.||||.||.||||",
+        "||||.||..............||.||||",
+        " ....|||| |||||||| ||||.... ",
+        "|.|| |||| |||||||| |||| ||.|",
+        "|.||                    ||.|",
+        "|.|||| || |||--||| || ||||.|",
+        "|.|||| || |______| || ||||.|",
+        "|.     || |______| ||     .|",
+        "|.|| |||| |______| |||| ||.|",
+        "|.|| |||| |||||||| |||| ||.|",
+        "|.||                    ||.|",
+        "|.|||| ||||| || ||||| ||||.|",
+        "|.|||| ||||| || ||||| ||||.|",
+        "|......||....||....||......|",
+        "|||.||.||.||||||||.||.||.|||",
+        "|||.||.||.||||||||.||.||.|||",
+        "|o..||.......  .......||..o|",
+        "|.||||.|||||.||.|||||.||||.|",
+        "|.||||.|||||.||.|||||.||||.|",
+        "|......||....||....||......|",
+        "|.||||.||.||||||||.||.||||.|",
+        "|.||||.||.||||||||.||.||||.|",
+        "|......||..........||......|",
+        "||||||||||||||||||||||||||||",
+    ]),
+    ("navy", 744, [
+        "||||||||||||||||||||||||||||",
+        "|..........................|",
+        "|.||.||||.||||||||.||||.||.|",
+        "|o||.||||.||||||||.||||.||o|",
+        "|.||.||||.||....||.||||.||.|",
+        "|.||......||.||.||......||.|",
+        "|.||||.||.||.||.||.||.||||.|",
+        "|.||||.||.||.||.||.||.||||.|",
+        "|......||....||....||......|",
+        "|||.|||||||| || ||||||||.|||",
+        "__|.|||||||| || ||||||||.|__",
+        "__|....||          ||....|__",
+        "||| ||.|| |||--||| ||.|| |||",
+        "    ||.|| |______| ||.||    ",
+        "||||||.   |______|   .||||||",
+        "||||||.|| |______| ||.||||||",
+        "    ||.|| |||||||| ||.||    ",
+        "||| ||.||          ||.|| |||",
+        "__|....||||| || |||||....|__",
+        "__|.||.||||| || |||||.||.|__",
+        "__|.||....   ||   ....||.|__",
+        "__|.|||||.|| || ||.|||||.|__",
+        "|||.|||||.|| || ||.|||||.|||",
+        "|.........||    ||.........|",
+        "|.||||.||.||||||||.||.||||.|",
+        "|.||||.||.||||||||.||.||||.|",
+        "|.||...||..........||...||.|",
+        "|o||.|||||||.||.|||||||.||o|",
+        "|.||.|||||||.||.|||||||.||.|",
+        "|............||............|",
+        "||||||||||||||||||||||||||||",
+    ]),
+    ("magenta", 992, [
+        "||||||||||||||||||||||||||||",
+        "|.........||....||.........|",
+        "|.|||||||.||.||.||.|||||||.|",
+        "|o|||||||.||.||.||.|||||||o|",
+        "|.||.........||.........||.|",
+        "|.||.||.||||.||.||||.||.||.|",
+        "|....||.||||.||.||||.||....|",
+        "||||.||.||||.||.||||.||.||||",
+        "||||.||..............||.||||",
+        " ....|||| |||||||| ||||.... ",
+        "|.|| |||| |||||||| |||| ||.|",
+        "|.||                    ||.|",
+        "|.|||| || |||--||| || ||||.|",
+        "|.|||| || |______| || ||||.|",
+        "|.     || |______| ||     .|",
+        "|.|| |||| |______| |||| ||.|",
+        "|.|| |||| |||||||| |||| ||.|",
+        "|.||                    ||.|",
+        "|.|||| ||||| || ||||| ||||.|",
+        "|.|||| ||||| || ||||| ||||.|",
+        "|......||....||....||......|",
+        "|||.||.||.||||||||.||.||.|||",
+        "|||.||.||.||||||||.||.||.|||",
+        "|o..||.......  .......||..o|",
+        "|.||||.|||||.||.|||||.||||.|",
+        "|.||||.|||||.||.|||||.||||.|",
+        "|......||....||....||......|",
+        "|.||||.||.||||||||.||.||||.|",
+        "|.||||.||.||||||||.||.||||.|",
+        "|......||..........||......|",
+        "||||||||||||||||||||||||||||",
+    ]),
+    ("salmon", 1240, [
+        "||||||||||||||||||||||||||||",
+        "|..........................|",
+        "|.||.||||.||||||||.||||.||.|",
+        "|o||.||||.||||||||.||||.||o|",
+        "|.||.||||.||....||.||||.||.|",
+        "|.||......||.||.||......||.|",
+        "|.||||.||.||.||.||.||.||||.|",
+        "|.||||.||.||.||.||.||.||||.|",
+        "|......||....||....||......|",
+        "|||.|||||||| || ||||||||.|||",
+        "__|.|||||||| || ||||||||.|__",
+        "__|....||          ||....|__",
+        "||| ||.|| |||--||| ||.|| |||",
+        "    ||.|| |______| ||.||    ",
+        "||||||.   |______|   .||||||",
+        "||||||.|| |______| ||.||||||",
+        "    ||.|| |||||||| ||.||    ",
+        "||| ||.||          ||.|| |||",
+        "__|....||||| || |||||....|__",
+        "__|.||.||||| || |||||.||.|__",
+        "__|.||....   ||   ....||.|__",
+        "__|.|||||.|| || ||.|||||.|__",
+        "|||.|||||.|| || ||.|||||.|||",
+        "|.........||    ||.........|",
+        "|.||||.||.||||||||.||.||||.|",
+        "|.||||.||.||||||||.||.||||.|",
+        "|.||...||..........||...||.|",
+        "|o||.|||||||.||.|||||||.||o|",
+        "|.||.|||||||.||.|||||||.||.|",
+        "|............||............|",
+        "||||||||||||||||||||||||||||",
+    ]),
 ]
 
 # cell kinds the game reads
@@ -166,8 +303,10 @@ def maze_data(px, name, oy, rows):
     tiles, index = [], {}
     tmap = []
     kinds = []
-    # the dot and the pill, as tiles, taken from the dotted panel
+    # the dot and the pill, as tiles, taken from the dotted panel; and
+    # the door, whose tile the game tells the house by
     dot_t = pill_t = None
+    door_t = None
     for ty in range(31):
         srow = rows[ty]
         for tx in range(28):
@@ -203,6 +342,10 @@ def maze_data(px, name, oy, rows):
                 index[clean] = len(tiles)
                 tiles.append(clean)
             tmap.append(index[clean])
+            if ch == "-":
+                assert any(clean), (name, tx, ty, "the door is drawn")
+                door_t = door_t or clean
+                assert clean == door_t, (name, tx, ty, "one door tile")
             kinds.append({"|": K_WALL, "_": K_WALL, ".": K_DOT, "o": K_PILL, " ": K_PATH,
                           "-": K_DOOR}[ch] if ch != "_" or True else K_WALL)
     # the house interior is '_' inside the box, rows 13-15 cols 11-16
@@ -218,14 +361,40 @@ def maze_data(px, name, oy, rows):
     for t in (dot_t, pill_t):
         index[t] = len(tiles)
         tiles.append(t)
+    # the map says where the dots are: a dot cell holds the dot tile,
+    # a pill cell the pill's, and the game reads its cell kinds off it
+    for i in range(868):
+        ch = rows[i // 28][i % 28]
+        if ch == ".":
+            tmap[i] = index[dot_t]
+        elif ch == "o":
+            tmap[i] = index[pill_t]
     palette = [0] * 16
     for c, i in pal.items():
         palette[i] = q4(c)
+    # every cell kind the game needs follows from the tile: the dot,
+    # the pill, the door, blank for a path, anything else a wall -- so
+    # the outside (`_`, black like a path but not one, and the house's
+    # inside) gets a second black tile of its own, `outside`
+    outside = len(tiles)
+    tiles.append(blank)
+    for i, k in enumerate(kinds):
+        t = tmap[i]
+        ch = rows[i // 28][i % 28]
+        if ch == "_":
+            assert t == index[blank], (name, i % 28, i // 28, "the outside drawn")
+            tmap[i] = outside
+        elif k == K_WALL:
+            assert t != index[blank], (name, i % 28, i // 28, "a wall drawn as nothing")
+        elif k == K_PATH:
+            assert t == index[blank], (name, i % 28, i // 28, "a path with something on it")
     return {"name": name, "tiles": tiles, "map": tmap, "kinds": kinds, "pal": palette,
-            "blank": index[blank], "dot": index[dot_t], "pill": index[pill_t], "colours": colours}
+            "blank": index[blank], "dot": index[dot_t], "pill": index[pill_t],
+            "door": index[door_t], "outside": outside, "colours": colours}
 
 
 SPRITE_PAL = {}      # colour -> index, filled as sprites are cut
+XTILES = []          # (name, 32 bytes): the act pieces and the scores, as tiles
 
 
 def quad(px, cx, cy):
@@ -258,10 +427,11 @@ def sprites(px):
     """Every frame the game draws, in the order the .act lists them."""
     def at(c, r):
         return 456 + c * 16, r * 16
-    # the palette: every colour in rows 0..7 of the strip, most common first
+    # the palette: every colour in rows 0..14 of the strip -- her, the
+    # ghosts, the fruit, and the acts' pieces below them -- most common first
     from collections import Counter
     cnt = Counter()
-    for r in range(8):
+    for r in range(15):
         for c in range(12):
             for col in cell_colours(px, *at(c, r)):
                 cnt[col] += 1
@@ -316,6 +486,41 @@ def sprites(px):
     palette = [0] * 16
     for c, i in SPRITE_PAL.items():
         palette[i] = q4(c)
+    # the acts (14-demos.md): Pac-Man himself, four rows under the ghost
+    # scores at y 144 -- right, left, up, down, three frames each; he
+    # has no bow, so left is right mirrored and down is up turned over,
+    # and only right and up are kept. Then the heart, the stork's two
+    # frames as left and right halves (32x16), the bundle and Junior.
+    for f in range(3):
+        assert flip_h(px, 456 + f * 16, 144) == raw(px, 456 + f * 16, 160), "Pac-Man's left is not right mirrored"
+        assert flip_v(px, 456 + f * 16, 176) == raw(px, 456 + f * 16, 192), "Pac-Man's down is not up turned over"
+    for f in range(3):
+        frames.append(("pac_right%d" % f, quad(px, 456 + f * 16, 144)))
+    for f in range(3):
+        frames.append(("pac_up%d" % f, quad(px, 456 + f * 16, 176)))
+    frames.append(("heart", quad(px, 504, 160)))
+    frames.append(("stork0l", quad(px, 504, 176)))
+    frames.append(("stork0r", quad(px, 520, 176)))
+    frames.append(("stork1l", quad(px, 536, 176)))
+    frames.append(("stork1r", quad(px, 552, 176)))
+    frames.append(("bundle", quad(px, 504, 192)))
+    frames.append(("junior", quad(px, 520, 192)))
+    # the pieces that sit still, as tiles in the sprite palette: three
+    # 32x32 clapperboards at (456, 208), 16 tiles each row-major; the
+    # act digits 1 2 3 at (553, 232); the ghost scores 200 400 800
+    # 1600 at (456, 132), two tiles each
+    XTILES.clear()
+    for k in range(3):
+        for i in range(16):
+            XTILES.append(("clap%d_%d" % (k, i), tile4(px, 456 + k * 32 + (i % 4) * 8, 208 + (i // 4) * 8, SPRITE_PAL)))
+    for k in range(3):
+        XTILES.append(("act%d" % (k + 1), tile4(px, 553 + k * 8, 232, SPRITE_PAL)))
+    for k, sc in enumerate((200, 400, 800, 1600)):
+        XTILES.append(("score%d_l" % sc, tile4(px, 456 + k * 16, 132, SPRITE_PAL)))
+        XTILES.append(("score%d_r" % sc, tile4(px, 464 + k * 16, 132, SPRITE_PAL)))
+    palette = [0] * 16
+    for c, i in SPRITE_PAL.items():
+        palette[i] = q4(c)
     return frames, palette, body
 
 
@@ -366,18 +571,58 @@ def font(px):
     return (cells_x[0], cells_y[0]), glyphs
 
 
+def recolour(m, base):
+    """`m` as a palette over `base`'s tiles: a nibble permutation p with
+    p(base tile) == m tile for every cell, and m's palette reordered
+    to base's indices -- or None when the shapes differ."""
+    if len(m["map"]) != len(base["map"]):
+        return None
+    perm = {0: 0}
+    for i in range(868):
+        a = base["tiles"][base["map"][i]]
+        bt = m["tiles"][m["map"][i]]
+        for x, y in zip(a, bt):
+            for pa, pb in ((x >> 4, y >> 4), (x & 15, y & 15)):
+                if perm.setdefault(pa, pb) != pb:
+                    return None
+    # the dot and pill tiles too
+    for ka, kb in (("dot", "dot"), ("pill", "pill")):
+        a, bt = base["tiles"][base[ka]], m["tiles"][m[kb]]
+        for x, y in zip(a, bt):
+            for pa, pb in ((x >> 4, y >> 4), (x & 15, y & 15)):
+                if perm.setdefault(pa, pb) != pb:
+                    return None
+    pal = [0] * 16
+    for pa, pb in perm.items():
+        pal[pa] = m["pal"][pb]
+    return pal
+
+
 def act(mz, frames, spal, body, fnt):
     o = []
     o.append("; Ms. Cool-Man's art, generated by tools/mkmscool.py from the ripped")
     o.append("; arcade sheets in assets/misscool/. Generated: do not edit.")
     o.append("")
     for i, m in enumerate(mz, 1):
+        if i > 4:
+            # the fifth and sixth are the third and fourth in other colours
+            base = mz[i - 3]
+            pal = recolour(m, base)
+            assert pal is not None, "maze %d is not maze %d recoloured" % (i, i - 2)
+            o.append("; maze %d, %s: maze %d in other colours" % (i, m["name"], i - 2))
+            o.append("CONST MZ%d_SHAPE = %d" % (i, i - 2))
+            o.append("CARD ARRAY mz%d_pal(16) = [%s]" % (i, " ".join("$%03X" % v for v in pal)))
+            o.append("")
+            continue
         o.append("; maze %d, %s: %d tiles, blank %d, dot %d, pill %d" %
                  (i, m["name"], len(m["tiles"]), m["blank"], m["dot"], m["pill"]))
+        o.append("CONST MZ%d_SHAPE = %d" % (i, i))
         o.append("CONST MZ%d_BLANK = %d" % (i, m["blank"]))
         o.append("CONST MZ%d_DOT = %d" % (i, m["dot"]))
         o.append("CONST MZ%d_PILL = %d" % (i, m["pill"]))
         o.append("CONST MZ%d_NTILES = %d" % (i, len(m["tiles"])))
+        o.append("CONST MZ%d_DOOR = %d" % (i, m["door"]))
+        o.append("CONST MZ%d_OUT = %d" % (i, m["outside"]))
         o.append("BYTE ARRAY mz%d_tiles(%d) = [" % (i, 32 * len(m["tiles"])))
         for t in m["tiles"]:
             o.append("  " + " ".join("$%02X" % b for b in t))
@@ -386,12 +631,18 @@ def act(mz, frames, spal, body, fnt):
         for r in range(31):
             o.append("  " + " ".join("%d" % v for v in m["map"][r * 28:(r + 1) * 28]))
         o.append("]")
-        o.append("BYTE ARRAY mz%d_kind(868) = [" % i)
-        for r in range(31):
-            o.append("  " + " ".join("%d" % v for v in m["kinds"][r * 28:(r + 1) * 28]))
-        o.append("]")
         o.append("CARD ARRAY mz%d_pal(16) = [%s]" % (i, " ".join("$%03X" % v for v in m["pal"])))
         o.append("")
+    o.append("; the act sprites' extras as tiles: the clapperboard, three times 32x32")
+    o.append("; as 16 tiles each row-major, ACT 1 2 3 as 8x8, and the four ghost scores")
+    o.append("; 200 400 800 1600 as two tiles each")
+    o.append("BYTE ARRAY xtiles(%d) = [" % (32 * len(XTILES)))
+    for name, t in XTILES:
+        o.append("  ; " + name)
+        o.append("  " + " ".join("$%02X" % b for b in t))
+    o.append("]")
+    o.append("CONST NXTILES = %d" % len(XTILES))
+    o.append("")
     o.append("; sprites: %d frames of four 16x16 raster patterns, TL TR BL BR, 512 bytes a frame" % len(frames))
     for i, (name, _) in enumerate(frames):
         o.append("CONST F_%s = %d" % (name.upper(), i))
@@ -419,7 +670,7 @@ def preview(mz, frames, spal, fnt):
     """Everything drawn back into a picture, from the generated data
     and nothing else -- if this looks right, the machine's copy is."""
     from PIL import Image
-    W, H = 224 * 2 + 16, 248 + 16 + 16 * 5 + 16
+    W, H = 232 * 6, 248 + 16 + 16 * 5 + 16
     im = Image.new("RGB", (W, H), (32, 32, 32))
     px = im.load()
 

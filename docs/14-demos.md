@@ -1110,11 +1110,15 @@ or a board is in doubt; the serial log is the record.
 
 ### `MSCOOLMN` — Ms. Cool-Man: the arcade's first two mazes, in mode 2
 
-`demos/mscoolman.act`, 39 KB of PRG, the whole of Ms. Pac-Man's first
-mazes with the arcade's rules: the pink maze for levels 1 and 2, the
-light blue one from level 3, the four ghosts with their own targets,
-the pills, the fruit, the house, the tunnels, the score beside the
-maze. A hobby port for the machine's owner, with no users; **its art
+`demos/mscoolman.act`, 56 KB of PRG from `$1400` under the loader of
+[D102](01-decisions.md#d102--the-loader-a-program-owns-the-machine-and-never-comes-back),
+the whole of Ms. Pac-Man with the arcade's rules: the four mazes on
+the arcade's schedule -- pink for levels 1 and 2, light blue for 3 to
+5, orange for 6 to 9, navy for 10 to 13, then the third and fourth
+shapes again in magenta-and-yellow and in salmon, four levels each and
+in turn for ever -- the four ghosts with their own targets, the pills,
+the fruit, the house, the tunnels, the score beside the maze, the
+ghost's score where it was eaten, and the three intermissions. A hobby port for the machine's owner, with no users; **its art
 is the arcade's own pixels**, in the repository by that owner's
 decision. `tools/mkmscool.py` rips the two mazes, her nine frames, the
 ghosts', the fruit and the font from the sheet images in
@@ -1137,9 +1141,13 @@ columns 28-39, where the arcade's 224-wide picture leaves 96 pixels
 of a 320-wide screen: the arcade's HUD rows above and below the maze
 are what the height does not allow, and the side is where it goes.
 The font is the arcade's, the maze tiles and palette are the sheet's
-(33 tiles for the pink maze, 35 for the blue, five colours each), the
-lives and the fruit beside the maze are her sprite and the fruit
-sprites undoubled into tiles.
+(38 to 40 tiles a shape, five colours each; the fifth and sixth
+mazes are the third and fourth shapes under other palettes, which the
+generator proves by finding the nibble permutation and emits as
+palettes alone), the lives and the fruit beside the maze are her
+sprite and the fruit sprites undoubled into tiles, and a cell's kind
+-- wall, path, dot, pill, door -- follows from its tile, the outside
+having a black tile of its own so that it is not a path.
 
 **A character is four hardware sprites.** Sixteen logical pixels over
 a doubled mode is 32 raster lines, and a sprite is 16 × 16 raster, so
@@ -1188,10 +1196,26 @@ strawberry, orange, pretzel, apple, pear, banana by level, 100 to
 the arcade's does: melody and bass on two voices from the VGMusic
 transcription of the level intro (mspacman.mid, Oedipus, 106 bpm),
 its pitches as the engine's 0.5 Hz steps and its lengths in frames.
-Not there: the intermissions and their tunes, the ghosts' score sprites (the
-number appears in the score only), a second player, and the third
-and fourth mazes, whose tiles the generator could cut from the same
-sheet.
+**The intermissions** come after levels 2, 5, 9 and every fourth
+after, on a black screen under the clapperboard from the sheet
+clapping its number: "They Meet" and "The Chase" move as the
+reference implementation whose maps these are (masonicGIT/pacman,
+`src/cutscenes.js`) moves them, frame for frame at the arcade's own
+pixel positions -- Pac-Man and Inky along one lane, she and Pinky
+along another, the ghosts quickening at the middle; both in from the
+sides, the ramp over the ghosts as they bump heads, the climb, and
+the heart; then the four runs of the chase at two and a half and
+three pixels a frame and the seven-pixel dart. "Junior" has no
+reference to follow and is choreographed from its description: the
+parents at the left, the stork over the top, the bundle dropped,
+falling, bouncing twice, and Junior in it. Pac-Man's own frames are
+on the sheet (left is right mirrored, down is up turned over), and so
+are the heart, the stork, the bundle and Junior. "They Meet" plays
+its tune, the VGMusic transcription (mspacman2.mid) on two voices;
+**the tunes of "The Chase" and "Junior" have no transcription to be
+found and are not made up**, so those two acts play to their sounds.
+Not there: a second player, and the level-by-level fright and speed
+tables past level 5 are the Dossier's for Pac-Man.
 
 **The gate** (`sim/test_action.py`, on `sim/mscool.py`) runs the game
 three ways: on the bare machine for the rules; `SYS`'d from a booted
@@ -1210,8 +1234,12 @@ a blue ghost eaten is 200, eyes, the door, the house, out again; a
 red one is a life and everyone back at the start with one icon fewer
 beside the maze; the level cleared is the pink maze again, and again
 is the blue one with 244 dots, its palette, its tiles and the orange
-beside it; the fruit walks in after 70 dots; and the sprite engine's
-overrun flag over 240 frames of play. An autopilot in `sim/mscool.py`
+beside it; the fruit walks in after 70 dots; the sprite engine's
+overrun flag over 240 frames of play; then the level poked to 2, 5, 9
+and 13 in turn and cleared, and after each the clapperboard with its
+digit, the first act's tune playing and the others' not, the next
+level's READY!, and levels 6, 10 and 14 in the orange, the navy and
+the magenta maze with their dot counts, palettes and tiles. An autopilot in `sim/mscool.py`
 pokes her wanted direction each frame along a shortest path, and the
 same file run by hand writes the frames as PNG: `python sim/mscool.py
 pill` (or `title`, `death`, `clear`, `fruit`) -- which is how every
