@@ -1,0 +1,61 @@
+; The loader -- the last thing BASIC does for a CoolAction! program.
+;
+; `SYS "NAME.BIN"` loads this stub into BASIC's user area and jumps in.
+; From here on the machine is the program's: interrupts off, the
+; vectors pointed at a handler that does nothing, and the real program
+; -- NAME.PRG on the same drive, a PRG with its load address in front
+; -- streamed from the flash by this stub's own catalogue lookup to
+; wherever its header says, which may be anywhere from the end of this
+; stub to the top of RAM. BASIC is overwritten if the program is big
+; enough to reach it, and nothing comes back: a program that returns
+; lands in Reset(), which puts the boot ROM back over the top of memory
+; and restarts the machine, the same as the Ctrl+Shift+Esc chord.
+;
+; tools/mkdemos.py compiles this once per program, behind the library,
+; with two lines appended: the drive and the payload's 8.3 name padded
+; to eleven characters, `BYTE ld_vol = [11]` and `BYTE ARRAY ld_name =
+; "MSCOOLMNPRG"`. Nothing else in it is the program's business -- it
+; is the same stub for every program on the disc, which is the point.
+
+CARD ld_org                          ; where the payload goes
+
+; the do-nothing handler the vectors point at while a program runs
+PROC Trap()
+  ASM
+        RETI
+  ENDASM
+RETURN
+
+PROC Main()
+  CARD n
+  ASM
+        DI
+        LDW  X,#Trap
+        STW  [$FFFA],X
+        STW  [$FFFC],X
+        STW  [$FFFE],X
+  ENDASM
+  ; and the sources off, not only masked: a program that ends with
+  ; interrupts on (the compiler's stub does EI) would otherwise take
+  ; BASIC's still-pending vblank into Trap for ever
+  VID_IRQ = $03                      ; enables clear, flags acknowledged
+  KBD_CTRL = 0
+  IF NOT DiskFind(ld_vol, ld_name) THEN
+    PrintE("LOADER: NO SUCH FILE")
+    Reset()
+  FI
+  DiskOpen(ld_vol)
+  ld_org = FlashByte()
+  ld_org = ld_org + FlashByte() * 256  ; a multiply widens; a shift would not
+  n = disk_len - 2
+  FlashRead(ld_org, n)
+  FlashClose()
+  ; into the program, with Reset as the address its RET would return
+  ; to -- so a program that finishes restarts the machine
+  ASM
+        LDW  X,#Reset
+        PUSHW X
+        LDW  X,[v_ld_org]
+        JMP  [X]
+  ENDASM
+RETURN

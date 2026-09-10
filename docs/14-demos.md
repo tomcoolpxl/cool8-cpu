@@ -1101,7 +1101,7 @@ as hex as it arrives and echoed to the serial port -- the raw Set 2
 stream, a make code, `$F0` then the code for a release, `$E0` before
 an extended key -- and under it what the library makes of the same
 bytes: the keys `KeyHeld` says are down and the last one `KeyHit`
-saw. Esc twice quits. Written the day the space bar did nothing in
+saw. Esc twice resets the machine. Written the day the space bar did nothing in
 Ms. Cool-Man ([D101](01-decisions.md#d101--a-program-that-reads-the-keyboard-owns-it)):
 the window typed a character as make-then-break in one burst, and
 this shows that in one line, where a real press is a make, a pause,
@@ -1264,7 +1264,12 @@ A complete, native port of the UCSD Pascal p-System II.0 virtual machine (P-Mach
    not just what it draws.
 
 **A CoolAction! one** is `demos/name.act`, and `poe demos` compiles it
-behind the library and places `NAME.BIN` on drive 11 — nothing else to
+behind the library at `$1400` as `NAME.PRG` on drive 11, with
+`NAME.BIN` beside it -- the loader of
+[D102](01-decisions.md#d102--the-loader-a-program-owns-the-machine-and-never-comes-back),
+which `SYS "NAME.BIN"` runs and which then owns the machine and
+streams the program in over whatever BASIC was. Up to 60 KB, no
+return: a program that finishes resets the machine. Nothing else to
 do. Its gate is in `sim/test_action.py`, not here: a port of a BASIC
 demo is held to the BASIC one's framebuffer, and a new one to whatever
 it claims. A stub is not wanted and not listed. Data the repository

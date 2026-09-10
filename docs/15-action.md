@@ -42,15 +42,25 @@ rust/target/release/coolaction sw/io.act sw/libaction.act game.act -o GAME.BIN
 | `--sym file` | `addr name`, sorted -- a global `foo` is the label `v_foo`, a routine is its own name |
 | `--assemble file.asm` | the compiler's assembler on its own; the output is the raw image |
 
-**Running it.** From BASIC, `SYS "GAME.BIN"` loads the file where its
-header says and jumps in; the program's entry is `CALL Main`, `EI`,
-`RET`, so a program that finishes comes back to the prompt with
-interrupts on -- the library turns them off the first time a program
-reads the keyboard (§6, `TakeKeys`,
-[D101](01-decisions.md#d101--a-program-that-reads-the-keyboard-owns-it)),
-because under BASIC the interrupt handler would otherwise have every
-scancode first. The entry routine is `Main` if there is one, otherwise
-the last `PROC` in the source, which is Action!'s rule.
+**Running it.** On the disc a program is two files: `NAME.PRG`, the
+PRG with its load address in front, compiled at `$1400` and free to
+run to `$FEFF` over the whole of BASIC; and `NAME.BIN`, the loader
+(`sw/loader.act`) with the drive and that name appended, which `SYS
+"NAME.BIN"` puts in BASIC's user area. The loader turns interrupts
+off and their sources with them, points the vectors at a `RETI`,
+streams the PRG in from the flash by its own catalogue lookup, and
+jumps in with `Reset()` as the return address -- so a program that
+finishes restarts the machine, the way the Ctrl+Shift+Esc chord does,
+and nothing of BASIC's is ever depended on
+([D102](01-decisions.md#d102--the-loader-a-program-owns-the-machine-and-never-comes-back)).
+The program's entry is `CALL Main`, `EI`, `RET`; the library turns
+interrupts off the first time a program reads the keyboard (§6,
+`TakeKeys`, [D101](01-decisions.md#d101--a-program-that-reads-the-keyboard-owns-it)),
+which matters for a PRG run some other way. The entry routine is
+`Main` if there is one, otherwise the last `PROC` in the source, which
+is Action!'s rule. `poe demos` builds both files; `sim/test_action.py`
+runs the bare PRG at `$0200` for the rules and the pair from the disc
+for the path a person takes.
 
 **Where it lives.** The default origin is `$0200`, the byte above the
 CPU stack, because a game does not need BASIC and BASIC is the only
@@ -471,6 +481,9 @@ the wrong register fails by name.
 | `Sound(v, inc, vol, noise)`, `Silence(v)` | `SOUND`, and a voice off |
 | `WaitVBlank()`, `Frame()` | `VSYNC`: hold until `TMR_L` moves, bounded by one frame; and the counter's low byte |
 | `TakeKeys()` | the FIFO becomes the program's: `DI`, once. **Under BASIC the interrupt handler drains the keyboard FIFO every frame into a ring of decoded keys** (`sw/main.asm`, `sw/input.asm`), so a raw read there sees nothing -- every port's final "press a key" waited for ever on the web page and in the window while the same programs answered the harness, which runs them without the ROM. `Key`, `ReadKey` and `KeyPoll` call it; the start-up stub's `EI` gives the interrupts back when `Main` returns ([D101](01-decisions.md#d101--a-program-that-reads-the-keyboard-owns-it)). From then on Ctrl+Pause does not break the program: leaving is the program's own key |
+| `FlashOpen(lo, hi)`, `FlashByte()`, `FlashRead(dest, n)`, `FlashClose()` | the SPI flash as a stream ([04-system.md §4.8](04-system.md)): open at a 24-bit address, a byte, `n` bytes into memory, close |
+| `DiskFind(drive, name)`, `DiskOpen(drive)` | a file on a volume by its eleven padded characters (`"MSCOOLMNPRG"`), in `tools/cool8disk.py`'s format read by the library itself -- `disk_page` and `disk_len` answer, and `DiskOpen` puts the stream on its first byte. What the loader is built on |
+| `Reset()` | the boot ROM back over the top of memory and the machine restarted from its reset entry -- the Ctrl+Shift+Esc chord, from software. The way out of a program the loader put in charge |
 | `Key()` | the next raw Set 2 scancode or 0, `KBD_STAT` read first |
 | `ReadKey()` | `INKEY`: the next key as ASCII, `K_UP`..`K_INS` at 256 up, 0 for none -- `sw/kbd.asm`'s decoder on the same three tables, which `tools/cool8kbd.py --emit` copies out of `sw/keymap.asm` into a marked block here and `poe check` holds current |
 | `KeyPoll()`, `KeyHeld(sc)`, `KeyHit(sc)`, `KeyFeed(c)` | what a game wants and `INKEY` cannot say: a bitmap of every key down, kept from the same FIFO -- call `KeyPoll` once a frame, ask `KeyHeld` about as many keys as you like. `sc` is the Set 2 make code, an `$E0`-prefixed one at `$80 + code`: the cursor keys are `$F5` `$F2` `$EB` `$F4`. `KeyHit` answers whether a key was *pressed* since it last asked, from a second bitmap that only its asking clears -- so a tap shorter than a frame, or a front end that types a character as make-then-break in one burst, still counts once: space, pause and escape want this, steering wants `KeyHeld`. `KeyFeed` is one byte of the stream into those bitmaps, for a program that reads the FIFO itself (KEYTEST). Shares the break/extended state with `ReadKey`, so a program uses one or the other on a FIFO |

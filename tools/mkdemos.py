@@ -241,11 +241,16 @@ def main():
             print("  placed PASCAL.BIN on drive %d, system.vol (%d bytes) on drive %d"
                   % (disk.SOFTWARE_VOL, len(system_vol), disk.PASCAL_VOL))
 
-    # **The CoolAction! demos, compiled onto drive 11.** A bare `.BIN`
-    # each -- the PRG carries its own load address (D87), so `SYS
-    # "NAME.BIN"` is the whole launch and there is no stub to type.
-    # Behind the library, which is two files in a fixed order
-    # (H.ACT_LIB); the compiler is built by the harness on the way.
+    # **The CoolAction! demos, compiled onto drive 11, two files each.**
+    # NAME.PRG is the program, a PRG with its load address in front
+    # (D87), compiled at H.PAYLOAD_ORG so it may run to the top of RAM
+    # over BASIC; NAME.BIN is the loader (sw/loader.act) with the
+    # drive and that name appended, which `SYS "NAME.BIN"` puts in
+    # BASIC's user area and which then owns the machine: interrupts
+    # off, the vectors trapped, the PRG streamed in from the flash by
+    # its own catalogue lookup, and Reset() at the end of it (D102).
+    # Both behind the library (H.ACT_LIB); the compiler is built by
+    # the harness on the way.
     vol11 = disk.Volume(im, disk.ACTION_VOL)
     for f in actions():
         nm = discname(f)
@@ -256,13 +261,26 @@ def main():
             print("  %s: a part named in demos/%s.parts is not here, so it is not on the disc"
                   % (f, os.path.splitext(f)[0]))
             continue
-        prg, _ = H.build_act(srcs, "disc_" + nm.lower())
-        p = os.path.join(H.BUILD, nm + ".BIN")
+        prg, _ = H.build_act(srcs, "disc_" + nm.lower(), org=H.PAYLOAD_ORG)
+        end = H.PAYLOAD_ORG + len(prg) - 2
+        if end > 0xFF00:
+            sys.exit("%s: %d bytes from $%04X reaches $%04X, past the top of RAM"
+                     % (f, len(prg) - 2, H.PAYLOAD_ORG, end))
+        p = os.path.join(H.BUILD, nm + ".PRG")
         with open(p, "wb") as fh:
             fh.write(prg)
+        vol11.add(p, nm + ".PRG")
+        stub, _ = H.build_act(H.ACT_LIB + ["sw/loader.act", H.loader_tail(disk.ACTION_VOL, nm + ".PRG")],
+                              "stub_" + nm.lower())
+        if 0x0200 + len(stub) - 2 > H.PAYLOAD_ORG:
+            sys.exit("the loader stub is %d bytes and reaches the payload at $%04X"
+                     % (len(stub) - 2, H.PAYLOAD_ORG))
+        p = os.path.join(H.BUILD, nm + ".BIN")
+        with open(p, "wb") as fh:
+            fh.write(stub)
         vol11.add(p, nm + ".BIN")
-        print("  compiled %-16s %6d bytes -> drive %d as %s.BIN"
-              % (f, len(prg), disk.ACTION_VOL, nm))
+        print("  compiled %-16s %6d bytes at $%04X -> drive %d as %s.PRG, with %s.BIN to load it"
+              % (f, len(prg) - 2, H.PAYLOAD_ORG, disk.ACTION_VOL, nm, nm))
 
     im.save()
 

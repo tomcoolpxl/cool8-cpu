@@ -482,6 +482,100 @@ PROC TextAt(BYTE col, BYTE row, BYTE POINTER s, BYTE attr)
 RETURN
 
 ; ---------------------------------------------------------------------
+; The flash, and the disc on it (04-system.md section 4.8, and
+; tools/cool8disk.py for the volume format). A read is a stream: the
+; 24-bit address set, FLS_CTRL 1 to open, FLS_DATA a byte at a time
+; and advancing, FLS_CTRL 0 to close. A volume is 448 KB from
+; $100000 + 7 * $10000 * drive: 256 sixteen-byte catalogue entries --
+; an 8.3 name padded to eleven characters, a status ($01 a file, $00
+; deleted, $80 the label, $FF free and the end), the page the data
+; starts on, the length in bytes -- then the files on 256-byte pages.
+; ---------------------------------------------------------------------
+
+CARD disk_page = [0]                 ; the file DiskFind found
+CARD disk_len = [0]
+BYTE ARRAY disk_ent(16)
+
+; FlashOpen(lo, hi) -- a stream open at 24-bit address hi:lo
+PROC FlashOpen(CARD lo, BYTE hi)
+  FLS_ADDR_L = lo
+  FLS_ADDR_M = lo >> 8
+  FLS_ADDR_H = hi
+  FLS_CTRL = 1
+RETURN
+
+PROC FlashClose()
+  FLS_CTRL = 0
+RETURN
+
+FUNC BYTE FlashByte()
+RETURN (FLS_DATA)
+
+; FlashRead(dest, n) -- n bytes of the open stream into memory
+PROC FlashRead(BYTE POINTER dest, CARD n)
+  WHILE n > 0 DO
+    *dest = FLS_DATA
+    dest += 1
+    n -= 1
+  OD
+RETURN
+
+; DiskFind(drive, name) -- name is the eleven padded characters, as a
+; string; 1 and disk_page/disk_len set when the file is on the drive
+FUNC BYTE DiskFind(BYTE drive, BYTE POINTER name)
+  BYTE i, k, st
+  CARD e
+  BYTE POINTER q
+  FlashOpen(0, $10 + drive * 7)
+  e = 0
+  WHILE e < 256 DO
+    FlashRead(disk_ent, 16)
+    st = disk_ent(11)
+    IF st == $FF THEN
+      e = 256
+    ELSEIF st == 1 THEN
+      k = 1
+      q = name + 1
+      FOR i = 0 TO 10 DO
+        IF disk_ent(i) <> *q THEN k = 0 FI
+        q += 1
+      OD
+      IF k THEN
+        disk_page = disk_ent(12) + disk_ent(13) * 256
+        disk_len = disk_ent(14) + disk_ent(15) * 256
+        FlashClose()
+        RETURN (1)
+      FI
+    FI
+    e += 1
+  OD
+  FlashClose()
+RETURN (0)
+
+; DiskOpen(drive) -- the stream on the first byte of the file found
+PROC DiskOpen(BYTE drive)
+  FlashOpen(disk_page << 8, $10 + drive * 7 + (disk_page >> 8))
+RETURN
+
+; ---------------------------------------------------------------------
+; The machine
+; ---------------------------------------------------------------------
+
+; Reset() -- the boot ROM back over the top of memory and the machine
+; restarted from its reset entry, as the Ctrl+Shift+Esc chord does it.
+; The way out of a program the loader (sw/loader.act) put in charge:
+; nothing of BASIC's is there to return to.
+PROC Reset()
+  ASM
+        DI
+        MOV  R0,#1
+        ST   [v_SYS_CTRL],R0
+        LDW  X,[$FFF8]
+        JMP  [X]
+  ENDASM
+RETURN
+
+; ---------------------------------------------------------------------
 ; Input and the UART
 ; ---------------------------------------------------------------------
 

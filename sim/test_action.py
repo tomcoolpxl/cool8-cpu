@@ -953,8 +953,65 @@ def test_keytest():
     m.run_frame(3)
     m.kbd.feed([0x76, 0xF0, 0x76])
     m.run_frame(3)
-    check(m.settle(bsyms["in_raw.rk0"], bsyms["irhead"], bsyms["irtail"], 20_000_000),
-          "keytest: Esc twice, and BASIC is back at its prompt with its interrupts")
+    for _ in range(130):
+        m.run_frame()
+    check(m.settle(bsyms["in_raw.rk0"], bsyms["irhead"], bsyms["irtail"], 80_000_000)
+          and any("COOLBASIC" in r for r in m.text()),
+          "keytest: Esc twice, the program returned into the loader's Reset(), and the machine rebooted to the banner")
+    print()
+
+
+def test_loader():
+    """The loader (sw/loader.act, D102): SYS "RAINBOW.BIN" from the
+    flash-booted disc puts the stub in BASIC's user area; the stub
+    traps the vectors, turns the interrupt sources off, streams
+    RAINBOW.PRG to $1400 by its own catalogue lookup and runs it; the
+    program's final key press returns into Reset(), and the machine
+    boots again."""
+    import cool8rsvm as vm
+    import cool8disk
+    import ioregs
+    print("  the loader, from the demos disc")
+    img = os.path.join(H.BUILD, "demos.img")
+    if not os.path.exists(img):
+        print("    SKIPPED: %s is not built (poe demos)" % img)
+        print()
+        return
+    prg, _ = H.build_act(H.ACT_LIB + ["demos/rainbow.act"], "rainbow_payload", org=H.PAYLOAD_ORG)
+    vol = cool8disk.Volume(cool8disk.Image(img), 11)
+    check(vol.get("RAINBOW.PRG") == bytes(prg), "loader: RAINBOW.PRG on the disc is this build at $%04X" % H.PAYLOAD_ORG,
+          "differs: poe demos")
+    stub = vol.get("RAINBOW.BIN")
+    check(stub[0] | (stub[1] << 8) == 0x0200 and 0x0200 + len(stub) - 2 <= H.PAYLOAD_ORG,
+          "loader: the stub loads at $0200 and ends below the payload", "%d bytes" % len(stub))
+    code, bsyms = basic_image()
+    m = vm.boot(flash_path=img, render=True)
+    for _ in range(90):
+        m.run_frame()
+    check(m.settle(bsyms["in_raw.rk0"], bsyms["irhead"], bsyms["irtail"], 80_000_000), "loader: BASIC booted")
+    H.key(m, bsyms, 'DRIVE 11\r')
+    H.key(m, bsyms, 'SYS "RAINBOW.BIN"')
+    m.key(["\r"])
+    m.run_frame(90)
+    # the program is running and writing its own globals by now, so
+    # its code is what can be compared: the entry stub and the first
+    # routine
+    check(bytes(m.bus.mem[H.PAYLOAD_ORG:H.PAYLOAD_ORG + 64]) == bytes(prg[2:66]),
+          "loader: the payload's code is in memory at $%04X" % H.PAYLOAD_ORG)
+    trap = m.bus.mem[0xFFFA] | (m.bus.mem[0xFFFB] << 8)
+    check(m.bus.mem[0xFFFC] | (m.bus.mem[0xFFFD] << 8) == trap and 0x0200 <= trap < H.PAYLOAD_ORG,
+          "loader: NMI and IRQ vectors point into the stub", "$%04X" % trap)
+    check(m.bus.read(ioregs.addr_of("VID_MODE")) == 0x84 and H.PAYLOAD_ORG <= m.cpu.pc < 0xFF00,
+          "loader: RAINBOW runs from there, in mode 4",
+          "MODE %02X PC $%04X" % (m.bus.read(ioregs.addr_of("VID_MODE")), m.cpu.pc))
+    m.kbd.feed([0x29, 0xF0, 0x29])
+    for _ in range(130):
+        m.run_frame()
+    check(m.settle(bsyms["in_raw.rk0"], bsyms["irhead"], bsyms["irtail"], 80_000_000)
+          and any("COOLBASIC" in r for r in m.text()),
+          "loader: its key press returned into Reset(), and the machine booted again to the banner")
+    check(m.bus.mem[0xFFFA] | (m.bus.mem[0xFFFB] << 8) != trap,
+          "loader: the ROM took the vectors back", "NMI still $%04X" % trap)
     print()
 
 
@@ -1028,12 +1085,13 @@ def test_mscoolman():
     img = os.path.join(H.BUILD, "demos.img")
     if not os.path.exists(img):
         print("    SKIPPED the flash boot: %s is not built (poe demos)" % img)
-    elif cool8disk.Volume(cool8disk.Image(img), 11).get("MSCOOLMN.BIN") != bytes(g.prg):
+    elif cool8disk.Volume(cool8disk.Image(img), 11).get("MSCOOLMN.PRG") != bytes(
+            H.build_act(mscool.sources(), "mscoolman_payload", org=H.PAYLOAD_ORG)[0]):
         # a disc from before this build is not this build: the flash
         # path once passed a stale game and failed a fresh one, and
         # neither answer meant anything
         check(False, "mscoolman from flash: the demos disc holds this build",
-              "MSCOOLMN.BIN on %s differs from the PRG just compiled: poe demos" % img)
+              "MSCOOLMN.PRG on %s differs from the PRG just compiled at $%04X: poe demos" % (img, H.PAYLOAD_ORG))
     else:
         m = vm.boot(flash_path=img, render=True)
         for _ in range(90):
@@ -1318,6 +1376,7 @@ def main():
     test_ports()
     test_keys()
     test_keytest()
+    test_loader()
     test_mscoolman()
     test_refusals()
     return H.report()

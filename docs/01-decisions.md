@@ -6215,3 +6215,49 @@ this now exists: `test_keys` and the Ms. Cool-Man gate in
 `sim/test_action.py` also `SYS` the program from a booted BASIC, press
 keys at the PS/2 port through the running handler, and ask BASIC a
 question afterwards.
+
+## D102 -- The loader: a program owns the machine, and never comes back
+
+**BASIC is the way a program gets loaded, and nothing else.** Ms.
+Cool-Man reached 39.5 KB, which is BASIC's whole user area; the third
+and fourth mazes and the intermissions do not fit under an interpreter
+the owner has said, more than once, he does not care to keep. So the
+program does not run under it. `SYS "NAME.BIN"` loads a 3.5 KB stub
+(`sw/loader.act`, compiled behind the library with two lines appended
+by `tools/mkdemos.py`: the drive and the payload's padded name) into
+the user area, where BASIC can load it, and from that moment the
+machine is the stub's: interrupts off and their sources with them
+(BASIC's vblank would otherwise stay pending and take an `EI` into
+the trap for ever -- the first version did), the NMI, IRQ and BRK
+vectors on a `RETI` in the stub, and `NAME.PRG` -- the program, a PRG
+with its load address in front, compiled at `$1400` -- streamed from
+the flash to wherever its header says by the library's own catalogue
+lookup (`DiskFind`, `DiskOpen`, `FlashRead`: the volume format of
+`tools/cool8disk.py`, read by the library itself, nothing of the
+ROM's or BASIC's). Then a jump into it with `Reset()` pushed as the
+return address.
+
+**Nothing comes back.** `Reset()` puts the boot ROM over the top of
+memory (`SYSCTRL` bit 0) and jumps through its reset vector, which is
+what the Ctrl+Shift+Esc chord does in hardware; the machine boots
+again and the launcher on the page or in the window does what it did
+the first time. A program's final "press a key" therefore restarts
+the machine, and Ms. Cool-Man's Esc calls `Reset()` itself. The stub
+stays where it is, 3.5 KB at `$0200`, so the payload begins at `$1400`
+and may run to `$FEFF`: 60 KB, the user area and BASIC and the text
+screen and the system's low RAM, all of it the program's. `poe demos`
+refuses a payload that would reach the I/O page and a stub that would
+reach the payload.
+
+**Why a stub and not a longer `SYS`.** The loader that BASIC has runs
+from BASIC's own code; a file poured over that code kills its own
+loader half-way. A stub that fits under BASIC and does the pouring
+itself has no such limit and no dependence on where BASIC happened to
+be -- it is the same 3.5 KB whatever it loads, which is the generic
+piece the owner asked for: every CoolAction! program on the disc goes
+this way, RAINBOW and PRIMES as much as the game, so nobody writes a
+second one. The bare PRG at `$0200` is still what the harness runs
+for the rules, and the pair from the disc is what the flash-booted
+gates run: `test_loader` watches RAINBOW.PRG land at `$1400` byte for
+byte, the vectors point at the stub's `RETI`, mode 4 come up, and the
+machine reboot to its banner after the key.

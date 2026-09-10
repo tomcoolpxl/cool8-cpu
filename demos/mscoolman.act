@@ -34,7 +34,8 @@
 ; through the first two scatters, so no pattern works twice, and the
 ; fruit walks the maze instead of waiting under the house.
 ;
-; Keys: the cursor keys steer, space starts, P pauses, Esc quits.
+; Keys: the cursor keys steer, space starts, P pauses, Esc on the
+; title resets the machine -- there is nothing to go back to (D102).
 
 ; --------------------------------------------------------------- layout
 CONST HUD_COL = 28                   ; the first map column beside the maze
@@ -1309,7 +1310,5 @@ PROC Main()
   OD
   Quiet()
   SpritesOff()
-  VID_SCY = 0
-  Graphics(0)
-  Cursor(1)
+  Reset()
 RETURN

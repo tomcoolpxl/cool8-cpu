@@ -339,6 +339,19 @@ _ACT_BUILT = [False]
 ACT_LIB = ["sw/io.act", "sw/libaction.act"]
 
 
+# Where a program the loader puts in charge is compiled to: above the
+# loader stub in BASIC's user area, and free to run to $FEFF (D102).
+PAYLOAD_ORG = 0x1400
+
+
+def loader_tail(drive, name):
+    """The two lines that make sw/loader.act one program's loader: the
+    drive and the payload's 8.3 name padded to the catalogue's eleven
+    characters."""
+    stem, _, ext = name.upper().partition(".")
+    return "BYTE ld_vol = [%d]\nBYTE ARRAY ld_name = \"%s\"\n" % (drive, stem.ljust(8) + ext.ljust(3))
+
+
 def act_sources(path):
     """The files that compile a CoolAction! program: the library, then
     the parts its `.parts` manifest names, then itself -- or None when
