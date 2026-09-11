@@ -6517,3 +6517,86 @@ is stale. `tools/mkactdata.py` no longer carries COBRA.
 the flicker; mode 5 and 8-bit mode 6, above; 256 steps of sine, for the
 shiver. A flight path, a starfield and depth shading were offered and
 not chosen.
+
+## D106 -- COBRA 2: a camera circles a ship that flies straight, under a sky fixed in the world
+
+**The owner asked for a copy of COBRA, COBRA left alone, read the other
+way round**: the ship flying in a straight line and a camera moving
+around it; a star field correct against the ship's motion, "or at
+least reasonably correct", moving as the camera does; and slower
+movement, because the tumble was sickening. Asked how Elite did it:
+Elite has no camera. The player's ship sits at the origin and the
+universe turns around it, and its "stars" are stardust -- a handful of
+particles in screen-centred coordinates, pushed outward by the speed,
+turned by the same pitch and roll as everything else, and recycled at
+random when they leave the screen. Stars and dust at half COBRA's
+rates were chosen.
+
+**The camera is COBRA's rotation.** If the ship does not turn in the
+world, its frame is the world's, and the matrix COBRA builds from three
+angles is the camera's. Nothing new moves the camera: every point fixed
+in the world goes through the matrix the ship's corners go through, and
+that is what makes the sky correct rather than plausible.
+
+**A star is a direction, a speck is a point.** A star has no position,
+only a direction about 110 long, and the rotation alone moves it: it
+lands at FOCAL · X / Z, its Z >> 6 indexing a byte reciprocal. A speck
+is a point near the ship in units of two model units that slides
+exactly one unit a frame back along the ship's length -- the flight, and
+a whole unit keeps it smooth -- and goes through the perspective as a
+corner does, so a speck in front of the ship and one behind it part
+company as the camera circles. Both are records in a vertex's shape,
+so `Sky()` is `Transform`'s three rows once a point, in assembly.
+
+**Recycled as Elite recycles, but placed in the world.** A star that
+leaves the screen comes back across the opposite edge -- its last place
+on the screen mirrored through the centre, a sixteenth inside -- and a
+speck anywhere in view at a random depth; each is carried back into the
+world through the matrix's transpose and stays fixed there until it
+leaves again. Elite's dust lives in the view and is turned by
+increments; here nothing drifts, and `test_cobra2` holds every star and
+speck to exactly where this frame's matrix puts it.
+
+**Behind the ship, the sky is hidden -- the owner saw stars through its
+body.** The ship is lines, and filling it black a frame would cost a
+frame. Its outline is the rim edges -- those on both their faces'
+outlines, which is every edge but the laser and the stern's panels --
+with one face shown and the other not, which `Visible()` lists; `Sky()`
+turns them into edges top to bottom with a slope from a table of 65,536
+/ dy, and a point is behind the ship when it lies between the outline's
+two crossings of its row. An edge has its rows from its top to just
+above its bottom, so a convex outline crosses a row exactly twice and
+the search stops at the second. A star is always tested, a speck only
+when it is behind the ship's centre, so dust in front still crosses
+the hull. What is hidden is not drawn and not recycled: it stays in the
+sky and comes out again past the ship's edge. `test_cobra2` models the
+outline and the test exactly -- 114 points hidden at its 12 poses, none
+drawn.
+
+**Hysteresis on the way out only.** At half COBRA's rates the
+generator's flicker check found a gap D105's two-sided hysteresis
+leaves: one face 256 past edge-on and turned away while its neighbour
+was not yet 256 in, and the edge between them out for a frame. In COBRA
+2 a face turns in as soon as it faces the camera and out only 256 past:
+rounding still cannot flick it, and a handover overlaps instead.
+
+**Measured**: 110,410 of a frame's 139,583 clocks, 79 %, over 1,800
+frames without one overrun -- the sky 48,338 for 48 points, hiding what
+is behind the ship included, their dots 2,869, putting them back 3,224,
+the faces and the edge lists 7,122, the rest the ship as COBRA. The
+first cut drew 72 points and put them back in compiled code with
+divisions and random numbers taken modulo: 142,378 clocks, a frame in
+two of every three vblanks, and the display check failed with it. Then
+56 points, `Sky()` queuing what left, a star coming back from its last
+place with no division, the random word masked, not divided -- 108,594.
+Hiding the sky cost 15,000 more and five frames in 1,800 overran, so
+`Visible()` went into assembly and the points came down to 28 stars and
+20 specks. The PRG is 14,072 bytes. The fixed point lands a star within
+1.51 px of exact division and a speck within 2.16, most of that the
+floor to a pixel.
+
+**Rejected**: Elite's dust in the view, turned by increments -- the
+increment between two frames' matrices is about the size of their
+rounding, so it would wobble; a camera modelled with a position and an
+orientation of its own, when the matrix already is one; more stars, for
+the frame.

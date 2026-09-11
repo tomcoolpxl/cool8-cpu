@@ -627,34 +627,67 @@ def test_cobra():
     - a frame every vblank -- over ten seconds of the machine the loop
       runs once a frame, so no frame's work ever overran one;
     - what it draws is what its own arithmetic says: at poses along the
-      tumble, each face's visibility is its normal through the
+      tumble, the rotation and every vertex are tools/mk3d.py's integer
+      pipeline's, each face's visibility is its normal through the
       program's own matrix against its threshold, agrees with its
       triangle's area on the screen wherever that area is past
       mk3d.SURE, and the page's edge list is exactly the edges
-      bordering a visible face;
-    - every vertex on the screen;
+      bordering a visible face -- and the page is that list's lines,
+      pixel for pixel;
+    - every vertex on the screen, and the next frame on the glass is the
+      finished page, never the one being drawn;
     - a page erased by drawing its last frame again in black is the page
       a clear would have left: the same frames, run once erasing and
       once clearing (the `clean` byte), leave the same two pages."""
     import mk3d
-    print("  COBRA: the tumble, every frame computed")
-    prg, syms = H.build_act(H.ACT_LIB + ["demos/cobra.act"], "act_cobra")
-    same_bytes("act_cobra", prg)
+    cobra_run("cobra", "COBRA: the tumble, every frame computed",
+              (mk3d.YAWR, mk3d.PITCHR, mk3d.ROLLR), mk3d.HYST, sky=False)
+
+
+def test_cobra2():
+    """COBRA 2 (demos/cobra2.act, D106): COBRA's ship and arithmetic at
+    half its rates, read as a camera circling a ship that flies straight,
+    and a sky that is fixed in the world. Every claim COBRA is held to,
+    faces hysteresis on the way out only, and on top:
+
+    - at the same poses, where Respawn() begins the page's dot list is
+      exactly where tools/mk3d.py's models of the program put every star
+      and speck, stars first, each in its colour, and the on-screen
+      flags are those models' answers;
+    - the page is the dots with the lines over them, pixel for pixel and
+      colour for colour, and the glass shows it in one shade a colour;
+    - over 120 consecutive frames every star on the screen keeps its
+      direction and every speck moves exactly one unit back along the
+      ship -- the flight -- until it leaves; and what is recycled is
+      back on the screen the next frame."""
+    import mk3d
+    cobra_run("cobra2", "COBRA 2: the camera circles, the ship flies, the sky stays put",
+              mk3d.RATES2, mk3d.TURNIN2, sky=True, FR=1800)    # 77 % of a frame: thirty seconds of it
+
+
+def cobra_run(name, title, rates, turn_in, sky, FR=600):
+    """The claims the compiled COBRAs are held to (test_cobra,
+    test_cobra2): `rates` and `turn_in` are the program's tumble and its
+    faces' hysteresis on the way in, `sky` adds COBRA 2's, and a frame is
+    computed in every one of FR vblanks."""
+    import mk3d
+    print("  " + title)
+    prg, syms = H.build_act(H.ACT_LIB + ["demos/%s.act" % name], "act_" + name)
+    same_bytes("act_" + name, prg)
     print("    %d bytes of PRG" % (len(prg) - 2))
 
-    def arr(m, name, n):
-        a = syms["v_" + name]
+    def arr(m, nm, n):
+        a = syms["v_" + nm]
         return bytes(m.bus.mem[a:a + n])
 
-    def word(m, name):
-        a = syms["v_" + name]
+    def word(m, nm):
+        a = syms["v_" + nm]
         return m.bus.mem[a] | (m.bus.mem[a + 1] << 8)
 
     m = H.session(render=True)
     org, end = H.load_act(m, prg)
     why = m.run(until=syms["WaitVBlank"], budget=40_000_000)
-    check(why == "until", "cobra: its mode set and both pages cleared, to the first frame wait", why)
-    FR = 600
+    check(why == "until", "%s: its mode set and both pages cleared, to the first frame wait" % name, why)
     f0, t0 = word(m, "frames"), m.frames
     p = dbg.Profile(syms, org, end)
     p.start(m)
@@ -662,38 +695,102 @@ def test_cobra():
     m.run(until=syms["WaitVBlank"], budget=2_000_000)   # the last vblank's pass finished too
     p.collect(m)
     passes, frames = word(m, "frames") - f0, m.frames - t0
-    check(passes == frames, "cobra: a frame computed and drawn in every one of %d vblanks -- sixty a second"
-          % FR, "%d passes in %d frames" % (passes, frames))
+    check(passes == frames, "%s: a frame computed and drawn in every one of %d vblanks -- sixty a second"
+          % (name, FR), "%d passes in %d frames" % (passes, frames))
     n = max(1, passes)
+    parts = [("the transform", ["Transform"]), ("the lines", ["Lines"]), ("the rotation", ["Matrix", "Row"]),
+             ("culling and listing", ["Faces", "Visible"])]
+    if sky:
+        parts += [("the sky", ["Sky"]), ("its dots", ["Dots", "DotsAsm"]),
+                  ("putting it back", ["Respawn", "Transpose", "Place", "Store", "StarAt", "DustAt", "Rnd",
+                                       "__div16", "__mod16"])]
+    parts.append(("16-bit multiplies", ["__mul16"]))
     per = lambda c: "{:,}".format(int(c / n))                 # noqa: E731
-    print("    a frame's work: %s clocks of 139,583 -- %s the transform, %s the lines, %s the rotation,"
-          " %s culling and listing, %s their 16-bit multiplies"
-          % (per(p.total - p.of("WaitVBlank")), per(p.of("Transform")), per(p.of("Lines")),
-             per(p.of("Matrix") + p.of("Row")), per(p.of("Faces") + p.of("Visible")), per(p.of("__mul16"))))
+    print("    a frame's work: %s clocks of 139,583 -- %s" % (
+        per(p.total - p.of("WaitVBlank")),
+        ", ".join("%s %s" % (per(sum(p.of(r) for r in rs if r in syms)), what) for what, rs in parts)))
 
-    md = mk3d.act_model()
+    md = mk3d.act_model(rates, turn_in)
     scr = md["scr"]                                 # each face's triangle, positive turned to the viewer
     nb = arr(m, "nb", 65)
     ea, eb, e1, e2 = (arr(m, nm, 38) for nm in ("ea", "eb", "ef1", "ef2"))
+    nhid = 0
+    if sky:
+        sk = mk3d.sky_model()
+        NS, ND = mk3d.STARS, mk3d.DUST
+        dlp = (NS + ND) * 3
+        rim = arr(m, "rim", 38)
+        rlo, rhi = mk3d.recip_tables()
+    angles = lambda: (word(m, a) * mk3d.SINES >> 16 for a in ("yaw", "pitch", "roll"))   # noqa: E731
     wrong_face = wrong_screen = wrong_list = wrong_mat = wrong_proj = wrong_px = wrong_glass = off = 0
-    first_px = ""
-    counts = []
+    wrong_sky = 0
+    first_px = first_sky = ""
+    counts, ndots = [], []
     for _ in range(12):
         m.run_frame(23)
         m.run(until=syms["Faces"], budget=2_000_000)
         was = arr(m, "fv", 13)                              # the faces as the last frame left them
+        dots = []
+        if sky:
+            # the sky as Sky() finds it and as it leaves it for Respawn():
+            # where the models say, the flight included
+            m.run(until=syms["Sky"], budget=2_000_000)
+            pre = arr(m, "dd", ND * 5)
+            m.run(until=syms["Respawn"], budget=2_000_000)
+            cur = m.bus.mem[syms["v_cur"]]
+            mat = md["matrix"](*angles())
+            sd, sc, sv = arr(m, "sd", NS * 5), arr(m, "sc", NS), arr(m, "sv", NS)
+            dd, dv = arr(m, "dd", ND * 5), arr(m, "dv", ND)
+            # the ship's outline, as Visible() lists it and as the model makes it
+            fv0, sx0, sy0 = arr(m, "fv", 13), arr(m, "sx", 28), arr(m, "sy", 28)
+            sil = [(sx0[ea[e]], sy0[ea[e]], sx0[eb[e]], sy0[eb[e]]) for e in range(38)
+                   if rim[e] and fv0[e1[e]] != fv0[e2[e]]]
+            raw = arr(m, "sl", 152)[:4 * m.bus.mem[syms["v_sln"]]]
+            have_sil = [tuple(raw[j:j + 4]) for j in range(0, len(raw), 4)]
+            recs, box = mk3d.outline(sil, rlo, rhi)
+            want, fs, fd, flown = [], [], [], b""
+            for i in range(NS):
+                s = mk3d.star_screen(mat, [b - 128 for b in sd[5 * i:5 * i + 3]], sk["srz"])
+                fs.append(1 if s else 0)
+                if s and mk3d.hidden(recs, box, s[0], s[1]):
+                    nhid += 1
+                elif s:
+                    want.append((s[0], s[1], sc[i]))
+            for i in range(ND):
+                a = pre[5 * i:5 * i + 5]
+                t = None                        # a unit further would leave a byte: out of reach
+                if a[2] >= 2:
+                    el = ((a[3] | a[4] << 8) - 128) & 0xFFFF
+                    a = bytes([a[0], a[1], a[2] - 1, el & 255, el >> 8])
+                    t = mk3d.dust_screen(mat, [b - 128 for b in a[:3]], sk["drz"])
+                flown += a
+                fd.append(1 if t else 0)
+                if t and t[3] >= 0 and mk3d.hidden(recs, box, t[0], t[1]):
+                    nhid += 1                   # behind the ship's centre, inside its outline
+                elif t:
+                    want.append((t[0], t[1], 4 if t[2] else 5))
+            k = m.bus.mem[syms["v_dn"] + cur]
+            raw = arr(m, "dl", 2 * dlp)[cur * dlp:cur * dlp + 3 * k]
+            dots = [tuple(raw[j:j + 3]) for j in range(0, len(raw), 3)]
+            if (dots != want or list(sv) != fs or list(dv) != fd or dd != flown or have_sil != sil
+                    or any(y > 239 for _, y, _ in dots)):
+                wrong_sky += 1
+                if not first_sky:
+                    first_sky = "list %s, models %s; flags %s %s" % (dots[:4], want[:4], list(sv) == fs,
+                                                                     list(dv) == fd)
+            ndots.append(len(dots))
         m.run(until=syms["WaitVBlank"], budget=2_000_000)   # this frame's page complete
         sx, sy, fv = arr(m, "sx", 28), arr(m, "sy", 28), arr(m, "fv", 13)
         mz = [b - 128 for b in arr(m, "mp", 9)[6:9]]      # the matrix's Z row, signed
         cur = m.bus.mem[syms["v_cur"]]
-        mat = md["matrix"](*(word(m, a) * mk3d.SINES >> 16 for a in ("yaw", "pitch", "roll")))
+        mat = md["matrix"](*angles())
         wrong_mat += list(arr(m, "mp", 9)) != [e + 128 for row in mat for e in row]
         wrong_proj += list(zip(sx, sy)) != md["project"](mat)
         for f in range(13):
             n = [b - 128 for b in nb[5 * f:5 * f + 3]]
             t = ((nb[5 * f + 3] | nb[5 * f + 4] << 8) - 128 * sum(n) + 0x8000) % 0x10000 - 0x8000
             q = sum(a * b for a, b in zip(mz, n)) - t
-            wrong_face += (q - mk3d.HYST < 0 if was[f] else q + mk3d.HYST < 0) != bool(fv[f])
+            wrong_face += (q - mk3d.HYST < 0 if was[f] else q + turn_in < 0) != bool(fv[f])
             (xa, ya), (xb, yb), (xc, yc) = ((sx[v], sy[v]) for v in scr[f])
             area = ((xb - xa) >> 1) * ((yc - ya) >> 1) - ((yb - ya) >> 1) * ((xc - xa) >> 1)
             wrong_screen += abs(area) > mk3d.SURE and (area > 0) != bool(fv[f])
@@ -704,53 +801,99 @@ def test_cobra():
         nl = m.bus.mem[syms["v_nl"] + cur]
         have = arr(m, "lst", 304)[cur * 152:cur * 152 + 4 * nl]
         wrong_list += have != bytes(lst)
-        # the page drawn is exactly its list's lines, pixel for pixel
+        # the page drawn is exactly its dots and then its list's lines,
+        # pixel for pixel and colour for colour
         base = m.bus.mem[syms["v_pg"] + cur] << 8
         page = bytes(m.video.vram[base:base + 30720])
-        lit = set()
+        colour = {}
         for i, b in enumerate(page):
             if b:
                 y, xb = divmod(i, 128)
                 if b >> 4:
-                    lit.add((2 * xb, y))
+                    colour[(2 * xb, y)] = b >> 4
                 if b & 15:
-                    lit.add((2 * xb + 1, y))
-        want = cobra_lines([tuple(have[j:j + 4]) for j in range(0, len(have), 4)])
-        if lit != want:
+                    colour[(2 * xb + 1, y)] = b & 15
+        want = {(x, y): c for x, y, c in dots}
+        for xy in cobra_lines([tuple(have[j:j + 4]) for j in range(0, len(have), 4)]):
+            want[xy] = 1
+        if colour != want:
             wrong_px += 1
             if not first_px:
-                extra, lost = sorted(lit - want), sorted(want - lit)
-                bad = [tuple(have[j:j + 4]) for j in range(0, len(have), 4)
-                       if cobra_lines([tuple(have[j:j + 4])]) & set(lost)]
-                first_px = "%d pixels lit off the lines, %d of them missing; lines %s" % (
-                    len(extra), len(lost), bad[:4])
+                extra = sorted(xy for xy in colour if colour[xy] != want.get(xy))
+                lost = sorted(xy for xy in want if xy not in colour)
+                first_px = "%d pixels lit off the picture or in the wrong colour, %d missing: %s %s" % (
+                    len(extra), len(lost), extra[:4], lost[:4])
         off += sum(1 for y in sy if y > 239)
         counts.append(len(edges))
         # and the next frame on the glass is that page, whole: not the one
         # being erased and drawn. This stop is mid-frame and the frame it
         # is in scans the page latched at its start, so the first frame
         # from this page is the one after (mode 6's picture starts 64
-        # pixels in, every pixel doubled both ways)
+        # pixels in, every pixel doubled both ways); one shade a colour
         m.run_frame(2)
         fb = m.fb()
-        glass = {(x, y) for y in range(240) for x in range(256)
+        glass = {(x, y): fb[2 * y * 640 + 64 + 2 * x] for y in range(240) for x in range(256)
                  if fb[2 * y * 640 + 64 + 2 * x] != 0}
-        wrong_glass += glass != lit
-    check(not wrong_face, "cobra: at 12 poses, every face's visibility is its normal through the program's "
-          "own matrix against its threshold, %d of hysteresis from the frame before" % mk3d.HYST,
-          "%d faces wrong" % wrong_face)
-    check(not wrong_screen, "cobra: and agrees with its triangle on the screen wherever the area is past %d"
-          % mk3d.SURE, "%d faces disagree" % wrong_screen)
-    check(not wrong_list, "cobra: and each page's list is exactly the edges bordering a visible face, %d-%d of them"
-          % (min(counts), max(counts)), "%d lists wrong" % wrong_list)
-    check(not off, "cobra: every vertex on the screen", "%d below it" % off)
-    check(not wrong_mat, "cobra: the rotation is tools/mk3d.py's, entry for entry", "%d poses differ" % wrong_mat)
-    check(not wrong_proj, "cobra: and every vertex lands where its integer pipeline puts it",
+        shade = {}
+        wrong_glass += set(glass) != set(colour) or any(
+            shade.setdefault(c, glass.get(xy)) != glass.get(xy) for xy, c in colour.items())
+    tag = name + ":"
+    check(not wrong_face, "%s at 12 poses, every face's visibility is its normal through the program's "
+          "own matrix against its threshold, %d of hysteresis on the way out, %d on the way in"
+          % (tag, mk3d.HYST, turn_in), "%d faces wrong" % wrong_face)
+    check(not wrong_screen, "%s and agrees with its triangle on the screen wherever the area is past %d"
+          % (tag, mk3d.SURE), "%d faces disagree" % wrong_screen)
+    check(not wrong_list, "%s and each page's list is exactly the edges bordering a visible face, %d-%d of them"
+          % (tag, min(counts), max(counts)), "%d lists wrong" % wrong_list)
+    check(not off, "%s every vertex on the screen" % tag, "%d below it" % off)
+    check(not wrong_mat, "%s the rotation is tools/mk3d.py's, entry for entry" % tag,
+          "%d poses differ" % wrong_mat)
+    check(not wrong_proj, "%s and every vertex lands where its integer pipeline puts it" % tag,
           "%d poses differ" % wrong_proj)
-    check(not wrong_px, "cobra: each page is exactly its list's lines, pixel for pixel",
-          "%d pages differ: %s" % (wrong_px, first_px))
-    check(not wrong_glass, "cobra: and the next frame on the glass is that page, whole -- never the one being drawn",
-          "%d of 12 frames showed something else" % wrong_glass)
+    if sky:
+        check(not wrong_sky, "%s and every star and speck lands where tools/mk3d.py's models of Sky() put "
+              "them, in their colours, %d-%d dots a frame -- and none behind the ship's outline, %d of them "
+              "hidden at 12 poses" % (tag, min(ndots), max(ndots), nhid),
+              "%d frames differ: %s" % (wrong_sky, first_sky))
+    check(not wrong_px, "%s each page is exactly its %slist's lines, pixel for pixel"
+          % (tag, "dots and then its " if sky else ""), "%d pages differ: %s" % (wrong_px, first_px))
+    check(not wrong_glass, "%s and the next frame on the glass is that page, whole -- never the one being drawn"
+          % tag, "%d of 12 frames showed something else" % wrong_glass)
+
+    if sky:
+        # the flight: consecutive frames, where Respawn() begins
+        m.run(until=syms["Respawn"], budget=2_000_000)
+        prev = [arr(m, nm, k) for nm, k in (("sd", NS * 5), ("sv", NS), ("dd", ND * 5), ("dv", ND))]
+        wrong_fly = kept = moved = recycled = back = 0
+        for _ in range(120):
+            m.tick()
+            m.run(until=syms["Respawn"], budget=2_000_000)
+            now = [arr(m, nm, k) for nm, k in (("sd", NS * 5), ("sv", NS), ("dd", ND * 5), ("dv", ND))]
+            (psd, psv, pdd, pdv), (sd, sv, dd, dv) = prev, now
+            for i in range(NS):
+                if psv[i]:
+                    kept += 1
+                    wrong_fly += sd[5 * i:5 * i + 5] != psd[5 * i:5 * i + 5]
+                else:
+                    recycled += 1
+                    back += sv[i]
+            for i in range(ND):
+                a = pdd[5 * i:5 * i + 5]
+                if pdv[i]:
+                    moved += 1
+                    if a[2] >= 2:
+                        el = ((a[3] | a[4] << 8) - 128) & 0xFFFF
+                        a = bytes([a[0], a[1], a[2] - 1, el & 255, el >> 8])
+                    wrong_fly += dd[5 * i:5 * i + 5] != a
+                else:
+                    recycled += 1
+                    back += dv[i]
+            prev = now
+        check(not wrong_fly, "%s over 120 frames every star on the screen keeps its direction and every speck "
+              "moves one unit back along the ship until it leaves -- %d kept, %d moved"
+              % (tag, kept, moved), "%d records moved otherwise" % wrong_fly)
+        check(back * 10 >= recycled * 9, "%s and what is recycled is back on the screen the next frame: %d of %d"
+              % (tag, back, recycled), "%d of %d" % (back, recycled))
 
     N = 40
 
@@ -765,10 +908,10 @@ def test_cobra():
         return bytes(mm.video.vram[0:0xF000])
     a, b = pages(0), pages(1)
     diff = sum(x != y for x, y in zip(a, b))
-    check(not diff, "cobra: %d frames erased by drawing each page's last frame again in black leave "
-          "both pages as clearing them would" % N, "%d bytes differ" % diff)
+    check(not diff, "%s %d frames erased by drawing each page's last frame again in black leave "
+          "both pages as clearing them would" % (tag, N), "%d bytes differ" % diff)
     lit = sum(1 for x in a if x)
-    check(lit > 200, "cobra: a ship on the pages", "%d lit bytes" % lit)
+    check(lit > 200, "%s a ship on the pages" % tag, "%d lit bytes" % lit)
     print()
 
 
@@ -1837,13 +1980,15 @@ def shoot_cobra():
     into its tumble, stern on, from the machine's own frame, into
     docs/img/demo-act-cobra.png -- the picture 14-demos.md shows.
     `--cobra 30 200 ...`: those frames instead, into
-    sim/build/cobra_<frame>.png, to look along the tumble."""
+    sim/build/cobra_<frame>.png, to look along the tumble. `--cobra2`
+    the same for COBRA 2, into demo-act-cobra2.png or cobra2_<frame>.png."""
     frames = [int(a) for a in sys.argv[1:] if a.isdigit()]
-    prg, syms = H.build_act(H.ACT_LIB + ["demos/cobra.act"], "act_cobra_shot")
+    name = "cobra2" if "--cobra2" in sys.argv else "cobra"
+    prg, syms = H.build_act(H.ACT_LIB + ["demos/%s.act" % name], "act_%s_shot" % name)
     m = H.session(render=True)
     H.load_act(m, prg)
     at = 0
-    for fr in frames or [340]:
+    for fr in frames or [{"cobra": 340, "cobra2": 200}[name]]:
         m.run_frame(max(1, fr - at))
         at = fr + 1
         # the page just finished, its edges named by vertex, then shown
@@ -1869,8 +2014,8 @@ def shoot_cobra():
             print("    a vertex on one edge: %s" % sorted(v for v, d in deg.items() if d == 1))
         m.run_frame(2)                  # the frame after this one scans the page
         at += 2
-        path = (os.path.join(H.BUILD, "cobra_%03d.png" % fr) if frames
-                else os.path.join(H.ROOT, "docs", "img", "demo-act-cobra.png"))
+        path = (os.path.join(H.BUILD, "%s_%03d.png" % (name, fr)) if frames
+                else os.path.join(H.ROOT, "docs", "img", "demo-act-%s.png" % name))
         print("  %d colours on screen -> %s" % (H.shot(m, path), os.path.relpath(path, H.ROOT)))
     return 0
 
@@ -1880,13 +2025,13 @@ def main():
         return profile_sieve()
     if "--slides" in sys.argv:
         return shoot_slides()
-    if "--cobra" in sys.argv:
+    if "--cobra" in sys.argv or "--cobra2" in sys.argv:
         return shoot_cobra()
     print("  A2 -- CoolAction! on the machine")
     print()
     only = [a for a in sys.argv[1:] if not a.startswith("--")]    # e.g. `cobra`: just those
     for t in (test_every_encoding, test_features, test_sieve, test_primes, test_library,
-              test_hardware, test_line, test_rainbow, test_cobra, test_ports, test_keys,
+              test_hardware, test_line, test_rainbow, test_cobra, test_cobra2, test_ports, test_keys,
               test_keytest, test_loader, test_mscoolman, test_slides, test_refusals):
         if not only or any(o in t.__name__ for o in only):
             t()

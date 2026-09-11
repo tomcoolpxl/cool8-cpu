@@ -370,7 +370,7 @@ about = "every CoolAction! port carries its BASIC original's DATA -- the tables 
 id = "cobra"
 run = "tools/mk3d.py"
 args = ["--check"]
-about = "demos/cobra.bas, and the model block of demos/cobra.act, are what tools/mk3d.py makes of the published Cobra Mk III -- the tumble's camera checked against the machine's own integer arithmetic over every pose it reaches"
+about = "demos/cobra.bas, and the model blocks of demos/cobra.act and demos/cobra2.act, are what tools/mk3d.py makes of the published Cobra Mk III -- each tumble's camera checked against the machine's own integer arithmetic over every pose it reaches, and COBRA 2's sky against exact division"
 
 [[tool.cool8.jobs.check]]
 id = "keymap"

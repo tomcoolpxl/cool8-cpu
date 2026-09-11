@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Elite's Cobra Mk III for both COBRAs: demos/cobra.bas, and the model
-block demos/cobra.act compiles behind.
+"""Elite's Cobra Mk III for the COBRAs: demos/cobra.bas, and the model
+blocks demos/cobra.act and demos/cobra2.act compile behind.
 
-    python tools/mk3d.py            write both
-    python tools/mk3d.py --check    both are what this writes
+    python tools/mk3d.py            write all three
+    python tools/mk3d.py --check    all three are what this writes
 
 **The model is the published one.** 28 vertices, 38 edges, 13 faces and
 the edge-to-face table, transcribed from the annotated BBC Elite source
@@ -68,10 +68,25 @@ products, the bias modulo 65,536, the depth bin, a product's high byte
 -- and every vertex must land on the screen, every reciprocal fit a
 byte, every product stay inside an INT, no edge flicker, and the
 picture close: no drawn edge but the laser ends in nothing.
+
+## demos/cobra2.act ([D106](../docs/01-decisions.md))
+
+**The same model at half the tumble, and a sky.** The block is
+cobra.act's at COBRA 2's rates, checked with its hysteresis on the way
+out only, and two more tables: a star's Z >> 6 to its reciprocal, and a
+speck's depth bin to its; and for hiding what is behind the ship, the
+rim edges and 65,536 / dy. star_screen(), dust_screen(), place(),
+outline() and hidden() are the program's sky in Python -- where Sky()
+lands a star or a speck, where Place() puts one back into the world,
+and whether the ship's outline covers it -- and sky_model() holds the
+projections to exact division over a grid of poses; sim/test_action.py
+holds the program to all of them.
 """
+import functools
 import io
 import math
 import os
+import random
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -131,6 +146,20 @@ SURE = 150                   # past this quarter area on the screen, Faces() and
 EDGEON = 2.0                 # and against its plane, it is wrong only this many degrees from edge-on
 CX, CY = 128, 120            # the screen's centre: 256 x 240
 YAWR, PITCHR, ROLLR = 0x0180, 0x00D3, 0x0111   # a frame's steps; 256 to a turn in the high byte
+
+# ---- demos/cobra2.act (D106): the same ship at half the tumble, and a sky
+ACT2 = os.path.join(ROOT, "demos", "cobra2.act")
+RATES2 = (YAWR // 2, PITCHR // 2, ROLLR // 2)
+# Faces()'s hysteresis on the way out only: at half the tumble an edge
+# went out for a frame between one face turning away, HYST past, and
+# the other not yet HYST in. A face turns in as soon as it faces the
+# camera; rounding still cannot flick it, since it turns out only HYST
+# past, and a handover overlaps instead of leaving a gap.
+TURNIN2 = 0
+STARS = 28                   # stars on the screen at once, each recycled as it leaves
+DUST = 20                    # specks of dust, likewise
+DNEAR, DFAR = 200, 750       # the dust is drawn between these depths, model units
+DBRIGHT = 115                # a speck with a reciprocal this big -- nearer than 400 -- is bright
 
 
 def face_loops():
@@ -351,11 +380,13 @@ def _dot(a, b):
     return sum(x * y for x, y in zip(a, b))
 
 
-def act_model():
-    """What demos/cobra.act is built from -- the model, the tables, each
-    face's normal and threshold -- checked against the arithmetic the
-    program does, over the tumble's first 4,096 frames and a grid of
-    every pose. sim/test_action.py holds the program to it."""
+@functools.lru_cache(maxsize=None)
+def act_model(rates=(YAWR, PITCHR, ROLLR), turn_in=HYST):
+    """What the compiled COBRAs are built from -- the model, the tables,
+    each face's normal and threshold -- checked against the arithmetic
+    the program does, over the first 4,096 frames of the tumble at these
+    rates and a grid of every pose. sim/test_action.py holds the programs
+    to it."""
     loops = face_loops()
     V = [tuple(max(-127, min(127, c)) for c in v) for v in VERTS]
 
@@ -513,11 +544,11 @@ def act_model():
     vis, pix, qs, loose = [], [], [], []
     sure, tilt = 0, 0.0
     for fr in range(4096):
-        ang = [(a + d) & 0xFFFF for a, d in zip(ang, (YAWR, PITCHR, ROLLR))]
+        ang = [(a + d) & 0xFFFF for a, d in zip(ang, rates)]
         m = matrix(*(a * SINES >> 16 for a in ang))
         pts = project(m)
         qs.append(facing(m))
-        fv = [q - HYST < 0 if was else q + HYST < 0 for q, was in zip(qs[-1], fv)]
+        fv = [q - HYST < 0 if was else q + turn_in < 0 for q, was in zip(qs[-1], fv)]
         for t, v in zip(scr, fv):
             ar = area4(pts, t)
             if (ar > 0) != v:
@@ -570,9 +601,210 @@ def act_model():
                 sure=sure, tilt=tilt, agree=agree, matrix=matrix, project=project)
 
 
-def act_text():
-    """The block demos/cobra.act compiles behind, and what it reports."""
-    md = act_model()
+# ------------------------------------------------------ COBRA 2's sky
+#
+# **The camera circles the ship, and the ship flies straight** (D106).
+# The ship does not turn in the world, so its frame is the world's, and
+# the rotation Transform uses is the camera's: a star -- a direction --
+# goes through it as a vertex does, and a speck of dust -- a point near
+# the ship -- goes through it too and slides one unit a frame back along
+# the ship's length, which is the ship flying. What is on the screen is
+# recycled the way Elite recycles its stardust: one that leaves is put
+# back into view, through the matrix's transpose, and from then on it is
+# fixed in the world again.
+
+ERR = 2.5                    # the sky's fixed point against division, pixels: 2.16 measured, a whole one of it the floor to a pixel
+
+
+def star_table():
+    """srz: a star's Z >> 6 to 512 * 16 * FOCAL / Z, for the offset
+    ((|X| >> 4) * r) >> 9; zero where that is past a byte, a Z too far
+    off the axis for the screen anyway"""
+    t = []
+    for i in range(256):
+        r = int(round(512.0 * 16 * FOCAL / (64 * i + 32)))
+        t.append(r if r <= 255 else 0)
+    return t
+
+
+def dust_table():
+    """drz: a speck's Z >> 7, plus 256, to 128 * FOCAL / depth for the
+    offset ((|X| >> 5) * r) >> 8 -- a speck's unit is two model units, so
+    a bin is two deep from DIST -- and zero outside DNEAR..DFAR"""
+    t = []
+    for i in range(512):
+        depth = DIST + 2 * (i - 256) + 1
+        t.append(int(round(128.0 * FOCAL / depth)) if DNEAR <= depth <= DFAR else 0)
+    assert max(t) <= 255, "a dust reciprocal outgrew a byte"
+    return t
+
+
+def _rot(m, p):
+    return [sum(m[r][j] * p[j] for j in range(3)) for r in range(3)]
+
+
+def star_screen(m, d, srz):
+    """Sky(), a star: its direction through the matrix, and where on the
+    screen it lands -- or None"""
+    X, Y, Z = _rot(m, d)
+    assert abs(Z) < 16384, "a star's Z outgrew its bins"
+    if Z < 0 or not srz[Z >> 6]:
+        return None
+    r = srz[Z >> 6]
+    px, py = (abs(X) >> 4) * r, (abs(Y) >> 4) * r
+    if px >= 256 * 256 or py >= 240 * 256:
+        return None
+    ox, oy = px >> 9, py >> 9
+    return (CX + ox if X >= 0 else CX - ox, CY - oy if Y >= 0 else CY + oy)
+
+
+def dust_screen(m, p, drz):
+    """Sky(), a speck: where on the screen it lands -- or None -- and
+    whether it is near enough to be bright"""
+    X, Y, Z = _rot(m, p)
+    r = drz[(Z >> 7) + 256]
+    if not r:
+        return None
+    px, py = (abs(X) >> 5) * r, (abs(Y) >> 5) * r
+    if px >= 128 * 256 or py >= 120 * 256:
+        return None
+    ox, oy = px >> 8, py >> 8
+    return (CX + ox if X >= 0 else CX - ox, CY - oy if Y >= 0 else CY + oy, r >= DBRIGHT, Z)
+
+
+def place(m, v):
+    """Place(): a view vector back into the world through the matrix's
+    transpose, each product brought back by seven bits before the sum so
+    none leaves an INT -- or None where a coordinate leaves a byte"""
+    a = [((m[0][j] * v[0]) >> 7) + ((m[1][j] * v[1]) >> 7) + ((m[2][j] * v[2]) >> 7)
+         for j in range(3)]
+    return tuple(a) if all(-127 <= c <= 127 for c in a) else None
+
+
+def star_view(px, py):
+    """StarAt(): the view direction through a point of the screen, px
+    right of the centre and py above it, about 110 long"""
+    return ((px * 77) >> 8, (py * 77) >> 8, 108)
+
+
+def dust_view(d, x, y):
+    """DustAt(): a point d deep, x right and y up, in model units, as a
+    view vector in the dust's units of two"""
+    return (x >> 1, y >> 1, (d - DIST) >> 1)
+
+
+# **Behind the ship, the sky is hidden.** The ship is lines, so a star
+# behind it would show through its body; filling it black would cost a
+# frame. Its outline is the rim edges -- on both their faces' outlines --
+# with one face shown and one not, and a point is behind the ship when it
+# is between that outline's crossings of its row. The ship is convex, so a
+# row crosses it once.
+
+def rim_edges():
+    """rim(): the edges on both their faces' outlines -- all but the
+    laser, a spur, and the stern's panels, face 9's on both sides"""
+    on = [set() for _ in range(13)]
+    for f, lp in enumerate(face_loops()):
+        for i in range(len(lp)):
+            on[f].add(frozenset((lp[i], lp[(i + 1) % len(lp)])))
+    rim = [1 if f1 != f2 and frozenset(EDGES[e]) in on[f1] and frozenset(EDGES[e]) in on[f2] else 0
+           for e, (f1, f2) in enumerate(EDGE_FACES)]
+    assert sum(rim) == 38 - 14 - 1, "the rim is not every edge but the laser and the stern's panels"
+    return rim
+
+
+def recip_tables():
+    """rlo, rhi: 65,536 / dy for dy 1..239, a byte of it each"""
+    r = [0] + [min(65535, int(round(65536.0 / dy))) for dy in range(1, 240)]
+    return [v & 255 for v in r], [v >> 8 for v in r]
+
+
+def outline(sil, rlo, rhi):
+    """Sky()'s outline, from Visible()'s list of outline edges: each top
+    to bottom as yt yb xt xb, whether x falls going down, and its slope
+    (|dx| * 65536 / dy) >> 8 -- a level one left out, its ends being its
+    neighbours' -- and the box around them"""
+    recs, box = [], [255, 0, 255, 0]
+    for xa, ya, xb, yb in sil:
+        if ya == yb:
+            continue
+        (xt, yt), (xo, yo) = ((xa, ya), (xb, yb)) if yb > ya else ((xb, yb), (xa, ya))
+        box = [min(box[0], xt, xo), max(box[1], xt, xo), min(box[2], yt), max(box[3], yo)]
+        dy, adx = yo - yt, abs(xo - xt)
+        recs.append((yt, yo, xt, xo, 1 if xo < xt else 0, adx * rhi[dy] + ((adx * rlo[dy]) >> 8)))
+    return recs, box
+
+
+def hidden(recs, box, px, py):
+    """Sky()'s .hid: the point is in the outline's box and between its
+    crossings of the point's row. An edge has its rows from its top to
+    just above its bottom, so a convex outline crosses a row twice, and
+    the search stops at the second"""
+    if not recs or not (box[0] <= px <= box[1] and box[2] <= py <= box[3]):
+        return False
+    lo, hi, found = 255, 0, 0
+    for yt, yb, xt, xb, sgn, slope in recs:
+        if py < yt or py >= yb:
+            continue
+        k = py - yt
+        off = (((k * (slope & 255)) >> 8) + (k * (slope >> 8))) & 255
+        x = (xt - off if sgn else xt + off) & 255
+        found, lo, hi = found + 1, min(lo, x), max(hi, x)
+        if found == 2:
+            break
+    return found > 0 and lo <= px <= hi
+
+
+@functools.lru_cache(maxsize=None)
+def sky_model():
+    """COBRA 2's sky, checked over a grid of poses: stars and specks put
+    where the program puts them, then projected as it projects them, and
+    each landing within ERR of where exact division puts the same point."""
+    srz, drz = star_table(), dust_table()
+    matrix = act_model(RATES2, TURNIN2)["matrix"]
+    rnd = random.Random(1)
+    err_s = err_d = 0.0
+    stars = starsin = specks = specksin = 0
+    for ya in range(0, SINES, SINES // 8):
+        for pa in range(0, SINES, SINES // 8):
+            for ra in range(0, SINES, SINES // 8):
+                m = matrix(ya, pa, ra)
+                for _ in range(8):
+                    d = place(m, star_view(rnd.randint(-124, 124), rnd.randint(-116, 116)))
+                    assert d is not None, "a star left a byte"
+                    stars += 1
+                    s = star_screen(m, d, srz)
+                    if s:
+                        starsin += 1
+                        X, Y, Z = _rot(m, d)
+                        err_s = max(err_s, abs(s[0] - (CX + FOCAL * X / Z)),
+                                    abs(s[1] - (CY - FOCAL * Y / Z)))
+                    dd = DNEAR + rnd.randint(0, 511)
+                    hx, hy = dd * 45 >> 7, dd * 21 >> 6
+                    p = place(m, dust_view(dd, ((rnd.randint(0, 255) - 128) * hx) >> 7,
+                                           ((rnd.randint(0, 255) - 128) * hy) >> 7))
+                    if p is None:
+                        continue
+                    specks += 1
+                    t = dust_screen(m, p, drz)
+                    if t:
+                        specksin += 1
+                        X, Y, Z = _rot(m, p)
+                        dep = DIST + Z / 64.0
+                        err_d = max(err_d, abs(t[0] - (CX + FOCAL * X / 64.0 / dep)),
+                                    abs(t[1] - (CY - FOCAL * Y / 64.0 / dep)))
+    assert err_s <= ERR, "a star is %.2f px from exact" % err_s
+    assert err_d <= ERR, "a speck is %.2f px from exact" % err_d
+    return dict(srz=srz, drz=drz, err_s=err_s, err_d=err_d, stars=stars, starsin=starsin,
+                specks=specks, specksin=specksin)
+
+
+def act_text(target="cobra"):
+    """The block a compiled COBRA compiles behind, and what it reports:
+    demos/cobra.act's, or demos/cobra2.act's -- the same model at half
+    the tumble, and the sky's two tables."""
+    rates = (YAWR, PITCHR, ROLLR) if target == "cobra" else RATES2
+    md = act_model(rates, HYST if target == "cobra" else TURNIN2)
     V, fn, sn, rz, vis, pix, xs, ys = (md[k] for k in ("V", "fn", "sn", "rz", "vis", "pix", "xs", "ys"))
 
     def rows(vals, per):
@@ -610,20 +842,43 @@ def act_text():
          "CONST ZBIAS = %d                     ; Z's high byte plus this is the depth bin" % ZBIAS,
          "CONST CX = %d" % CX,
          "CONST CY = %d" % CY,
-         "CONST YAWR = $%04X                  ; the angles' steps a frame" % YAWR,
-         "CONST PITCHR = $%04X" % PITCHR,
-         "CONST ROLLR = $%04X" % ROLLR,
-         ACT_END]
+         "CONST YAWR = $%04X                  ; the angles' steps a frame" % rates[0],
+         "CONST PITCHR = $%04X" % rates[1],
+         "CONST ROLLR = $%04X" % rates[2]]
+    if target == "cobra2":
+        sky = sky_model()
+        o += ["; the sky: a star's Z >> 6 to 512 * 16 * FOCAL / Z, zero off the screen's cone",
+              "BYTE ARRAY srz(256) = [\n%s]" % rows(sky["srz"], 16),
+              "; the dust: a speck's Z >> 7, + 256, to 128 * FOCAL / depth, zero outside %d..%d"
+              % (DNEAR, DFAR),
+              "BYTE ARRAY drz(512) = [\n%s]" % rows(sky["drz"], 16),
+              "; the edges on both their faces' outlines -- all but the laser, a spur,",
+              "; and the stern's panels: on the ship's outline when one face is shown",
+              "BYTE ARRAY rim(38) = [\n%s]" % rows(rim_edges(), 19),
+              "; 65,536 / dy, a byte each: an outline edge's slope is |dx| times it",
+              "BYTE ARRAY rlo(240) = [\n%s]" % rows(recip_tables()[0], 16),
+              "BYTE ARRAY rhi(240) = [\n%s]" % rows(recip_tables()[1], 16),
+              "CONST NS = %d                        ; stars on the screen, each recycled as it leaves" % STARS,
+              "CONST ND = %d                        ; specks of dust, likewise" % DUST,
+              "CONST DNEAR = %d                    ; the dust's depths, model units" % DNEAR,
+              "CONST DFAR = %d" % DFAR,
+              "CONST DBRIGHT = %d                  ; a speck with a reciprocal this big is bright" % DBRIGHT]
+    o.append(ACT_END)
     counts = [len(v) for v in vis]
     report = [
-        "  cobra.act: 13 faces culled by their normals -- against their planes, wrong only"
+        "  %s.act: 13 faces culled by their normals -- against their planes, wrong only"
         " %.2f degrees from edge-on; against their triangles on the screen, only below"
-        " an area of %d" % (md["tilt"], md["sure"]),
+        " an area of %d" % (target, md["tilt"], md["sure"]),
         "  on the screen over %d poses: x %d-%d, y %d-%d; reciprocals %d-%d"
         % (len(xs) // 28 + 4096, min(xs), max(xs), min(ys), max(ys), min(rz), max(rz)),
         "  the tumble's first 4,096 frames: %d-%d edges a frame, mean %.1f; %d-%d pixels,"
         " mean %d; no edge flickers" % (min(counts), max(counts), sum(counts) / 4096.0,
                                           min(pix), max(pix), sum(pix) // 4096)]
+    if target == "cobra2":
+        report.append("  the sky: stars within %.2f px of exact division, dust within %.2f; of"
+                      " the points placed in view, %d of %d stars and %d of %d specks land on the"
+                      " screen" % (sky["err_s"], sky["err_d"], sky["starsin"], sky["stars"],
+                                   sky["specksin"], sky["specks"]))
     return "\n".join(o), report
 
 
@@ -636,26 +891,23 @@ def splice(text, block):
 def main():
     check = "--check" in sys.argv
     bas, bas_report = bas_text()
-    block, act_report = act_text()
-    act_now = io.open(ACT, encoding="utf-8").read()
-    act_new = splice(act_now, block)
+    outs = [(BAS, bas, bas_report)]
+    for target, path in (("cobra", ACT), ("cobra2", ACT2)):
+        block, report = act_text(target)
+        outs.append((path, splice(io.open(path, encoding="utf-8").read(), block), report))
     if check:
-        stale = []
-        if io.open(BAS, encoding="utf-8").read() != bas:
-            stale.append(BAS)
-        if act_now != act_new:
-            stale.append(ACT)
+        stale = [p for p, text, _ in outs if io.open(p, encoding="utf-8").read() != text]
         for p in stale:
             print("  %s is not what tools/mk3d.py writes: python tools/mk3d.py"
                   % os.path.relpath(p, ROOT))
         if not stale:
-            print("  demos/cobra.bas and cobra.act's model block are current")
+            print("  demos/cobra.bas, and cobra.act's and cobra2.act's model blocks, are current")
         return 1 if stale else 0
-    io.open(BAS, "w", encoding="utf-8", newline="\n").write(bas)
-    io.open(ACT, "w", encoding="utf-8", newline="\n").write(act_new)
-    for line in bas_report + act_report:
-        print(line)
-    print("  -> %s, %s" % (os.path.relpath(BAS, ROOT), os.path.relpath(ACT, ROOT)))
+    for p, text, report in outs:
+        io.open(p, "w", encoding="utf-8", newline="\n").write(text)
+        for line in report:
+            print(line)
+    print("  -> %s" % ", ".join(os.path.relpath(p, ROOT) for p, _, _ in outs))
     return 0
 
 
