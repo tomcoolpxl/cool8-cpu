@@ -74,8 +74,10 @@ picture close: no drawn edge but the laser ends in nothing.
 **The same model at half the tumble, and a sky.** The block is
 cobra.act's at COBRA 2's rates, checked with its hysteresis on the way
 out only, and two more tables: a star's Z >> 6 to its reciprocal, and a
-speck's depth bin to its; and for hiding what is behind the ship, the
-rim edges and 65,536 / dy. star_screen(), dust_screen(), place(),
+speck's depth bin to its; for hiding what is behind the ship, the rim
+edges and 65,536 / dy; the stern's panel vertices, which Transform
+skips while the stern is turned away; and the ship's speed, SPEED of
+the dust's units of two a frame -- the ship flies, the dust stays put. star_screen(), dust_screen(), place(),
 outline() and hidden() are the program's sky in Python -- where Sky()
 lands a star or a speck, where Place() puts one back into the world,
 and whether the ship's outline covers it -- and sky_model() holds the
@@ -156,10 +158,13 @@ RATES2 = (YAWR // 2, PITCHR // 2, ROLLR // 2)
 # camera; rounding still cannot flick it, since it turns out only HYST
 # past, and a handover overlaps instead of leaving a gap.
 TURNIN2 = 0
-STARS = 28                   # stars on the screen at once, each recycled as it leaves
+STARS = 24                   # stars on the screen at once, each recycled as it leaves
 DUST = 20                    # specks of dust, likewise
 DNEAR, DFAR = 200, 750       # the dust is drawn between these depths, model units
 DBRIGHT = 115                # a speck with a reciprocal this big -- nearer than 400 -- is bright
+SPEED = 4                    # the ship's flight a frame along its nose, in the dust's units of two model units
+DSPAWN = 246                 # a speck comes back at a depth from this, 512 deep: its place from the ship a byte
+STERN = 9                    # the stern's face: its panel vertices are worked out only while it is shown
 
 
 def face_loops():
@@ -606,14 +611,15 @@ def act_model(rates=(YAWR, PITCHR, ROLLR), turn_in=HYST):
 # **The camera circles the ship, and the ship flies straight** (D106).
 # The ship does not turn in the world, so its frame is the world's, and
 # the rotation Transform uses is the camera's: a star -- a direction --
-# goes through it as a vertex does, and a speck of dust -- a point near
-# the ship -- goes through it too and slides one unit a frame back along
-# the ship's length, which is the ship flying. What is on the screen is
+# goes through it as a vertex does. A speck of dust is a point fixed in
+# the world, and the ship flies through it: the ship's place moves SPEED
+# a frame along its nose, the camera follows, and what goes through the
+# rotation is the speck's place from the ship. What is on the screen is
 # recycled the way Elite recycles its stardust: one that leaves is put
-# back into view, through the matrix's transpose, and from then on it is
-# fixed in the world again.
+# back into view -- a speck ahead of the ship -- through the matrix's
+# transpose, and from then on it is fixed in the world again.
 
-ERR = 2.5                    # the sky's fixed point against division, pixels: 2.16 measured, a whole one of it the floor to a pixel
+ERR = 2.5                    # the sky's fixed point against division, pixels: 2.02 measured, a whole one of it the floor to a pixel
 
 
 def star_table():
@@ -658,6 +664,14 @@ def star_screen(m, d, srz):
     return (CX + ox if X >= 0 else CX - ox, CY - oy if Y >= 0 else CY + oy)
 
 
+def dust_rel(w, s):
+    """Sky()'s .rel: a speck's place from the ship -- its world place less
+    the ship's, 16 bits that wrap -- in the dust's units of two, or None
+    past the dust's reach of 127 on any axis"""
+    r = [((a - b + 0x8000) & 0xFFFF) - 0x8000 for a, b in zip(w, s)]
+    return r if all(-127 <= v <= 127 for v in r) else None
+
+
 def dust_screen(m, p, drz):
     """Sky(), a speck: where on the screen it lands -- or None -- and
     whether it is near enough to be bright"""
@@ -673,12 +687,21 @@ def dust_screen(m, p, drz):
 
 
 def place(m, v):
-    """Place(): a view vector back into the world through the matrix's
-    transpose, each product brought back by seven bits before the sum so
-    none leaves an INT -- or None where a coordinate leaves a byte"""
-    a = [((m[0][j] * v[0]) >> 7) + ((m[1][j] * v[1]) >> 7) + ((m[2][j] * v[2]) >> 7)
-         for j in range(3)]
+    """Place(): a view vector -- bytes -- back into the world through the
+    matrix's transpose, the whole sum brought back by seven bits, as
+    PlaceAsm's rows over the transpose make it; or None where a
+    coordinate leaves a byte"""
+    a = [sum(m[r][j] * v[r] for r in range(3)) >> 7 for j in range(3)]
     return tuple(a) if all(-127 <= c <= 127 for c in a) else None
+
+
+def stern_vertices():
+    """vd(): 1 for the vertices only the stern's panels use -- face 9 on
+    both sides -- which Transform skips while the stern is turned away"""
+    used = set(v for e, faces in zip(EDGES, EDGE_FACES) if faces != (STERN, STERN) for v in e)
+    vd = [0 if v in used else 1 for v in range(28)]
+    assert sum(vd) == 14, "the stern's panels are not fourteen vertices of their own"
+    return vd
 
 
 def star_view(px, py):
@@ -689,8 +712,8 @@ def star_view(px, py):
 
 def dust_view(d, x, y):
     """DustAt(): a point d deep, x right and y up, in model units, as a
-    view vector in the dust's units of two"""
-    return (x >> 1, y >> 1, (d - DIST) >> 1)
+    view vector in the dust's units of two, held to a byte"""
+    return tuple(max(-127, min(127, c)) for c in (x >> 1, y >> 1, (d - DIST) >> 1))
 
 
 # **Behind the ship, the sky is hidden.** The ship is lines, so a star
@@ -779,7 +802,7 @@ def sky_model():
                         X, Y, Z = _rot(m, d)
                         err_s = max(err_s, abs(s[0] - (CX + FOCAL * X / Z)),
                                     abs(s[1] - (CY - FOCAL * Y / Z)))
-                    dd = DNEAR + rnd.randint(0, 511)
+                    dd = DSPAWN + rnd.randint(0, 511)
                     hx, hy = dd * 45 >> 7, dd * 21 >> 6
                     p = place(m, dust_view(dd, ((rnd.randint(0, 255) - 128) * hx) >> 7,
                                            ((rnd.randint(0, 255) - 128) * hy) >> 7))
@@ -862,7 +885,12 @@ def act_text(target="cobra"):
               "CONST ND = %d                        ; specks of dust, likewise" % DUST,
               "CONST DNEAR = %d                    ; the dust's depths, model units" % DNEAR,
               "CONST DFAR = %d" % DFAR,
-              "CONST DBRIGHT = %d                  ; a speck with a reciprocal this big is bright" % DBRIGHT]
+              "CONST DBRIGHT = %d                  ; a speck with a reciprocal this big is bright" % DBRIGHT,
+              "CONST SPEED = %d                     ; the ship's flight a frame, in the dust's units of two" % SPEED,
+              "CONST DSPAWN = %d                  ; a speck comes back at a depth from this, 512 deep" % DSPAWN,
+              "; the vertices only the stern's panels use, worked out while it is shown",
+              "BYTE ARRAY vd(28) = [\n%s]" % rows(stern_vertices(), 14),
+              "CONST STERN = %d                     ; the stern's face" % STERN]
     o.append(ACT_END)
     counts = [len(v) for v in vis]
     report = [

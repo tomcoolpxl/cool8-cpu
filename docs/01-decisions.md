@@ -6538,22 +6538,34 @@ angles is the camera's. Nothing new moves the camera: every point fixed
 in the world goes through the matrix the ship's corners go through, and
 that is what makes the sky correct rather than plausible.
 
-**A star is a direction, a speck is a point.** A star has no position,
-only a direction about 110 long, and the rotation alone moves it: it
-lands at FOCAL · X / Z, its Z >> 6 indexing a byte reciprocal. A speck
-is a point near the ship in units of two model units that slides
-exactly one unit a frame back along the ship's length -- the flight, and
-a whole unit keeps it smooth -- and goes through the perspective as a
-corner does, so a speck in front of the ship and one behind it part
-company as the camera circles. Both are records in a vertex's shape,
-so `Sky()` is `Transform`'s three rows once a point, in assembly.
+**A star is a direction, a speck is a point, and the ship flies.** A
+star has no position, only a direction about 110 long, and the rotation
+alone moves it: it lands at FOCAL · X / Z, its Z >> 6 indexing a byte
+reciprocal. A speck is a point fixed in the world, in units of two
+model units; the ship has a place in the world too and flies four of
+those units a frame along its nose, the camera following it. What goes
+through the rotation and the perspective, as a corner does, is the
+speck's place from the ship -- its world place less the ship's, 16 bits
+that wrap -- so a speck in front of the ship and one behind it part
+company as the camera circles. Both are records in a vertex's shape, so
+`Sky()` is `Transform`'s three rows once a point, in assembly, a speck's
+record built each frame from the two places.
+
+**The first cut moved the dust, and the owner had it flipped.** A speck
+slid back along a ship that stood still -- the same picture -- but the
+ship moving through dust that stays put is the structure a second ship
+will need, each with a place of its own. It also flew at a quarter of
+this speed, about 1.4 pixels a frame at the ship, less than the
+camera's orbit moved the same dust, and did not read as flight.
 
 **Recycled as Elite recycles, but placed in the world.** A star that
 leaves the screen comes back across the opposite edge -- its last place
 on the screen mirrored through the centre, a sixteenth inside -- and a
-speck anywhere in view at a random depth; each is carried back into the
-world through the matrix's transpose and stays fixed there until it
-leaves again. Elite's dust lives in the view and is turned by
+speck somewhere in view ahead of the ship, so it streams past it: at a
+depth on the side the nose points, and mirrored through the ship's
+centre if it still lands behind. Each is carried back into the world
+through the matrix's transpose and stays fixed there until it leaves
+again. Elite's dust lives in the view and is turned by
 increments; here nothing drifts, and `test_cobra2` holds every star and
 speck to exactly where this frame's matrix puts it.
 
@@ -6580,20 +6592,25 @@ was not yet 256 in, and the edge between them out for a frame. In COBRA
 2 a face turns in as soon as it faces the camera and out only 256 past:
 rounding still cannot flick it, and a handover overlaps instead.
 
-**Measured**: 110,410 of a frame's 139,583 clocks, 79 %, over 1,800
-frames without one overrun -- the sky 48,338 for 48 points, hiding what
-is behind the ship included, their dots 2,869, putting them back 3,224,
-the faces and the edge lists 7,122, the rest the ship as COBRA. The
-first cut drew 72 points and put them back in compiled code with
-divisions and random numbers taken modulo: 142,378 clocks, a frame in
-two of every three vblanks, and the display check failed with it. Then
-56 points, `Sky()` queuing what left, a star coming back from its last
-place with no division, the random word masked, not divided -- 108,594.
-Hiding the sky cost 15,000 more and five frames in 1,800 overran, so
-`Visible()` went into assembly and the points came down to 28 stars and
-20 specks. The PRG is 14,072 bytes. The fixed point lands a star within
-1.51 px of exact division and a speck within 2.16, most of that the
-floor to a pixel.
+**Measured**: 106,988 of a frame's 139,583 clocks, 77 %, over 1,800
+frames without one overrun -- the sky 48,772 for 44 points, hiding what
+is behind the ship included, their dots 2,613, putting them back 3,027,
+the transform 10,602, the faces and the edge lists 7,122, the lines as
+COBRA's. It got there in steps, each forced by an overrun. The first
+cut drew 72 points and put them back in compiled code with divisions
+and random numbers taken modulo: 142,378 clocks, a frame in two of
+every three vblanks, and the display check failed with it. Then 56
+points, `Sky()` queuing what left, a star coming back from its last
+place with no division, the random word masked -- 108,594. Hiding the
+sky cost 15,000 more and five frames in 1,800 overran: `Visible()` into
+assembly, 28 stars and 20 specks, 110,410. The flip cost 4,600 for the
+specks' records and more recycling at the faster flow, and 24 frames
+overran: `Place()` and its transpose into assembly, a speck put back
+ahead in one go rather than by retrying, `Transform` skipping the
+stern's fourteen panel vertices while the stern is turned away
+(`Faces()` now goes first), and 24 stars. The PRG is 14,421 bytes. The
+fixed point lands a star within 1.52 px of exact division and a speck
+within 2.02, most of that the floor to a pixel.
 
 **Rejected**: Elite's dust in the view, turned by increments -- the
 increment between two frames' matrices is about the size of their

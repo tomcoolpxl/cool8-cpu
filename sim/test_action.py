@@ -656,10 +656,10 @@ def test_cobra2():
       flags are those models' answers;
     - the page is the dots with the lines over them, pixel for pixel and
       colour for colour, and the glass shows it in one shade a colour;
-    - over 120 consecutive frames every star on the screen keeps its
-      direction and every speck moves exactly one unit back along the
-      ship -- the flight -- until it leaves; and what is recycled is
-      back on the screen the next frame."""
+    - over 120 consecutive frames the ship flies mk3d.SPEED a frame
+      along its nose, every star on the screen keeps its direction and
+      every speck its place in the world until it leaves; and what is
+      recycled is back on the screen the next frame."""
     import mk3d
     cobra_run("cobra2", "COBRA 2: the camera circles, the ship flies, the sky stays put",
               mk3d.RATES2, mk3d.TURNIN2, sky=True, FR=1800)    # 77 % of a frame: thirty seconds of it
@@ -684,6 +684,10 @@ def cobra_run(name, title, rates, turn_in, sky, FR=600):
         a = syms["v_" + nm]
         return m.bus.mem[a] | (m.bus.mem[a + 1] << 8)
 
+    def ints(m, nm, n):
+        b = arr(m, nm, 2 * n)
+        return [((b[2 * j] | b[2 * j + 1] << 8) + 0x8000) % 0x10000 - 0x8000 for j in range(n)]
+
     m = H.session(render=True)
     org, end = H.load_act(m, prg)
     why = m.run(until=syms["WaitVBlank"], budget=40_000_000)
@@ -702,8 +706,8 @@ def cobra_run(name, title, rates, turn_in, sky, FR=600):
              ("culling and listing", ["Faces", "Visible"])]
     if sky:
         parts += [("the sky", ["Sky"]), ("its dots", ["Dots", "DotsAsm"]),
-                  ("putting it back", ["Respawn", "Transpose", "Place", "Store", "StarAt", "DustAt", "Rnd",
-                                       "__div16", "__mod16"])]
+                  ("putting it back", ["Respawn", "Transpose", "Place", "PlaceAsm", "Store", "StarAt", "DustAt",
+                                       "Rnd", "__div16", "__mod16"])]
     parts.append(("16-bit multiplies", ["__mul16"]))
     per = lambda c: "{:,}".format(int(c / n))                 # noqa: E731
     print("    a frame's work: %s clocks of 139,583 -- %s" % (
@@ -711,6 +715,7 @@ def cobra_run(name, title, rates, turn_in, sky, FR=600):
         ", ".join("%s %s" % (per(sum(p.of(r) for r in rs if r in syms)), what) for what, rs in parts)))
 
     md = mk3d.act_model(rates, turn_in)
+    stern = mk3d.stern_vertices()
     scr = md["scr"]                                 # each face's triangle, positive turned to the viewer
     nb = arr(m, "nb", 65)
     ea, eb, e1, e2 = (arr(m, nm, 38) for nm in ("ea", "eb", "ef1", "ef2"))
@@ -732,15 +737,12 @@ def cobra_run(name, title, rates, turn_in, sky, FR=600):
         was = arr(m, "fv", 13)                              # the faces as the last frame left them
         dots = []
         if sky:
-            # the sky as Sky() finds it and as it leaves it for Respawn():
-            # where the models say, the flight included
-            m.run(until=syms["Sky"], budget=2_000_000)
-            pre = arr(m, "dd", ND * 5)
+            # the sky as Sky() leaves it for Respawn(): where the models say
             m.run(until=syms["Respawn"], budget=2_000_000)
             cur = m.bus.mem[syms["v_cur"]]
             mat = md["matrix"](*angles())
             sd, sc, sv = arr(m, "sd", NS * 5), arr(m, "sc", NS), arr(m, "sv", NS)
-            dd, dv = arr(m, "dd", ND * 5), arr(m, "dv", ND)
+            dw, sh, dv = ints(m, "dw", ND * 3), ints(m, "sh", 3), arr(m, "dv", ND)
             # the ship's outline, as Visible() lists it and as the model makes it
             fv0, sx0, sy0 = arr(m, "fv", 13), arr(m, "sx", 28), arr(m, "sy", 28)
             sil = [(sx0[ea[e]], sy0[ea[e]], sx0[eb[e]], sy0[eb[e]]) for e in range(38)
@@ -748,7 +750,7 @@ def cobra_run(name, title, rates, turn_in, sky, FR=600):
             raw = arr(m, "sl", 152)[:4 * m.bus.mem[syms["v_sln"]]]
             have_sil = [tuple(raw[j:j + 4]) for j in range(0, len(raw), 4)]
             recs, box = mk3d.outline(sil, rlo, rhi)
-            want, fs, fd, flown = [], [], [], b""
+            want, fs, fd = [], [], []
             for i in range(NS):
                 s = mk3d.star_screen(mat, [b - 128 for b in sd[5 * i:5 * i + 3]], sk["srz"])
                 fs.append(1 if s else 0)
@@ -757,13 +759,8 @@ def cobra_run(name, title, rates, turn_in, sky, FR=600):
                 elif s:
                     want.append((s[0], s[1], sc[i]))
             for i in range(ND):
-                a = pre[5 * i:5 * i + 5]
-                t = None                        # a unit further would leave a byte: out of reach
-                if a[2] >= 2:
-                    el = ((a[3] | a[4] << 8) - 128) & 0xFFFF
-                    a = bytes([a[0], a[1], a[2] - 1, el & 255, el >> 8])
-                    t = mk3d.dust_screen(mat, [b - 128 for b in a[:3]], sk["drz"])
-                flown += a
+                p = mk3d.dust_rel(dw[3 * i:3 * i + 3], sh)     # its place from the ship, or past reach
+                t = mk3d.dust_screen(mat, p, sk["drz"]) if p else None
                 fd.append(1 if t else 0)
                 if t and t[3] >= 0 and mk3d.hidden(recs, box, t[0], t[1]):
                     nhid += 1                   # behind the ship's centre, inside its outline
@@ -772,7 +769,7 @@ def cobra_run(name, title, rates, turn_in, sky, FR=600):
             k = m.bus.mem[syms["v_dn"] + cur]
             raw = arr(m, "dl", 2 * dlp)[cur * dlp:cur * dlp + 3 * k]
             dots = [tuple(raw[j:j + 3]) for j in range(0, len(raw), 3)]
-            if (dots != want or list(sv) != fs or list(dv) != fd or dd != flown or have_sil != sil
+            if (dots != want or list(sv) != fs or list(dv) != fd or have_sil != sil
                     or any(y > 239 for _, y, _ in dots)):
                 wrong_sky += 1
                 if not first_sky:
@@ -785,7 +782,10 @@ def cobra_run(name, title, rates, turn_in, sky, FR=600):
         cur = m.bus.mem[syms["v_cur"]]
         mat = md["matrix"](*angles())
         wrong_mat += list(arr(m, "mp", 9)) != [e + 128 for row in mat for e in row]
-        wrong_proj += list(zip(sx, sy)) != md["project"](mat)
+        # COBRA 2 works out the stern's panel vertices only while the stern is shown
+        keep = [v for v in range(28) if not ("v_vd" in syms and not fv[mk3d.STERN] and stern[v])]
+        proj = md["project"](mat)
+        wrong_proj += [(sx[v], sy[v]) for v in keep] != [proj[v] for v in keep]
         for f in range(13):
             n = [b - 128 for b in nb[5 * f:5 * f + 3]]
             t = ((nb[5 * f + 3] | nb[5 * f + 4] << 8) - 128 * sum(n) + 0x8000) % 0x10000 - 0x8000
@@ -862,14 +862,18 @@ def cobra_run(name, title, rates, turn_in, sky, FR=600):
 
     if sky:
         # the flight: consecutive frames, where Respawn() begins
+        def state():
+            return (arr(m, "sd", NS * 5), arr(m, "sv", NS), ints(m, "dw", ND * 3), arr(m, "dv", ND),
+                    ints(m, "sh", 3))
         m.run(until=syms["Respawn"], budget=2_000_000)
-        prev = [arr(m, nm, k) for nm, k in (("sd", NS * 5), ("sv", NS), ("dd", ND * 5), ("dv", ND))]
-        wrong_fly = kept = moved = recycled = back = 0
+        prev = state()
+        wrong_fly = kept = held = recycled = back = 0
         for _ in range(120):
             m.tick()
             m.run(until=syms["Respawn"], budget=2_000_000)
-            now = [arr(m, nm, k) for nm, k in (("sd", NS * 5), ("sv", NS), ("dd", ND * 5), ("dv", ND))]
-            (psd, psv, pdd, pdv), (sd, sv, dd, dv) = prev, now
+            now = state()
+            (psd, psv, pdw, pdv, psh), (sd, sv, dw, dv, sh) = prev, now
+            wrong_fly += sh != [psh[0], psh[1], (psh[2] + mk3d.SPEED + 0x8000) % 0x10000 - 0x8000]
             for i in range(NS):
                 if psv[i]:
                     kept += 1
@@ -878,21 +882,20 @@ def cobra_run(name, title, rates, turn_in, sky, FR=600):
                     recycled += 1
                     back += sv[i]
             for i in range(ND):
-                a = pdd[5 * i:5 * i + 5]
                 if pdv[i]:
-                    moved += 1
-                    if a[2] >= 2:
-                        el = ((a[3] | a[4] << 8) - 128) & 0xFFFF
-                        a = bytes([a[0], a[1], a[2] - 1, el & 255, el >> 8])
-                    wrong_fly += dd[5 * i:5 * i + 5] != a
+                    held += 1
+                    wrong_fly += dw[3 * i:3 * i + 3] != pdw[3 * i:3 * i + 3]
                 else:
                     recycled += 1
                     back += dv[i]
             prev = now
-        check(not wrong_fly, "%s over 120 frames every star on the screen keeps its direction and every speck "
-              "moves one unit back along the ship until it leaves -- %d kept, %d moved"
-              % (tag, kept, moved), "%d records moved otherwise" % wrong_fly)
-        check(back * 10 >= recycled * 9, "%s and what is recycled is back on the screen the next frame: %d of %d"
+        check(not wrong_fly, "%s over 120 frames the ship flies %d a frame along its nose, and every star on the "
+              "screen keeps its direction and every speck its place in the world until it leaves -- %d kept, "
+              "%d held" % (tag, mk3d.SPEED, kept, held), "%d moved otherwise" % wrong_fly)
+        # a speck behind the ship is mirrored through its centre to be ahead,
+        # and now and then that lands just outside the view: it is simply put
+        # back again the next frame
+        check(back * 10 >= recycled * 8, "%s and what is recycled is back on the screen the next frame: %d of %d"
               % (tag, back, recycled), "%d of %d" % (back, recycled))
 
     N = 40

@@ -11,15 +11,16 @@
 ;
 ; **The sky is Elite's, placed in the world.** A star is a direction, so
 ; the rotation alone moves it, and it swings across the screen exactly
-; as far as the camera turns. A speck of dust is a point near the ship
-; that slides one unit a frame back along its length -- that is the
-; flight -- and goes through the rotation and the perspective as a
-; corner does, so a speck in front of the ship and one behind it part
-; company as they should. Elite keeps a handful of stardust and recycles
-; each speck that leaves the screen; so does this. A star re-enters
-; across the edge opposite the one it left by, a speck anywhere in view
-; at a random depth, and each is carried back into the world through the
-; matrix's transpose, where it stays fixed until it leaves again.
+; as far as the camera turns. A speck of dust is a point fixed in the
+; world, and the ship flies through it: the ship's place (sh) moves SPEED
+; a frame along its nose, the camera follows, and what goes through the
+; rotation and the perspective, as a corner does, is the speck's place
+; from the ship -- its world place less the ship's. Elite keeps a handful
+; of stardust and recycles each speck that leaves the screen; so does
+; this. A star re-enters across the edge opposite the one it left by, a
+; speck somewhere in view ahead of the ship, so it streams past it, and
+; each is carried back into the world through the matrix's transpose,
+; where it stays fixed until it leaves again.
 ;
 ; **Behind the ship, the sky is hidden.** The ship is lines, so a star
 ; behind it would show through its body, and filling it black would cost
@@ -268,11 +269,18 @@ BYTE ARRAY rhi(240) = [
   1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1
   1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1
   1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1]
-CONST NS = 28                        ; stars on the screen, each recycled as it leaves
+CONST NS = 24                        ; stars on the screen, each recycled as it leaves
 CONST ND = 20                        ; specks of dust, likewise
 CONST DNEAR = 200                    ; the dust's depths, model units
 CONST DFAR = 750
 CONST DBRIGHT = 115                  ; a speck with a reciprocal this big is bright
+CONST SPEED = 4                     ; the ship's flight a frame, in the dust's units of two
+CONST DSPAWN = 246                  ; a speck comes back at a depth from this, 512 deep
+; the vertices only the stern's panels use, worked out while it is shown
+BYTE ARRAY vd(28) = [
+  0 0 0 0 0 0 0 0 0 0 0 0 1 1
+  1 1 1 1 1 1 0 0 1 1 1 1 1 1]
+CONST STERN = 9                     ; the stern's face
 ; ---- end of the generated block ----
 
 BYTE ARRAY pg(2) = [$00 $78]         ; the two pages' high bytes, 30,720 bytes apart
@@ -295,7 +303,10 @@ CONST DUSTFAR = 5                    ;   and far
 BYTE ARRAY sd(NS * 5)                ; the stars: a direction each, in a vertex's record
 BYTE ARRAY sc(NS)                    ; a star's colour, 2 or 3
 BYTE ARRAY sv(NS)                    ; 1 when Sky() drew it this frame
-BYTE ARRAY dd(ND * 5)                ; the dust: a point near the ship each, in units of two
+INT ARRAY dw(ND * 3)                 ; the dust: a place in the world each, x y z, in units of two model units
+INT ARRAY sh(3) = [0 0 0]            ; the ship's place in the world, likewise: it flies SPEED a frame along z
+BYTE ARRAY qd(5)                     ; Sky(): a speck's place from the ship, as a vertex's record,
+CARD qw                              ;   and the next speck's place in the world
 BYTE ARRAY dv(ND)                    ; 1 when Sky() drew it this frame
 BYTE ARRAY dl(DLP * 2)               ; each page's dots
 BYTE ARRAY dn(2)                     ; and how many
@@ -315,8 +326,11 @@ CARD vw, vs                          ; Visible(): the page's list and the outlin
 BYTE vn, ve, vx                      ;   how many edges, the edge, and one face shown of two
 CARD dq                              ; Dots(): the list,
 BYTE dk, dc                          ;   how many, and 0 to erase
-INT ARRAY mt(9)                      ; Place(): the rotation, signed,
-INT pa0, pa1, pa2                    ;   and a point put back into the world
+BYTE ARRAY mpt(9)                    ; Place(): the rotation's transpose, every entry + 128,
+CARD ARRAY krt(3)                    ;   a column's 128 * sum, which it takes back off,
+BYTE ARRAY pv(5)                     ;   the view vector as a vertex's record,
+INT ARRAY pa(3)                      ;   and the point put back into the world --
+BYTE pok                             ;   or 0, when a coordinate leaves a byte
 
 ; Row(r, m0, m1, m2) -- row r of the rotation as Transform wants it: the
 ; entries with 128 added, and 128 times their sum plus 49152
@@ -369,12 +383,25 @@ RETURN
 ; a MUL, two moves and an add with carry. Z goes first: its high byte is
 ; the depth bin, and the reciprocal there, times |X| >> 7, is how far
 ; from the centre the vertex lands -- a second MUL's high byte.
+;
+; **The stern's panels only while the stern is shown.** Fourteen of the
+; 28 vertices are the stern's panel details (vd), and no other edge uses
+; them, so with the stern turned away they are skipped -- Faces() goes
+; first -- and 6,800 clocks go to the sky instead.
 PROC Transform()
   ASM
     LDW  Y,#v_vb
     CLR  R0
     ST   [v_tv],R0
-.v: CLR  R2
+.v: LD   R1,[v_tv]
+    LDW  X,#v_vd
+    LD   R0,[X+R1]
+    TST  R0
+    BEQ  .vg
+    LD   R0,[v_fv+c_STERN]
+    TST  R0
+    BEQ  .vn
+.vg: CLR  R2
     CLR  R3
     LD   R0,[v_mp+6]
     LD   R1,[Y+0]
@@ -517,7 +544,7 @@ PROC Transform()
 .ys: LD   R1,[v_tv]
     LDW  X,#v_sy
     ST   [X+R1],R0
-    ADDW Y,#5
+.vn: ADDW Y,#5
     LD   R0,[v_tv]
     ADD  R0,#1
     ST   [v_tv],R0
@@ -819,9 +846,10 @@ RETURN
 ; A point is a record in a vertex's shape -- three coordinates with 128
 ; added, and 128 times their sum -- so .rows is Transform's three rows,
 ; once a point. A star is a direction: it lands at FOCAL * X / Z, its
-; Z >> 6 indexing a reciprocal (srz). A speck is a point relative to the
-; ship in units of two, first slid one unit back along the ship -- the
-; flight -- and its Z >> 7 indexes 128 * FOCAL / depth (drz). Either
+; Z >> 6 indexing a reciprocal (srz). A speck's record (qd) is built each
+; frame from its place in the world less the ship's (.rel), in the
+; dust's units of two, and past the dust's reach of 127 it is off; its
+; Z >> 7 indexes 128 * FOCAL / depth (drz). Either
 ; offset is |X| >> s, nine or ten bits, times that byte: a MUL and at
 ; most three adds (.off). Past an edge, or outside the table's depths,
 ; the point is marked off (sv, dv) and Respawn() puts it back. On the
@@ -998,19 +1026,59 @@ PROC Sky()
     ST   [v_qi],R1
     CMP  R1,#c_NS
     BNE  .st
-    LDW  Y,#v_dd
+    LDW  X,#v_dw
+    STW  [v_qw],X
     CLR  R0
     ST   [v_qi],R0
-.du: LD   R0,[Y+2]
-    SUB  R0,#1
-    BEQ  .do
-    ST   [Y+2],R0
-    LD   R0,[Y+3]
-    SUB  R0,#128
-    ST   [Y+3],R0
-    LD   R0,[Y+4]
-    SBC  R0,#0
-    ST   [Y+4],R0
+.du: LDW  X,[v_qw]
+    LD   R2,[X+0]
+    LD   R3,[X+1]
+    LD   R0,[v_sh+0]
+    SUB  R2,R0
+    LD   R0,[v_sh+1]
+    SBC  R3,R0
+    CALL .rel
+    TST  R1
+    BNE  .do
+    ST   [v_qd+0],R0
+    LD   R2,[X+2]
+    LD   R3,[X+3]
+    LD   R0,[v_sh+2]
+    SUB  R2,R0
+    LD   R0,[v_sh+3]
+    SBC  R3,R0
+    CALL .rel
+    TST  R1
+    BNE  .do
+    ST   [v_qd+1],R0
+    LD   R2,[X+4]
+    LD   R3,[X+5]
+    LD   R0,[v_sh+4]
+    SUB  R2,R0
+    LD   R0,[v_sh+5]
+    SBC  R3,R0
+    CALL .rel
+    TST  R1
+    BNE  .do
+    ST   [v_qd+2],R0
+    CLR  R3
+    LD   R2,[v_qd+0]
+    LD   R0,[v_qd+1]
+    ADD  R2,R0
+    ADC  R3,#0
+    LD   R0,[v_qd+2]
+    ADD  R2,R0
+    ADC  R3,#0
+    SHR  R3
+    ROR  R2
+    BCS  .l1
+    CLR  R0
+    BRA  .l2
+.l1: MOV  R0,#128
+.l2: ST   [v_qd+3],R0
+    SUB  R2,#192
+    ST   [v_qd+4],R2
+    LDW  Y,#v_qd
     CALL .rows
     LD   R2,[v_qz]
     LD   R3,[v_qz+1]
@@ -1082,7 +1150,9 @@ PROC Sky()
 .df: LD   R1,[v_qi]
     LDW  X,#v_dv
     ST   [X+R1],R0
-    ADDW Y,#5
+    LDW  X,[v_qw]
+    ADDW X,#6
+    STW  [v_qw],X
     ADD  R1,#1
     ST   [v_qi],R1
     CMP  R1,#c_ND
@@ -1257,6 +1327,21 @@ PROC Sky()
 .t5: RET
 .t6: MOV  R1,#1
     RET
+; .rel -- R3:R2 a speck's place from the ship on one axis, in the dust's
+; units: R0 that + 128 with R1 zero, or R1 1 past the reach of 127.
+; X is kept
+.rel: MOV  R0,R2
+    ADD  R0,#127
+    MOV  R1,R3
+    ADC  R1,#0
+    BNE  .r9
+    CMP  R0,#255
+    BEQ  .r9
+    ADD  R0,#1
+    CLR  R1
+    RET
+.r9: MOV  R1,#1
+    RET
 ; .dot -- a dot at qa, R3 in colour R0, onto the list
 .dot: LDW  X,[v_qp]
     LD   R1,[v_qa]
@@ -1419,41 +1504,218 @@ PROC Dots(BYTE p, BYTE on)
   IF dk THEN DotsAsm() FI
 RETURN
 
-; Place(vx, vy, vz) -- the view vector v back into the world: the
-; matrix's transpose, each product brought back by seven bits before the
-; sum so none leaves an INT. 0 when a coordinate leaves a byte
+; PlaceAsm() -- the view vector in pv back into the world, into pa():
+; Transform's rows over the matrix's transpose -- the same biased bytes
+; in another order, a column's constant 128 times its sum -- each sum
+; brought back by seven bits; pok 0 when one leaves a byte. In assembly:
+; compiled, a speck put back cost 2,000 clocks
+PROC PlaceAsm()
+  ASM
+    LDW  Y,#v_pv
+    MOV  R0,#1
+    ST   [v_pok],R0
+    CLR  R2
+    CLR  R3
+    LD   R0,[v_mpt+0]
+    LD   R1,[Y+0]
+    MUL  R0,R1
+    MOV  R0,XL
+    ADD  R2,R0
+    MOV  R0,XH
+    ADC  R3,R0
+    LD   R0,[v_mpt+1]
+    LD   R1,[Y+1]
+    MUL  R0,R1
+    MOV  R0,XL
+    ADD  R2,R0
+    MOV  R0,XH
+    ADC  R3,R0
+    LD   R0,[v_mpt+2]
+    LD   R1,[Y+2]
+    MUL  R0,R1
+    MOV  R0,XL
+    ADD  R2,R0
+    MOV  R0,XH
+    ADC  R3,R0
+    LD   R0,[v_krt+0]
+    SUB  R2,R0
+    LD   R0,[v_krt+1]
+    SBC  R3,R0
+    LD   R0,[Y+3]
+    SUB  R2,R0
+    LD   R0,[Y+4]
+    SBC  R3,R0
+    LDW  X,#v_pa
+    CALL .pd
+    CLR  R2
+    CLR  R3
+    LD   R0,[v_mpt+3]
+    LD   R1,[Y+0]
+    MUL  R0,R1
+    MOV  R0,XL
+    ADD  R2,R0
+    MOV  R0,XH
+    ADC  R3,R0
+    LD   R0,[v_mpt+4]
+    LD   R1,[Y+1]
+    MUL  R0,R1
+    MOV  R0,XL
+    ADD  R2,R0
+    MOV  R0,XH
+    ADC  R3,R0
+    LD   R0,[v_mpt+5]
+    LD   R1,[Y+2]
+    MUL  R0,R1
+    MOV  R0,XL
+    ADD  R2,R0
+    MOV  R0,XH
+    ADC  R3,R0
+    LD   R0,[v_krt+2]
+    SUB  R2,R0
+    LD   R0,[v_krt+3]
+    SBC  R3,R0
+    LD   R0,[Y+3]
+    SUB  R2,R0
+    LD   R0,[Y+4]
+    SBC  R3,R0
+    LDW  X,#v_pa+2
+    CALL .pd
+    CLR  R2
+    CLR  R3
+    LD   R0,[v_mpt+6]
+    LD   R1,[Y+0]
+    MUL  R0,R1
+    MOV  R0,XL
+    ADD  R2,R0
+    MOV  R0,XH
+    ADC  R3,R0
+    LD   R0,[v_mpt+7]
+    LD   R1,[Y+1]
+    MUL  R0,R1
+    MOV  R0,XL
+    ADD  R2,R0
+    MOV  R0,XH
+    ADC  R3,R0
+    LD   R0,[v_mpt+8]
+    LD   R1,[Y+2]
+    MUL  R0,R1
+    MOV  R0,XL
+    ADD  R2,R0
+    MOV  R0,XH
+    ADC  R3,R0
+    LD   R0,[v_krt+4]
+    SUB  R2,R0
+    LD   R0,[v_krt+5]
+    SBC  R3,R0
+    LD   R0,[Y+3]
+    SUB  R2,R0
+    LD   R0,[Y+4]
+    SBC  R3,R0
+    LDW  X,#v_pa+4
+    CALL .pd
+    BRA  .pz
+; .pd -- the sum in R3:R2, >> 7, an INT at X; pok 0 when it is past a
+; byte's 127: the sum + $3F80 must be under $7F80
+.pd: MOV  R0,R2
+    ADD  R0,#$80
+    MOV  R1,R3
+    ADC  R1,#$3F
+    CMP  R1,#$7F
+    BCC  .p1
+    BNE  .p8
+    CMP  R0,#$80
+    BCS  .p8
+.p1: ADD  R2,R2
+    ADC  R3,R3
+    ST   [X+0],R3
+    CLR  R0
+    TST  R3
+    BPL  .p2
+    MOV  R0,#$FF
+.p2: ST   [X+1],R0
+    RET
+.p8: CLR  R0
+    ST   [v_pok],R0
+    RET
+.pz:
+  ENDASM
+RETURN
+
+; Place(vx, vy, vz) -- the view vector, bytes, as a record for PlaceAsm
 FUNC BYTE Place(INT vx, INT vy, INT vz)
-  pa0 = ((mt(0) * vx) >> 7) + ((mt(3) * vy) >> 7) + ((mt(6) * vz) >> 7)
-  pa1 = ((mt(1) * vx) >> 7) + ((mt(4) * vy) >> 7) + ((mt(7) * vz) >> 7)
-  pa2 = ((mt(2) * vx) >> 7) + ((mt(5) * vy) >> 7) + ((mt(8) * vz) >> 7)
-  IF pa0 < -127 OR pa0 > 127 OR pa1 < -127 OR pa1 > 127 OR pa2 < -127 OR pa2 > 127 THEN
-    RETURN (0)
-  FI
-RETURN (1)
+  INT l
+  pv(0) = vx + 128
+  pv(1) = vy + 128
+  pv(2) = vz + 128
+  l = (vx + vy + vz) * 128
+  pv(3) = l & 255
+  pv(4) = l >> 8
+  PlaceAsm()
+RETURN (pok)
 
 ; Store(w) -- Place()'s point as a record at w: the three coordinates
 ; with 128 added, and 128 times their sum
 PROC Store(BYTE POINTER w)
   INT l
-  *w = pa0 + 128
+  *w = pa(0) + 128
   w += 1
-  *w = pa1 + 128
+  *w = pa(1) + 128
   w += 1
-  *w = pa2 + 128
+  *w = pa(2) + 128
   w += 1
-  l = (pa0 + pa1 + pa2) * 128
+  l = (pa(0) + pa(1) + pa(2)) * 128
   *w = l & 255
   w += 1
   *w = l >> 8
 RETURN
 
-; Transpose() -- the rotation, signed, for Place()
+; Transpose() -- the rotation's transpose for Place(): mp's biased bytes
+; column by column, and a column's constant, 128 times its sum -- the
+; sum's low bit the low byte's top, the rest the high byte
 PROC Transpose()
-  BYTE k
-  FOR k = 0 TO 8 DO
-    mt(k) = mp(k)
-    mt(k) -= 128
-  OD
+  ASM
+    LD   R0,[v_mp+0]
+    ST   [v_mpt+0],R0
+    LD   R0,[v_mp+3]
+    ST   [v_mpt+1],R0
+    LD   R0,[v_mp+6]
+    ST   [v_mpt+2],R0
+    LD   R0,[v_mp+1]
+    ST   [v_mpt+3],R0
+    LD   R0,[v_mp+4]
+    ST   [v_mpt+4],R0
+    LD   R0,[v_mp+7]
+    ST   [v_mpt+5],R0
+    LD   R0,[v_mp+2]
+    ST   [v_mpt+6],R0
+    LD   R0,[v_mp+5]
+    ST   [v_mpt+7],R0
+    LD   R0,[v_mp+8]
+    ST   [v_mpt+8],R0
+    LDW  Y,#v_mpt
+    LDW  X,#v_krt
+    MOV  R1,#3
+.c: CLR  R3
+    LD   R2,[Y+0]
+    LD   R0,[Y+1]
+    ADD  R2,R0
+    ADC  R3,#0
+    LD   R0,[Y+2]
+    ADD  R2,R0
+    ADC  R3,#0
+    SHR  R3
+    ROR  R2
+    BCS  .c1
+    CLR  R0
+    BRA  .c2
+.c1: MOV  R0,#128
+.c2: ST   [X+0],R0
+    ST   [X+1],R2
+    ADDW X,#2
+    ADDW Y,#3
+    SUB  R1,#1
+    BNE  .c
+  ENDASM
 RETURN
 
 ; StarAt(i, px, py) -- star i where the screen point (px, py) from the
@@ -1469,37 +1731,49 @@ PROC StarAt(BYTE i, INT px, INT py)
   ssy(i) = CY - py
 RETURN
 
-; DustAt(i) -- speck i anywhere in view: a random depth from DNEAR, 512
-; deep, a random point across the view at that depth, in the dust's
-; units of two -- the random word masked and scaled, not divided. A few
-; tries, since far out the view is wider than the dust's reach; failing
-; those it is parked where the next frame's flight retires it again
+; DustAt(i) -- speck i somewhere in view ahead of the ship, so it
+; streams past it: a random depth on the side of the ship its nose points
+; -- beyond it when the nose points away from the camera, nearer when it
+; points this way -- and a random point across the view at that depth,
+; the random word masked and scaled, not divided, in the dust's units of
+; two, carried back into the ship's frame. One still behind the ship's
+; centre is mirrored through it, which puts it ahead; then it is placed
+; in the world, the ship's place plus that. Past the dust's reach it is
+; parked far behind the ship, where the next frame retires it again
 PROC DustAt(BYTE i)
   CARD d
   INT hx, hy, x, y, z
-  BYTE t
-  FOR t = 1 TO 4 DO
-    d = Rnd(0) & 511
-    d += DNEAR
-    hx = d * 45 >> 7
-    hy = d * 21 >> 6
-    x = Rnd(0) & 255
-    x -= 128
-    x = x * hx >> 7
-    y = Rnd(0) & 255
-    y -= 128
-    y = y * hy >> 7
-    z = d
-    z -= DIST
-    IF Place(x >> 1, y >> 1, z >> 1) THEN
-      Store(dd + i * 5)
-      RETURN
+  BYTE k
+  k = i * 3
+  d = Rnd(0) & 255
+  IF mp(8) >= 128 THEN d += DIST ELSE d += DSPAWN FI
+  hx = d * 45 >> 7
+  hy = d * 21 >> 6
+  x = Rnd(0) & 255
+  x -= 128
+  x = x * hx >> 8
+  IF x > 127 THEN x = 127 ELSEIF x < -127 THEN x = -127 FI
+  y = Rnd(0) & 255
+  y -= 128
+  y = y * hy >> 8
+  z = d
+  z -= DIST
+  z = z >> 1
+  IF z > 127 THEN z = 127 FI
+  IF Place(x, y, z) THEN
+    IF pa(2) < 0 THEN
+      pa(0) = -pa(0)
+      pa(1) = -pa(1)
+      pa(2) = -pa(2)
     FI
-  OD
-  pa0 = 0
-  pa1 = 0
-  pa2 = -127
-  Store(dd + i * 5)
+    dw(k) = sh(0) + pa(0)
+    dw(k + 1) = sh(1) + pa(1)
+    dw(k + 2) = sh(2) + pa(2)
+  ELSE
+    dw(k) = sh(0)
+    dw(k + 1) = sh(1)
+    dw(k + 2) = sh(2) - 1000
+  FI
 RETURN
 
 ; Scatter() -- the sky's first frame: every star and speck anywhere in view
@@ -1528,7 +1802,7 @@ RETURN
 PROC Respawn()
   BYTE k, i
   INT px, py
-  Transpose()
+  IF qo THEN Transpose() FI
   FOR k = 1 TO qo DO
     i = sq(k - 1)
     IF i & 128 THEN
@@ -1579,9 +1853,10 @@ PROC Main()
     yaw += YAWR
     pitch += PITCHR
     roll += ROLLR
+    sh(2) += SPEED                   ; the ship flies along its nose; the camera follows it
     Matrix()
+    Faces()                          ; first: Transform skips the stern's panels while it is away
     Transform()
-    Faces()
     Visible()
     Sky()
     Respawn()
