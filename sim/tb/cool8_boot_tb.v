@@ -15,9 +15,20 @@
 //   vvp cool8_boot_tb.vvp +rom=sim/build/boot.hex
 //
 // Plusargs:
-//   +rom=FILE  the 4096-line ROM image from tools/mkrom.py
-//   +vcd=FILE  dump waves
-//   +verbose   print every check
+//   +rom=FILE    the 4096-line ROM image from tools/mkrom.py
+//   +stopat=HEX  where the boot hands over -- the `monitor` symbol
+//   +banner=HEX  where the ROM draws the banner -- the `bancell` symbol
+//   +moncy=HEX   the monitor's cursor row -- the `mon_cy` symbol
+//   +vcd=FILE    dump waves
+//   +verbose     print every check
+//
+// The three addresses come from sim/test_boot.py, which reads them out
+// of the assembled boot.asm, because the symbols belong to the
+// assembler and not to this file. The banner address was a literal
+// $8104 here once, and it stayed behind through every map move from
+// [D70] to [D82]: this bench then checked user RAM for a banner that
+// was being drawn three moves away, and failed for days before anyone
+// ran it.
 
 `default_nettype none
 `timescale 1ns / 1ps
@@ -38,6 +49,8 @@ module cool8_boot_tb;
     reg          verbose;
     reg [1023:0] vcdfile, romfile;
     reg [15:0]   stopat;            // where the boot hands over, +stopat=
+    reg [15:0]   bannerat;          // the banner's first cell, +banner=
+    reg [15:0]   moncy;             // the monitor's cursor row, +moncy=
     reg [7:0]    byte_at;
 
     reg          bootram;
@@ -224,6 +237,14 @@ module cool8_boot_tb;
             $display("FAIL: no +stopat= given");
             $finish;
         end
+        if (!$value$plusargs("banner=%h", bannerat)) begin
+            $display("FAIL: no +banner= given");
+            $finish;
+        end
+        if (!$value$plusargs("moncy=%h", moncy)) begin
+            $display("FAIL: no +moncy= given");
+            $finish;
+        end
 
         if ($value$plusargs("vcd=%s", vcdfile)) begin
             $dumpfile(vcdfile);
@@ -263,21 +284,21 @@ module cool8_boot_tb;
         // the ROM, so an x here is a byte the clear loop missed.
         //
         // The banner is the exception, and it is skipped rather than
-        // tolerated: the ROM writes its text map row at $8104 after the
-        // clear, so those ten bytes are the one place in 60 KB where a
-        // non-zero byte is the right answer. Everything else, including
+        // tolerated: the ROM writes its text map row at `bannerat` after
+        // the clear, so those ten bytes are the one place in 60 KB where
+        // a non-zero byte is the right answer. Everything else, including
         // the rest of that row, still has to be zero.
         n_bad = 0;
         for (i = 0; i < 16'hF000; i = i + 1) begin
             byte_at = ram_byte(i[15:0]);
-            // $EF43 is the monitor's cursor row, which the boot code
+            // `moncy` is the monitor's cursor row, which the boot code
             // sets to 3 on its way out so the console starts below the
             // banner rather than on top of it. Like the banner itself,
             // it is written after the clear and a zero there would mean
             // the handover never happened.
             if ((byte_at !== 8'h00) &&
-                (i !== 16'hEF43) &&
-                !(i >= 16'h8104 && i < 16'h8104 + 16'd10)) begin
+                (i !== {16'd0, moncy}) &&
+                !(i >= {16'd0, bannerat} && i < {16'd0, bannerat} + 10)) begin
                 if (n_bad < 4)
                     $display("FAIL $%04h is %02h, not cleared", i[15:0],
                              byte_at);
@@ -289,11 +310,11 @@ module cool8_boot_tb;
         // ...and the banner really is there. "COOL8" in light cyan,
         // character in the even byte and attribute in the odd one, which
         // is the layout the fetch engine reads a cell in.
-        chk("the banner: C",     {24'd0, ram_byte(16'h8104)}, 32'h43);
-        chk("...its attribute",  {24'd0, ram_byte(16'h8105)}, 32'h0B);
-        chk("the banner: O",     {24'd0, ram_byte(16'h8106)}, 32'h4F);
-        chk("the banner: 8",     {24'd0, ram_byte(16'h810C)}, 32'h38);
-        chk("...and it stopped", {24'd0, ram_byte(16'h810E)}, 32'h00);
+        chk("the banner: C",     {24'd0, ram_byte(bannerat)},          32'h43);
+        chk("...its attribute",  {24'd0, ram_byte(bannerat + 16'd1)},  32'h0B);
+        chk("the banner: O",     {24'd0, ram_byte(bannerat + 16'd2)},  32'h4F);
+        chk("the banner: 8",     {24'd0, ram_byte(bannerat + 16'd8)},  32'h38);
+        chk("...and it stopped", {24'd0, ram_byte(bannerat + 16'd10)}, 32'h00);
 
         // The vectors are in RAM, underneath the ROM window they were
         // written through. This is the overlay's whole reason for being

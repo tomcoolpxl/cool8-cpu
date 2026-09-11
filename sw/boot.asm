@@ -107,7 +107,9 @@ reset:  LDW  X,#stack
         ST   [VID_MODE],R0
 
 ; The banner, cell by cell: character in the even byte, attribute in the
-; odd one. Row 1, column 2, which is SCREEN + 1*CSTRIDE + 2*2.
+; odd one. Row 1, column 2 -- `bancell`, defined below with the other
+; addresses because the assembler evaluates an equate where it stands,
+; and SCREEN does not exist until sysbot.asm has been included.
 ;
 ; **This was $8104 until [D70] moved the map**, and the ROM kept its own
 ; copy of the address while the display followed the preset. The banner
@@ -116,7 +118,7 @@ reset:  LDW  X,#stack
 ; generates, so there is one number and the assembler does the sum.
 
         LDW  X,#banner
-        LDW  Y,#SCREEN + CSTRIDE + 4
+        LDW  Y,#bancell
 .msg:   LD   R1,[X+]
         CMP  R1,#0
         BEQ  .cursor
@@ -320,6 +322,13 @@ stack   = $0200
 ; rather than have the monitor's first line overwrite it.
 mon_cx  = $EF42
 mon_cy  = $EF43
+
+; Where the banner is drawn: row 1, column 2 of the text map. Named so
+; sim/test_boot.py can hand the address to cool8_boot_tb as a plusarg
+; the way it already hands over `monitor` -- the testbench kept its own
+; $8104 from before [D70] until after [D82], and checked user RAM for a
+; banner the map had moved off three times.
+bancell = SCREEN + CSTRIDE + 4
 
 ; ---------------------------------------------------------------------
 ; The monitor, and the disassembler it uses. Same ROM image: there is
