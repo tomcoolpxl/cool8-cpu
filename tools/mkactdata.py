@@ -3,11 +3,11 @@
 
     python tools/mkactdata.py            rewrite every generated block
     python tools/mkactdata.py --check    fail if any is stale
-    python tools/mkactdata.py cobra      one demo
+    python tools/mkactdata.py plasma     one demo
 
-**Two demos, one model, and the numbers are copied by machine.** A
+**Two demos, one table, and the numbers are copied by machine.** A
 CoolAction! port of a BASIC demo has no `READ`, so what the BASIC
-carries as `DATA` -- a ship, a sine table, a palette, a tune -- is an
+carries as `DATA` -- a sine table, a palette, a tune -- is an
 initialised array in the `.act`. Typed twice, thousands of numbers
 would be wrong in one place and the picture subtly bent in a way only
 the framebuffer comparison in `sim/test_action.py` could see; so each
@@ -63,32 +63,11 @@ def rows(vals, per):
                      for i in range(0, len(vals), per))
 
 
-def cobra_frames(v):
-    """The frame stream is 72 of: a count, then that many edge indices."""
-    i, n, total = 0, 0, 0
-    while i < len(v):
-        cnt = v[i]
-        assert 0 < cnt <= 38 and all(0 <= e < 38 for e in v[i + 1:i + 1 + cnt])
-        i += 1 + cnt
-        n += 1
-        total += cnt
-    assert n == 72 and i == len(v), (n, i, len(v))
-    return v
-
-
 # (act name, type, first DATA line, last DATA line, layout, expected
-#  count or None, one line on what it is)
+#  count or None, one line on what it is). COBRA is not here: its
+# CoolAction! program left the BASIC's frames behind (D105), and its
+# model comes from tools/mk3d.py, which writes both.
 BLOCKS = {
-    "cobra": [
-        ("vx", "INT", 200, 249, stride(3, 0), 28, "28 vertices: x -- tilted 20 degrees about X by tools/mk3d.py"),
-        ("vy", "INT", 200, 249, stride(3, 1), 28, "the vertices' screen y: already a row, only x moves"),
-        ("vz", "INT", 200, 249, stride(3, 2), 28, "and z"),
-        ("ea", "BYTE", 250, 299, stride(2, 0), 38, "38 edges, as two vertex indices"),
-        ("eb", "BYTE", 250, 299, stride(2, 1), 38, ""),
-        ("sn", "INT", 300, 349, flat, 72, "72 of sin, scaled to 127, one per 5 degrees"),
-        ("fr", "BYTE", 350, 9999, cobra_frames, None,
-         "the visible edges of each of the 72 frames: a count, then that many edge indices"),
-    ],
     "plasma": [
         ("ax", "BYTE", 200, 299, flat, 256, "the x interference table, two sine voices"),
         ("gy", "BYTE", 300, 399, flat, 240, "the y one; a pixel is ax(x) + gy(y), 1..46"),
@@ -131,18 +110,9 @@ def block(demo):
             o.append("; " + what)
         o.append("%s ARRAY %s(%d) = [" % (ctype, name, len(vals)))
         o.append(rows(vals, 24 if ctype == "BYTE" else 12) + "]")
-        if demo == "cobra" and name == "fr":
-            consts.append("CONST NLINES = %d" % sum(vals[i] for i in _frame_starts(vals)))
     o += consts
     o.append(END)
     return "\n".join(o) + "\n"
-
-
-def _frame_starts(v):
-    i = 0
-    while i < len(v):
-        yield i
-        i += 1 + v[i]
 
 
 def splice(text, demo, new):

@@ -5741,6 +5741,16 @@ consecutive display frames: the two registers stay a page apart, the
 shown page always holds a complete wireframe, and its content changes
 only when `DBASE` flips.
 
+**Amended by [D105](#d105--cobra-compiled-computes-every-frame-and-is-no-longer-the-basics-twin):
+`DBASE` goes before `VSYNC`, not after.** The fetch takes `DBASE` at
+`frame_start` (`cool8_fetch.v`, `row_ptr <= base`) and the frame
+counter `VSYNC` waits on ticks on the same pulse (`cool8_vregs.v`), so a
+`DBASE` written after `VSYNC` reaches the glass a frame late -- and
+`BASE` moved to the old page that same moment is drawing in view for
+that frame. The order is `DBASE` to the finished page, `VSYNC`, then
+`BASE` to the other. The registers read a page apart either way, which
+is all a register probe can see.
+
 **Measured cost: +21 placed cells** -- 5,199 to **5,220 of 5,280, 98.9
 %, and it fits with 60 left**; Fmax `sclk` 11.15 MHz against the 8.375
 the machine runs at. Gates: `test_soc` (decode, readback, and the
@@ -6412,3 +6422,98 @@ palette, pixel for pixel.
 clock-exact code against a raster the CPU can only poll to within 8
 clocks, and only the RTL or the board could show where it landed. The
 between-lines budget is the one the emulator can hold exactly.
+
+## D105 -- COBRA, compiled, computes every frame and is no longer the BASIC's twin
+
+**The owner asked for three things**: every frame computed between two
+vertical blanks rather than precalculated; more interesting movement
+than a spin; and the most optimised program the language allows --
+corners cut where they can be, sine precomputed if need be, the video
+mode chosen for speed, and no obligation to match `demos/cobra.bas`.
+Of a tumble, a flight path, a starfield and depth shading, the tumble on
+three axes was chosen, alone.
+
+**So COBRA leaves the pair gate.** It was one of the nine ports held
+byte for byte to their BASIC ([14-demos.md §4](14-demos.md)); a program
+that computes a tumble cannot match one that replays 72 precomputed
+frames about one axis, and holding it to that would have kept the
+BASIC's algorithm. `demos/cobra.bas` is unchanged. `test_cobra` holds
+the compiled one to its own claims instead: a pass of the loop in every
+one of 600 vblanks; the rotation and every vertex on the screen exactly
+where the generator's integer pipeline puts them; each face's
+visibility its normal through the program's own matrix; each page's
+list exactly the edges bordering a visible face, and the page exactly
+that list's lines, pixel for pixel; and a page erased by drawing its
+last frame again in black the page a clear would have left.
+
+**The mode is one no preset names: 256 × 240 at 4 bits a pixel.** Mode
+6's timing with `VID_CTRL = $3A` and a stride of 128 -- 30,720 bytes a
+page, so two fit VRAM, at `$0000` and `$7800`, and the display flips
+between them (D92). Mode 5 is the same depth and gives 48 of the
+240 lines to borders; mode 6 at 8 bits is 61,440 bytes a page and
+cannot double-buffer. At 4 bits the pixel port plots a pixel in one
+store and steps X or Y itself, so a line is a store and an error step a
+pixel: 14 clocks, 23 where the other axis steps.
+
+**Where the corners are cut.** Sine is a table, 1,024 steps to a turn
+at 127 to a unit, and the reciprocal of depth is a byte table for bins
+two model units deep, so perspective is a multiply's high byte and not
+a divide. `MUL` is unsigned and 8 × 8, so every signed value carries 128
+into it and the surplus comes back off as two constants, the row's and
+the vertex's: a multiply-add is 28 clocks with no branch. The
+rotation's fifteen products stay compiled, 1,856 clocks. The old frame
+is erased by drawing its edge list again in black, which the BASIC's
+profile chose over clearing and which still holds -- a clear is 30,720
+bytes.
+
+**The cull is by normals, and the screen said why.** The BASIC decides a
+face by the signed area of its polygon under the projection, and the
+first compiled cut did the same with a triangle a face. Near edge-on a
+long thin face's area is the rounding of its corners -- one went 88, 44,
+-35, 36, -108 in five frames -- and an edge went out for a frame and
+came back. A margin of 8 flickered, and so did hysteresis of 24 either
+side. Each face's normal is now its own triangle's, from the vertices
+drawn, 127 long, with the plane's distance from the ship's centre folded
+into a threshold of its own: the face shows while its rotated normal's z
+is under it. That is `Transform`'s Z row again, over 13 records, in
+assembly. `tools/mk3d.py` measures it over every pose: against the true
+planes it is wrong only within 0.24° of edge-on, and against the
+triangles on the screen only below an area of 146.
+
+**Two more things the flicker check found.** With 256 steps of sine the
+angles advanced unevenly -- a yaw of 1.5 steps a frame went 1, 2, 1, 2
+-- and a rotated normal zig-zagged (237, -48, 66, -276) as fast as it
+moved; 1,024 steps and rounded products (an `INT` shift floors) took it
+to a few units. What was left -- a face crossing edge-on in a frame
+that moved it less than the matrix rounds, and an edge whose two faces
+are both within a degree of edge-on for one frame -- is taken by 256 of
+hysteresis, one in the high byte, 0.9°.
+
+**The flip goes before the wait, and D92 had it after.** The shots
+along the tumble showed lines ending in nothing while every check on
+the page passed: the glass was showing the *other* page, mid-erase. The
+fetch takes `DBASE` at `frame_start` and `TMR_L`, which `WaitVBlank()`
+watches, ticks on the same pulse, so a page flipped after the wait is
+on the glass a frame late and the page drawn next is the one on show.
+COBRA now writes `DBASE` when its page is finished, waits, and only
+then moves `BASE`; `test_cobra` compares the frame after each finished
+page with that page, pixel for pixel. D92's flip is amended, and the
+library's `FlipBuffer()` says the same.
+
+**Measured**: 55,958 of a frame's 139,583 clocks, 40 % -- the lines,
+erased and drawn, 30,457; `Transform` 13,658; the faces and the list
+8,618; the rotation 1,856 -- so it holds 60 Hz with room to spare. The
+PRG is 8,430 bytes against the port's 15,009, 2 KB of it sine. The
+tumble's first 4,096 frames draw 11 to 36 edges, 21.7 on average, 371
+to 1,174 pixels.
+
+**One generator for both.** `tools/mk3d.py` writes `demos/cobra.bas` as
+before and the compiled program's model block -- vertices, edges,
+normals, sine, reciprocals -- and checks the camera against the
+machine's integer arithmetic; `poe check`'s `cobra` job fails if either
+is stale. `tools/mkactdata.py` no longer carries COBRA.
+
+**Rejected**: precomputed frames, which was the ask; the area cull, for
+the flicker; mode 5 and 8-bit mode 6, above; 256 steps of sine, for the
+shiver. A flight path, a starfield and depth shading were offered and
+not chosen.

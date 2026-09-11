@@ -583,90 +583,192 @@ def test_rainbow():
     print()
 
 
+def cobra_lines(entries):
+    """Lines()'s pixels for a list of (x0, y0, x1, y1), as its four loops
+    choose them: the end with the smaller y first; along X rightward from
+    the left end, along Y downward; the error starting at half the long
+    distance and the short axis stepping when it runs out."""
+    px = set()
+    for x0, y0, x1, y1 in entries:
+        if y0 > y1:
+            x0, y0, x1, y1 = x1, y1, x0, y0
+        dy, dx = y1 - y0, abs(x1 - x0)
+        sx = 1 if x1 >= x0 else -1
+        if dx >= dy:                        # .rx, or .lx from the lower-left end
+            x, y, s = (x0, y0, 1) if sx > 0 else (x1, y1, -1)
+            err = dx >> 1
+            for _ in range(dx + 1):
+                px.add((x, y))
+                x += 1
+                if err >= dy:
+                    err -= dy
+                else:
+                    err += dx - dy
+                    y += s
+        else:                               # .ry and .ly, from the top
+            x, y, err = x0, y0, dy >> 1
+            for _ in range(dy + 1):
+                px.add((x, y))
+                y += 1
+                if err >= dx:
+                    err -= dx
+                else:
+                    err += dy - dx
+                    x += sx
+    return px
+
+
 def test_cobra():
-    """The second port, held to the original the same way, on both
-    pages: demos/cobra.bas and demos/cobra.act each run to the K-th
-    VSYNC / WaitVBlank, and the two VRAM pages and both base registers
-    must be identical. Ten frames is past the two clearing frames and
-    into the erase-and-draw steady state, so a wrong projection, a
-    wrong cull table, a Line tie or a flip out of step is a different
-    page.
+    """COBRA (demos/cobra.act, D105): Elite's Cobra Mk III tumbling on
+    three axes, every frame computed between two vertical blanks. It is
+    not the BASIC's twin any more, so it is held to its own claims
+    rather than to demos/cobra.bas's pages:
 
-    And the first real answer to "how much faster": the same work on
-    both sides, measured two ways -- the start-up (projection and cull,
-    2,016 multiply-adds and 1,772 table gathers, to the first frame
-    wait) and the clocks a frame of drawing costs, which is everything
-    not spent waiting for the frame. Both are VSYNC-paced, so the wall
-    clock is the same; the number that differs is how much of the frame
-    is left."""
-    import test_basic as B
-    import memmap
-    K = 10
-    print("  COBRA: the port against the original, %d frames, both pages" % K)
-    code, bsyms = B.build()
-    M = B.Machine(code, bsyms)
-    M.settle()
-    for ln in open(os.path.join(H.ROOT, "demos", "cobra.bas"), encoding="utf-8"):
-        if ln.strip():
-            H.line(M.m, bsyms, ln.rstrip("\r\n"))
-    M.m.type("RUN\r")
-    c0 = M.m.cpu.cycles
-    why = M.m.run(until=bsyms["h_vsync"], budget=600_000_000)
-    bas_start = M.m.cpu.cycles - c0
-    check(why == "until", "cobra: the BASIC reached its first VSYNC", why)
-    # the frames are profiled from the first wait, so the start-up is
-    # not averaged into them
-    bp = dbg.Profile(bsyms, memmap.ORG, memmap.ORG + len(code))
-    bp.start(M.m)
-    for _ in range(K - 1):
-        M.m.tick()
-        why = M.m.run(until=bsyms["h_vsync"], budget=60_000_000)
-    check(why == "until", "cobra: the BASIC reached VSYNC %d times" % K, why)
-    bp.collect(M.m)
-    bas_vram = bytes(M.m.video.vram[0:0xC000])
-    import ioregs
-    rd = M.m.bus.read
-    bas_regs = (rd(ioregs.addr_of("VID_DBASE_H")), rd(ioregs.addr_of("VID_BASE_H")),
-                rd(ioregs.addr_of("VID_CTRL")))
-
+    - a frame every vblank -- over ten seconds of the machine the loop
+      runs once a frame, so no frame's work ever overran one;
+    - what it draws is what its own arithmetic says: at poses along the
+      tumble, each face's visibility is its normal through the
+      program's own matrix against its threshold, agrees with its
+      triangle's area on the screen wherever that area is past
+      mk3d.SURE, and the page's edge list is exactly the edges
+      bordering a visible face;
+    - every vertex on the screen;
+    - a page erased by drawing its last frame again in black is the page
+      a clear would have left: the same frames, run once erasing and
+      once clearing (the `clean` byte), leave the same two pages."""
+    import mk3d
+    print("  COBRA: the tumble, every frame computed")
     prg, syms = H.build_act(H.ACT_LIB + ["demos/cobra.act"], "act_cobra")
     same_bytes("act_cobra", prg)
-    m = H.session()
-    org, end = H.load_act(m, prg)
-    c0 = m.cpu.cycles
-    why = m.run(until=syms["WaitVBlank"], budget=60_000_000)
-    act_start = m.cpu.cycles - c0
-    check(why == "until", "cobra: reached the first WaitVBlank", why)
-    ap = dbg.Profile(syms, org, end)
-    ap.start(m)
-    for _ in range(K - 1):
-        m.tick()
-        why = m.run(until=syms["WaitVBlank"], budget=20_000_000)
-    check(why == "until", "cobra: reached WaitVBlank %d times" % K, why)
-    ap.collect(m)
-    act_vram = bytes(m.video.vram[0:0xC000])
-    rd = m.bus.read
-    act_regs = (rd(ioregs.addr_of("VID_DBASE_H")), rd(ioregs.addr_of("VID_BASE_H")),
-                rd(ioregs.addr_of("VID_CTRL")))
-    check(act_regs == bas_regs, "cobra: the same display base, drawing base and control byte",
-          "compiled %s BASIC %s" % (act_regs, bas_regs))
-    bad = [i for i in range(0xC000) if act_vram[i] != bas_vram[i]]
-    check(not bad, "cobra: both pages identical to the BASIC's after %d frames" % K,
-          "%d bytes differ; first at $%04X: compiled %02X BASIC %02X"
-          % (len(bad), bad[0] if bad else 0,
-             act_vram[bad[0]] if bad else 0, bas_vram[bad[0]] if bad else 0))
-    lit = sum(1 for b in act_vram if b)
-    check(lit > 300, "cobra: a ship is on the pages", "%d lit bytes" % lit)
+    print("    %d bytes of PRG" % (len(prg) - 2))
 
-    bas_work = (bp.total - bp.of("h_vsync")) / (K - 1)
-    act_work = (ap.total - ap.of("WaitVBlank")) / (K - 1)
-    print("    start-up, projection and cull: %s clocks compiled, %s interpreted (%.1fx)"
-          % (f"{act_start:,}", f"{bas_start:,}", bas_start / act_start))
-    print("    a frame's drawing, the wait excluded: %s clocks compiled, %s interpreted "
-          "(%.1fx), the mean of frames 2-%d; a frame is 139,583; %d bytes of PRG"
-          % (f"{act_work:,.0f}", f"{bas_work:,.0f}", bas_work / act_work, K, len(prg)))
-    print("    where the compiled frames go:")
-    print("\n".join("    " + l for l in ap.report(top=5).split("\n")[1:]))
+    def arr(m, name, n):
+        a = syms["v_" + name]
+        return bytes(m.bus.mem[a:a + n])
+
+    def word(m, name):
+        a = syms["v_" + name]
+        return m.bus.mem[a] | (m.bus.mem[a + 1] << 8)
+
+    m = H.session(render=True)
+    org, end = H.load_act(m, prg)
+    why = m.run(until=syms["WaitVBlank"], budget=40_000_000)
+    check(why == "until", "cobra: its mode set and both pages cleared, to the first frame wait", why)
+    FR = 600
+    f0, t0 = word(m, "frames"), m.frames
+    p = dbg.Profile(syms, org, end)
+    p.start(m)
+    m.run_frame(FR)
+    m.run(until=syms["WaitVBlank"], budget=2_000_000)   # the last vblank's pass finished too
+    p.collect(m)
+    passes, frames = word(m, "frames") - f0, m.frames - t0
+    check(passes == frames, "cobra: a frame computed and drawn in every one of %d vblanks -- sixty a second"
+          % FR, "%d passes in %d frames" % (passes, frames))
+    n = max(1, passes)
+    per = lambda c: "{:,}".format(int(c / n))                 # noqa: E731
+    print("    a frame's work: %s clocks of 139,583 -- %s the transform, %s the lines, %s the rotation,"
+          " %s culling and listing, %s their 16-bit multiplies"
+          % (per(p.total - p.of("WaitVBlank")), per(p.of("Transform")), per(p.of("Lines")),
+             per(p.of("Matrix") + p.of("Row")), per(p.of("Faces") + p.of("Visible")), per(p.of("__mul16"))))
+
+    md = mk3d.act_model()
+    scr = md["scr"]                                 # each face's triangle, positive turned to the viewer
+    nb = arr(m, "nb", 65)
+    ea, eb, e1, e2 = (arr(m, nm, 38) for nm in ("ea", "eb", "ef1", "ef2"))
+    wrong_face = wrong_screen = wrong_list = wrong_mat = wrong_proj = wrong_px = wrong_glass = off = 0
+    first_px = ""
+    counts = []
+    for _ in range(12):
+        m.run_frame(23)
+        m.run(until=syms["Faces"], budget=2_000_000)
+        was = arr(m, "fv", 13)                              # the faces as the last frame left them
+        m.run(until=syms["WaitVBlank"], budget=2_000_000)   # this frame's page complete
+        sx, sy, fv = arr(m, "sx", 28), arr(m, "sy", 28), arr(m, "fv", 13)
+        mz = [b - 128 for b in arr(m, "mp", 9)[6:9]]      # the matrix's Z row, signed
+        cur = m.bus.mem[syms["v_cur"]]
+        mat = md["matrix"](*(word(m, a) * mk3d.SINES >> 16 for a in ("yaw", "pitch", "roll")))
+        wrong_mat += list(arr(m, "mp", 9)) != [e + 128 for row in mat for e in row]
+        wrong_proj += list(zip(sx, sy)) != md["project"](mat)
+        for f in range(13):
+            n = [b - 128 for b in nb[5 * f:5 * f + 3]]
+            t = ((nb[5 * f + 3] | nb[5 * f + 4] << 8) - 128 * sum(n) + 0x8000) % 0x10000 - 0x8000
+            q = sum(a * b for a, b in zip(mz, n)) - t
+            wrong_face += (q - mk3d.HYST < 0 if was[f] else q + mk3d.HYST < 0) != bool(fv[f])
+            (xa, ya), (xb, yb), (xc, yc) = ((sx[v], sy[v]) for v in scr[f])
+            area = ((xb - xa) >> 1) * ((yc - ya) >> 1) - ((yb - ya) >> 1) * ((xc - xa) >> 1)
+            wrong_screen += abs(area) > mk3d.SURE and (area > 0) != bool(fv[f])
+        edges = [e for e in range(38) if fv[e1[e]] or fv[e2[e]]]
+        lst = []
+        for e in edges:
+            lst += [sx[ea[e]], sy[ea[e]], sx[eb[e]], sy[eb[e]]]
+        nl = m.bus.mem[syms["v_nl"] + cur]
+        have = arr(m, "lst", 304)[cur * 152:cur * 152 + 4 * nl]
+        wrong_list += have != bytes(lst)
+        # the page drawn is exactly its list's lines, pixel for pixel
+        base = m.bus.mem[syms["v_pg"] + cur] << 8
+        page = bytes(m.video.vram[base:base + 30720])
+        lit = set()
+        for i, b in enumerate(page):
+            if b:
+                y, xb = divmod(i, 128)
+                if b >> 4:
+                    lit.add((2 * xb, y))
+                if b & 15:
+                    lit.add((2 * xb + 1, y))
+        want = cobra_lines([tuple(have[j:j + 4]) for j in range(0, len(have), 4)])
+        if lit != want:
+            wrong_px += 1
+            if not first_px:
+                extra, lost = sorted(lit - want), sorted(want - lit)
+                bad = [tuple(have[j:j + 4]) for j in range(0, len(have), 4)
+                       if cobra_lines([tuple(have[j:j + 4])]) & set(lost)]
+                first_px = "%d pixels lit off the lines, %d of them missing; lines %s" % (
+                    len(extra), len(lost), bad[:4])
+        off += sum(1 for y in sy if y > 239)
+        counts.append(len(edges))
+        # and the next frame on the glass is that page, whole: not the one
+        # being erased and drawn. This stop is mid-frame and the frame it
+        # is in scans the page latched at its start, so the first frame
+        # from this page is the one after (mode 6's picture starts 64
+        # pixels in, every pixel doubled both ways)
+        m.run_frame(2)
+        fb = m.fb()
+        glass = {(x, y) for y in range(240) for x in range(256)
+                 if fb[2 * y * 640 + 64 + 2 * x] != 0}
+        wrong_glass += glass != lit
+    check(not wrong_face, "cobra: at 12 poses, every face's visibility is its normal through the program's "
+          "own matrix against its threshold, %d of hysteresis from the frame before" % mk3d.HYST,
+          "%d faces wrong" % wrong_face)
+    check(not wrong_screen, "cobra: and agrees with its triangle on the screen wherever the area is past %d"
+          % mk3d.SURE, "%d faces disagree" % wrong_screen)
+    check(not wrong_list, "cobra: and each page's list is exactly the edges bordering a visible face, %d-%d of them"
+          % (min(counts), max(counts)), "%d lists wrong" % wrong_list)
+    check(not off, "cobra: every vertex on the screen", "%d below it" % off)
+    check(not wrong_mat, "cobra: the rotation is tools/mk3d.py's, entry for entry", "%d poses differ" % wrong_mat)
+    check(not wrong_proj, "cobra: and every vertex lands where its integer pipeline puts it",
+          "%d poses differ" % wrong_proj)
+    check(not wrong_px, "cobra: each page is exactly its list's lines, pixel for pixel",
+          "%d pages differ: %s" % (wrong_px, first_px))
+    check(not wrong_glass, "cobra: and the next frame on the glass is that page, whole -- never the one being drawn",
+          "%d of 12 frames showed something else" % wrong_glass)
+
+    N = 40
+
+    def pages(clean):
+        mm = H.session()
+        H.load_act(mm, prg)
+        mm.bus.mem[syms["v_clean"]] = clean
+        mm.run(until=syms["WaitVBlank"], budget=40_000_000)
+        for _ in range(N):
+            mm.tick()
+            mm.run(until=syms["WaitVBlank"], budget=20_000_000)
+        return bytes(mm.video.vram[0:0xF000])
+    a, b = pages(0), pages(1)
+    diff = sum(x != y for x, y in zip(a, b))
+    check(not diff, "cobra: %d frames erased by drawing each page's last frame again in black leave "
+          "both pages as clearing them would" % N, "%d bytes differ" % diff)
+    lit = sum(1 for x in a if x)
+    check(lit > 200, "cobra: a ship on the pages", "%d lit bytes" % lit)
     print()
 
 
@@ -1386,7 +1488,7 @@ def profile_sieve():
     labels are the compiler's own (.do, .wh, .od ...), qualified by
     routine, so the report names the loop rather than the routine.
     `--profile line` does the same for the library's Line over
-    test_run.py's fan, which is where COBRA's frame goes."""
+    test_run.py's fan."""
     if "line" in sys.argv:
         import test_run as R
         flat = [v for line in R.LINE_FAN for v in line]
@@ -1730,29 +1832,64 @@ def shoot_slides():
     return 0
 
 
+def shoot_cobra():
+    """`python sim/test_action.py --cobra`: the compiled COBRA 340 frames
+    into its tumble, stern on, from the machine's own frame, into
+    docs/img/demo-act-cobra.png -- the picture 14-demos.md shows.
+    `--cobra 30 200 ...`: those frames instead, into
+    sim/build/cobra_<frame>.png, to look along the tumble."""
+    frames = [int(a) for a in sys.argv[1:] if a.isdigit()]
+    prg, syms = H.build_act(H.ACT_LIB + ["demos/cobra.act"], "act_cobra_shot")
+    m = H.session(render=True)
+    H.load_act(m, prg)
+    at = 0
+    for fr in frames or [340]:
+        m.run_frame(max(1, fr - at))
+        at = fr + 1
+        # the page just finished, its edges named by vertex, then shown
+        m.run(until=syms["WaitVBlank"], budget=2_000_000)
+        mem = m.bus.mem
+        cur = mem[syms["v_cur"]]
+        where = {}
+        for v in range(28):
+            where.setdefault((mem[syms["v_sx"] + v], mem[syms["v_sy"] + v]), []).append(v)
+        a = syms["v_lst"] + cur * 152
+        ends = []
+        for j in range(mem[syms["v_nl"] + cur]):
+            x0, y0, x1, y1 = mem[a + 4 * j:a + 4 * j + 4]
+            ends.append((where.get((x0, y0), ["?"]), (x0, y0), where.get((x1, y1), ["?"]), (x1, y1)))
+        deg = {}
+        for va, _, vb, _ in ends:
+            for v in va + vb:
+                deg[v] = deg.get(v, 0) + 1
+        if frames:
+            print("  frame %d: %s" % (fr, ", ".join("%s%s-%s%s" % ("/".join(map(str, va)), pa,
+                                                                   "/".join(map(str, vb)), pb)
+                                                  for va, pa, vb, pb in ends)))
+            print("    a vertex on one edge: %s" % sorted(v for v, d in deg.items() if d == 1))
+        m.run_frame(2)                  # the frame after this one scans the page
+        at += 2
+        path = (os.path.join(H.BUILD, "cobra_%03d.png" % fr) if frames
+                else os.path.join(H.ROOT, "docs", "img", "demo-act-cobra.png"))
+        print("  %d colours on screen -> %s" % (H.shot(m, path), os.path.relpath(path, H.ROOT)))
+    return 0
+
+
 def main():
     if "--profile" in sys.argv:
         return profile_sieve()
     if "--slides" in sys.argv:
         return shoot_slides()
+    if "--cobra" in sys.argv:
+        return shoot_cobra()
     print("  A2 -- CoolAction! on the machine")
     print()
-    test_every_encoding()
-    test_features()
-    test_sieve()
-    test_primes()
-    test_library()
-    test_hardware()
-    test_line()
-    test_rainbow()
-    test_cobra()
-    test_ports()
-    test_keys()
-    test_keytest()
-    test_loader()
-    test_mscoolman()
-    test_slides()
-    test_refusals()
+    only = [a for a in sys.argv[1:] if not a.startswith("--")]    # e.g. `cobra`: just those
+    for t in (test_every_encoding, test_features, test_sieve, test_primes, test_library,
+              test_hardware, test_line, test_rainbow, test_cobra, test_ports, test_keys,
+              test_keytest, test_loader, test_mscoolman, test_slides, test_refusals):
+        if not only or any(o in t.__name__ for o in only):
+            t()
     return H.report()
 
 

@@ -427,20 +427,23 @@ in R0:R1 between a store and their next use. What is left is `dx`,
 `err`, `dyn`, `n` and `x0` in the stack frame -- the sieve's profile in
 a different routine.
 
-**The nine ports, against their originals.** Every `demos/name.act` is
-its `name.bas` statement for statement, and `sim/test_action.py` runs
-each pair to the same point and compares what the machine holds --
-[14-demos.md §4](14-demos.md) has the table of what and where. Every
-one matched on its first run, which is the `Line` gate and the `Rnd`
-of §6 paying off. The numbers, the interpreter's beside the compiler's,
-after §4a:
+**The ports, against their originals.** Every port's `demos/name.act`
+is its `name.bas` statement for statement, and `sim/test_action.py`
+runs each pair to the same point and compares what the machine holds --
+[14-demos.md §4](14-demos.md) has the table of what and where. All
+nine matched on their first run, which is the `Line` gate and the
+`Rnd` of §6 paying off. COBRA has since left the pairs to compute its
+frames ([D105](01-decisions.md)); its first three rows below are the
+port's. The numbers, the interpreter's beside the compiler's, after
+§4a:
 
 | | interpreted | compiled | |
 |---|---|---|---|
 | RAINBOW, 40 frames | 6,722,811 | 5,738,090 | 1.2× -- both sit in `VSYNC` most of the frame, so the wall clock is the same 60 Hz |
-| COBRA, start-up: 2,016 projections and 1,772 table gathers | 50,538,504 | 1,391,498 | **36×** (18.7× before §4a) |
-| COBRA, a frame's drawing, the wait excluded (mean of frames 2-10) | 578,058 | 238,810 | 2.4× (2.0× before) |
-| COBRA, the PRG | -- | 15,009 bytes | 7 KB of it the four endpoint arrays, `BYTE` where the BASIC has integers |
+| COBRA's port, start-up: 2,016 projections and 1,772 table gathers | 50,538,504 | 1,391,498 | **36×** (18.7× before §4a) |
+| COBRA's port, a frame's drawing, the wait excluded (mean of frames 2-10) | 578,058 | 238,810 | 2.4× (2.0× before) |
+| COBRA's port, the PRG | -- | 15,009 bytes | 7 KB of it the four endpoint arrays, `BYTE` where the BASIC has integers |
+| COBRA since D105, a whole frame: the rotation, 28 vertices, 13 faces, the lines erased and drawn | -- | 55,958 | inside one frame, every frame: 60 Hz with 60 % to spare; the PRG 8,430 bytes |
 | MANDEL, the whole set to the key wait | 2,126,100,169 | 60,530,720 | **35×** (7.1× before §4a) -- the same Q6 iteration and the same Mariani-Silver rectangles; 4 min 14 s of machine time against 7 s |
 | TRIANGLES, MAZE, PLASMA, WAVE, SYNTH, INTRO | | | exact against their originals -- VRAM, palette, text map, voices, registers -- at the point the gate parks them; not timed, because they wait for the frame or the random number, not the CPU |
 
@@ -450,8 +453,12 @@ thirty-five times the interpreter, because an interpreted statement's
 cost is parsing it and a compiled one's is its loads and stores. Where
 the work is `Line`, it is 2.4×, because `Line` and `LINE` are the same
 algorithm and the compiled one only just overtook it. A frame is
-139,583 clocks, so neither COBRA holds 60 Hz: the interpreted one draws
-a frame in four, the compiled one in two. The next clock to find is
+139,583 clocks, so neither of the pair held 60 Hz: the interpreted one
+drew a frame in four, the compiled port in two. The COBRA that replaced
+the port holds it with 60 % to spare, and the difference is not the
+compiler: it draws with its own lines in assembly on a 4-bit screen,
+and computes what the port looked up ([D105](01-decisions.md)). The
+next clock to find is
 inside `Line` and it is the stack-frame traffic the sieve's profile
 already named -- the second piece of evidence
 [D97](01-decisions.md#d97--coolaction-a-compiled-language-for-games-cross-compiled-in-rust)
@@ -485,7 +492,7 @@ the wrong register fails by name.
 | `Plot(x, y, c)`, `HLine(x, y, n, c)`, `VLine(x, y, n, c)` | the pixel port: `PLOT`, and the two auto-incrementing runs |
 | `Line(x0, y0, x1, y1, c)` | `LINE`, **pixel for pixel**: `h_line`'s structure -- the horizontal case apart, always drawn downward, a pixel countdown, the port's own steps -- gated against the interpreter's fan in `sim/test_action.py` |
 | `Clg(c)` | `CLG`: the same 240 rows of the stride's low byte from `VID_BASE`, in `h_clg`'s own fill loop, ten clocks a byte |
-| `DoubleBuffer(show, draw)`, `FlipBuffer()` | mode 5's two pages ([D92](01-decisions.md#d92--vid_dbase_h-the-glass-and-the-pencil-part-company)): turn it on showing one and drawing the other; swap after `WaitVBlank()` |
+| `DoubleBuffer(show, draw)`, `FlipBuffer()` | mode 5's two pages ([D92](01-decisions.md#d92--vid_dbase_h-the-glass-and-the-pencil-part-company)): turn it on showing one and drawing the other; swap when a page is finished, then `WaitVBlank()` before drawing on the other -- after the wait, the glass lags a frame ([D105](01-decisions.md)) |
 | `SetTileBase(addr)`, `SetTile(col, row, t, a)`, `LoadTile(t, pattern)` | mode 2: the pattern base, a map entry, a 32-byte pattern |
 | `SetSprite(id, x, y, pat, big, flags)`, `SpriteMove(id, x, y, big)`, `SpriteHide(id)`, `SpritesOn(bank)`, `SpritesOff()` | the descriptor port, [04-system.md §5.6](04-system.md)'s layout: `pat` is a VRAM address, `big` is 16×16, `flags` is byte 6 |
 | `Sound(v, inc, vol, noise)`, `Silence(v)` | `SOUND`, and a voice off |

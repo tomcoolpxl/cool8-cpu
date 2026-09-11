@@ -11,8 +11,9 @@ Z-Machine games and the p-System's loader are Software on 14, each a
 `.BIN` behind a `.BAS` stub that sets the drive and `SYS`es it; and a
 CoolAction! source is compiled behind `sw/libaction.act` and placed as
 a bare `.BIN` on 11 -- no stub, started by `SYS "NAME.BIN"`. RAINBOW
-and COBRA exist on both 11 and 13, which is the point: the two menus
-are how the interpreter and the compiler get compared.
+and the other ports exist on both 11 and 13, which is the point: the
+two menus are how the interpreter and the compiler get compared. COBRA
+is on both as two programs since D105.
 
 **The machine is booted, not poked.** `BOOT.BIN` goes on drive 0 and the
 ROM autoboots it, which is `poe emu` without a window -- because the boot

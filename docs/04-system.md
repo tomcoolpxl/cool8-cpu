@@ -918,9 +918,12 @@ to wanting it is usually mode 2.
 
 Double-buffering is `VID_DBASE_H` plus `VID_CTRL` bit 6 ([D92]): the
 display scans from `{VID_DBASE_H, $00}` while `VID_BASE` steers the
-drawing — the pixel port and `CLG` both follow it. Flipping is two
-`POKE`s after `VSYNC`: `DBASE` to the page just finished, `BASE` to
-the other. Flipping `VID_BASE` alone does not double-buffer: the fetch
+drawing — the pixel port and `CLG` both follow it. Flipping is `DBASE`
+to the page just finished, then `VSYNC`, then `BASE` to the other: the
+fetch takes `DBASE` at the frame start, on the same pulse that ticks
+the frame counter `VSYNC` waits on, so a `DBASE` written after `VSYNC`
+reaches the glass a frame late, and drawing on the old page during that
+frame is drawing in view ([D105](01-decisions.md)). Flipping `VID_BASE` alone does not double-buffer: the fetch
 re-latches it every frame start, so with a multi-frame draw the viewer
 follows the page under construction — the failure D92 exists for. A
 mode preset clears bit 6.

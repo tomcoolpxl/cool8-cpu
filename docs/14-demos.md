@@ -42,16 +42,18 @@ move them. Software is what the machine runs natively — the Z-Machine
 and the p-System — reached through a small BASIC stub that sets the
 drive and `SYS`es into the interpreter; the stub is the menu entry and
 the `.BIN` beside it is not listed twice. CoolAction is the compiled
-`.BIN` demos, no stub at all. RAINBOW and COBRA therefore exist twice
-under one name, on 13 in BASIC and on 11 compiled, and that is the
-point: the two menus are how the interpreter and the compiler get
-compared on the same picture.
+`.BIN` demos, no stub at all. RAINBOW and the other ports therefore
+exist twice under one name, on 13 in BASIC and on 11 compiled, and
+that is the point: the two menus are how the interpreter and the
+compiler get compared on the same picture. COBRA is on both as well,
+but as two programs: the compiled one tumbles, every frame computed
+([D105](01-decisions.md)).
 
 | menu | drive | programs |
 |---|---|---|
 | **Demos** | 13 | MAZE, RAINBOW, WAVE, PLASMA, INTRO, BOING, TRIANGLES, MANDEL, COBRA, SYNTH, BENCH, MINIBNCH, BAPPLE, TAIPAN, COOLTRS1, COOLTRS2 |
 | **Software** | 14 | HHGG, ZORK1, PLANET, LGOP, PASCAL |
-| **CoolAction** | 11 | RAINBOW, COBRA, TRIANGLE, MAZE, PLASMA, WAVE, MANDEL, SYNTH, INTRO, PRIMES — the compiled twins, §4 — and MSCOOLMN, KEYTEST and SLIDES, which have no BASIC |
+| **CoolAction** | 11 | RAINBOW, TRIANGLE, MAZE, PLASMA, WAVE, MANDEL, SYNTH, INTRO, PRIMES — the compiled twins, §4 — COBRA, which shares only its ship and its name with the BASIC's, and MSCOOLMN, KEYTEST and SLIDES, which have no BASIC |
 
 **Volume 0 is not the user's, and that is the ROM's decision.**
 `sw/boot.asm` walks volume 0's directory for `BOOT.BIN`; it is the 4 KB
@@ -548,6 +550,10 @@ the demo's**: name lookup (`nentry`, `nlook.*`, `varidx`, `aelem`) is
 ~36 % of a frame, and a `nlook` memo in `prg_find`'s two-slot shape is
 the candidate.
 
+**The compiled COBRA is a different program** since
+[D105](01-decisions.md): the same ship, tumbling on three axes, every
+frame computed at 60 Hz -- its section is with the CoolAction menu's.
+
 ### `SYNTH` — the screen is the sequencer
 
 ![SYNTH](img/demo-synth.png)
@@ -1008,19 +1014,20 @@ Classic arcade Tetris re-engineered for **Mode 2 (40×30 Tile Mode, 320×240 dou
 - **Audio & Timing**:
   - Crisp noise-free multi-voice square wave sound effects (`noise = 0`), anti-hover hardware timer synchronization (`TIMER`), pause (`P`), game over restart (`N`), and clean exit (`Q`).
 
-### The CoolAction menu — nine of the demos, compiled, and a game
+### The CoolAction menu — eight of the demos, compiled, and programs of its own
 
 The same demos in CoolAction! ([15-action.md](15-action.md)), on
-drive 11 as bare `.BIN`s: RAINBOW, COBRA, TRIANGLES, MAZE, PLASMA,
-WAVE, MANDEL, SYNTH and INTRO, each a `demos/name.act` beside its
-`demos/name.bas` -- and MSCOOLMN, which has no BASIC and is the next
-section. **The picture is the contract, not the code.** A port
+drive 11 as bare `.BIN`s: RAINBOW, TRIANGLES, MAZE, PLASMA, WAVE,
+MANDEL, SYNTH and INTRO, each a `demos/name.act` beside its
+`demos/name.bas`; COBRA, which was the ninth and is now a program of
+its own, the next section; and KEYTEST, MSCOOLMN and SLIDES, which
+have no BASIC and follow it. **The picture is the contract, not the code.** A port
 may do the work any way the language allows -- and mostly does it the
 BASIC's way, because the BASIC's way was measured -- but
 `sim/test_action.py` runs every pair to the same point and requires
 what the machine holds to be identical: VRAM, palette, the text map,
-the programmed voices, the registers. Every one of the nine matched
-on its first run against its original, which is what the library's
+the programmed voices, the registers. Every one of the nine -- COBRA
+then among them -- matched on its first run against its original, which is what the library's
 `Line` being `LINE` pixel for pixel and `Rnd` being `RND` from the
 same seed bought.
 
@@ -1029,7 +1036,6 @@ same seed bought.
 | port | parked at | identical |
 |---|---|---|
 | RAINBOW | the 40th frame wait | 38,400 bytes of mode 4, 16 palette entries |
-| COBRA | the 10th frame wait | both mode 5 pages, the display and drawing bases |
 | TRIANGLES | the 281st `RND` -- forty triangles in | 38,400 bytes of mode 4 |
 | MAZE | the 1,341st `RND` -- the map and twelve scroll steps | the map and the tile, the palette, `VID_BASE`, `VID_SCY` |
 | PLASMA | the 5th frame wait -- painted, four rotations in | 61,440 bytes of mode 6, 47 palette entries |
@@ -1046,9 +1052,9 @@ numbers *is* the clock.
 
 **What a port changes.** `READ`/`DATA` becomes an initialised array;
 `tools/mkactdata.py` copies every BASIC's `DATA` into a marked block
-of its `.act` -- COBRA's 2,264 table entries, PLASMA's tables and
-rainbow, WAVE's sine and 253-entry ramp, SYNTH's and INTRO's tunes,
-MAZE's palette and tile -- and `poe check` fails if a block is stale,
+of its `.act` -- PLASMA's tables and rainbow, WAVE's sine and
+253-entry ramp, SYNTH's and INTRO's tunes, MAZE's palette and tile --
+and `poe check` fails if a block is stale,
 so a change to a model or a palette in the BASIC fails there rather
 than in the framebuffer. `DIM` is a declaration, `0-Q` is `-q`, a
 `POKE` to a register is the register's generated name, a `POKE` to the
@@ -1056,19 +1062,18 @@ text map is the machine's own base plus the BASIC's offset, `INKEY` is
 `ReadKey()` on the interpreter's own keyboard tables, and `RND` is
 `Rnd()`, the interpreter's xorshift from its seed -- which is why
 TRIANGLES and MAZE, pictures made of nothing but random numbers, match.
-COBRA's endpoint arrays and MANDEL's coordinates are `BYTE` where the
-BASIC has integers, because a screen coordinate is 0-255 by
-construction; the arithmetic that must not be narrowed -- MANDEL's Q6
+MANDEL's coordinates are `BYTE` where the BASIC has integers, because
+a screen coordinate is 0-255 by construction; the arithmetic that must not be narrowed -- MANDEL's Q6
 iteration, WAVE's `o < y - 1` at the top of the screen, TRIANGLES' edge
 accumulators -- is `INT`, and every divide truncates towards zero as
 the BASIC's does.
 
-**What the pairs measure.** COBRA's start-up -- 2,016 projections and
-1,772 table gathers -- is **36× faster** compiled (1.4 M clocks against
-50.5 M), and a frame's drawing 2.4× (239 K against 578 K), because
-`Line` and `LINE` are the same algorithm and the compiled one, at 97
-clocks a pixel, has only just overtaken the interpreter's 101-181;
-neither holds 60 Hz. **MANDEL is 35×**: the whole set in 60.5 M clocks
+**What the pairs measure.** COBRA, while it was a port, measured the
+two ends: its start-up -- 2,016 projections and 1,772 table gathers --
+was **36× faster** compiled (1.4 M clocks against 50.5 M), and a
+frame's drawing 2.4× (239 K against 578 K), because `Line` and `LINE`
+are the same algorithm and the compiled one, at 97 clocks a pixel, had
+only just overtaken the interpreter's 101-181; neither held 60 Hz. **MANDEL is 35×**: the whole set in 60.5 M clocks
 against 2,126 M -- 7 s against 4 min 14 s of machine time -- with the
 same Mariani-Silver rectangles and the same Q6 iteration, which is the
 arithmetic-and-array-traffic case the sieve profile predicted. Those
@@ -1088,15 +1093,61 @@ picture.
 
 **Two things the ports made visible.** `CLG` clears 240 rows of the
 stride in every mode (`h_clg`), which in mode 5 is 30,720 bytes from
-`VID_BASE` -- 6,144 past the page -- so COBRA's second clearing frame
-wipes the top 48 rows of the page then on show; it lasts one frame,
-the library's `Clg` does exactly the same, and the two framebuffers
-agree. And a voice's phase accumulator, bytes 2 and 3 of its eight,
+`VID_BASE` -- 6,144 past the page -- so the COBRA port's second
+clearing frame wiped the top 48 rows of the page then on show; it
+lasted one frame, the library's `Clg` does exactly the same, and the
+two framebuffers agreed. And a voice's phase accumulator, bytes 2 and 3 of its eight,
 can never be compared between two machines: the engine advances it
 every 256 clocks from the moment the pitch lands, and two programs
 that write the same pitch in the same frame write it at different
 clocks. The gate compares pitch, volume and the mode bits, which is
 what the program wrote.
+
+### `COBRA`, compiled — the tumble, every frame computed
+
+![COBRA, compiled](img/demo-act-cobra.png)
+
+**The same ship, a different program** ([D105](01-decisions.md)).
+`demos/cobra.act` tumbles the Cobra Mk III on three axes and computes
+every frame between two vertical blanks -- the rotation from three
+angles, the 28 vertices through it and into perspective, the 13 faces
+culled, the visible edges erased and drawn -- in 55,958 of the frame's
+139,583 clocks, so it holds 60 Hz with 60 % to spare. The BASIC's
+COBRA replays 72 precomputed frames about one axis at about 12 a
+second, and the compiled port of it drew 30.
+
+**A mode no preset names**: 256 × 240 at 4 bits a pixel -- mode 6's
+timing, `VID_CTRL = $3A`, a stride of 128 -- which is 30,720 bytes a
+page, so both pages of a double buffer fit VRAM. At 4 bits the pixel
+port plots in one store and steps X or Y itself, and a line is 14
+clocks a pixel. **The page is flipped before the frame wait, not
+after**: the fetch takes `DBASE` on the pulse that ticks the frame
+counter, so a flip after the wait lags a frame and the glass shows the
+page being redrawn -- which the first cut did, and D92's order still
+said.
+
+**Assembly where the profile put the clocks**, compiled CoolAction!
+everywhere else:
+
+| a frame | clocks | |
+|---|---|---|
+| the lines, the last frame's erased and this one's drawn | 30,457 | assembly: a store and an error step a pixel |
+| 28 vertices onto the screen | 13,658 | assembly: the unsigned `MUL` with 128 carried in, the surplus off as two constants |
+| 13 faces and the edge list | 8,618 | the faces in assembly, the same multiply-add; the list compiled |
+| the rotation | 1,856 | compiled: fifteen products from a 1,024-step sine table |
+
+**The faces are culled by their normals**, each its own triangle's,
+with 256 of hysteresis: the BASIC's area on the screen flickered at
+this speed, because near edge-on a thin face's area is the rounding of
+its corners. `tools/mk3d.py` writes the model and the tables and
+checks the camera against the machine's own integer arithmetic over
+every pose, down to the picture closing -- no drawn edge but the
+laser ends in nothing. `test_cobra` holds the program to it: a pass in
+each of 600 vblanks, every vertex where the generator's arithmetic puts
+it, every face's decision from the program's own matrix, the list
+exactly the visible edges and the page exactly the list's lines, pixel
+for pixel, and erasing by redrawing the same as a clear. The PRG is
+8,430 bytes, 2 KB of it sine.
 
 ### `KEYTEST` — what the keyboard sends
 

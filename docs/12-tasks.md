@@ -451,7 +451,10 @@ shell that has not set that up says "no" and means nothing.
 the ones that verify a generated table still matches what generated
 it. The last two are the CoolAction! ports' tables against their BASIC
 originals' `DATA`, and the library's keyboard tables against
-`sw/keymap.asm`. `mkpics --check` holds the picture drive's `.pic` and
+`sw/keymap.asm`. `mk3d --check` holds `demos/cobra.bas` and the
+compiled COBRA's model block to the generator, which checks the
+tumble's camera against the machine's integer arithmetic over every
+pose on the way ([D105](01-decisions.md)). `mkpics --check` holds the picture drive's `.pic` and
 `.rpl` files to the originals they were made from, and passes with a
 message when none has been fetched -- the originals are downloaded, not
 committed ([D103](01-decisions.md)). It plans every row's palette again

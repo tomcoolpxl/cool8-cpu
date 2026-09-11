@@ -286,7 +286,10 @@ PROC DoubleBuffer(BYTE show_h, BYTE draw_h)
 RETURN
 
 ; FlipBuffer() -- show the page just drawn, draw into the one that was
-; showing. Call it after WaitVBlank(), as COBRA does.
+; showing. Call it when the page is finished, then WaitVBlank() before
+; drawing again: the display takes VID_DBASE at the frame start, on the
+; pulse TMR_L ticks on, so a flip after WaitVBlank() is on the glass a
+; frame late and the drawing that follows it is in view (D105).
 PROC FlipBuffer()
   BYTE p
   p = VID_DBASE_H
