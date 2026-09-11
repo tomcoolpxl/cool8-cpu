@@ -37,7 +37,11 @@ hidden-line ship is simply better -- so the draw loop erases the
 two-flips-old frame's edges in black (its list precomputed like every
 other) and draws the new set; two CLGs at start cover pages that have
 never been drawn. Mode 5 double buffer throughout, D92's split: DBASE
-names the glass, BASE the pencil, flipped in two POKEs after VSYNC.
+names the glass, BASE the pencil. **DBASE goes to the finished page
+before VSYNC and BASE to the other after it**: the fetch takes DBASE at
+the frame start VSYNC waits for, so a DBASE written after VSYNC reached
+the glass a frame late, and every flip showed the old page being erased
+for that frame (D105's amendment to D92).
 
 ## demos/cobra.act ([D105](../docs/01-decisions.md))
 
@@ -281,8 +285,8 @@ def bas_text():
 
     body = """1 GOTO 100
 10 A=A+1:IF A>71 THEN A=0
-11 VSYNC
-12 POKE $FF30,P:P=96-P:POKE $FF13,P
+11 POKE $FF30,P:VSYNC
+12 P=96-P:POKE $FF13,P
 13 IF R>0 THEN R=R-1:CLG 0:GOTO 16
 14 Y=A-2:IF Y<0 THEN Y=Y+72
 15 D=O(Y)+Q(Y)-1:FOR K=O(Y) TO D:LINE H(K),J(K),L(K),M(K),0:NEXT K

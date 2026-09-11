@@ -529,26 +529,43 @@ edges a frame mean against the normal cull's 23.6, worst 33 against
 constraint set for it: all of this runs in the generator, and the
 machine only ever `READ`s shorter or equal lists.
 
-**First user of mode 5's double buffer, and it shipped wrong first** —
-worth keeping because the claim sounded right. The first cut flipped
+**First user of mode 5's double buffer, and it shipped wrong twice** —
+worth keeping because both claims sounded right. The first cut flipped
 `VID_BASE` alone and called the viewer safe; false — the fetch
 re-latches the base every frame start and a drawn frame takes several,
 so the display followed the page under construction and the `CLG` was
-a visible black frame between ships. [D92](01-decisions.md) is the
-fix: `VID_DBASE_H` names the page the display scans, `VID_BASE` steers
-only the drawing, and the flip is two `POKE`s after `VSYNC`.
+a visible black frame between ships. [D92](01-decisions.md) split the
+glass from the pencil: `VID_DBASE_H` names the page the display scans,
+`VID_BASE` steers only the drawing. The second cut flipped both with
+two `POKE`s after `VSYNC`, and that was a frame wrong: the fetch takes
+`DBASE` at the frame start, on the pulse that ticks the counter
+`VSYNC` waits for, so a `DBASE` written after `VSYNC` reached the glass
+a frame late — and `BASE`, moved to the old page in the same line, had
+the erase begin on the page being shown. Measured on the glass, **at 9
+flips of 9 the first frame after the flip was the old page mid-erase**:
+on one, 452 of the new page's 621 pixels were missing, and all 348 lit
+pixels it does not hold were the page before's. One display frame in
+four or five showed the outgoing pose with lines already erased, where
+the new one belonged. The flip is now `POKE $FF30,P:VSYNC`, then
+`POKE $FF13` to the other page — the order [D105](01-decisions.md)
+amended D92 to after the compiled COBRA found the same fault.
 
-**Measured: about 5 display frames a drawn frame — ~12 fps — and the
-glass is never blank.** `sim/test_run.py`'s `cobra_flips` holds it:
-mode 5 on, the override on, and over thirty consecutive display frames
-the shown page always carries a complete ship, changes only when
-`DBASE` flips, and stays a page apart from the drawing base. The probe
-reads registers through `bus.read()` — `bus.mem[]` is the RAM *under*
-the I/O page, the mistake `cool8_soc_tb`'s "the page wins" section
-exists to catch. **The recorded next lever is the interpreter's, not
-the demo's**: name lookup (`nentry`, `nlook.*`, `varidx`, `aelem`) is
-~36 % of a frame, and a `nlook` memo in `prg_find`'s two-slot shape is
-the candidate.
+**Measured: 4.5 display frames a drawn frame (4–5), ~13 fps, and every
+frame on the glass is a finished page.** `sim/test_run.py`'s
+`cobra_flips` holds it on the rendered frame, not on the registers. It
+finds each flip exactly — parked in the `VSYNC` wait the page is done,
+and the next `stmt` is `VSYNC` returning, just past the frame start
+that latched the display base — and requires the first two frames
+scanned after the flip, and the last before the next one, to be the
+finished page pixel for pixel, 396–647 pixels a ship. **The probe it
+replaced read `VID_DBASE_H` and `VID_BASE_H` every frame and passed
+with the flip in the wrong order**: the registers read a page apart
+either way, and a register is not the glass. Registers are still read
+through `bus.read()` — `bus.mem[]` is the RAM *under* the I/O page, the
+mistake `cool8_soc_tb`'s "the page wins" section exists to catch.
+**The recorded next lever is the interpreter's, not the demo's**: name
+lookup (`nentry`, `nlook.*`, `varidx`, `aelem`) is ~36 % of a frame,
+and a `nlook` memo in `prg_find`'s two-slot shape is the candidate.
 
 **The compiled COBRA is a different program** since
 [D105](01-decisions.md): the same ship, tumbling on three axes, every
@@ -950,10 +967,16 @@ types a decoy demo first to keep the scenario alive.
 **Gate-enforced** (`bapple_decodes`): a fresh synthetic clip is
 encoded, placed, and played -- the stub typed over a decoy program, as
 the disc build types it; both VRAM pages must then equal a consecutive
-reference frame pair with the right parity, and the flip must show the
-page just written — the token walk, the flash auto-advance, the VRAM
-auto-increment, the skip carry, the page alternation and the DBASE
-flip in one comparison. Sound is a later, separate step, by decision.
+reference frame pair with the right parity — the token walk, the flash
+auto-advance, the VRAM auto-increment, the skip carry and the page
+alternation in one comparison. **The flip is held on the glass**:
+twenty-two consecutive display frames must each be a whole frame of
+the clip, in order, four apiece. BAPPLE never had COBRA's flip fault —
+the decoder writes `VID_DBASE_H` as its last store, before the stub's
+four `VSYNC`s, the order [D105](01-decisions.md) amended D92 to, so a
+page has left the glass before it is decoded into — but the gate used
+to read the register, and now it reads the frame. Sound is a later,
+separate step, by decision.
 
 ### `TAIPAN` — the 1982 China Sea trading game in 40-column Mode 1
 
@@ -1113,7 +1136,7 @@ every frame between two vertical blanks -- the rotation from three
 angles, the 28 vertices through it and into perspective, the 13 faces
 culled, the visible edges erased and drawn -- in 55,958 of the frame's
 139,583 clocks, so it holds 60 Hz with 60 % to spare. The BASIC's
-COBRA replays 72 precomputed frames about one axis at about 12 a
+COBRA replays 72 precomputed frames about one axis at about 13 a
 second, and the compiled port of it drew 30.
 
 **A mode no preset names**: 256 × 240 at 4 bits a pixel -- mode 6's
@@ -1123,8 +1146,9 @@ port plots in one store and steps X or Y itself, and a line is 14
 clocks a pixel. **The page is flipped before the frame wait, not
 after**: the fetch takes `DBASE` on the pulse that ticks the frame
 counter, so a flip after the wait lags a frame and the glass shows the
-page being redrawn -- which the first cut did, and D92's order still
-said.
+page being redrawn -- which the first cut did, D92's order still said,
+and the BASIC COBRA did at every flip until its gate compared the
+glass.
 
 **Assembly where the profile put the clocks**, compiled CoolAction!
 everywhere else:

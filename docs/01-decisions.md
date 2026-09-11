@@ -5736,10 +5736,11 @@ drawing that spans frames; the honest fix is a second register, and the
 high byte is enough because every buffer sits on a 256-byte boundary.
 
 **The flip is two POKEs after `VSYNC`:** `DBASE` to the page just
-finished, `BASE` to the other. `sim/test_run.py`'s gate samples thirty
+finished, `BASE` to the other. `sim/test_run.py`'s gate sampled thirty
 consecutive display frames: the two registers stay a page apart, the
 shown page always holds a complete wireframe, and its content changes
-only when `DBASE` flips.
+only when `DBASE` flips. (The order and the gate were both wrong; see
+the amendment.)
 
 **Amended by [D105](#d105--cobra-compiled-computes-every-frame-and-is-no-longer-the-basics-twin):
 `DBASE` goes before `VSYNC`, not after.** The fetch takes `DBASE` at
@@ -5750,6 +5751,24 @@ counter `VSYNC` waits on ticks on the same pulse (`cool8_vregs.v`), so a
 that frame. The order is `DBASE` to the finished page, `VSYNC`, then
 `BASE` to the other. The registers read a page apart either way, which
 is all a register probe can see.
+
+**Measured on the glass, in the BASIC COBRA as well.** `cobra_flips` now
+compares the rendered frame, not the registers: it finds each flip
+exactly -- parked in the `VSYNC` wait, the next `stmt` is `VSYNC`
+returning -- and requires the first two frames scanned after it, and
+the last before the next, to be the finished page pixel for pixel.
+Against D92's order it failed **9 flips of 9**: the first frame after
+each was the old page mid-erase -- on one, 452 of the new page's 621
+pixels missing, and all 348 lit pixels it does not hold the page
+before's -- while the
+frame after it and the last before the next flip were right, so the
+comparison was sound and the fault was exactly the one frame.
+`demos/cobra.bas` now flips `POKE $FF30,P:VSYNC`, then `POKE $FF13`,
+from `tools/mk3d.py`, and fails none, at an unchanged 4.5 display
+frames a drawn frame. BAPPLE's decoder already wrote `DBASE` as it
+finished a page, before its `VSYNC`s; its gate now holds that on the
+glass too -- every display frame a whole frame of the clip, in order,
+four apiece.
 
 **Measured cost: +21 placed cells** -- 5,199 to **5,220 of 5,280, 98.9
 %, and it fits with 60 left**; Fmax `sclk` 11.15 MHz against the 8.375

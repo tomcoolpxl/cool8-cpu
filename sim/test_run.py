@@ -1138,16 +1138,28 @@ def line_exact(code, syms):
 
 def cobra_flips(code, syms):
     """COBRA is the first user of mode 5's double buffer, and this is
-    the contract: the base alternates between $0000 and $6000, one POKE
-    of VID_BASE_H a frame; both pages hold a drawn wireframe; and the
-    two pages hold *different* frames, because the ship rotated between
-    them. Sampling is run(until=h_vsync.vw) -- parked in the VSYNC wait,
-    the previous iteration's clear and 38 LINEs are complete.
+    the contract, held on the glass -- the rendered frame -- and not on
+    the registers: at every flip the next frame on the glass is the
+    page just finished, pixel for pixel, and so is the frame after it
+    and the last frame before the next flip. No frame the viewer sees
+    is a page being erased or drawn.
 
-    The demo leans on the split D91 documented: the display latches the
-    base once at frame start (cool8_fetch.v), the pixel port reads it
-    live (cool8_pixport.v), so drawing lands on the hidden page while
-    the shown one stays whole.
+    **Why the glass.** This gate used to read VID_DBASE_H and VID_BASE_H
+    every frame and require them a page apart, the shown page lit, and
+    its content changing only when DBASE flipped -- and it passed while
+    the first frame after every flip showed the old page being erased.
+    The fetch takes DBASE at the frame start (cool8_fetch.v, `row_ptr
+    <= base`), on the pulse the frame counter VSYNC waits on ticks, so a
+    DBASE written after VSYNC reaches the glass a frame late (D105's
+    amendment to D92); the registers read a page apart either way,
+    which is all a register probe can see.
+
+    **Each flip is found exactly, not sampled.** Parked in the VSYNC
+    wait the page is finished and VID_BASE still names it; the next
+    `stmt` is VSYNC returning, just past the frame start that latched
+    the display base, so the frame after the next wrap is the first one
+    scanned from it -- `run_frame(2)`. What the glass held at that
+    moment is the last frame before the flip.
     """
     src = [l for l in open(os.path.join(ROOT, "demos", "cobra.bas"),
                            encoding="utf-8").read().splitlines()
@@ -1174,53 +1186,91 @@ def cobra_flips(code, syms):
           "the display-base override is on (D92)",
           "VID_CTRL reads %02X" % rd(io["VID_CTRL"]))
 
-    # **The glass is never blank and never under construction** -- the
-    # regression this demo shipped with: one base register meant the
-    # display followed the page being cleared and drawn, and the CLG
-    # was a visible black frame. Now VID_DBASE_H names the shown page
-    # and VID_BASE the drawing one; sampled every display frame, the
-    # two must stay a page apart, the shown page must always hold a
-    # full wireframe, and its content may change only when DBASE flips.
-    def watch(n):
-        """n display frames: flips seen, faults seen, mean lit bytes.
+    # mode 5 on the glass: 256 x 192, every pixel doubled both ways and
+    # the picture centred -- 64 pixels in, 48 down
+    def glass():
+        """The frame last scanned: its lit pixels, and their shades."""
+        fb = M.m.fb()
+        lit, shades = set(), set()
+        for y in range(192):
+            row = (48 + 2 * y) * 640 + 64
+            for x, c in enumerate(fb[row:row + 512:2]):
+                if c:
+                    lit.add((x, y))
+                    shades.add(c)
+        return lit, shades
 
-        A fault is the drawing and display bases not a page apart, a
-        shown page under 150 lit bytes, or shown content changing
-        without a flip -- the black frame and the mid-draw exposure,
-        by their signatures."""
-        flips = faults = 0
-        lits = []
-        prev_d = prev_body = None
-        for _ in range(n):
-            M.m.run_frame(1)
-            d, w = rd(io["VID_DBASE_H"]), rd(io["VID_BASE_H"])
-            if (d ^ w) != 0x60:
-                faults += 1000
-            shown = bytes(M.m.video.vram[(d << 8):(d << 8) + 0x6000])
-            lit = sum(1 for x in shown if x)
-            lits.append(lit)
-            if lit < 150:
-                faults += 1
-            if prev_d is not None:
-                if d != prev_d:
-                    flips += 1
-                elif shown != prev_body:
-                    faults += 1
-            prev_d, prev_body = d, shown
-        return flips, faults, sum(lits) // len(lits)
+    def page(h):
+        """A page's lit pixels, out of VRAM: 4 bits a pixel, 128 bytes
+        a row, even x the high nibble."""
+        lit, base = set(), h << 8
+        for i, b in enumerate(bytes(M.m.video.vram[base:base + 0x6000])):
+            if b:
+                y, xb = divmod(i, 128)
+                if b >> 4:
+                    lit.add((2 * xb, y))
+                if b & 15:
+                    lit.add((2 * xb + 1, y))
+        return lit
 
     M.m.run_frame(60)      # past the start-up blank and the two CLG
                            # iterations, into the erase-and-draw steady
                            # state the demo lives in
-    fa, xa, la = watch(30)
-    check(xa == 0,
-          "the shown page is always whole: never blank, never mid-draw",
-          "%d bad samples of 30" % xa)
-    check(3 <= fa <= 12, "the display flips as frames finish",
-          "%d flips in 30 frames" % fa)
+    # Three frames a flip are read: the first two scanned after it, and
+    # the last before the next one. That needs three display frames a
+    # drawn frame; were the interpreter to make it two, the third read
+    # would land past the next flip and `stale` would say so.
+    n = 8
+    late = gone = stale = 0
+    why = ""
+    spans, sizes = [], []
+    prev = at = None
+    for k in range(n + 1):
+        M.m.run(until=syms["h_vsync.vw"], budget=100_000_000)
+        fin = page(rd(io["VID_BASE_H"]))           # the pencil just lifted
+        M.m.run(until=syms["stmt"], budget=2_000_000)   # VSYNC returns
+        before, _ = glass()
+        if prev is not None:
+            spans.append(M.m.frames - at)
+            stale += before != prev
+        at = M.m.frames
+        M.m.run_frame(2)
+        after, sh = glass()
+        if after != fin or len(sh) != 1:
+            late += 1
+            if not why and prev is not None:
+                extra = after - fin
+                why = ("%d of the page's %d pixels not on the glass, and "
+                       "%d lit that it does not hold -- %d of those the "
+                       "page before's: its erase, in view"
+                       % (len(fin - after), len(fin), len(extra),
+                          len(extra & prev)))
+        M.m.run_frame(1)
+        after, sh = glass()
+        gone += after != fin or len(sh) != 1
+        prev = fin
+        sizes.append(len(fin))
 
-    print("      %d flips in 30 display frames, %d lit bytes shown"
-          % (fa, la))
+    check(not late,
+          "the first frame after every flip is the page just finished, "
+          "pixel for pixel -- never the old one being erased",
+          "%d of %d flips showed something else; %s" % (late, n + 1, why))
+    check(not gone, "and so is the frame after it",
+          "%d of %d" % (gone, n + 1))
+    check(not stale,
+          "and the last frame before the next flip: a page stays whole "
+          "on the glass until it is replaced", "%d of %d" % (stale, n))
+    check(min(sizes) >= 150,
+          "every page flipped to carries a ship: the glass is never blank",
+          "a page of %d lit pixels" % min(sizes))
+    check(all(3 <= s <= 10 for s in spans),
+          "the display flips as frames finish",
+          "display frames between flips: %s" % spans)
+
+    print("      %d flips, %.1f display frames a drawn frame (%d-%d), "
+          "%d-%d pixels a ship" % (n, sum(spans) / float(len(spans)),
+                                   min(spans), max(spans),
+                                   min(sizes), max(sizes)))
 
 
 SYNTH_TRACKS = [
@@ -1240,7 +1290,9 @@ def bapple_decodes(code, syms):
     stretch of playback both VRAM pages must equal a consecutive
     reference frame pair with the right parity -- proving the token
     walk, the FLS auto-advance, the VRAM auto-increment, the skip
-    carry, the page alternation and the DBASE flip in one comparison.
+    carry and the page alternation in one comparison. The DBASE flip
+    is held on the glass: every display frame a whole frame of the
+    clip, in order, four apiece.
     """
     sys.path.insert(0, os.path.join(ROOT, "tools"))
     import mkbadapple as BA
@@ -1291,13 +1343,43 @@ def bapple_decodes(code, syms):
     check(bool(hit),
           "both pages match a consecutive reference frame pair",
           "no reference frame matches the machine's pages")
-    io_ = {v["name"]: v["addr"] for v in ioregs.registers().values()}
-    d = M.m.bus.read(io_["VID_DBASE_H"])
-    if hit:
-        want = 0x60 if (hit[0] & 1) else 0x00
-        check(d == want, "and the flip shows the page just written",
-              "frame %d shown from %02X, wanted %02X"
-              % (hit[0], d, want))
+
+    # **The flip, on the glass, not in the register.** The decoder
+    # writes VID_DBASE_H as it finishes a page and the stub's four
+    # VSYNCs come after it, so the fetch takes the page at the next
+    # frame start and the one decoded next has already left the glass --
+    # DBASE before the wait, the order D105 amended D92 to. A page
+    # mid-decode on the glass is two frames at once and matches none of
+    # the clip's; a flip landing late or early is a run other than four.
+    import itertools
+    index = {p: f for f, p in enumerate(planes)}
+
+    def shown():
+        """The frame last scanned, as the clip frame it is: mode 5 is
+        doubled both ways and centred, 64 pixels in and 48 down."""
+        fb = M.m.fb()
+        out = bytearray()
+        for y in range(BA.H):
+            row = (48 + 2 * y) * 640 + 64
+            px = fb[row:row + 512:2]
+            out += bytes((0xF0 if a else 0) | (0x0F if b else 0)
+                         for a, b in zip(px[0::2], px[1::2]))
+        return index.get(bytes(out))
+
+    seen = []
+    for _ in range(22):
+        M.m.run_frame(1)
+        seen.append(shown())
+    check(None not in seen,
+          "every display frame is a whole frame of the clip: the page "
+          "being decoded is never on the glass",
+          "%d of %d frames match none" % (seen.count(None), len(seen)))
+    runs = [len(list(g)) for _, g in itertools.groupby(seen)]
+    steps = {b - a for a, b in zip(seen, seen[1:])
+             if None not in (a, b) and a != b}
+    check(steps == {1} and set(runs[1:-1]) == {4},
+          "and in order, each for the stub's four VSYNCs",
+          "clip frames on the glass: %s" % seen)
 
 
 def intro_scrolls(code, syms):
