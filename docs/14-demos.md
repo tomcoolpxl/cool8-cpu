@@ -1446,6 +1446,27 @@ register log a 60 Hz frame at a time, the three channels' periods as
 phase increments and their levels on the machine's linear scale, the
 envelopes worked out where a channel asks for one.
 
+**The Vaus's collisions, and what the first cut got wrong.** An enemy
+that meets the Vaus bursts, for 100, as one the ball or a beam hits
+does, and does the Vaus no harm: StrategyWiki's
+[gameplay page](https://strategywiki.org/wiki/Arkanoid/Gameplay) has the
+Vaus crash into enemies harmlessly, and has the ball leave it steeply
+off its middle, at 45 degrees off its red bands and shallowly off its
+very ends, as the six angles above do. The ball bounces off the Vaus
+anywhere in its body on the way down, not only across its top: the
+first cut bounced only a ball that crossed the top in a frame, so a
+Vaus that came under the ball a frame late -- the ball's bottom one to
+eight pixels past its top -- let it through (`python sim/arkanoid.py
+late`). The body is the frame on the screen, as wide as its pixels on
+the rows a ball lands on, which the generator measures from the sheet
+(`vf_l`, `vf_r`): the first cut took the form's, and a morph plays while
+the form already says where it goes, so for the 18 frames of shrinking
+up to 8 pixels of the Vaus each side let a ball through (`vaus`). And an
+enemy never heads up into the frame's top: one heading in eight is up,
+nothing stopped it, and a sprite's y is nine bits, so an enemy that
+rose past the field wrapped to the screen's bottom -- at y -26 and -34
+under and beside the Vaus -- where nothing met it (`up`).
+
 **DOH** sits in the wall's hole on his red round, cells 10-17 x 5-16,
 drawn from four normal frames with his mouth opening; hit, he flashes
 cyan, and beaten he turns purple in the sheet's twelve dying frames --
@@ -1477,14 +1498,21 @@ Vaus as cells of the background in its banks, its shadow in the row
 under; 600 frames of the autopilot with a frame of play in every
 vblank; each capsule caught and its power; an enemy through a gate; out
 through the exit into round 2 with 10,000; a ball lost and a life gone;
-the stack where it should be; then the path a person takes -- the real
+the stack where it should be; the Vaus's collisions -- an enemy onto it
+bursting where they meet and not beside it, a ball bouncing off a Vaus
+that came under it late, down to its last row, the ball's body the drawn
+one within a pixel for each form and every frame of both morphs both
+ways, an enemy made to head up stopping at the field's top; then the
+path a person takes -- the real
 ROM booting the demos disc, `DRIVE 11` and `SYS "ARKANOID.BIN"` typed at
 the keyboard, the game finding its two data files on the drive it came
 from, the logo up, space, and round 1 -- with the disc first held to
 this build and these data files; then round 33, DOH's face in pattern
 bank 2, the sixteenth hit, and the black he sat in. `python sim/arkanoid.py
 play` (or `powers`, `enemies`, `doh`, `intro`, `profile`) plays it with
-an autopilot and writes the frames as PNG.
+an autopilot and writes the frames as PNG; `touch`, `late`, `vaus` and
+`up` are the collision experiments the gate holds, and print what they
+find.
 
 ### `SLIDES` — the old test pictures, as fully as mode 6 can show them
 

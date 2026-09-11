@@ -1570,11 +1570,19 @@ def build():
     vm = {c: i + 1 for i, c in enumerate(VAUS_COLS)}
     frames = []
     groups = []
+    # each frame's body, for the ball, the capsules, the enemies and
+    # DOH's shots: its pixels on the rows a ball lands on, its top four,
+    # from the Vaus's anchor -- so that the game's Vaus is as wide as the
+    # frame on the screen, a morph's too. A frame with nothing there (the
+    # flash, the debris, which are not played) has the normal body.
+    body = []
 
     def put(name, ims, ox_of, oy=0):
         groups.append((name, len(frames), len(ims)))
         for im in ims:
             frames.append(((len(im[0]) + 7) // 8, (len(im) + 7) // 8, ox_of(im), oy, vc.image(im, vm)))
+            xs = [x for row in im[:4] for x, c in enumerate(row) if c is not None] if oy == 0 else []
+            body.append((ox_of(im) + min(xs), ox_of(im) + max(xs)) if xs else (0, 31))
     put("normal", v["normal"], lambda im: 0)
     put("laser", v["laser"], lambda im: 0)
     put("big", v["big"], lambda im: -8)
@@ -1585,6 +1593,7 @@ def build():
     put("flash", [pad_rows(im, 4 - len(im) // 2, 8) for im in v["flash"]], lambda im: 16 - len(im[0]) // 2)
     put("debris", v["debris"], lambda im: 16 - len(im[0]) // 2, -8)
     o["vaus_cells"], o["vaus_frames"], o["vaus_groups"] = vc.cells, frames, groups
+    o["vaus_body"] = body
     o["vaus_banks"] = [vaus_banks(b) for b in flds]
     # the gates in the top of the frame, and the exit in its right side
     gate, ex, pos, near = gates_exit(fl)
@@ -1734,6 +1743,9 @@ def act(o):
     for name, first, n in o["vaus_groups"]:
         w("CONST VF_%s = %d" % (name.upper(), first))
         w("CONST VN_%s = %d" % (name.upper(), n))
+    w("; each frame's body on its top four rows, 16 over: vx + vf_l(f) - 16 to vx + vf_r(f) - 16")
+    w("BYTE ARRAY vf_l(%d) = [%s]" % (len(o["vaus_body"]), " ".join(str(l + 16) for l, _ in o["vaus_body"])))
+    w("BYTE ARRAY vf_r(%d) = [%s]" % (len(o["vaus_body"]), " ".join(str(r + 16) for _, r in o["vaus_body"])))
     fo, fb = [], []
     for wc, hc, ox, oy, cells in o["vaus_frames"]:
         fo.append(len(fb))

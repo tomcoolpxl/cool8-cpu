@@ -1687,6 +1687,26 @@ def test_arkanoid():
     g.m.run_frame(160)
     check(g.byte("lives") == lives - 1, "arkanoid: the ball lost, a Vaus gone", "%d -> %d" % (lives, g.byte("lives")))
     check(0x100 < g.m.cpu.sp <= 0x200, "arkanoid: the stack is where it should be", "SP $%04X" % g.m.cpu.sp)
+
+    # the Vaus's collisions, sim/arkanoid.py's experiments from the ball
+    # waiting on it: an enemy straight down onto it bursts where they
+    # meet; a ball the Vaus comes under late -- its bottom already past
+    # the Vaus's top -- still bounces; the body a ball bounces off is the
+    # frame on the screen, a morph's too; and an enemy never heads up out
+    # of the field, where its sprite's nine-bit y puts it at the screen's
+    # bottom over the Vaus and nothing meets it (docs/14-demos.md)
+    A.playing(g)
+    tc = A.touch(g, step=6)
+    bad = [c for c in tc if c[4] or (-8 <= c[0] <= 28 and c[1] != "burst") or (c[0] in (-20, 34) and c[1] == "burst")]
+    check(not bad, "arkanoid: an enemy onto the Vaus bursts where they meet, and not beside it", str(bad))
+    lt = A.late(g)
+    check(all(b for _, b in lt), "arkanoid: a ball the Vaus comes under late, down to its last row, still bounces", str(lt))
+    vs = A.vaus(g, xs=(96, 99, 103))
+    off = [v for v in vs if v[1] is None or abs(v[1][0] - v[2][0]) > 1 or abs(v[1][1] - v[2][1]) > 1]
+    check(not off, "arkanoid: the ball bounces off the Vaus as drawn, each form and every frame of its morphs",
+          "%d of %d differ: %s" % (len(off), len(vs), off[:3]))
+    low, _ = A.up(g, frames=64)
+    check(low >= 8, "arkanoid: an enemy made to head up stops at the field's top", "its y went to %d" % low)
     del g
 
     # And the path a person takes: the real ROM booting the demos disc,

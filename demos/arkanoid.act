@@ -772,15 +772,27 @@ PROC EraseVaus()
   vshown = 255
 RETURN
 
-; its body's extent, for the ball, from its form
-PROC VausExtent()
-  IF vform == 2 THEN
-    vleft = vx - 8
-    vright = vx + 39
+; the frame the Vaus is shown in: its morph's, or its form's with the
+; lights turning
+FUNC BYTE VausFrame()
+  BYTE f
+  IF mo_n THEN
+    IF mo_rev THEN f = mo_f0 + mo_n - 1 - mo_i ELSE f = mo_f0 + mo_i FI
   ELSE
-    vleft = vx
-    vright = vx + 31
+    f = (vanim >> 3) % 6
+    IF vform == 1 THEN f += VF_LASER ELSEIF vform == 2 THEN f += VF_BIG ELSE f += VF_NORMAL FI
   FI
+RETURN (f)
+
+; its body, for the ball, the capsules, the enemies and DOH's shots: the
+; frame it is shown in, as wide as its pixels on the rows a ball lands
+; on (the generator's vf_l and vf_r) -- so that a morph between forms is
+; the size it looks and not the size it is going to be
+PROC VausExtent()
+  BYTE f
+  f = VausFrame()
+  vleft = vx + vf_l(f) - 16
+  vright = vx + vf_r(f) - 16
 RETURN
 
 ; a morph plays its frames two at a time; one away from normal and back
@@ -833,12 +845,7 @@ RETURN
 ; where it is changed
 PROC ShowVaus()
   BYTE f
-  IF mo_n THEN
-    IF mo_rev THEN f = mo_f0 + mo_n - 1 - mo_i ELSE f = mo_f0 + mo_i FI
-  ELSE
-    f = (vanim >> 3) % 6
-    IF vform == 1 THEN f += VF_LASER ELSEIF vform == 2 THEN f += VF_BIG ELSE f += VF_NORMAL FI
-  FI
+  f = VausFrame()
   IF f <> vshown OR vx <> vshown_x THEN
     DrawVaus(f, vx)
     vshown = f
@@ -868,7 +875,6 @@ PROC MoveVaus()
   IF ex_on THEN hi = 224 FI
   IF vx < lo THEN vx = lo FI
   IF vx > hi THEN vx = hi FI
-  VausExtent()
 RETURN
 
 ; --------------------------------------------------------------- sound
@@ -1229,10 +1235,15 @@ PROC MoveEnemy(BYTE e)
   DO
     nx = en_x(e) + en_dx(e) - 1
     ny = en_y(e) + en_dy(e) - 1
-    IF EnemyFree(nx, ny) THEN
-      en_x(e) = nx
-      en_y(e) = ny
-      EXIT
+    ; never up into the frame's top, which only a gate lets it through: a
+    ; sprite's y is nine bits, so one above the screen wraps to its
+    ; bottom -- over the Vaus, with nothing there to meet it
+    IF ny >= 8 OR en_dy(e) <> 0 THEN
+      IF EnemyFree(nx, ny) THEN
+        en_x(e) = nx
+        en_y(e) = ny
+        EXIT
+      FI
     FI
     NewHeading(e)
     tries += 1
@@ -1462,7 +1473,7 @@ RETURN
 
 PROC MoveBall(BYTE b)
   CARD nb
-  INT nx, ny, x, oy
+  INT nx, ny, x
   BYTE h
   IF bon(b) == 0 THEN RETURN FI
   IF bheld AND bheld_b == b THEN
@@ -1493,7 +1504,6 @@ PROC MoveBall(BYTE b)
   nb = by(b) + bdy(b)
   ny = nb >> 8
   x = bx(b) >> 8
-  oy = by(b) >> 8
   IF ny < 8 THEN
     bdy(b) = -bdy(b)
     IF bceil == 0 THEN
@@ -1508,7 +1518,9 @@ PROC MoveBall(BYTE b)
     ELSEIF DohUnder(x, ny) THEN
       bdy(b) = -bdy(b)
       DohHit()
-    ELSEIF bdy(b) > 0 AND ny + 4 > VAUS_Y AND oy + 4 <= VAUS_Y AND x + 4 >= vleft AND x <= vright THEN
+    ELSEIF bdy(b) > 0 AND ny + 4 > VAUS_Y AND ny <= VAUS_Y + 7 AND x + 4 >= vleft AND x <= vright THEN
+      ; anywhere in its body on the way down, not only across its top:
+      ; a Vaus that comes under the ball a frame late still sends it up
       VausBounce(b, x)
     ELSE
       by(b) = nb
@@ -1982,6 +1994,7 @@ FUNC BYTE PlayLife()
     MoveVaus()
     MorphStep()
     vanim += 1
+    VausExtent()                       ; the frame the next vblank shows
     IF bheld THEN
       bhold_t += 1
       IF KeyHit(KEY_SPACE) OR bhold_t > 150 THEN Release() FI
