@@ -81,8 +81,9 @@ out only, and two more tables: a star's Z >> 6 to its reciprocal, and a
 speck's depth bin to its; for hiding what is behind the ship, the rim
 edges and 65,536 / dy; the stern's panel vertices, which Transform
 skips while the stern is turned away; and the ship's speed, SPEED of
-the dust's units of two a frame -- the ship flies, the dust stays put. star_screen(), dust_screen(), place(),
-outline() and hidden() are the program's sky in Python -- where Sky()
+the dust's units of two a frame -- the ship flies, the dust stays put.
+star_screen(), dust_screen(), place(), outline() and hidden() are the
+program's sky in Python -- where Sky()
 lands a star or a speck, where Place() puts one back into the world,
 and whether the ship's outline covers it -- and sky_model() holds the
 projections to exact division over a grid of poses; sim/test_action.py
