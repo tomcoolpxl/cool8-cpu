@@ -6530,7 +6530,9 @@ universe turns around it, and its "stars" are stardust -- a handful of
 particles in screen-centred coordinates, pushed outward by the speed,
 turned by the same pitch and roll as everything else, and recycled at
 random when they leave the screen. Stars and dust at half COBRA's
-rates were chosen.
+rates were chosen -- and later the camera's rates a third of that
+again, a sixth of COBRA's, the owner asking for the orbit about
+two-thirds slower; yaw is then one step of the sine table a frame.
 
 **The camera is COBRA's rotation.** If the ship does not turn in the
 world, its frame is the world's, and the matrix COBRA builds from three
@@ -6562,8 +6564,9 @@ camera's orbit moved the same dust, and did not read as flight.
 leaves the screen comes back across the opposite edge -- its last place
 on the screen mirrored through the centre, a sixteenth inside -- and a
 speck somewhere in view ahead of the ship, so it streams past it: at a
-depth on the side the nose points, and mirrored through the ship's
-centre if it still lands behind. Each is carried back into the world
+depth on the side the nose points, up to three tries for one within the
+dust's reach and ahead of the ship's centre, and the last mirrored
+through that centre if none is. Each is carried back into the world
 through the matrix's transpose and stays fixed there until it leaves
 again. Elite's dust lives in the view and is turned by
 increments; here nothing drifts, and `test_cobra2` holds every star and
@@ -6592,11 +6595,12 @@ was not yet 256 in, and the edge between them out for a frame. In COBRA
 2 a face turns in as soon as it faces the camera and out only 256 past:
 rounding still cannot flick it, and a handover overlaps instead.
 
-**Measured**: 106,988 of a frame's 139,583 clocks, 77 %, over 1,800
-frames without one overrun -- the sky 48,772 for 44 points, hiding what
-is behind the ship included, their dots 2,613, putting them back 3,027,
-the transform 10,602, the faces and the edge lists 7,122, the lines as
-COBRA's. It got there in steps, each forced by an overrun. The first
+**Measured**: 90,065 of a frame's 139,583 clocks, 65 %, over 1,800
+frames without one overrun -- the sky 36,456 for 34 points, 24 stars and
+10 specks, hiding what is behind the ship included, their dots 2,166,
+putting them back 1,620, the transform 9,574, the faces and the edge
+lists 6,879, the lines as COBRA's. It got there in steps, each forced by
+an overrun until the last. The first
 cut drew 72 points and put them back in compiled code with divisions
 and random numbers taken modulo: 142,378 clocks, a frame in two of
 every three vblanks, and the display check failed with it. Then 56
@@ -6606,9 +6610,14 @@ sky cost 15,000 more and five frames in 1,800 overran: `Visible()` into
 assembly, 28 stars and 20 specks, 110,410. The flip cost 4,600 for the
 specks' records and more recycling at the faster flow, and 24 frames
 overran: `Place()` and its transpose into assembly, a speck put back
-ahead in one go rather than by retrying, `Transform` skipping the
+at a depth on the side the nose points, `Transform` skipping the
 stern's fourteen panel vertices while the stern is turned away
-(`Faces()` now goes first), and 24 stars. The PRG is 14,421 bytes. The
+(`Faces()` now goes first), and 24 stars -- 106,988. At a sixth of
+COBRA's rates the frame is lighter again, and with `Place()` cheap a
+speck gets three tries at a place in reach and ahead, which puts 96 of
+101 recycled points back on the screen the next frame against 104 of
+131 with one. Then the owner found twenty specks too many, and they are
+ten. The PRG is 14,330 bytes. The
 fixed point lands a star within 1.52 px of exact division and a speck
 within 2.02, most of that the floor to a pixel.
 

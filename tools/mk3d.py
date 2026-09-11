@@ -71,7 +71,7 @@ picture close: no drawn edge but the laser ends in nothing.
 
 ## demos/cobra2.act ([D106](../docs/01-decisions.md))
 
-**The same model at half the tumble, and a sky.** The block is
+**The same model at a sixth of the tumble, and a sky.** The block is
 cobra.act's at COBRA 2's rates, checked with its hysteresis on the way
 out only, and two more tables: a star's Z >> 6 to its reciprocal, and a
 speck's depth bin to its; for hiding what is behind the ship, the rim
@@ -149,9 +149,11 @@ EDGEON = 2.0                 # and against its plane, it is wrong only this many
 CX, CY = 128, 120            # the screen's centre: 256 x 240
 YAWR, PITCHR, ROLLR = 0x0180, 0x00D3, 0x0111   # a frame's steps; 256 to a turn in the high byte
 
-# ---- demos/cobra2.act (D106): the same ship at half the tumble, and a sky
+# ---- demos/cobra2.act (D106): the same ship at a sixth of the tumble, and a sky
 ACT2 = os.path.join(ROOT, "demos", "cobra2.act")
-RATES2 = (YAWR // 2, PITCHR // 2, ROLLR // 2)
+# a sixth of COBRA's: half was the first cut, and the owner asked for the
+# camera about two-thirds slower again. Yaw is then one step of sine a frame
+RATES2 = (YAWR // 6, PITCHR // 6, ROLLR // 6)
 # Faces()'s hysteresis on the way out only: at half the tumble an edge
 # went out for a frame between one face turning away, HYST past, and
 # the other not yet HYST in. A face turns in as soon as it faces the
@@ -159,7 +161,7 @@ RATES2 = (YAWR // 2, PITCHR // 2, ROLLR // 2)
 # past, and a handover overlaps instead of leaving a gap.
 TURNIN2 = 0
 STARS = 24                   # stars on the screen at once, each recycled as it leaves
-DUST = 20                    # specks of dust, likewise
+DUST = 10                    # specks of dust, likewise: twenty was too many, the owner said
 DNEAR, DFAR = 200, 750       # the dust is drawn between these depths, model units
 DBRIGHT = 115                # a speck with a reciprocal this big -- nearer than 400 -- is bright
 SPEED = 4                    # the ship's flight a frame along its nose, in the dust's units of two model units
@@ -824,7 +826,7 @@ def sky_model():
 
 def act_text(target="cobra"):
     """The block a compiled COBRA compiles behind, and what it reports:
-    demos/cobra.act's, or demos/cobra2.act's -- the same model at half
+    demos/cobra.act's, or demos/cobra2.act's -- the same model at a sixth of
     the tumble, and the sky's two tables."""
     rates = (YAWR, PITCHR, ROLLR) if target == "cobra" else RATES2
     md = act_model(rates, HYST if target == "cobra" else TURNIN2)

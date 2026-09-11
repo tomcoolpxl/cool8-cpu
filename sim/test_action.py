@@ -646,7 +646,7 @@ def test_cobra():
 
 def test_cobra2():
     """COBRA 2 (demos/cobra2.act, D106): COBRA's ship and arithmetic at
-    half its rates, read as a camera circling a ship that flies straight,
+    a sixth of its rates, read as a camera circling a ship that flies straight,
     and a sky that is fixed in the world. Every claim COBRA is held to,
     faces hysteresis on the way out only, and on top:
 
@@ -892,9 +892,10 @@ def cobra_run(name, title, rates, turn_in, sky, FR=600):
         check(not wrong_fly, "%s over 120 frames the ship flies %d a frame along its nose, and every star on the "
               "screen keeps its direction and every speck its place in the world until it leaves -- %d kept, "
               "%d held" % (tag, mk3d.SPEED, kept, held), "%d moved otherwise" % wrong_fly)
-        # a speck behind the ship is mirrored through its centre to be ahead,
-        # and now and then that lands just outside the view: it is simply put
-        # back again the next frame
+        # a speck gets three tries at a place in reach and ahead of the ship,
+        # the last mirrored through its centre if none is, and now and then
+        # that lands just outside the view: it is simply put back again the
+        # next frame
         check(back * 10 >= recycled * 8, "%s and what is recycled is back on the screen the next frame: %d of %d"
               % (tag, back, recycled), "%d of %d" % (back, recycled))
 

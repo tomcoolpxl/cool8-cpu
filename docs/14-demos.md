@@ -1155,11 +1155,11 @@ for pixel, and erasing by redrawing the same as a clear. The PRG is
 
 **COBRA read the other way round** ([D106](01-decisions.md)).
 `demos/cobra2.act` is a copy of the compiled COBRA, which it leaves
-alone: the ship does not turn, a camera circles it at half COBRA's
+alone: the ship does not turn, a camera circles it at a sixth of COBRA's
 rates, and the ship flies straight along its length. The ship's frame
 is then the world's, so the rotation COBRA computes is the camera's,
 and everything fixed in the world goes through it -- the corners, 24
-stars and 20 specks of dust.
+stars and 10 specks of dust.
 
 **Elite's sky, placed in the world, and the ship flying through it.** A
 star is a direction and swings across the screen exactly as far as the
@@ -1181,10 +1181,10 @@ any row, and a point between the two crossings of its row is not drawn:
 a star always, a speck when it is behind the ship's centre. It stays in
 the sky and comes out again past the ship's edge.
 
-**Measured**: 106,988 of the frame's 139,583 clocks, 60 Hz over 1,800
-frames -- the sky 48,772 (in assembly: the ship's own three rows once a
+**Measured**: 90,065 of the frame's 139,583 clocks, 60 Hz over 1,800
+frames -- the sky 36,456 (in assembly: the ship's own three rows once a
 point, a table and a `MUL` for the perspective, and the outline test),
-its dots 2,613, recycling 3,027; the transform skips the stern's panel
+its dots 2,166, recycling 1,620; the transform skips the stern's panel
 vertices while the stern is turned away. `test_cobra2` holds it to every claim COBRA is held to
 and, on top, to `tools/mk3d.py`'s models of the sky: every star and
 speck where the models put it, in its colour, and none drawn inside the
@@ -1192,9 +1192,9 @@ ship's outline; each page the dots with
 the lines over them, pixel for pixel; over 120 frames the ship flying
 its four units a frame, each star on the screen keeping its direction
 and each speck its place in the world; and what is recycled mostly back
-on the screen the next frame. Faces keep hysteresis on the way out only: at half the rates,
+on the screen the next frame. Faces keep hysteresis on the way out only: at half COBRA's rates, the first cut's,
 two-sided hysteresis left a one-frame gap between two faces trading an
-edge. The PRG is 14,421 bytes.
+edge. The PRG is 14,330 bytes.
 
 ### `KEYTEST` — what the keyboard sends
 

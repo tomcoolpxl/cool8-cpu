@@ -4,7 +4,7 @@
 ; **COBRA is the ship; this is the view** (D106). The same ship and the
 ; same arithmetic, every frame computed between two vertical blanks
 ; (D105), read the other way round: the ship does not turn, the camera
-; circles it at half COBRA's rates, and the ship flies straight along its
+; circles it at a sixth of COBRA's rates, and the ship flies straight along its
 ; length. The ship's frame is then the world's, so the rotation COBRA
 ; computes is the camera's, and everything fixed in the world goes
 ; through it: the ship's corners, the stars, the dust.
@@ -176,9 +176,9 @@ CONST FOCAL = 360
 CONST ZBIAS = 68                     ; Z's high byte plus this is the depth bin
 CONST CX = 128
 CONST CY = 120
-CONST YAWR = $00C0                  ; the angles' steps a frame
-CONST PITCHR = $0069
-CONST ROLLR = $0088
+CONST YAWR = $0040                  ; the angles' steps a frame
+CONST PITCHR = $0023
+CONST ROLLR = $002D
 ; the sky: a star's Z >> 6 to 512 * 16 * FOCAL / Z, zero off the screen's cone
 BYTE ARRAY srz(256) = [
   0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
@@ -270,7 +270,7 @@ BYTE ARRAY rhi(240) = [
   1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1
   1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1]
 CONST NS = 24                        ; stars on the screen, each recycled as it leaves
-CONST ND = 20                        ; specks of dust, likewise
+CONST ND = 10                        ; specks of dust, likewise
 CONST DNEAR = 200                    ; the dust's depths, model units
 CONST DFAR = 750
 CONST DBRIGHT = 115                  ; a speck with a reciprocal this big is bright
@@ -1736,31 +1736,37 @@ RETURN
 ; -- beyond it when the nose points away from the camera, nearer when it
 ; points this way -- and a random point across the view at that depth,
 ; the random word masked and scaled, not divided, in the dust's units of
-; two, carried back into the ship's frame. One still behind the ship's
-; centre is mirrored through it, which puts it ahead; then it is placed
-; in the world, the ship's place plus that. Past the dust's reach it is
-; parked far behind the ship, where the next frame retires it again
+; two, carried back into the ship's frame. Up to three tries for one
+; within the dust's reach and ahead of the ship's centre; failing that,
+; the last one in reach is mirrored through the centre, which puts it
+; ahead. Then it is placed in the world, the ship's place plus that. None
+; in reach, it is parked far behind the ship, where the next frame
+; retires it again
 PROC DustAt(BYTE i)
   CARD d
   INT hx, hy, x, y, z
-  BYTE k
+  BYTE k, t, ok
   k = i * 3
-  d = Rnd(0) & 255
-  IF mp(8) >= 128 THEN d += DIST ELSE d += DSPAWN FI
-  hx = d * 45 >> 7
-  hy = d * 21 >> 6
-  x = Rnd(0) & 255
-  x -= 128
-  x = x * hx >> 8
-  IF x > 127 THEN x = 127 ELSEIF x < -127 THEN x = -127 FI
-  y = Rnd(0) & 255
-  y -= 128
-  y = y * hy >> 8
-  z = d
-  z -= DIST
-  z = z >> 1
-  IF z > 127 THEN z = 127 FI
-  IF Place(x, y, z) THEN
+  FOR t = 1 TO 3 DO
+    d = Rnd(0) & 255
+    IF mp(8) >= 128 THEN d += DIST ELSE d += DSPAWN FI
+    hx = d * 45 >> 7
+    hy = d * 21 >> 6
+    x = Rnd(0) & 255
+    x -= 128
+    x = x * hx >> 8
+    IF x > 127 THEN x = 127 ELSEIF x < -127 THEN x = -127 FI
+    y = Rnd(0) & 255
+    y -= 128
+    y = y * hy >> 8
+    z = d
+    z -= DIST
+    z = z >> 1
+    IF z > 127 THEN z = 127 FI
+    ok = Place(x, y, z)
+    IF ok AND pa(2) > 0 THEN EXIT FI
+  OD
+  IF ok THEN
     IF pa(2) < 0 THEN
       pa(0) = -pa(0)
       pa(1) = -pa(1)
