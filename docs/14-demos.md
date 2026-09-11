@@ -53,7 +53,7 @@ but as two programs: the compiled one tumbles, every frame computed
 |---|---|---|
 | **Demos** | 13 | MAZE, RAINBOW, WAVE, PLASMA, INTRO, BOING, TRIANGLES, MANDEL, COBRA, SYNTH, BENCH, MINIBNCH, BAPPLE, TAIPAN, COOLTRS1, COOLTRS2 |
 | **Software** | 14 | HHGG, ZORK1, PLANET, LGOP, PASCAL |
-| **CoolAction** | 11 | RAINBOW, TRIANGLE, MAZE, PLASMA, WAVE, MANDEL, SYNTH, INTRO, PRIMES — the compiled twins, §4 — COBRA, which shares only its ship and its name with the BASIC's, COBRA2, its camera and sky, and MSCOOLMN, KEYTEST and SLIDES, which have no BASIC |
+| **CoolAction** | 11 | RAINBOW, TRIANGLE, MAZE, PLASMA, WAVE, MANDEL, SYNTH, INTRO, PRIMES — the compiled twins, §4 — COBRA, which shares only its ship and its name with the BASIC's, COBRA2, its camera and sky, and MSCOOLMN, ARKANOID, KEYTEST and SLIDES, which have no BASIC |
 
 **Volume 0 is not the user's, and that is the ROM's decision.**
 `sw/boot.asm` walks volume 0's directory for `BOOT.BIN`; it is the 4 KB
@@ -1044,7 +1044,7 @@ drive 11 as bare `.BIN`s: RAINBOW, TRIANGLES, MAZE, PLASMA, WAVE,
 MANDEL, SYNTH and INTRO, each a `demos/name.act` beside its
 `demos/name.bas`; COBRA, which was the ninth and is now a program of
 its own, and COBRA2, its camera and sky, the next two sections; and
-KEYTEST, MSCOOLMN and SLIDES, which have no BASIC and follow them. **The picture is the contract, not the code.** A port
+KEYTEST, MSCOOLMN, ARKANOID and SLIDES, which have no BASIC and follow them. **The picture is the contract, not the code.** A port
 may do the work any way the language allows -- and mostly does it the
 BASIC's way, because the BASIC's way was measured -- but
 `sim/test_action.py` runs every pair to the same point and requires
@@ -1372,6 +1372,119 @@ pill` (or `title`, `death`, `clear`, `fruit`) -- which is how every
 picture above was checked, and how the two bugs of the first frame
 were found: every cell in row 0 because `row << 7` on a `BYTE` is a
 byte, and the fruit one column off the sheet.
+
+### `ARKANOID` — the arcade Arkanoid, all 33 rounds, in mode 2
+
+`demos/arkanoid.act`, the whole of Taito's 1986 arcade Arkanoid under
+the loader of [D102](01-decisions.md): the 32 rounds in the arcade's
+layouts on their four backgrounds, the Vaus, the ball, the seven
+capsules and what each does, the laser, the three balls, the enemies
+through the gates in the frame's top, the exit a B opens, DOH on round
+33, the intro's story over the mothership, and the board's own music. A
+hobby port for the machine's owner, with no users; **its art is the
+arcade's own pixels**, as Ms. Cool-Man's is. `tools/mkarkanoid.py` reads
+The Spriters Resource's arcade sheets in `assets/arkanoid/` (the fields,
+the blocks, the power-ups, the enemies, DOH, the intro's mothership and
+the owner's fuller "Arkanoid (World, older)" Vaus sheet) and writes
+three files there: `arkanoid_art.act`, which `demos/arkanoid.parts`
+names as the part the game compiles behind, and **two data files the
+game reads from its own drive** -- ARKANOID.DAT and ARKSCENE.DAT, 92 KB
+of tiles and sprite patterns that do not fit the program and are
+streamed from the flash into VRAM when a phase needs them
+([D107](01-decisions.md)). `demos/arkanoid.disc` names them, and
+`tools/mkdemos.py` puts them on drive 11 beside ARKANOID.PRG. `poe
+check` holds all three to the sheets.
+
+**The rounds are read off the arcade**, from StrategyWiki's walkthrough,
+whose 32 pictures are the arcade's own 224 x 256 frames: each brick cell
+by its face, 40 of its 65 inner pixels one brick colour and its right
+and bottom edges the black every brick has. Round 1 reads silver, red,
+yellow, blue, magenta, green. One cell is put back by hand: round 5's
+top-left antenna, under a cone and its shadow in that frame. The same
+frames that caught an enemy say which comes when: cones on the blue
+rounds, pyramids on the green, molecules on the circuit, cubes on the
+grey -- the background and the enemy are one choice, (round - 1) mod 4.
+
+**Mode 2, the field at one pixel to one.** The arcade's field is 224 x
+240 under its score line and mode 2 is 320 x 240, so the field is
+columns 0-27 exactly and the score, the round and the lives go beside
+it. A background is a model the generator proves against the sheet --
+its frame, a pattern of cells, and the cells the pattern does not
+predict. A brick is two tiles; its shadow, one cell right and one down,
+is the background's dark tile, as the arcade's own tile map does it. The
+gates open in the frame's top row a strip of six frames at a time; the
+exit is three frames of crackle in the right wall.
+
+**The Vaus is composed into the background** ([D107](01-decisions.md)):
+the background under it, its shadow in black, the Vaus, into tiles --
+all 60 of its frames, the lights turning, the enlarging and arming
+morphs, its appearing and its breaking up -- so it costs no sprite and
+its shadow is the arcade's. Everything else is sprites from one bank,
+the capsule's two colours and the round's enemy's four filled in when
+they change.
+
+**The rules as far as they are known.** Points by colour, 50 to 120,
+silver 50 times the round and two hits (one more every eight rounds),
+gold never; 1,000 for a capsule, 100 for an enemy, 10,000 for the exit,
+1,000 a hit on DOH, who takes sixteen; an extra Vaus at 20,000, 60,000
+and every 60,000. The capsules as the arcade's instruction card names
+them -- orange S slows the ball, green C catches it, blue E enlarges,
+aqua D splits it in three, red L arms the laser, pink B opens the exit,
+grey P is a Vaus more -- one at a time, none while three balls fly, B
+and P half as likely as the rest, never the power already held. **Chosen,
+because the arcade's numbers are not published**: eight ball speeds from
+1.5 to 3.5 pixels a frame, a step faster every eight hits and at the
+first touch of the ceiling; six angles off the Vaus, 30, 45 and 60
+degrees either way by where the ball lands; a capsule a brick in five;
+an enemy through the gate on the Vaus's side every six seconds, three at
+most, wandering down; DOH opening his mouth every two and a half seconds
+for three shots aimed where the Vaus was. **The sound effects are made
+on the voices** -- the rip has the board's music and nothing else --
+and are this port's. **The music is the board's**: the story, the round
+start, DOH's round, game over and the ending, replayed from the YM2149's
+register log a 60 Hz frame at a time, the three channels' periods as
+phase increments and their levels on the machine's linear scale, the
+envelopes worked out where a channel asks for one.
+
+**DOH** sits in the wall's hole on his red round, cells 10-17 x 5-16,
+drawn from four normal frames with his mouth opening; hit, he flashes
+cyan, and beaten he turns purple in the sheet's twelve dying frames --
+each a normal frame with one colour changed, a palette write -- then
+his wireframe comes down through him a cell row at a time, where the
+sheet's eight frames of it pixel by pixel would be 660 tiles. **Not
+there**: the ending's words, of which no frame was found; the board's
+extra-life jingle, which the rip does not have.
+
+**The intro and the title are the arcade's pictures**: the ARKANOID
+logo over the title screen's words, and the story typed over the
+mothership, which is lit, hit in four red flashes -- palettes over its
+lit frame -- and gives up the Vaus in rings, the Vaus flying off in the
+sheet's fifteen frames. The story's words are the game's (the NES
+version's FAQ quotes them; StrategyWiki's frame shows the last three
+lines); the other lines' breaks and the timing are this port's, and the
+font here has no comma. The glyphs themselves are the arcade's where a
+frame shows them: 25 on the title and the play screen, 23 of them the
+Namco font Ms. Cool-Man has and E and L a pixel wider; the rest are
+Namco's, and `tools/mkarkanoid.py` lists which.
+
+**The gate** (`sim/test_action.py`, on `sim/arkanoid.py`) runs the game
+with its two data files on drive 11 of a flash image of its own: the
+generator's three files current; the compiled bytes the same as
+`tools/cool8asm.py`'s; mode 2 and the logo on the title; round 1's
+silver and green bricks where the arcade has them and a shadow cell the
+dark tile; ROUND over the field and the round-start tune on voice 0; the
+Vaus as cells of the background in its banks, its shadow in the row
+under; 600 frames of the autopilot with a frame of play in every
+vblank; each capsule caught and its power; an enemy through a gate; out
+through the exit into round 2 with 10,000; a ball lost and a life gone;
+the stack where it should be; then the path a person takes -- the real
+ROM booting the demos disc, `DRIVE 11` and `SYS "ARKANOID.BIN"` typed at
+the keyboard, the game finding its two data files on the drive it came
+from, the logo up, space, and round 1 -- with the disc first held to
+this build and these data files; then round 33, DOH's face in pattern
+bank 2, the sixteenth hit, and the black he sat in. `python sim/arkanoid.py
+play` (or `powers`, `enemies`, `doh`, `intro`, `profile`) plays it with
+an autopilot and writes the frames as PNG.
 
 ### `SLIDES` — the old test pictures, as fully as mode 6 can show them
 

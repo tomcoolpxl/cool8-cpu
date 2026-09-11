@@ -6645,3 +6645,86 @@ increment between two frames' matrices is about the size of their
 rounding, so it would wobble; a camera modelled with a position and an
 orientation of its own, when the matrix already is one; more stars, for
 the frame.
+
+## D107 -- Arkanoid: the arcade's art streamed from its drive, the Vaus drawn into the background
+
+**The owner asked for Arkanoid, the arcade's**, with its sprites from a
+good source -- the machine being "quite powerful for graphics or
+colours" -- its noises, and the effects made on the voices. The art is
+The Spriters Resource's arcade sheets and the owner's own fuller Vaus
+sheet; the music is VGMPF's register log of the board's YM2149; the 32
+rounds are read off StrategyWiki's frames of the arcade.
+`tools/mkarkanoid.py` turns them into what the game reads, and
+`demos/arkanoid.act` is the game ([14-demos.md](14-demos.md)).
+
+**The art does not fit the program.** Tiles and sprite patterns come to
+92 KB, against a PRG that may run from `$1400` to `$FEFF`: 58 KB, with
+the code in it. Run-length coding measured 33 KB of the first 40; zlib
+13 KB, but a decompressor wants a buffer the size of its largest block.
+The machine already has the answer -- a tile set is loaded from the SPI
+flash by a loop, not a DMA engine ([04-system.md](04-system.md) section
+5.4) -- and the harness already makes flash images, for SLIDES. So the
+tiles and patterns are **data files on drive 11, beside the program,
+streamed from the flash into VRAM when a phase needs them**: at startup
+the bricks, the font and the sprites; at a round's start its background,
+its gates and its enemy; for the title the logo and the mothership; for
+round 33 DOH. The PRG keeps what the CPU reads while it plays -- the
+rounds, the fields' models, the Vaus's cells, palettes, tables, the
+music -- 21,253 bytes of it; the whole PRG is 51,744.
+
+**Two files, because a file is at most 65,535 bytes**: a catalogue
+entry's length is two bytes ([04-system.md](04-system.md) section 8,
+`tools/cool8disk.py`). ARKANOID.DAT, 57,440 bytes, is the rounds';
+ARKSCENE.DAT, 34,240, the intro's and DOH's. Bit 7 of a block's high
+offset byte says which, so no call changes. Rejected: widening the
+length, which is a change of the disk's format for every tool and for
+BASIC's filesystem, and not this game's to make.
+
+**The Vaus is drawn into the background, not by the sprite engine.** It
+never leaves its row, so each time it moves its cells are composed --
+the background under it, its shadow in black four right and four down,
+then the Vaus -- into tiles the map points at, two sets of 28 so the
+screen never shows one half-written. It costs no descriptor and none of
+the eight a line the balls, the capsule and the enemies crossing its row
+need, and the arcade's shadow under it, which a sprite shadow would
+cost eight more sprites for, comes free. The blue background and the
+Vaus are 17 colours, one over a bank, so every background has two Vaus
+banks, left of a column and from it, with the Vaus's nine at the same
+indices in both. Measured with `sim/arkanoid.py profile`, the busiest
+play there is -- three balls, the exit crackling, enemies about, the
+Vaus moving every frame: 300 frames of play in 300 vblanks, 73 % of the
+clocks waiting for the next. Rebuilding the cache of what is under the
+Vaus's rows is 170,000 clocks, more than a frame, and the first cut did
+it on each of the exit's crackles and lost 33 frames in 300; the exit
+refreshes its own four cells now.
+
+**One palette bank for every sprite** (section 5.6), and a round needs
+more colours than sixteen, so the bank is shared by rule: six colours
+fixed, four slots filled with the round's enemy when the round starts --
+one kind a round, which the arcade's frames show following the
+background -- and two with the falling capsule when it appears, of which
+there is only ever one.
+
+**DOH is palette work.** His hit and dying frames on the sheet are each
+one of his four normal frames with one colour changed, so they are a
+palette write; his pixels are kept apart from the wall's in his
+palette, so the write recolours him and not what is behind him. The
+eight frames in which the wireframe dissolves down through him are 660
+tiles of their own; the port moves the edge a cell row at a time instead,
+with the sheet's two whole wireframe frames, which are tiles in pattern
+bank 3 over the capsules' patterns -- none falls in his round -- and
+streamed back by the next game. The mothership's red flashes are
+palettes the same way, the space behind it an index of its own.
+
+**What is not the arcade's, and says so**: the sound effects, made on
+the voices (the rip has the music only); the ball's speeds and angles,
+the enemies' wandering, DOH's rate of fire and the capsules' odds, whose
+numbers are not published and which are chosen, the last from two
+descriptions; the ending's words, of which no frame was found; the
+intro's line breaks but the last three, and its timing; the commas the
+arcade's font has no glyph for here.
+
+**Rejected**: sprites for the Vaus, which with its shadow would take
+eight to twelve of a line's eight; the art compressed in the PRG, which
+at a third of its size still would not fit beside the code; a data file
+wider than the filesystem allows.

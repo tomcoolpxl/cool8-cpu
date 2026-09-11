@@ -527,13 +527,14 @@ def sprites(px):
 FONT = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ-.!/ "
 
 
-def font(px):
+def font(px, extra=None):
     """The arcade font, from the Pac-Man sheet's second panel from the
     left at the top: pink glyphs on a grid of magenta lines, 8-pixel
     cells at a 9-pixel pitch. Row 0 is 0-9 then A-F, row 1 NAMCO PTS
     and `/ - .`, row 2 the digits again and `" (c) !`, rows 3 and 4 the
     alphabet in two halves. The grid is found from the lines, not
-    assumed; ink is index 1."""
+    assumed; ink is index 1. `extra` names more glyphs by (column, row),
+    for a caller that wants one FONT leaves out (Arkanoid's quote)."""
     MAG, INK = (255, 0, 255), (255, 183, 255)
     # grid columns and rows: the magenta lines through the panel
     xs = [x for x in range(195, 345) if sum(1 for y in range(70) if px[x, y] == MAG) > 40]
@@ -555,8 +556,9 @@ def font(px):
         where[ch] = (i, 4)
     where["/"], where["-"], where["."] = (10, 1), (11, 1), (12, 1)
     where["!"] = (12, 2)
+    where.update(extra or {})
     glyphs = {" ": [0] * 32}
-    for ch in FONT:
+    for ch in FONT + "".join(extra or {}):
         if ch == " ":
             continue
         c, r = where[ch]

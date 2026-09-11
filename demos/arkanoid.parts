@@ -1,0 +1,5 @@
+# Arkanoid compiles behind its art, which tools/mkarkanoid.py rips from
+# the arcade sheets in assets/arkanoid/; the tiles and sprite patterns
+# themselves are in assets/arkanoid/ARKANOID.DAT, which the game reads
+# from drive 11. One path a line, relative to the repository root.
+assets/arkanoid/arkanoid_art.act

@@ -1,0 +1,2309 @@
+; ARKANOID -- the arcade Arkanoid (Taito, 1986) on COOL8, in CoolAction!
+;
+; The picture is the original's: the fields, the bricks, the Vaus, the
+; capsules, the enemies and DOH are the arcade's own pixels, ripped from
+; the sheets in assets/arkanoid/ by tools/mkarkanoid.py, and the 32
+; rounds are the arcade's layouts. The generator writes two files. The
+; tiles and sprite patterns are ARKANOID.DAT, which this program finds
+; on drive 11 and streams from the flash straight into VRAM when a phase
+; needs them. Everything the CPU reads while it plays is
+; assets/arkanoid/arkanoid_art.act, compiled in front of this file
+; (demos/arkanoid.parts names it).
+;
+; **Mode 2, because the arcade board is a tile map with sprites.** The
+; arcade's field is 224 x 240 below its score line, and mode 2 is 320 x
+; 240: the field is columns 0-27 at one pixel to one, and the score goes
+; beside it in columns 28-39, where Ms. Cool-Man keeps hers. A brick is
+; two tiles; its shadow, one cell right and one down, is the background's
+; dark tile under it, as the arcade's own tile map does it.
+;
+; **The Vaus is drawn into the background, not by the sprite engine.** It
+; never leaves its row, so its cells are composed each time it moves --
+; the background under it, its shadow in black four right and four down,
+; then the Vaus -- into tiles the map points at. That costs no sprite and
+; none of the engine's eight a line, which the balls, the capsule and the
+; enemies that cross its row need; and the shadow the arcade draws under
+; it comes for nothing.
+;
+; **All the sprites share one palette bank** (04-system.md section 5.6),
+; so six colours are fixed, the falling capsule's two are written into
+; slots 11-12 when it appears -- there is never more than one -- and the
+; round's enemy's four into 7-10 when the round starts, as there is only
+; one kind to a round.
+;
+; Keys: the cursor keys move the Vaus, space launches the ball and fires
+; the laser, P pauses, Esc gives up the game.
+
+; --------------------------------------------------------------- layout
+CONST PAT_BASE = $1000               ; pattern bank 0; 1 and 2 follow at $3000, $5000
+CONST SPR_COMMON = $7000             ; the sprites that stay: capsules, burst, ball, beam, shot
+CONST SPR_ENEMY = $B000              ; the round's enemy, streamed over the last one's
+CONST DRIVE = 11                     ; the drive the demos disc keeps ARKANOID.DAT on
+
+; tile numbers in pattern bank 0
+CONST T_FIELD = 0                    ; the round's background: up to 68 tiles
+CONST T_BRICK = 68                   ; the ten bricks at rest, then silver's and gold's shine
+CONST T_FONT = 108                   ; the glyphs, in fontmap's order
+CONST T_SPACE = 148                  ; T_FONT + 40
+CONST T_VAUS = 151                   ; the Vaus drawn into the background: two sets of NSLOT
+CONST NSLOT = 28
+CONST T_LIFE = 207                   ; a life beside the field, two tiles
+CONST T_GATE = 209                   ; a gate's six frames of four cells
+CONST T_EXIT = 233                   ; the exit's three frames of five cells
+
+; palette banks
+CONST B_FIELD = 0
+CONST B_BRICK = 1
+CONST B_VA = 2                       ; the Vaus's bank left of the background's split column
+CONST B_VB = 3                       ; ...and from it
+CONST B_WHITE = 4
+CONST B_RED = 5
+CONST B_HUD = 6
+CONST B_SPR = 15
+
+CONST VAUS_Y = 216                   ; the Vaus's top: tile row 27
+CONST FIELD_R = 215                  ; the last pixel inside the right wall
+
+; keys, as KeyHeld wants them: $80 + the $E0-prefixed code
+CONST KEY_LEFT = $EB
+CONST KEY_RIGHT = $F4
+CONST KEY_SPACE = $29
+CONST KEY_ESC = $76
+CONST KEY_P = $4D
+
+; sprite descriptors: a lower number is drawn over a higher one
+CONST SP_BALL = 0                    ; three
+CONST SP_SHADOW = 3                  ; three
+CONST SP_CAP = 6                     ; two
+CONST SP_BEAM = 8                    ; six
+CONST SP_ENEMY = 14                  ; three enemies of four
+
+; --------------------------------------------------------------- the game
+BYTE round                           ; 1 up
+BYTE lives                           ; in hand, the one in play among them
+CARD score10, hi10, extend10         ; points, in tens: every score ends in 0
+BYTE quit
+CARD loops                           ; frames of play the loop has run, for the gate
+
+; the Vaus: its anchor is the left edge of the normal frame, and the
+; enlarged one reaches eight pixels past it either side
+INT vx
+BYTE vform                           ; 0 normal, 1 laser, 2 enlarged
+BYTE vpower                          ; 0 none, 1 catch, 2 laser, 3 enlarge
+BYTE vanim, vmove_t
+BYTE vshown                          ; the frame on the screen, 255 none
+INT vshown_x
+INT vleft, vright                    ; its body, for the ball
+; a morph between forms: first frame, how many, backwards, where, and
+; the form a second stage goes on to (255 none)
+BYTE mo_f0, mo_n, mo_rev, mo_i, mo_t, mo_next
+
+; the balls, three at most
+CARD ARRAY bx(3), by(3)              ; top-left, in 256ths of a pixel
+INT ARRAY bdx(3), bdy(3)             ; 256ths of a pixel a frame
+BYTE ARRAY bon(3), bang(3)
+BYTE nballs, bspeed, bbase, bceil, bheld, bheld_b
+INT bhold                            ; where the held ball rides on the Vaus
+CARD bhold_t, bhits
+
+; the bricks: 18 rows of 13, row 0 at tile row 1
+BYTE ARRAY bk(234)                   ; the kind: 0 none, 1-8 colours, 9 silver, 10 gold
+BYTE ARRAY bhp(234)                  ; hits it has left
+BYTE ARRAY bshine(234)               ; the shine's frame, 0 none
+CARD bricks_left
+BYTE ARRAY sh_i(8), sh_t(8)          ; the bricks shining now
+BYTE ARRAY pts(9) = [0 5 6 7 8 9 10 11 12]
+
+; the capsule falling, one at most
+BYTE cap_on, cap_k, cap_t
+INT cap_x, cap_y
+
+; the laser's beams, three pairs
+BYTE ARRAY bm_on(6)
+INT ARRAY bm_x(6), bm_y(6)
+BYTE bm_cool
+
+; the enemies, three at most; a heading is 0-2 for -1, 0, +1
+BYTE ARRAY en_on(3)                  ; 0 none, 1 about, 2 going up in a burst
+BYTE ARRAY en_t(3), en_dx(3), en_dy(3)
+INT ARRAY en_x(3), en_y(3)
+BYTE en_nf
+BYTE POINTER en_tab
+CARD en_timer
+BYTE gt_side, gt_state, gt_t         ; the gate an enemy is coming through
+
+; the exit, open after a B
+BYTE ex_on, ex_t, ex_f
+
+; speeds, 256ths of a pixel a frame; and the three angles off the Vaus
+; either way -- shallow, middle, steep -- as cosines and sines of 30, 45
+; and 60 degrees in 256ths. The arcade has six; its numbers are not
+; published, and these are chosen (docs/14-demos.md).
+CARD ARRAY spd_tab(8) = [384 448 512 576 640 704 768 896]
+BYTE ARRAY cos_tab(3) = [222 181 128]
+BYTE ARRAY sin_tab(3) = [128 181 222]
+
+; ---------------------------------------------------------- the data file
+; Two files, because a file on a drive is at most 65,535 bytes -- its
+; catalogue entry's length is two bytes -- and the art is more: the
+; rounds' in ARKANOID.DAT, the intro's and DOH's in ARKSCENE.DAT. A
+; block's high offset byte says which in its bit 7.
+BYTE ARRAY dat_name = "ARKANOIDDAT"
+BYTE ARRAY dat2_name = "ARKSCENEDAT"
+CARD ARRAY dat_lo(2)
+BYTE ARRAY dat_hi(2)
+CARD st_n
+
+FUNC BYTE OpenFile(BYTE f, BYTE POINTER name)
+  IF DiskFind(DRIVE, name) == 0 THEN RETURN (0) FI
+  dat_lo(f) = disk_page << 8
+  dat_hi(f) = disk_page >> 8
+  dat_hi(f) += $10 + DRIVE * 7
+RETURN (1)
+
+FUNC BYTE OpenData()
+  IF OpenFile(0, dat_name) == 0 THEN RETURN (0) FI
+RETURN (OpenFile(1, dat2_name))
+
+; Stream(off, hi, vaddr, n): n bytes of a data file from hi:off into
+; VRAM at vaddr, at the flash's own rate
+PROC Stream(CARD off, BYTE hi, CARD vaddr, CARD n)
+  CARD a
+  BYTE h, f
+  f = hi >> 7
+  a = dat_lo(f) + off
+  h = dat_hi(f) + (hi & $7F)
+  IF a < off THEN h += 1 FI
+  FlashOpen(a, h)
+  VRAM_ADDR = vaddr
+  VRAM_STEP = 1
+  st_n = n
+  ASM
+    LDW  X,[v_st_n]
+    MOV  R0,XL
+    MOV  R1,XH
+    OR   R0,R1
+    BEQ  .d
+.l: LD   R0,[v_FLS_DATA]
+    ST   [v_VRAM_DATA],R0
+    DECW X
+    BNE  .l
+.d:
+  ENDASM
+  FlashClose()
+RETURN
+
+; ------------------------------------------------------------- the screen
+PROC Cell(BYTE col, BYTE row, BYTE t, BYTE attr)
+  CARD a
+  a = row                            ; a shift keeps its left side's width
+  VRAM_ADDR = (a << 7) + (col << 1)
+  VRAM_STEP = 1
+  VRAM_DATA = t
+  VRAM_DATA = attr
+RETURN
+
+FUNC BYTE Glyph(BYTE ch)
+  BYTE i, n
+  n = fontmap(0)
+  FOR i = 1 TO n DO
+    IF fontmap(i) == ch THEN RETURN (i - 1) FI
+  OD
+RETURN (40)
+
+PROC Text(BYTE col, BYTE row, BYTE POINTER s, BYTE bank)
+  BYTE n
+  n = *s
+  WHILE n > 0 DO
+    s += 1
+    Cell(col, row, T_FONT + Glyph(*s), bank)
+    col += 1
+    n -= 1
+  OD
+RETURN
+
+; Number(col, row, v, bank): right-aligned, ending at col
+PROC Number(BYTE col, BYTE row, CARD v, BYTE bank)
+  DO
+    Cell(col, row, T_FONT + v % 10, bank)
+    v = v / 10
+    col -= 1
+  UNTIL v == 0 OD
+RETURN
+
+; a score in tens, right-aligned at col: the units are always 0
+PROC ShowScore(BYTE col, BYTE row, CARD s10, BYTE bank)
+  BYTE c
+  FOR c = col - 6 TO col DO Cell(c, row, T_SPACE, bank) OD
+  Cell(col, row, T_FONT, bank)
+  Number(col - 1, row, s10, bank)
+RETURN
+
+; every cell blank: the whole map, 40 x 30
+PROC ClearScreen()
+  BYTE r, c
+  CARD a
+  FOR r = 0 TO 29 DO
+    a = r
+    VRAM_ADDR = a << 7
+    VRAM_STEP = 1
+    FOR c = 0 TO 39 DO
+      VRAM_DATA = T_SPACE
+      VRAM_DATA = B_WHITE
+    OD
+  OD
+RETURN
+
+; ------------------------------------------------------------- the field
+BYTE ARRAY fn(840), fd(840)          ; each cell's background tile, normal and dark
+BYTE fk                              ; the background in use: 0-3, 4 DOH's
+
+; the round's background from its model: the pattern everywhere inside,
+; the frame round it, then the cells the pattern does not predict
+PROC BuildField(BYTE k)
+  BYTE tx, ty, pw, ph, i
+  CARD c, e, e1, po, fo
+  pw = fld_pw(k)
+  ph = fld_ph(k)
+  po = k
+  po = po << 6
+  FOR ty = 1 TO 29 DO
+    FOR tx = 1 TO 26 DO
+      i = (ty % ph) * pw + tx % pw
+      c = ty * 28 + tx
+      fn(c) = fld_pn(po + i)
+      fd(c) = fld_pd(po + i)
+    OD
+  OD
+  fo = k * 86
+  FOR tx = 0 TO 27 DO
+    fn(tx) = fld_frame(fo + tx)
+    fd(tx) = fn(tx)
+  OD
+  FOR ty = 1 TO 29 DO
+    c = ty * 28
+    fn(c) = fld_frame(fo + 27 + ty)
+    fd(c) = fn(c)
+    c = c + 27
+    fn(c) = fld_frame(fo + 56 + ty)
+    fd(c) = fn(c)
+  OD
+  e = fld_exc_off(k)
+  e1 = fld_exc_off(k + 1)
+  WHILE e < e1 DO
+    c = fld_exc(e + 1) * 28 + fld_exc(e)
+    fn(c) = fld_exc(e + 2)
+    fd(c) = fld_exc(e + 3)
+    e += 4
+  OD
+RETURN
+
+FUNC BYTE BrickAt(BYTE tx, BYTE ty)
+  IF tx < 1 OR tx > 26 OR ty < 1 OR ty > 18 THEN RETURN (0) FI
+RETURN (bk((ty - 1) * 13 + ((tx - 1) >> 1)))
+
+FUNC BYTE ExitCell(BYTE tx, BYTE ty)
+  IF ex_on AND tx == 27 AND ty >= 25 THEN RETURN (1) FI
+RETURN (0)
+
+; the pattern bank the background's tiles are in, as a tile attribute's
+; bits 5-4: 0 for the 32 rounds, 1 for DOH's, whose background is more
+; tiles than bank 0 has room for beside the font and the Vaus
+BYTE fpat
+
+; a cell as it is now: a brick, the exit, or the background -- dark
+; where a brick one cell up and to the left casts its shadow
+PROC DrawCell(BYTE tx, BYTE ty)
+  BYTE k, t, s
+  CARD c
+  IF ExitCell(tx, ty) THEN
+    Cell(tx, ty, T_EXIT + ex_f * 5 + ty - 25, B_VB)
+    RETURN
+  FI
+  k = BrickAt(tx, ty)
+  IF k THEN
+    t = T_BRICK + ((k - 1) << 1) + ((tx - 1) & 1)
+    s = bshine((ty - 1) * 13 + ((tx - 1) >> 1))
+    IF s THEN t = T_BRICK + 20 + (k - 9) * 10 + ((s - 1) << 1) + ((tx - 1) & 1) FI
+    Cell(tx, ty, t, B_BRICK)
+  ELSE
+    c = ty * 28 + tx
+    IF BrickAt(tx - 1, ty - 1) THEN
+      Cell(tx, ty, T_FIELD + fd(c), B_FIELD | fpat)
+    ELSE
+      Cell(tx, ty, T_FIELD + fn(c), B_FIELD | fpat)
+    FI
+  FI
+RETURN
+
+PROC DrawField()
+  BYTE tx, ty
+  FOR ty = 0 TO 29 DO
+    FOR tx = 0 TO 27 DO DrawCell(tx, ty) OD
+  OD
+RETURN
+
+; the round's bricks out of the packed layouts: a silver brick takes two
+; hits on rounds 1-8 and one more each eight rounds after
+PROC LoadRound(BYTE n)
+  CARD o, i
+  BYTE f, cnt, r, col, b, k, sh
+  FOR i = 0 TO 233 DO
+    bk(i) = 0
+    bhp(i) = 0
+    bshine(i) = 0
+  OD
+  FOR r = 0 TO 7 DO sh_t(r) = 0 OD
+  o = rnd_off(n - 1)
+  f = rnd_data(o)
+  cnt = rnd_data(o + 1)
+  o += 2
+  bricks_left = 0
+  sh = (n - 1) >> 3
+  sh += 2
+  FOR r = 0 TO cnt - 1 DO
+    FOR col = 0 TO 12 DO
+      b = rnd_data(o + (col >> 1))
+      IF col & 1 THEN k = b & 15 ELSE k = b >> 4 FI
+      i = (f + r) * 13 + col
+      bk(i) = k
+      IF k == 9 THEN
+        bhp(i) = sh
+      ELSEIF k <> 0 AND k <> 10 THEN
+        bhp(i) = 1
+      FI
+      IF k <> 0 AND k <> 10 THEN bricks_left += 1 FI
+    OD
+    o += 7
+  OD
+RETURN
+
+PROC RedrawBrick(BYTE i)
+  BYTE tx, ty
+  tx = (i % 13) << 1
+  tx += 1
+  ty = i / 13
+  ty += 1
+  DrawCell(tx, ty)
+  DrawCell(tx + 1, ty)
+RETURN
+
+PROC Shine(BYTE i)
+  BYTE j
+  FOR j = 0 TO 7 DO
+    IF sh_t(j) == 0 THEN
+      sh_i(j) = i
+      sh_t(j) = 1
+      bshine(i) = 1
+      RedrawBrick(i)
+      RETURN
+    FI
+  OD
+RETURN
+
+; the shine runs its five frames, two frames each, and the brick is
+; itself again
+PROC Shines()
+  BYTE j, i, f
+  FOR j = 0 TO 7 DO
+    IF sh_t(j) THEN
+      sh_t(j) += 1
+      i = sh_i(j)
+      f = sh_t(j) >> 1
+      IF f > 5 THEN
+        sh_t(j) = 0
+        bshine(i) = 0
+      ELSE
+        bshine(i) = f
+      FI
+      IF bk(i) THEN RedrawBrick(i) FI
+    FI
+  OD
+RETURN
+
+; ----------------------------------------------------------------- the HUD
+PROC Lives()
+  BYTE i, c, r
+  FOR i = 0 TO 7 DO
+    c = 29 + (i & 3) * 2
+    r = 14 + (i >> 2)
+    IF i + 1 < lives THEN
+      Cell(c, r, T_LIFE, B_HUD)
+      Cell(c + 1, r, T_LIFE + 1, B_HUD)
+    ELSE
+      Cell(c, r, T_SPACE, B_WHITE)
+      Cell(c + 1, r, T_SPACE, B_WHITE)
+    FI
+  OD
+RETURN
+
+PROC Hud()
+  Text(29, 1, "HIGH SCORE", B_RED)
+  ShowScore(36, 2, hi10, B_WHITE)
+  Text(29, 5, "1UP", B_RED)
+  ShowScore(36, 6, score10, B_WHITE)
+  Text(29, 9, "ROUND", B_RED)
+  Cell(32, 10, T_SPACE, B_WHITE)
+  Number(33, 10, round, B_WHITE)
+  Lives()
+RETURN
+
+; points in tens: an extra Vaus at 20,000, at 60,000 and every 60,000 after
+PROC AddScore(CARD n)
+  score10 += n
+  IF score10 > hi10 THEN
+    hi10 = score10
+    ShowScore(36, 2, hi10, B_WHITE)
+  FI
+  ShowScore(36, 6, score10, B_WHITE)
+  IF score10 >= extend10 THEN
+    lives += 1
+    IF extend10 == 2000 THEN extend10 = 6000 ELSE extend10 += 6000 FI
+    Lives()
+  FI
+RETURN
+
+; ------------------------------------------------------------- the Vaus
+; Its cells are composed in a strip, a byte a pixel, 64 pixels wide and
+; 32 rows tall -- eight cells by four, which the widest frame, the
+; debris, needs -- and packed into tiles for the map to point at. The
+; background under it comes from a cache of the cells in rows 26-29,
+; built when the round's background is: each distinct cell once, its
+; pixels already in the Vaus bank's numbering.
+BYTE ARRAY vz_sb(2048)
+BYTE ARRAY vz_cache(3072)            ; 48 cells of 64 pixels: the background's, and the exit's three frames
+BYTE ARRAY vz_key(48)
+BYTE vz_nkey
+BYTE ARRAY vz_slot(112)              ; rows 26-29: each cell's place in the cache
+BYTE ARRAY vz_rm(32)                 ; a field colour's index in the Vaus bank: A, then B
+BYTE vz_split
+BYTE ARRAY vz_cov(112), vz_old(112)  ; the cells the Vaus covers, now and last time
+BYTE vz_set
+CARD vz_s, vz_d                      ; source and destination for the ASM below
+BYTE ARRAY vz_tile(32)
+
+; one cell of the cache of what is under the Vaus's rows: the
+; background, or the exit, whose tiles are in the Vaus's own numbering
+; already -- found among those read before, or read in from VRAM
+PROC BaseCell(BYTE tx, BYTE ty)
+  BYTE t, key, i, found, b, x, ab, own
+  CARD a, p
+  own = 0
+  ab = 0
+  IF ExitCell(tx, ty) THEN
+    own = 1
+    t = T_EXIT + ex_f * 5 + ty - 25
+    key = t
+  ELSE
+    t = T_FIELD + fn(ty * 28 + tx)
+    IF tx >= vz_split THEN ab = 16 FI
+    key = t | (ab << 3)
+  FI
+  found = 255
+  i = 0
+  WHILE i < vz_nkey DO
+    IF vz_key(i) == key THEN
+      found = i
+      i = vz_nkey
+    ELSE
+      i += 1
+    FI
+  OD
+  IF found == 255 THEN
+    found = vz_nkey
+    vz_key(found) = key
+    vz_nkey += 1
+    a = fpat >> 4                    ; the background's pattern bank; the exit's is 0
+    IF own THEN a = 0 FI
+    p = t
+    VRead(PAT_BASE + (a << 13) + (p << 5), vz_tile, 32)
+    p = found
+    p = p << 6
+    FOR b = 0 TO 31 DO
+      x = vz_tile(b)
+      IF own THEN
+        vz_cache(p) = x >> 4
+        vz_cache(p + 1) = x & 15
+      ELSE
+        vz_cache(p) = vz_rm(ab + (x >> 4))
+        vz_cache(p + 1) = vz_rm(ab + (x & 15))
+      FI
+      p += 2
+    OD
+  FI
+  vz_slot((ty - 26) * 28 + tx) = found
+RETURN
+
+; the whole cache, when a round's background comes in: 170,000 clocks,
+; more than a frame, so the exit's crackle refreshes its own four cells
+; with BaseCell instead (measured with sim/arkanoid.py profile)
+PROC BuildBase()
+  BYTE tx, ty
+  vz_nkey = 0
+  FOR ty = 26 TO 29 DO
+    FOR tx = 0 TO 27 DO BaseCell(tx, ty) OD
+  OD
+RETURN
+
+; 8 rows of 8 pixels from vz_s (packed) to vz_d (the strip)
+PROC CopyBase()
+  ASM
+    LDW  Y,[v_vz_s]
+    LDW  X,[v_vz_d]
+    MOV  R2,#8
+.r: LD   R0,[Y+0]
+    ST   [X+0],R0
+    LD   R0,[Y+1]
+    ST   [X+1],R0
+    LD   R0,[Y+2]
+    ST   [X+2],R0
+    LD   R0,[Y+3]
+    ST   [X+3],R0
+    LD   R0,[Y+4]
+    ST   [X+4],R0
+    LD   R0,[Y+5]
+    ST   [X+5],R0
+    LD   R0,[Y+6]
+    ST   [X+6],R0
+    LD   R0,[Y+7]
+    ST   [X+7],R0
+    ADDW Y,#8
+    ADDW X,#64
+    SUB  R2,#1
+    BNE  .r
+  ENDASM
+RETURN
+
+; a Vaus cell's shape onto the strip in black (index 1)
+PROC BlitShadow()
+  ASM
+    LDW  Y,[v_vz_s]
+    LDW  X,[v_vz_d]
+    MOV  R3,#1
+    MOV  R2,#8
+.r: LD   R0,[Y+0]
+    CALL .px
+    LD   R0,[Y+1]
+    CALL .px
+    LD   R0,[Y+2]
+    CALL .px
+    LD   R0,[Y+3]
+    CALL .px
+    ADDW Y,#4
+    ADDW X,#56
+    SUB  R2,#1
+    BNE  .r
+    BRA  .x
+.px: MOV R1,R0
+    AND  R1,#$F0
+    BEQ  .p1
+    ST   [X+0],R3
+.p1: AND R0,#$0F
+    BEQ  .p2
+    ST   [X+1],R3
+.p2: INCW X
+    INCW X
+    RET
+.x:
+  ENDASM
+RETURN
+
+; a Vaus cell's colours onto the strip, 0 see-through
+PROC BlitColour()
+  ASM
+    LDW  Y,[v_vz_s]
+    LDW  X,[v_vz_d]
+    MOV  R2,#8
+.r: LD   R0,[Y+0]
+    CALL .px
+    LD   R0,[Y+1]
+    CALL .px
+    LD   R0,[Y+2]
+    CALL .px
+    LD   R0,[Y+3]
+    CALL .px
+    ADDW Y,#4
+    ADDW X,#56
+    SUB  R2,#1
+    BNE  .r
+    BRA  .x
+.px: MOV R1,R0
+    AND  R1,#$F0
+    BEQ  .p1
+    SWAP R1
+    ST   [X+0],R1
+.p1: AND R0,#$0F
+    BEQ  .p2
+    ST   [X+1],R0
+.p2: INCW X
+    INCW X
+    RET
+.x:
+  ENDASM
+RETURN
+
+; 8 rows of 8 strip pixels from vz_s packed into VRAM at VRAM_ADDR
+PROC Pack()
+  ASM
+    LDW  Y,[v_vz_s]
+    MOV  R2,#8
+.r: LD   R0,[Y+0]
+    SWAP R0
+    LD   R1,[Y+1]
+    OR   R0,R1
+    ST   [v_VRAM_DATA],R0
+    LD   R0,[Y+2]
+    SWAP R0
+    LD   R1,[Y+3]
+    OR   R0,R1
+    ST   [v_VRAM_DATA],R0
+    LD   R0,[Y+4]
+    SWAP R0
+    LD   R1,[Y+5]
+    OR   R0,R1
+    ST   [v_VRAM_DATA],R0
+    LD   R0,[Y+6]
+    SWAP R0
+    LD   R1,[Y+7]
+    OR   R0,R1
+    ST   [v_VRAM_DATA],R0
+    ADDW Y,#64
+    SUB  R2,#1
+    BNE  .r
+  ENDASM
+RETURN
+
+; a cell the Vaus left, back to what is there
+PROC Uncover(BYTE cc)
+  BYTE tx, ty
+  tx = cc % 28
+  ty = cc / 28
+  DrawCell(tx, ty + 26)
+RETURN
+
+; DrawVaus(f, x): frame f with its anchor at x -- the background under
+; it, its shadow, the Vaus, packed into the set of slots the screen is
+; not showing, the map pointed at them, and what it no longer covers
+; given back. Nothing of it right of the field is drawn, which is how it
+; goes into the exit.
+PROC DrawVaus(BYTE f, INT x)
+  BYTE wc, hc, sh, tx0, ty0, ncx, ncy, i, j, a, b, s, n, cc, bank, pass
+  INT ox, oy, px0
+  CARD p, q, c, t
+  p = vf_off(f)
+  wc = vf_data(p)
+  hc = vf_data(p + 1)
+  ox = vf_data(p + 2)
+  IF ox > 127 THEN ox -= 256 FI
+  oy = vf_data(p + 3)
+  IF oy > 127 THEN oy -= 256 FI
+  px0 = x + ox
+  IF px0 < 0 THEN px0 = 0 FI
+  FOR i = 0 TO 111 DO vz_cov(i) = 0 OD
+  IF px0 < 224 THEN
+    tx0 = px0 >> 3
+    sh = px0 & 7
+    ty0 = 27
+    IF oy < 0 THEN ty0 = 26 FI
+    ncx = (sh + (wc << 3) + 11) >> 3
+    ncy = ((hc << 3) + 11) >> 3
+    IF ty0 + ncy > 30 THEN ncy = 30 - ty0 FI
+    IF tx0 + ncx > 28 THEN ncx = 28 - tx0 FI
+    FOR j = 0 TO ncy - 1 DO
+      FOR i = 0 TO ncx - 1 DO
+        c = vz_slot((ty0 + j - 26) * 28 + tx0 + i)
+        vz_s = vz_cache + (c << 6)
+        c = j
+        vz_d = vz_sb + (c << 9) + (i << 3)
+        CopyBase()
+      OD
+    OD
+    FOR pass = 0 TO 1 DO
+      q = p + 4
+      FOR b = 0 TO hc - 1 DO
+        FOR a = 0 TO wc - 1 DO
+          t = vf_data(q)
+          q += 1
+          vz_s = vaus_cells + (t << 5)
+          c = b
+          vz_d = vz_sb + (c << 9) + (a << 3) + sh
+          IF pass == 0 THEN
+            vz_d += 260
+            BlitShadow()
+          ELSE
+            BlitColour()
+          FI
+        OD
+      OD
+    OD
+    s = vz_set * NSLOT
+    n = 0
+    FOR j = 0 TO ncy - 1 DO
+      FOR i = 0 TO ncx - 1 DO
+        cc = (ty0 + j - 26) * 28 + tx0 + i
+        vz_cov(cc) = 1
+        t = T_VAUS + s + n
+        VRAM_ADDR = PAT_BASE + (t << 5)
+        VRAM_STEP = 1
+        c = j
+        vz_s = vz_sb + (c << 9) + (i << 3)
+        Pack()
+        bank = B_VB
+        IF tx0 + i < vz_split THEN bank = B_VA FI
+        Cell(tx0 + i, ty0 + j, t, bank)
+        n += 1
+      OD
+    OD
+  FI
+  FOR i = 0 TO 111 DO
+    IF vz_old(i) AND vz_cov(i) == 0 THEN Uncover(i) FI
+    vz_old(i) = vz_cov(i)
+  OD
+  vz_set = 1 - vz_set
+RETURN
+
+; the Vaus gone: every cell it covered back to what is there
+PROC EraseVaus()
+  BYTE i
+  FOR i = 0 TO 111 DO
+    IF vz_old(i) THEN Uncover(i) FI
+    vz_old(i) = 0
+  OD
+  vshown = 255
+RETURN
+
+; its body's extent, for the ball, from its form
+PROC VausExtent()
+  IF vform == 2 THEN
+    vleft = vx - 8
+    vright = vx + 39
+  ELSE
+    vleft = vx
+    vright = vx + 31
+  FI
+RETURN
+
+; a morph plays its frames two at a time; one away from normal and back
+; is a second stage after the first
+PROC StartMorph(BYTE f0, BYTE n, BYTE rev)
+  mo_f0 = f0
+  mo_n = n
+  mo_rev = rev
+  mo_i = 0
+  mo_t = 0
+RETURN
+
+PROC Forward(BYTE nf)
+  IF nf == 2 THEN StartMorph(VF_GROW, VN_GROW, 0) ELSE StartMorph(VF_ARM, VN_ARM, 0) FI
+  vform = nf
+RETURN
+
+PROC SetForm(BYTE nf)
+  IF nf == vform THEN RETURN FI
+  mo_next = 255
+  IF vform == 2 THEN
+    StartMorph(VF_GROW, VN_GROW, 1)
+    vform = 0
+    IF nf THEN mo_next = nf FI
+  ELSEIF vform == 1 THEN
+    StartMorph(VF_ARM, VN_ARM, 1)
+    vform = 0
+    IF nf THEN mo_next = nf FI
+  ELSE
+    Forward(nf)
+  FI
+RETURN
+
+PROC MorphStep()
+  IF mo_n == 0 THEN RETURN FI
+  mo_t += 1
+  IF mo_t < 2 THEN RETURN FI
+  mo_t = 0
+  mo_i += 1
+  IF mo_i >= mo_n THEN
+    mo_n = 0
+    IF mo_next <> 255 THEN
+      Forward(mo_next)
+      mo_next = 255
+    FI
+  FI
+RETURN
+
+; the frame its form, its lights or its morph want; drawn when that or
+; where it is changed
+PROC ShowVaus()
+  BYTE f
+  IF mo_n THEN
+    IF mo_rev THEN f = mo_f0 + mo_n - 1 - mo_i ELSE f = mo_f0 + mo_i FI
+  ELSE
+    f = (vanim >> 3) % 6
+    IF vform == 1 THEN f += VF_LASER ELSEIF vform == 2 THEN f += VF_BIG ELSE f += VF_NORMAL FI
+  FI
+  IF f <> vshown OR vx <> vshown_x THEN
+    DrawVaus(f, vx)
+    vshown = f
+    vshown_x = vx
+  FI
+RETURN
+
+PROC MoveVaus()
+  INT s, lo, hi
+  BYTE l, r
+  l = KeyHeld(KEY_LEFT)
+  r = KeyHeld(KEY_RIGHT)
+  IF l OR r THEN
+    IF vmove_t < 24 THEN vmove_t += 1 FI
+  ELSE
+    vmove_t = 0
+  FI
+  s = 2 + (vmove_t >> 3)
+  IF l THEN vx -= s FI
+  IF r THEN vx += s FI
+  lo = 8
+  hi = FIELD_R - 31
+  IF vform == 2 THEN
+    lo = 16
+    hi = FIELD_R - 39
+  FI
+  IF ex_on THEN hi = 224 FI
+  IF vx < lo THEN vx = lo FI
+  IF vx > hi THEN vx = hi FI
+  VausExtent()
+RETURN
+
+; --------------------------------------------------------------- sound
+; Effects on voices 3-5, made on the voices: the pack has the board's
+; music and no effects, so these are this port's own (docs/14-demos.md).
+BYTE ARRAY sfx_t(3)
+CARD sfx_pitch
+INT sfx_step
+
+PROC Sfx(BYTE n)
+  IF n == 0 THEN
+    Sound(3, 1760, 12, 0)            ; a brick
+    sfx_t(0) = 3
+  ELSEIF n == 1 THEN
+    Sound(4, 880, 12, 0)             ; the Vaus
+    sfx_t(1) = 3
+  ELSEIF n == 2 THEN
+    Sound(3, 2640, 12, 0)            ; silver and gold
+    sfx_t(0) = 5
+  ELSEIF n == 3 THEN
+    sfx_pitch = 2000                 ; the Vaus destroyed: noise falling away
+    sfx_step = -36
+    Sound(5, sfx_pitch, 15, 1)
+    sfx_t(2) = 50
+  ELSEIF n == 4 THEN
+    Sound(4, 1320, 12, 0)            ; a capsule caught
+    sfx_t(1) = 8
+  ELSEIF n == 5 THEN
+    Sound(3, 3520, 9, 0)             ; the laser
+    sfx_t(0) = 2
+  ELSEIF n == 6 THEN
+    sfx_pitch = 4000                 ; an enemy going up
+    sfx_step = -300
+    Sound(5, sfx_pitch, 12, 1)
+    sfx_t(2) = 12
+  FI
+RETURN
+
+PROC SfxStep()
+  BYTE v
+  FOR v = 0 TO 2 DO
+    IF sfx_t(v) THEN
+      sfx_t(v) -= 1
+      IF v == 2 AND sfx_t(2) THEN
+        sfx_pitch += sfx_step
+        Sound(5, sfx_pitch, (sfx_t(2) >> 2) + 1, 1)
+      ELSEIF v == 1 AND sfx_t(1) > 3 THEN
+        Sound(4, 2640 - sfx_t(1) * 160, 12, 0)
+      FI
+      IF sfx_t(v) == 0 THEN Silence(3 + v) FI
+    FI
+  OD
+RETURN
+
+; the board's music, a frame at a time on voices 0-2 (the stream's form
+; is in the art file)
+BYTE POINTER mp
+BYTE mwait, mon
+
+PROC MusicStart(BYTE POINTER t)
+  mp = t
+  mwait = *mp
+  mp += 1
+  mon = 1
+RETURN
+
+PROC MusicStep()
+  BYTE m, c, lo, hi, vol
+  CARD inc
+  IF mon == 0 THEN RETURN FI
+  WHILE mwait == 0 DO
+    m = *mp
+    mp += 1
+    IF m == $80 THEN
+      mon = 0
+      FOR c = 0 TO 2 DO Silence(c) OD
+      RETURN
+    FI
+    FOR c = 0 TO 2 DO
+      IF m & (1 << c) THEN
+        lo = *mp
+        mp += 1
+        hi = *mp
+        mp += 1
+        vol = *mp
+        mp += 1
+        inc = hi
+        inc = (inc << 8) | lo
+        IF vol THEN Sound(c, inc, vol, 0) ELSE Silence(c) FI
+      FI
+    OD
+    mwait = *mp
+    mp += 1
+  OD
+  mwait -= 1
+RETURN
+
+PROC Quiet()
+  BYTE v
+  FOR v = 0 TO 7 DO Silence(v) OD
+  mon = 0
+  FOR v = 0 TO 2 DO sfx_t(v) = 0 OD
+RETURN
+
+; a frame of waiting, with the sound going on
+PROC Tick()
+  WaitVBlank()
+  KeyPoll()
+  MusicStep()
+  SfxStep()
+RETURN
+
+; -------------------------------------------------------------- the ball
+PROC SetVel(BYTE b, BYTE angle, BYTE left, BYTE up)
+  CARD s
+  INT dx, dy
+  s = spd_tab(bspeed) >> 2
+  dx = (s * cos_tab(angle)) >> 6
+  dy = (s * sin_tab(angle)) >> 6
+  IF left THEN dx = -dx FI
+  IF up THEN dy = -dy FI
+  bdx(b) = dx
+  bdy(b) = dy
+  bang(b) = angle
+RETURN
+
+; every ball at the speed level, each going the way it was
+PROC Revel()
+  BYTE b
+  FOR b = 0 TO 2 DO
+    IF bon(b) THEN SetVel(b, bang(b), bdx(b) < 0, bdy(b) < 0) FI
+  OD
+RETURN
+
+PROC SpeedUp()
+  IF bspeed >= 7 THEN RETURN FI
+  bspeed += 1
+  Revel()
+RETURN
+
+FUNC BYTE BrickUnder(INT x, INT y)
+  CARD i
+  IF x < 8 OR x > FIELD_R OR y < 8 OR y >= 152 THEN RETURN (0) FI
+  i = ((y - 8) >> 3) * 13 + ((x - 8) >> 4)
+  IF bk(i) THEN RETURN (i + 1) FI
+RETURN (0)
+
+; the first brick under a corner of the ball at (x, y), plus one; 0 none
+FUNC BYTE BallBricks(INT x, INT y)
+  BYTE h
+  h = BrickUnder(x, y)
+  IF h THEN RETURN (h) FI
+  h = BrickUnder(x + 4, y)
+  IF h THEN RETURN (h) FI
+  h = BrickUnder(x, y + 3)
+  IF h THEN RETURN (h) FI
+RETURN (BrickUnder(x + 4, y + 3))
+
+; -------------------------------------------------------------- capsules
+; one a brick in five, while one ball is in play and none is falling;
+; the kinds weighted as the arcade's are said to be, B and P half as
+; likely as the others (docs/14-demos.md), and never the power the Vaus
+; already has
+PROC DropCapsule(BYTE i)
+  BYTE k, r
+  IF cap_on OR nballs > 1 THEN RETURN FI
+  IF Rnd(5) THEN RETURN FI
+  r = Rnd(12)
+  k = r >> 1                         ; 0-9: S C L E D, two each
+  IF r >= 10 THEN k = r - 5 FI       ; 10 B, 11 P
+  IF (k == 1 AND vpower == 1) OR (k == 2 AND vpower == 2) OR (k == 3 AND vpower == 3) THEN
+    k = Rnd(5)
+  FI
+  cap_k = k
+  cap_on = 1
+  cap_t = 0
+  cap_x = (i % 13) * 16 + 8
+  cap_y = (i / 13) * 8 + 8
+  SetPalette(cap_pal + (k << 2), (B_SPR << 4) + 11, 2)
+RETURN
+
+PROC HideCapsule()
+  cap_on = 0
+  SpriteHide(SP_CAP)
+  SpriteHide(SP_CAP + 1)
+RETURN
+
+; the ball that is held goes, at the angle its place on the Vaus gives
+PROC Release()
+  BYTE b, zone
+  INT w, rel
+  b = bheld_b
+  bheld = 0
+  w = vright - vleft + 1
+  rel = vx + bhold + 2 - vleft
+  IF rel < 0 THEN rel = 0 FI
+  IF rel >= w THEN rel = w - 1 FI
+  zone = (rel * 6) / w
+  IF zone < 3 THEN SetVel(b, zone, 1, 1) ELSE SetVel(b, 5 - zone, 0, 1) FI
+RETURN
+
+; the ball in play splits in three, at the other two angles
+PROC Split()
+  BYTE b, s, k
+  s = 255
+  FOR b = 0 TO 2 DO
+    IF bon(b) AND s == 255 THEN s = b FI
+  OD
+  IF s == 255 THEN RETURN FI
+  IF bheld THEN Release() FI
+  k = 1
+  FOR b = 0 TO 2 DO
+    IF bon(b) == 0 THEN
+      bon(b) = 1
+      bx(b) = bx(s)
+      by(b) = by(s)
+      SetVel(b, (bang(s) + k) % 3, bdx(s) < 0, bdy(s) < 0)
+      k += 1
+    FI
+  OD
+  nballs = 3
+RETURN
+
+PROC OpenExit()
+  ex_on = 1
+  ex_t = 0
+  ex_f = 255
+RETURN
+
+PROC Power(BYTE k)
+  IF k == 0 THEN
+    bspeed = bbase                   ; S: slow again
+    Revel()
+  ELSEIF k == 1 THEN
+    SetForm(0)                       ; C: catch
+    vpower = 1
+  ELSEIF k == 2 THEN
+    SetForm(1)                       ; L: laser
+    vpower = 2
+  ELSEIF k == 3 THEN
+    SetForm(2)                       ; E: enlarge
+    vpower = 3
+  ELSEIF k == 4 THEN
+    Split()                          ; D: disruption
+  ELSEIF k == 5 THEN
+    OpenExit()                       ; B: break
+  ELSE
+    lives += 1                       ; P: player extend
+    Lives()
+  FI
+RETURN
+
+PROC MoveCapsule()
+  BYTE f, c
+  IF cap_on == 0 THEN RETURN FI
+  cap_t += 1
+  cap_y += 1
+  IF cap_y + 8 >= VAUS_Y AND cap_y <= VAUS_Y + 7 AND cap_x + 15 >= vleft AND cap_x <= vright THEN
+    HideCapsule()
+    AddScore(100)
+    Sfx(4)
+    Power(cap_k)
+    RETURN
+  FI
+  IF cap_y > 240 THEN
+    HideCapsule()
+    RETURN
+  FI
+  f = (cap_t >> 2) & 7
+  c = cap_cells((cap_k << 4) + (f << 1))
+  SetSprite(SP_CAP, cap_x << 1, cap_y << 1, SPR_COMMON + c * 128, 1, 0)
+  c = cap_cells((cap_k << 4) + (f << 1) + 1)
+  SetSprite(SP_CAP + 1, (cap_x + 8) << 1, cap_y << 1, SPR_COMMON + c * 128, 1, 0)
+RETURN
+
+; --------------------------------------------------------------- enemies
+PROC LoadEnemy(BYTE t)
+  IF t == 0 THEN
+    Stream(D_ENEMY_CONE, DH_ENEMY_CONE, SPR_ENEMY, N_ENEMY_CONE)
+    en_tab = en_cone
+    en_nf = EN_CONE_FRAMES
+  ELSEIF t == 1 THEN
+    Stream(D_ENEMY_PYRAMID, DH_ENEMY_PYRAMID, SPR_ENEMY, N_ENEMY_PYRAMID)
+    en_tab = en_pyramid
+    en_nf = EN_PYRAMID_FRAMES
+  ELSEIF t == 2 THEN
+    Stream(D_ENEMY_MOLECULE, DH_ENEMY_MOLECULE, SPR_ENEMY, N_ENEMY_MOLECULE)
+    en_tab = en_molecule
+    en_nf = EN_MOLECULE_FRAMES
+  ELSE
+    Stream(D_ENEMY_CUBE, DH_ENEMY_CUBE, SPR_ENEMY, N_ENEMY_CUBE)
+    en_tab = en_cube
+    en_nf = EN_CUBE_FRAMES
+  FI
+  SetPalette(enemy_pal + t * 8, (B_SPR << 4) + 7, 4)
+RETURN
+
+FUNC BYTE EnemyFree(INT x, INT y)
+  IF x < 8 OR x > FIELD_R - 15 THEN RETURN (0) FI
+  IF BrickUnder(x, y) OR BrickUnder(x + 15, y) OR BrickUnder(x + 8, y) THEN RETURN (0) FI
+  IF BrickUnder(x, y + 15) OR BrickUnder(x + 15, y + 15) OR BrickUnder(x + 8, y + 15) THEN RETURN (0) FI
+RETURN (1)
+
+; the enemy about at (x, y), plus one; 0 none
+FUNC BYTE EnemyAt(INT x, INT y)
+  BYTE e
+  FOR e = 0 TO 2 DO
+    IF en_on(e) == 1 AND x >= en_x(e) AND x <= en_x(e) + 15 AND y >= en_y(e) AND y <= en_y(e) + 15 THEN
+      RETURN (e + 1)
+    FI
+  OD
+RETURN (0)
+
+PROC Burst(BYTE e)
+  en_on(e) = 2
+  en_t(e) = 0
+  AddScore(10)
+  Sfx(6)
+RETURN
+
+; down mostly, now and then across, seldom up: the arcade's enemies
+; drift down through the bricks' gaps, and how exactly they choose is
+; not published (docs/14-demos.md)
+PROC NewHeading(BYTE e)
+  BYTE r
+  r = Rnd(8)
+  en_dx(e) = Rnd(3)
+  IF r < 5 THEN
+    en_dy(e) = 2
+  ELSEIF r < 7 THEN
+    en_dy(e) = 1
+  ELSE
+    en_dy(e) = 0
+  FI
+  IF en_dx(e) == 1 AND en_dy(e) == 1 THEN en_dy(e) = 2 FI
+RETURN
+
+PROC HideEnemy(BYTE e)
+  BYTE q
+  FOR q = 0 TO 3 DO SpriteHide(SP_ENEMY + (e << 2) + q) OD
+RETURN
+
+PROC MoveEnemy(BYTE e)
+  INT nx, ny
+  BYTE tries
+  IF en_on(e) == 0 THEN RETURN FI
+  en_t(e) += 1
+  IF en_on(e) == 2 THEN
+    IF en_t(e) >= 24 THEN
+      en_on(e) = 0
+      HideEnemy(e)
+    FI
+    RETURN
+  FI
+  IF en_t(e) & 1 THEN RETURN FI
+  IF en_t(e) & 62 == 0 THEN NewHeading(e) FI
+  tries = 0
+  DO
+    nx = en_x(e) + en_dx(e) - 1
+    ny = en_y(e) + en_dy(e) - 1
+    IF EnemyFree(nx, ny) THEN
+      en_x(e) = nx
+      en_y(e) = ny
+      EXIT
+    FI
+    NewHeading(e)
+    tries += 1
+  UNTIL tries > 4 OD
+  IF en_y(e) > 236 THEN
+    en_on(e) = 0
+    HideEnemy(e)
+    RETURN
+  FI
+  IF en_y(e) + 15 >= VAUS_Y AND en_y(e) <= VAUS_Y + 7 AND en_x(e) + 15 >= vleft AND en_x(e) <= vright THEN
+    Burst(e)
+  FI
+RETURN
+
+PROC DrawEnemy(BYTE e)
+  BYTE f, q, id, c
+  CARD base, x, y
+  BYTE POINTER p
+  IF en_on(e) == 0 THEN RETURN FI
+  id = SP_ENEMY + (e << 2)
+  x = en_x(e)
+  y = en_y(e)
+  IF en_on(e) == 2 THEN
+    f = en_t(e) >> 2
+    IF f > 5 THEN f = 5 FI
+    p = burst_cells + (f << 2)
+    base = SPR_COMMON
+  ELSE
+    f = (en_t(e) >> 2) % en_nf
+    p = en_tab + (f << 2)
+    base = SPR_ENEMY
+  FI
+  FOR q = 0 TO 3 DO
+    c = *p
+    p += 1
+    SetSprite(id + q, (x + ((q & 1) << 3)) << 1, (y + ((q >> 1) << 3)) << 1, base + c * 128, 1, 0)
+  OD
+RETURN
+
+; a gate's frames: open over five, the enemy out, shut over five
+PROC GateStep()
+  BYTE tx, c, f, e
+  gt_t += 1
+  IF gt_t < 3 THEN RETURN FI
+  gt_t = 0
+  gt_state += 1
+  tx = GATE_L
+  IF gt_side THEN tx = GATE_R FI
+  IF gt_state <= 5 THEN
+    f = gt_state
+  ELSEIF gt_state == 6 THEN
+    f = 5
+    FOR e = 0 TO 2 DO
+      IF en_on(e) == 0 THEN
+        en_on(e) = 1
+        en_x(e) = tx * 8 + 8
+        en_y(e) = 0
+        en_t(e) = 0
+        en_dx(e) = 1
+        en_dy(e) = 2
+        e = 3
+      FI
+    OD
+  ELSEIF gt_state <= 11 THEN
+    f = 11 - gt_state
+  ELSE
+    gt_state = 0
+    f = 0
+  FI
+  IF f == 0 THEN
+    FOR c = 0 TO 3 DO DrawCell(tx + c, 0) OD
+  ELSE
+    FOR c = 0 TO 3 DO Cell(tx + c, 0, T_GATE + (f << 2) + c, B_FIELD) OD
+  FI
+RETURN
+
+PROC EnemyStep()
+  BYTE e, n
+  IF gt_state THEN
+    GateStep()
+  ELSEIF en_timer THEN
+    en_timer -= 1
+  ELSE
+    n = 0
+    FOR e = 0 TO 2 DO
+      IF en_on(e) THEN n += 1 FI
+    OD
+    IF n < 3 THEN
+      gt_side = 0
+      IF vx + 16 >= 112 THEN gt_side = 1 FI
+      gt_state = 1
+      gt_t = 0
+    FI
+    en_timer = 360
+  FI
+  FOR e = 0 TO 2 DO MoveEnemy(e) OD
+RETURN
+
+PROC ClearEnemies()
+  BYTE e
+  FOR e = 0 TO 2 DO
+    en_on(e) = 0
+    HideEnemy(e)
+  OD
+  IF gt_state THEN
+    gt_state = 0
+    FOR e = 0 TO 3 DO
+      DrawCell(GATE_L + e, 0)
+      DrawCell(GATE_R + e, 0)
+    OD
+  FI
+RETURN
+
+; ----------------------------------------------------------------- beams
+PROC Fire()
+  BYTE j
+  IF vform <> 1 OR mo_n OR bm_cool THEN RETURN FI
+  FOR j = 0 TO 4 STEP 2 DO
+    IF bm_on(j) == 0 AND bm_on(j + 1) == 0 THEN
+      bm_on(j) = 1
+      bm_x(j) = vx + 3
+      bm_y(j) = VAUS_Y - 8
+      bm_on(j + 1) = 1
+      bm_x(j + 1) = vx + 26
+      bm_y(j + 1) = VAUS_Y - 8
+      bm_cool = 12
+      Sfx(5)
+      RETURN
+    FI
+  OD
+RETURN
+
+PROC MoveBeams()
+  BYTE j, h, e
+  IF bm_cool THEN bm_cool -= 1 FI
+  FOR j = 0 TO 5 DO
+    IF bm_on(j) THEN
+      bm_y(j) -= 6
+      IF bm_y(j) < 8 THEN
+        bm_on(j) = 0
+      ELSE
+        h = BrickUnder(bm_x(j) + 1, bm_y(j))
+        IF h THEN
+          HitBrick(h - 1)
+          bm_on(j) = 0
+        ELSE
+          e = EnemyAt(bm_x(j) + 1, bm_y(j))
+          IF e THEN
+            Burst(e - 1)
+            bm_on(j) = 0
+          FI
+        FI
+      FI
+      IF bm_on(j) THEN
+        SetSprite(SP_BEAM + j, bm_x(j) << 1, bm_y(j) << 1, SPR_COMMON + SC_BEAM * 128, 1, 0)
+      ELSE
+        SpriteHide(SP_BEAM + j)
+      FI
+    FI
+  OD
+RETURN
+
+PROC ClearBeams()
+  BYTE j
+  FOR j = 0 TO 5 DO
+    bm_on(j) = 0
+    SpriteHide(SP_BEAM + j)
+  OD
+RETURN
+
+; ------------------------------------------------------------- the ball
+PROC HitBrick(BYTE i)
+  BYTE k, tx, ty
+  k = bk(i)
+  bhits += 1
+  IF bhits & 7 == 0 THEN SpeedUp() FI
+  IF k == 10 THEN
+    Shine(i)
+    Sfx(2)
+    RETURN
+  FI
+  bhp(i) -= 1
+  IF bhp(i) THEN
+    Shine(i)
+    Sfx(2)
+    RETURN
+  FI
+  bk(i) = 0
+  bricks_left -= 1
+  IF k == 9 THEN AddScore(5 * round) ELSE AddScore(pts(k)) FI
+  tx = (i % 13) << 1
+  tx += 1
+  ty = i / 13
+  ty += 1
+  DrawCell(tx, ty)
+  DrawCell(tx + 1, ty)
+  DrawCell(tx + 1, ty + 1)
+  DrawCell(tx + 2, ty + 1)
+  Sfx(0)
+  DropCapsule(i)
+RETURN
+
+; off the Vaus at the angle where it landed: six zones across it, the
+; outer ones shallow and the inner ones steep -- or held, with a catch
+PROC VausBounce(BYTE b, INT x)
+  INT rel, w
+  BYTE zone
+  CARD y
+  y = VAUS_Y - 4
+  by(b) = y << 8
+  IF vpower == 1 AND bheld == 0 THEN
+    bheld = 1
+    bheld_b = b
+    bhold = x - vx
+    bhold_t = 0
+    Sfx(1)
+    RETURN
+  FI
+  w = vright - vleft + 1
+  rel = x + 2 - vleft
+  IF rel < 0 THEN rel = 0 FI
+  IF rel >= w THEN rel = w - 1 FI
+  zone = (rel * 6) / w
+  IF zone < 3 THEN SetVel(b, zone, 1, 1) ELSE SetVel(b, 5 - zone, 0, 1) FI
+  Sfx(1)
+RETURN
+
+PROC MoveBall(BYTE b)
+  CARD nb
+  INT nx, ny, x, oy
+  BYTE h
+  IF bon(b) == 0 THEN RETURN FI
+  IF bheld AND bheld_b == b THEN
+    nb = vx + bhold
+    bx(b) = nb << 8
+    nb = VAUS_Y - 4
+    by(b) = nb << 8
+    RETURN
+  FI
+  ; across first, then down: a brick struck on its side turns the ball
+  ; across, on its top or bottom turns it up or down
+  nb = bx(b) + bdx(b)
+  nx = nb >> 8
+  IF nx < 8 OR nx > FIELD_R - 4 THEN
+    bdx(b) = -bdx(b)
+  ELSE
+    h = BallBricks(nx, by(b) >> 8)
+    IF h THEN
+      bdx(b) = -bdx(b)
+      HitBrick(h - 1)
+    ELSEIF DohUnder(nx, by(b) >> 8) THEN
+      bdx(b) = -bdx(b)
+      DohHit()
+    ELSE
+      bx(b) = nb
+    FI
+  FI
+  nb = by(b) + bdy(b)
+  ny = nb >> 8
+  x = bx(b) >> 8
+  oy = by(b) >> 8
+  IF ny < 8 THEN
+    bdy(b) = -bdy(b)
+    IF bceil == 0 THEN
+      bceil = 1
+      SpeedUp()
+    FI
+  ELSE
+    h = BallBricks(x, ny)
+    IF h THEN
+      bdy(b) = -bdy(b)
+      HitBrick(h - 1)
+    ELSEIF DohUnder(x, ny) THEN
+      bdy(b) = -bdy(b)
+      DohHit()
+    ELSEIF bdy(b) > 0 AND ny + 4 > VAUS_Y AND oy + 4 <= VAUS_Y AND x + 4 >= vleft AND x <= vright THEN
+      VausBounce(b, x)
+    ELSE
+      by(b) = nb
+      IF ny > 236 THEN
+        bon(b) = 0
+        nballs -= 1
+        SpriteHide(SP_BALL + b)
+        SpriteHide(SP_SHADOW + b)
+        RETURN
+      FI
+    FI
+  FI
+  h = EnemyAt(x + 2, (by(b) >> 8) + 2)
+  IF h THEN
+    Burst(h - 1)
+    bdy(b) = -bdy(b)
+  FI
+RETURN
+
+PROC DrawBalls()
+  BYTE b
+  CARD x, y
+  FOR b = 0 TO 2 DO
+    IF bon(b) THEN
+      x = bx(b) >> 8
+      y = by(b) >> 8
+      SetSprite(SP_BALL + b, x << 1, y << 1, SPR_COMMON + SC_BALL * 128, 1, 0)
+      SetSprite(SP_SHADOW + b, (x + 4) << 1, (y + 4) << 1, SPR_COMMON + SC_SHADOW * 128, 1, 0)
+    FI
+  OD
+RETURN
+
+PROC HideBalls()
+  BYTE b
+  FOR b = 0 TO 2 DO
+    bon(b) = 0
+    SpriteHide(SP_BALL + b)
+    SpriteHide(SP_SHADOW + b)
+  OD
+RETURN
+
+; ------------------------------------------------------------- the exit
+PROC ExitStep()
+  BYTE f, r
+  IF ex_on == 0 THEN RETURN FI
+  ex_t += 1
+  f = (ex_t >> 3) % 3
+  IF f <> ex_f THEN
+    ex_f = f
+    FOR r = 25 TO 29 DO DrawCell(27, r) OD
+    FOR r = 26 TO 29 DO BaseCell(27, r) OD
+    vshown = 255
+  FI
+RETURN
+
+PROC CloseExit()
+  BYTE r
+  IF ex_on == 0 THEN RETURN FI
+  ex_on = 0
+  FOR r = 25 TO 29 DO DrawCell(27, r) OD
+  FOR r = 26 TO 29 DO BaseCell(27, r) OD
+RETURN
+
+; ------------------------------------------------------------------- DOH
+; Round 33. DOH's face is cells DOH_TX.. x DOH_TY.. over his round's
+; background; the ball bounces off him as off a brick, sixteen hits end
+; him, and every few seconds his mouth opens and three shots come at the
+; Vaus a third of a second apart, each aimed where the Vaus was when it
+; left. How often and how fast are this port's choice: the arcade's
+; numbers are not published (docs/14-demos.md).
+CONST B_DOH = 7                      ; his palette bank
+CONST B_WIRE = 8                     ; his wireframe's
+CONST SP_SHOT = 26                   ; his three shots
+CONST DOH_L = 82                     ; his face, in pixels
+CONST DOH_R = 143
+CONST DOH_T = 40
+CONST DOH_B = 135
+BYTE doh_on, doh_hits, doh_state, doh_t, doh_frame, doh_look, doh_fired, shot_hit, spr_dirty
+BYTE ARRAY dsh_on(3), dsh_t(3)
+CARD ARRAY dsh_x(3), dsh_y(3)        ; 256ths of a pixel
+INT ARRAY dsh_dx(3), dsh_dy(3)
+
+; rows r0-r1 of his frame f (0-3, the mouth opening) from his tiles, or
+; of the wireframe w (1 or 2)
+PROC DohCells(BYTE f, BYTE w, BYTE r0, BYTE r1)
+  BYTE tx, ty
+  CARD i
+  FOR ty = r0 TO r1 DO
+    FOR tx = 0 TO DOH_W - 1 DO
+      i = ty * DOH_W + tx
+      IF w THEN
+        Cell(DOH_TX + tx, DOH_TY + ty, wire_maps((w - 1) * 96 + i), B_WIRE | $30)
+      ELSE
+        Cell(DOH_TX + tx, DOH_TY + ty, doh_maps(f * 96 + i), B_DOH | $20)
+      FI
+    OD
+  OD
+RETURN
+
+PROC DrawDoh(BYTE f)
+  doh_frame = f
+  DohCells(f, 0, 0, DOH_H - 1)
+RETURN
+
+; the sheet's hit and dying frames: a normal frame, his colour DOH_RED
+; changed -- a palette write, no tiles of their own
+PROC DohLook(BYTE n)
+  DrawDoh(look_base(n))
+  SetColor((B_DOH << 4) + DOH_RED, look_col(n))
+RETURN
+
+PROC DohPlain()
+  SetColor((B_DOH << 4) + DOH_RED, $A00)
+RETURN
+
+; his round in: the background over pattern bank 1, DOH over bank 2,
+; his wireframe over bank 3 -- which is the capsules' sprite patterns,
+; free here, where none falls, and streamed back by the next game
+PROC LoadDoh()
+  CARD c
+  BYTE i
+  Stream(D_DOHBG, DH_DOHBG, PAT_BASE + $2000, N_DOHBG)
+  Stream(D_DOH, DH_DOH, PAT_BASE + $4000, N_DOH)
+  Stream(D_WIRE, DH_WIRE, PAT_BASE + $6000, N_WIRE)
+  spr_dirty = 1
+  SetPalette(doh_bgpal, B_FIELD << 4, 16)
+  SetPalette(doh_pal, B_DOH << 4, 16)
+  SetPalette(wire_pal, B_WIRE << 4, 16)
+  SetPalette(vb_pal + 320, B_VA << 4, 16)
+  SetPalette(vb_pal + 352, B_VB << 4, 16)
+  FOR i = 0 TO 31 DO vz_rm(i) = vb_map(160 + i) OD
+  vz_split = vb_split(5)
+  FOR c = 0 TO 839 DO
+    fn(c) = doh_bgmap(c)
+    fd(c) = fn(c)
+  OD
+  fpat = $10
+  fk = 5
+RETURN
+
+FUNC BYTE DohUnder(INT x, INT y)
+  IF doh_on == 0 THEN RETURN (0) FI
+  IF x + 4 < DOH_L OR x > DOH_R OR y + 3 < DOH_T OR y > DOH_B THEN RETURN (0) FI
+RETURN (1)
+
+PROC DohHit()
+  IF doh_state >= 9 THEN RETURN FI
+  doh_hits += 1
+  AddScore(100)
+  Sfx(2)
+  doh_look = 10
+  DohLook(doh_frame)
+  IF doh_hits >= 16 THEN doh_state = 9 FI
+RETURN
+
+PROC DohFire()
+  BYTE s
+  INT dx
+  FOR s = 0 TO 2 DO
+    IF dsh_on(s) == 0 THEN
+      dsh_on(s) = 1
+      dsh_t(s) = 0
+      dsh_x(s) = 108 << 8
+      dsh_y(s) = 112 << 8
+      dx = vx + 16 - 110
+      dsh_dx(s) = dx << 2
+      dsh_dy(s) = (VAUS_Y - 112) << 2
+      RETURN
+    FI
+  OD
+RETURN
+
+PROC MoveShot(BYTE s)
+  CARD x, y
+  BYTE ph, c, fl
+  IF dsh_on(s) == 0 THEN RETURN FI
+  dsh_t(s) += 1
+  dsh_x(s) += dsh_dx(s)
+  dsh_y(s) += dsh_dy(s)
+  x = dsh_x(s) >> 8
+  y = dsh_y(s) >> 8
+  IF y > 236 OR x > 216 THEN
+    dsh_on(s) = 0
+    SpriteHide(SP_SHOT + s)
+    RETURN
+  FI
+  IF y + 7 >= VAUS_Y AND y <= VAUS_Y + 7 AND x + 7 >= vleft AND x <= vright THEN
+    dsh_on(s) = 0
+    SpriteHide(SP_SHOT + s)
+    shot_hit = 1
+    RETURN
+  FI
+  ; edge on, turning, face on, turning back: the three the frame shows
+  ph = (dsh_t(s) >> 2) & 3
+  fl = 0
+  IF ph == 3 THEN
+    ph = 1
+    fl = $40
+  FI
+  c = shot_cells(ph)
+  SetSprite(SP_SHOT + s, x << 1, y << 1, SPR_COMMON + c * 128, 1, fl)
+RETURN
+
+PROC ClearShots()
+  BYTE s
+  FOR s = 0 TO 2 DO
+    dsh_on(s) = 0
+    SpriteHide(SP_SHOT + s)
+  OD
+  shot_hit = 0
+RETURN
+
+; the mouth: shut a while, opening over four frames, three shots, shut
+PROC DohStep()
+  BYTE s
+  IF doh_on == 0 THEN RETURN FI
+  IF doh_look THEN
+    doh_look -= 1
+    IF doh_look == 0 THEN DohPlain() FI
+  FI
+  doh_t += 1
+  IF doh_state == 0 THEN
+    IF doh_t >= 150 THEN
+      doh_state = 1
+      doh_t = 0
+    FI
+  ELSEIF doh_state == 1 THEN
+    IF doh_t & 3 == 0 THEN
+      IF doh_frame < 3 THEN
+        DrawDoh(doh_frame + 1)
+      ELSE
+        doh_state = 2
+        doh_t = 0
+        doh_fired = 0
+      FI
+    FI
+  ELSEIF doh_state == 2 THEN
+    IF doh_t >= 20 THEN
+      doh_t = 0
+      DohFire()
+      doh_fired += 1
+      IF doh_fired >= 3 THEN doh_state = 3 FI
+    FI
+  ELSEIF doh_state == 3 THEN
+    IF doh_t & 3 == 0 THEN
+      IF doh_frame > 0 THEN
+        DrawDoh(doh_frame - 1)
+      ELSE
+        doh_state = 0
+        doh_t = 0
+      FI
+    FI
+  FI
+  FOR s = 0 TO 2 DO MoveShot(s) OD
+RETURN
+
+; sixteen hits: the sheet's twelve dying frames, the purple washing
+; through him; then his wireframe comes down through him a cell row at a
+; time -- the sheet's eight frames of it pixel by pixel would be 660
+; tiles, the row is this port's step -- the dark wireframe, and he is
+; gone
+PROC DohDeath()
+  BYTE n, t, r
+  ClearShots()
+  HideBalls()
+  Quiet()
+  Sfx(3)
+  FOR n = 4 TO 15 DO
+    DohLook(n)
+    FOR t = 0 TO 5 DO Tick() OD
+  OD
+  DohPlain()
+  DrawDoh(0)
+  FOR r = 0 TO DOH_H - 1 DO
+    DohCells(0, 1, r, r)
+    FOR t = 0 TO 3 DO Tick() OD
+  OD
+  FOR t = 0 TO 30 DO Tick() OD
+  DohCells(0, 2, 0, DOH_H - 1)
+  FOR t = 0 TO 40 DO Tick() OD
+  doh_on = 0
+  FOR r = DOH_TY TO DOH_TY + DOH_H - 1 DO
+    FOR t = DOH_TX TO DOH_TX + DOH_W - 1 DO DrawCell(t, r) OD
+  OD
+RETURN
+
+; --------------------------------------------------------------- a round
+PROC LoadField(BYTE k)
+  CARD o
+  BYTE i
+  IF k == 0 THEN
+    Stream(D_FIELD0, DH_FIELD0, PAT_BASE, N_FIELD0)
+    Stream(D_GATE0, DH_GATE0, PAT_BASE + (T_GATE << 5), N_GATE0)
+  ELSEIF k == 1 THEN
+    Stream(D_FIELD1, DH_FIELD1, PAT_BASE, N_FIELD1)
+    Stream(D_GATE1, DH_GATE1, PAT_BASE + (T_GATE << 5), N_GATE1)
+  ELSEIF k == 2 THEN
+    Stream(D_FIELD2, DH_FIELD2, PAT_BASE, N_FIELD2)
+    Stream(D_GATE2, DH_GATE2, PAT_BASE + (T_GATE << 5), N_GATE2)
+  ELSEIF k == 3 THEN
+    Stream(D_FIELD3, DH_FIELD3, PAT_BASE, N_FIELD3)
+    Stream(D_GATE3, DH_GATE3, PAT_BASE + (T_GATE << 5), N_GATE3)
+  ELSE
+    Stream(D_FIELD4, DH_FIELD4, PAT_BASE, N_FIELD4)
+    Stream(D_GATE4, DH_GATE4, PAT_BASE + (T_GATE << 5), N_GATE4)
+  FI
+  o = k
+  SetPalette(fld_pal + (o << 5), B_FIELD << 4, 16)
+  SetPalette(vb_pal + (o << 6), B_VA << 4, 16)
+  SetPalette(vb_pal + (o << 6) + 32, B_VB << 4, 16)
+  o = o << 5
+  FOR i = 0 TO 31 DO vz_rm(i) = vb_map(o + i) OD
+  vz_split = vb_split(k)
+  fk = k
+  fpat = 0
+RETURN
+
+BYTE start_round = [1]               ; the round a game starts on: the gate pokes it
+
+; the board's round-start words over the field, and the cells they took
+; given back afterwards
+PROC Words(BYTE show)
+  BYTE c
+  IF show THEN
+    Text(10, 18, "ROUND", B_WHITE)
+    Number(16 + (round >= 10), 18, round, B_WHITE)
+    Text(11, 20, "READY", B_WHITE)
+  ELSE
+    FOR c = 9 TO 18 DO
+      DrawCell(c, 18)
+      DrawCell(c, 20)
+    OD
+  FI
+RETURN
+
+; a round in: its background, its enemy, its bricks -- or, for round 33,
+; DOH's background and DOH, and no bricks to clear
+PROC StartRound()
+  BYTE k, i
+  HideBalls()
+  HideCapsule()
+  ClearBeams()
+  ClearShots()
+  FOR i = 0 TO 2 DO
+    en_on(i) = 0
+    HideEnemy(i)
+  OD
+  gt_state = 0
+  ex_on = 0
+  IF round == 33 THEN
+    LoadDoh()
+    FOR i = 0 TO 233 DO bk(i) = 0 OD
+    FOR i = 0 TO 7 DO sh_t(i) = 0 OD
+    bricks_left = 1                  ; the round ends when DOH does
+  ELSE
+    k = (round - 1) & 3
+    LoadField(k)
+    LoadEnemy(k)
+    BuildField(k)
+    LoadRound(round)
+  FI
+  DrawField()
+  doh_on = 0
+  IF round == 33 THEN
+    doh_on = 1
+    doh_hits = 0
+    doh_state = 0
+    doh_t = 0
+    doh_look = 0
+    DohPlain()
+    DrawDoh(0)
+  FI
+  BuildBase()
+  FOR i = 0 TO 111 DO vz_old(i) = 0 OD
+  vshown = 255
+  Hud()
+  bbase = (round - 1) >> 3
+RETURN
+
+; a fresh Vaus, no power, nothing about
+PROC ResetPlay()
+  HideBalls()
+  HideCapsule()
+  ClearBeams()
+  ClearEnemies()
+  ClearShots()
+  CloseExit()
+  vform = 0
+  vpower = 0
+  mo_n = 0
+  mo_next = 255
+  en_timer = 300
+RETURN
+
+; the Vaus comes out of the flash and fills in, and the ball waits on it
+PROC Serve(BYTE words)
+  BYTE f, t
+  ResetPlay()
+  vx = 92
+  VausExtent()
+  IF words THEN
+    Words(1)
+    IF round == 33 THEN MusicStart(mus_doh) ELSE MusicStart(mus_start) FI
+  FI
+  FOR f = 0 TO VN_FLASH - 1 DO
+    DrawVaus(VF_FLASH + f, vx)
+    FOR t = 0 TO 3 DO Tick() OD
+  OD
+  FOR f = 0 TO VN_APPEAR - 1 DO
+    DrawVaus(VF_APPEAR + f, vx)
+    FOR t = 0 TO 5 DO Tick() OD
+  OD
+  vshown = 255
+  IF words THEN
+    WHILE mon DO Tick() OD
+    Words(0)
+  FI
+  nballs = 1
+  bon(0) = 1
+  bheld = 1
+  bheld_b = 0
+  bhold = 14
+  bhold_t = 0
+  bspeed = bbase
+  bceil = 0
+  bhits = 0
+  bang(0) = 1
+  MoveBall(0)
+RETURN
+
+; lost: the Vaus cracks, crackles and flies apart
+PROC Die()
+  BYTE f, t
+  HideBalls()
+  HideCapsule()
+  ClearBeams()
+  ClearShots()
+  Quiet()
+  Sfx(3)
+  FOR f = 0 TO VN_HIT - 1 DO
+    DrawVaus(VF_HIT + f, vx)
+    FOR t = 0 TO 7 DO Tick() OD
+  OD
+  FOR f = 0 TO VN_DEBRIS - 1 DO
+    DrawVaus(VF_DEBRIS + f, vx)
+    FOR t = 0 TO 7 DO Tick() OD
+  OD
+  EraseVaus()
+  FOR t = 0 TO 40 DO Tick() OD
+RETURN
+
+; a life's play: 1 the balls lost, 2 the round cleared, 3 given up, 4
+; out through the exit
+FUNC BYTE PlayLife()
+  BYTE b, e
+  DO
+    WaitVBlank()
+    ShowVaus()
+    DrawBalls()
+    FOR e = 0 TO 2 DO DrawEnemy(e) OD
+    loops += 1
+    KeyPoll()
+    IF KeyHit(KEY_ESC) THEN RETURN (3) FI
+    IF KeyHit(KEY_P) THEN
+      Quiet()
+      DO
+        WaitVBlank()
+        KeyPoll()
+      UNTIL KeyHit(KEY_P) OD
+    FI
+    MoveVaus()
+    MorphStep()
+    vanim += 1
+    IF bheld THEN
+      bhold_t += 1
+      IF KeyHit(KEY_SPACE) OR bhold_t > 150 THEN Release() FI
+    ELSEIF KeyHeld(KEY_SPACE) THEN
+      Fire()
+    FI
+    FOR b = 0 TO 2 DO MoveBall(b) OD
+    MoveCapsule()
+    MoveBeams()
+    IF doh_on THEN DohStep() ELSE EnemyStep() FI
+    ExitStep()
+    Shines()
+    MusicStep()
+    SfxStep()
+    IF nballs == 0 OR shot_hit THEN RETURN (1) FI
+    IF doh_on AND doh_state >= 9 THEN RETURN (5) FI
+    IF bricks_left == 0 THEN RETURN (2) FI
+    IF ex_on AND vx >= 200 THEN RETURN (4) FI
+  OD
+RETURN (0)
+
+PROC GameOver()
+  BYTE t
+  Text(9, 18, "GAME OVER", B_WHITE)
+  MusicStart(mus_over)
+  FOR t = 0 TO 180 DO Tick() OD
+  Quiet()
+RETURN
+
+; DOH beaten: the board's ending tune over the field he left. The
+; ending's words are not here -- no frame of them was found to take
+; them from (docs/14-demos.md)
+PROC Ending()
+  HideBalls()
+  EraseVaus()
+  MusicStart(mus_ending)
+  WHILE mon DO Tick() OD
+  Quiet()
+RETURN
+
+PROC Play()
+  BYTE r, t, fresh
+  IF spr_dirty THEN
+    Stream(D_SPRITES, DH_SPRITES, SPR_COMMON, N_SPRITES)
+    spr_dirty = 0
+  FI
+  lives = 3
+  score10 = 0
+  extend10 = 2000
+  round = start_round
+  DO
+    StartRound()
+    fresh = 1
+    DO
+      Serve(fresh)
+      fresh = 0
+      r = PlayLife()
+      IF r == 1 THEN
+        Die()
+        lives -= 1
+        Lives()
+        IF lives == 0 THEN
+          GameOver()
+          RETURN
+        FI
+      ELSEIF r == 5 THEN
+        DohDeath()
+        Ending()
+        RETURN
+      ELSEIF r == 2 OR r == 4 THEN
+        Quiet()
+        HideBalls()
+        HideCapsule()
+        ClearBeams()
+        ClearEnemies()
+        IF r == 4 THEN AddScore(1000) FI
+        FOR t = 0 TO 60 DO Tick() OD
+        EraseVaus()
+        round += 1
+        IF round > 33 THEN round = 1 FI
+        EXIT
+      ELSE
+        Quiet()
+        RETURN
+      FI
+    OD
+  OD
+RETURN
+
+; ------------------------------------------------- the title, the intro
+; The logo and the mothership are one run of tile numbers over pattern
+; banks 1 and 2 (bit 8 of a number picks the bank), streamed in for the
+; title; the Vaus flying off is sprites over the enemy's patterns, which
+; the first round streams back.
+CONST B_LOGO = 9
+CONST B_SHIP = 10
+CONST LOGO_X = 7
+CONST SHIP_X = 8
+CONST SHIP_Y = 18
+CONST SPR_ESC = $B000
+CONST SP_ESC = 0                     ; six sprites
+
+PROC LoadIntro()
+  Stream(D_INTRO, DH_INTRO, PAT_BASE + $2000, N_INTRO)
+  Stream(D_ESCAPE, DH_ESCAPE, SPR_ESC, N_ESCAPE)
+  SetPalette(logo_pal, B_LOGO << 4, 16)
+  SetPalette(ship_pal, B_SHIP << 4, 16)
+RETURN
+
+PROC Tile2(BYTE col, BYTE row, CARD t, BYTE bank)
+  BYTE pb
+  pb = $10
+  IF t >= 256 THEN pb = $20 FI
+  Cell(col, row, t & 255, bank | pb)
+RETURN
+
+PROC DrawLogo(BYTE col, BYTE row)
+  BYTE i
+  FOR i = 0 TO LOGO_W * LOGO_H - 1 DO
+    Tile2(col + i % LOGO_W, row + i / LOGO_W, logo_map(i), B_LOGO)
+  OD
+RETURN
+
+; the ship's frame k: frame 0's cells, then the ones k changes
+PROC ShipCells(BYTE k)
+  CARD i, o, n, j, c
+  FOR i = 0 TO SHIP_W * SHIP_H - 1 DO
+    Tile2(SHIP_X + i % SHIP_W, SHIP_Y + i / SHIP_W, ship_map(i), B_SHIP)
+  OD
+  o = ship_doff(k)
+  IF o == 0 THEN RETURN FI
+  o -= 1
+  n = ship_dl(o)
+  FOR j = 1 TO n DO
+    c = ship_dl(o + (j << 1) - 1)
+    Tile2(SHIP_X + c % SHIP_W, SHIP_Y + c / SHIP_W, ship_dl(o + (j << 1)), B_SHIP)
+  OD
+RETURN
+
+; a frame of the ship: cells, or the frame it recolours and a palette
+PROC ShipFrame(BYTE k)
+  BYTE i
+  FOR i = 0 TO SHIP_NFLASH - 1 DO
+    IF ship_ff(i) == k THEN
+      ShipCells(ship_fb(i))
+      SetPalette(ship_flash + (i << 5), B_SHIP << 4, 16)
+      RETURN
+    FI
+  OD
+  ShipCells(k)
+  SetPalette(ship_pal, B_SHIP << 4, 16)
+RETURN
+
+; frame f of the Vaus flying off, its top-left at (x, y)
+PROC EscapeAt(BYTE f, INT x, INT y)
+  BYTE wc, hc, i, j, c, id
+  CARD p
+  p = esc_off(f)
+  wc = esc_data(p)
+  hc = esc_data(p + 1)
+  p += 4
+  id = SP_ESC
+  FOR j = 0 TO hc - 1 DO
+    FOR i = 0 TO wc - 1 DO
+      c = esc_data(p)
+      p += 1
+      SetSprite(id, (x + (i << 3)) << 1, (y + (j << 3)) << 1, SPR_ESC + c * 128, 1, 0)
+      id += 1
+    OD
+  OD
+  WHILE id < SP_ESC + 6 DO
+    SpriteHide(id)
+    id += 1
+  OD
+RETURN
+
+; The story over the mothership, typed a character every three frames:
+; its first part with the ship lit and hit, its end on a clean page with
+; the rings the Vaus rises in and the Vaus away. The words are the
+; game's -- quoted from it in the NES version's FAQ, the last three lines
+; broken as StrategyWiki's frame of the arcade breaks them; where the
+; others break, and what the ship does when, are this port's
+; (docs/14-demos.md). There is no comma in the font the arcade shows,
+; so there is none here. Space skips it.
+BYTE ARRAY story = "THE ERA AND TIME OF#THIS STORY IS UNKNOWN.#AFTER THE MOTHERSHIP#'ARKANOID' WAS DESTROYED#A SPACECRAFT 'VAUS'#SCRAMBLED AWAY FROM IT.*BUT ONLY TO BE#TRAPPED IN SPACE WARPED#BY SOMEONE......."
+BYTE ARRAY ship_lit(8) = [0 1 2 3 4 5 6 2]
+BYTE skip
+
+FUNC BYTE IntroWait(BYTE n)
+  BYTE t
+  FOR t = 1 TO n DO
+    Tick()
+    IF KeyHit(KEY_SPACE) THEN RETURN (1) FI
+  OD
+RETURN (0)
+
+; the length of the line from story(i): up to a # or a *
+FUNC BYTE LineLen(BYTE i)
+  BYTE n, c
+  n = 0
+  DO
+    IF i + n > story(0) THEN EXIT FI
+    c = story(i + n)
+    IF c == $23 OR c == $2A THEN EXIT FI
+    n += 1
+  OD
+RETURN (n)
+
+PROC Intro()
+  BYTE i, n, ch, col, row, k, f, t, part
+  skip = 0
+  ClearScreen()
+  ShipFrame(0)
+  MusicStart(mus_story)
+  row = 2
+  i = 1
+  k = 0
+  part = 0
+  n = LineLen(1)
+  col = 20 - (n >> 1)
+  WHILE i <= story(0) DO
+    ch = story(i)
+    i += 1
+    IF ch == $23 THEN
+      row += 2
+      n = LineLen(i)
+      col = 20 - (n >> 1)
+    ELSEIF ch == $2A THEN
+      IF IntroWait(60) THEN
+        skip = 1
+        EXIT
+      FI
+      FOR row = 1 TO 16 DO
+        FOR col = 0 TO 39 DO Cell(col, row, T_SPACE, B_WHITE) OD
+      OD
+      row = 2
+      n = LineLen(i)
+      col = 20 - (n >> 1)
+      part = 1
+      k = 0
+    ELSE
+      Cell(col, row, T_FONT + Glyph(ch), B_WHITE)
+      col += 1
+      k += 1
+      IF part == 0 AND (k & 15) == 0 AND (k >> 4) < 8 THEN ShipFrame(ship_lit(k >> 4)) FI
+      IF part == 1 AND (k & 3) == 0 AND (k >> 2) < 13 THEN ShipFrame(7 + (k >> 2)) FI
+      IF IntroWait(3) THEN
+        skip = 1
+        EXIT
+      FI
+    FI
+  OD
+  IF skip == 0 THEN
+    SetPalette(esc_pal, B_SPR << 4, 16)
+    FOR f = 0 TO ESC_FRAMES - 1 DO
+      EscapeAt(f, 160 - f * 8, 150 - f * 8)
+      IF IntroWait(6) THEN
+        skip = 1
+        EXIT
+      FI
+    OD
+    IF skip == 0 THEN skip = IntroWait(90) FI
+  FI
+  FOR t = 0 TO 5 DO SpriteHide(SP_ESC + t) OD
+  SetPalette(spr_pal, B_SPR << 4, 16)
+  Quiet()
+  ClearScreen()
+RETURN
+
+PROC Title()
+  HideBalls()
+  ClearScreen()
+  LoadIntro()
+  Text(15, 1, "HIGH SCORE", B_RED)
+  ShowScore(22, 2, hi10, B_WHITE)
+  DrawLogo(LOGO_X, 6)
+  Text(13, 17, "PUSH SPACE KEY", B_WHITE)
+  Text(8, 24, "@ 1986 TAITO CORP JAPAN", B_WHITE)
+  Text(10, 26, "ALL RIGHTS RESERVED", B_WHITE)
+  quit = 0
+  DO
+    Tick()
+    IF KeyHit(KEY_ESC) THEN quit = 1 FI
+  UNTIL quit OR KeyHit(KEY_SPACE) OD
+  rseed = (TMR_L * 256 + TMR_M) | 1
+  ClearScreen()
+  IF quit == 0 AND start_round == 1 THEN Intro() FI
+RETURN
+
+PROC Main()
+  BYTE i
+  Graphics(2)
+  Cursor(0)
+  VID_BORDER = 0
+  VID_PAT = PAT_BASE
+  SpritesOff()
+  IF OpenData() == 0 THEN
+    Graphics(0)
+    PrintE("ARKANOID.DAT or ARKSCENE.DAT is not on drive 11")
+    RETURN
+  FI
+  Stream(D_BRICKS, DH_BRICKS, PAT_BASE + (T_BRICK << 5), N_BRICKS)
+  Stream(D_FONT, DH_FONT, PAT_BASE + (T_FONT << 5), N_FONT)
+  Stream(D_HUD, DH_HUD, PAT_BASE + (T_LIFE << 5), N_HUD)
+  Stream(D_EXIT, DH_EXIT, PAT_BASE + (T_EXIT << 5), N_EXIT)
+  Stream(D_SPRITES, DH_SPRITES, SPR_COMMON, N_SPRITES)
+  SetPalette(brk_pal, B_BRICK << 4, 16)
+  SetPalette(hud_pal, B_HUD << 4, 16)
+  SetColor(B_WHITE << 4, 0)
+  SetColor((B_WHITE << 4) + 1, $FFF)
+  SetColor(B_RED << 4, 0)
+  SetColor((B_RED << 4) + 1, $F00)
+  SetPalette(spr_pal, B_SPR << 4, 16)
+  FOR i = 0 TO 31 DO SpriteHide(i) OD
+  SpritesOn(B_SPR)
+  hi10 = 5000
+  DO
+    Title()
+    IF quit THEN EXIT FI
+    Play()
+  OD
+  Quiet()
+  SpritesOff()
+  Reset()
+RETURN

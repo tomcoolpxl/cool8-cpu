@@ -318,6 +318,12 @@ args = ["--check"]
 about = "Ms. Cool-Man's generated art against the ripped sheets"
 
 [[tool.cool8.jobs.check]]
+id = "arkanoid"
+run = "tools/mkarkanoid.py"
+args = ["--check"]
+about = "Arkanoid's generated art file and its two data files against the ripped arcade sheets, the rounds and the music logs"
+
+[[tool.cool8.jobs.check]]
 id = "pics"
 run = "tools/mkpics.py"
 args = ["--check"]

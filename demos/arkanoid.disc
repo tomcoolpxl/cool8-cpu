@@ -1,0 +1,6 @@
+# Arkanoid's data files, which tools/mkdemos.py puts on drive 11 beside
+# the program: the tiles and sprite patterns it streams from the flash
+# into VRAM itself, in two files because a file on a drive is at most
+# 65,535 bytes. One path a line, relative to the repository root.
+assets/arkanoid/ARKANOID.DAT
+assets/arkanoid/ARKSCENE.DAT

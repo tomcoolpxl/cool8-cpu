@@ -282,6 +282,16 @@ def main():
         vol11.add(p, nm + ".BIN")
         print("  compiled %-16s %6d bytes at $%04X -> drive %d as %s.PRG, with %s.BIN to load it"
               % (f, len(prg) - 2, H.PAYLOAD_ORG, disk.ACTION_VOL, nm, nm))
+        # the files a program reads from its own drive beside it --
+        # Arkanoid's tiles and patterns, which it streams from the flash
+        # into VRAM -- as its .disc manifest names them
+        disc = os.path.join(ROOT, "demos", os.path.splitext(f)[0] + ".disc")
+        if os.path.exists(disc):
+            for line in open(disc, encoding="utf-8"):
+                line = line.strip()
+                if line and not line.startswith("#"):
+                    vol11.add(os.path.join(ROOT, line), os.path.basename(line).upper())
+                    print("    and %s beside it" % os.path.basename(line).upper())
 
     # **The pictures onto their own drive** (D103): every .pic
     # tools/mkpics.py has written, in its order, which is the order

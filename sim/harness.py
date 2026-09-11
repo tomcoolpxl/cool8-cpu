@@ -95,15 +95,21 @@ def machine():
     return _vm.machine()
 
 
-def session(render=False):
+def session(render=False, flash_path=None):
     """The session VM: one persistent machine with peripherals.
 
     For anything involving the screen, the keyboard, the UART or flash
     — `type`, `key`, `row`, `shows`, `settle`, `run_frame`, and `fb()`
-    with `render=True`.
+    with `render=True`. `flash_path` is the image its SPI flash holds,
+    for a program that reads a drive (Arkanoid's data file).
     """
     _require()
-    return _vm.Machine(render=render) if render else _vm.Machine()
+    kw = {}
+    if render:
+        kw["render"] = True
+    if flash_path:
+        kw["flash_path"] = flash_path
+    return _vm.Machine(**kw)
 
 
 def shot(m, path):

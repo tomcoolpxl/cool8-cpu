@@ -455,7 +455,12 @@ originals' `DATA`, and the library's keyboard tables against
 compiled COBRAs' model blocks to the generator, which checks each
 tumble's camera against the machine's integer arithmetic over every
 pose, and COBRA 2's sky against exact division, on the way
-([D105](01-decisions.md), [D106](01-decisions.md)). `mkpics --check` holds the picture drive's `.pic` and
+([D105](01-decisions.md), [D106](01-decisions.md)). `mkarkanoid --check`
+holds Arkanoid's art file and its two data files, ARKANOID.DAT and
+ARKSCENE.DAT, to the ripped arcade sheets, the 32 rounds and the music's
+register logs, proving on the way that every background's model rebuilds
+its panel and that the shadow is the sheet's own
+([D107](01-decisions.md)). `mkpics --check` holds the picture drive's `.pic` and
 `.rpl` files to the originals they were made from, and passes with a
 message when none has been fetched -- the originals are downloaded, not
 committed ([D103](01-decisions.md)). It plans every row's palette again

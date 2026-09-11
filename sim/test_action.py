@@ -1547,6 +1547,221 @@ def test_mscoolman():
     print()
 
 
+def test_arkanoid():
+    """Arkanoid, on the machine, with its two data files on drive 11 of a
+    flash of its own: the title's logo, round 1 as the arcade draws it,
+    the Vaus composed into the background, a frame of play in every
+    vblank, each capsule's power, an enemy through a gate, the exit to
+    round 2, a life lost, and DOH beaten. Skips, loudly, without the art."""
+    import subprocess
+    import ioregs
+    import arkanoid as A
+    print("  ARKANOID")
+    if A.sources() is None:
+        print("    SKIPPED: the art is not here -- tools/mkarkanoid.py makes "
+              "assets/arkanoid/arkanoid_art.act and its two data files from the sheets")
+        print()
+        return
+    r = subprocess.run([sys.executable, os.path.join(H.ROOT, "tools", "mkarkanoid.py"), "--check"],
+                       capture_output=True, text=True)
+    check(r.returncode == 0, "arkanoid: the art file and the two data files are what the generator writes",
+          (r.stdout + r.stderr).strip()[-200:])
+    g = A.Game(tag="arkanoid")
+    same_bytes("arkanoid", g.prg)
+    print("    %d bytes of PRG" % (len(g.prg) - 2))
+    reg = lambda n: g.m.bus.read(ioregs.addr_of(n))   # noqa: E731
+    sym = g.syms
+    mem = g.m.bus.mem
+    c_ = lambda n: sym["c_" + n]                       # noqa: E731
+
+    # the title: mode 2, patterns at $1000, the sprite engine on bank 15,
+    # and the arcade's logo out of the data file, in pattern bank 1
+    g.m.run_frame(40)
+    check(reg("VID_MODE") & 0x0F == 2 and reg("VID_PAT_H") == 0x10, "arkanoid: mode 2, patterns at $1000",
+          "MODE %02X PAT_H %02X" % (reg("VID_MODE"), reg("VID_PAT_H")))
+    check(reg("SPR_CTRL") & 0xF1 == 0xF1, "arkanoid: sprites on, palette bank 15", "SPR_CTRL %02X" % reg("SPR_CTRL"))
+    lx, ly = c_("LOGO_X"), 6
+    check(g.cell(lx, ly) == (mem[sym["v_logo_map"]], c_("B_LOGO") | 0x10),
+          "arkanoid: the logo's first cell on the title, in its bank", str(g.cell(lx, ly)))
+
+    # the game, its intro skipped: round 1 as the arcade draws it
+    g.tap(A.SPACE)
+    g.m.run_frame(20)
+    g.tap(A.SPACE)
+    g.m.run_frame(60)
+    tb, bb = c_("T_BRICK"), c_("B_BRICK")
+    check(g.cell(1, 5) == (tb + 16, bb) and g.cell(2, 5) == (tb + 17, bb),
+          "arkanoid: round 1's first silver brick, both halves, at row 5", "%s %s" % (g.cell(1, 5), g.cell(2, 5)))
+    check(g.cell(1, 10) == (tb + 6, bb), "arkanoid: and its green one five rows down", str(g.cell(1, 10)))
+    fn, fd = sym["v_fn"], sym["v_fd"]
+    check(g.cell(3, 11) == (mem[fd + 11 * 28 + 3], 0) and mem[fd + 11 * 28 + 3] != mem[fn + 11 * 28 + 3],
+          "arkanoid: under the green row, one cell right, the background's dark tile: the bricks' shadow",
+          str(g.cell(3, 11)))
+    check(g.cell(4, 21) == (mem[fn + 21 * 28 + 4], 0), "arkanoid: and further down, the background as it is",
+          str(g.cell(4, 21)))
+    check(g.cell(10, 18)[0] == c_("T_FONT") + 27, "arkanoid: ROUND over the field", str(g.cell(10, 18)))
+    v = voices(g.m)
+    check(v[0:2] != b"\x00\x00" and (v[3] & 0x40) != 0, "arkanoid: the board's round-start tune on voice 0", v.hex())
+    g.m.run_frame(230)
+    tv = c_("T_VAUS")
+    vc = [g.cell(tx, 27) for tx in range(28)]
+    ours = [tx for tx, (t, a) in enumerate(vc) if tv <= t < tv + 2 * c_("NSLOT") and a in (c_("B_VA"), c_("B_VB"))]
+    check(len(ours) >= 4, "arkanoid: the Vaus is cells of the background, in its own banks", str(ours))
+    sh = [g.cell(tx, 28) for tx in ours]
+    check(all(tv <= t < tv + 2 * c_("NSLOT") for t, _ in sh), "arkanoid: and its shadow is in the row under it", str(sh))
+
+    # play: the loop runs a frame of play in every vblank, and bricks go
+    g.tap(A.SPACE)
+    f0, l0 = g.m.frames, g.uword("loops")
+    g.autopilot(600)
+    loops, frames = g.uword("loops") - l0, g.m.frames - f0
+    check(loops == frames, "arkanoid: a frame of play in every one of %d vblanks" % frames, "%d of %d" % (loops, frames))
+    check(g.uword("score10") > 0 and g.uword("bricks_left") < 77, "arkanoid: bricks broken, points scored",
+          "score %d bricks %d" % (g.uword("score10") * 10, g.uword("bricks_left")))
+
+    # each capsule dropped on the Vaus, and what it does: the Vaus held
+    # under it until it lands -- the autopilot would steer it away after
+    # the ball -- then play on while the power takes
+    def caught(letter, frames=40):
+        g.drop(letter)
+        x = g.word("vx")
+        for _ in range(30):
+            g.pokew("vx", x)
+            g.m.run_frame(1)
+            if not g.byte("cap_on"):
+                break
+        g.autopilot(frames)
+    lives = g.byte("lives")
+    caught("E")
+    check(g.byte("vform") == 2 and g.byte("vpower") == 3, "arkanoid: E, the Vaus enlarged", str(g.byte("vform")))
+    caught("L")
+    g.m.kbd.feed(A.SPACE)
+    g.autopilot(8)
+    g.m.kbd.feed([0xF0, 0x29])
+    beams = sum(g.byte("bm_on", j) for j in range(6))
+    check(g.byte("vform") == 1 and beams >= 2, "arkanoid: L, the laser, and space fires its beams",
+          "form %d beams %d" % (g.byte("vform"), beams))
+    caught("C")
+    check(g.byte("vform") == 0 and g.byte("vpower") == 1, "arkanoid: C, catch, the Vaus normal again",
+          "form %d power %d" % (g.byte("vform"), g.byte("vpower")))
+    caught("D")
+    check(len(g.balls()) == 3 and g.byte("nballs") == 3, "arkanoid: D, three balls", str(g.balls()))
+    g.poke("bspeed", 5)
+    caught("S", 20)
+    check(g.byte("bspeed") == g.byte("bbase"), "arkanoid: S, the ball slowed to the round's speed", str(g.byte("bspeed")))
+    caught("P", 20)
+    check(g.byte("lives") == lives + 1, "arkanoid: P, a Vaus more", "%d -> %d" % (lives, g.byte("lives")))
+    caught("B", 30)
+    te = c_("T_EXIT")
+    check(g.byte("ex_on") and te <= g.cell(27, 27)[0] < te + 15, "arkanoid: B, the exit open in the right wall",
+          str(g.cell(27, 27)))
+
+    # an enemy through a gate within the round's first minute
+    g.poke("en_timer", 10)
+    n = g.autopilot(200, until=lambda: any(g.byte("en_on", e) == 1 and g.word("en_y", e) >= 8 for e in range(3)))
+    check(n < 200, "arkanoid: an enemy comes in through a gate in the frame's top", "%d frames" % n)
+
+    # out through the exit: ten thousand, and round 2 -- the Vaus walked
+    # into it by hand, the autopilot keeping it inside the field
+    if not g.byte("ex_on"):
+        caught("B", 10)
+    s0 = g.uword("score10")
+    for _ in range(30):
+        g.pokew("vx", 210)
+        g.m.run_frame(1)
+        if g.byte("round") == 2:
+            break
+    g.m.run_frame(100)
+    check(g.byte("round") == 2 and g.uword("score10") >= s0 + 1000, "arkanoid: out through the exit, 10,000 and round 2",
+          "round %d score %d" % (g.byte("round"), g.uword("score10") * 10))
+    g.m.run_frame(300)
+    check(g.cell(1, 3) == (tb, bb), "arkanoid: round 2's staircase, its white brick at row 3", str(g.cell(1, 3)))
+
+    # the balls lost: a life
+    g.tap(A.SPACE)
+    g.autopilot(30)
+    lives = g.byte("lives")
+    for b in range(3):
+        g.poke("bon", 0, b)
+    g.poke("nballs", 0)
+    g.m.run_frame(160)
+    check(g.byte("lives") == lives - 1, "arkanoid: the ball lost, a Vaus gone", "%d -> %d" % (lives, g.byte("lives")))
+    check(0x100 < g.m.cpu.sp <= 0x200, "arkanoid: the stack is where it should be", "SP $%04X" % g.m.cpu.sp)
+    del g
+
+    # And the path a person takes: the real ROM booting the demos disc,
+    # DRIVE 11 and SYS "ARKANOID.BIN" typed at the keyboard, and the
+    # game finding its two data files on the drive it came from. The
+    # disc is `poe demos`' output; its absence is said, not passed over.
+    import cool8rsvm as vm
+    import cool8disk
+    img = os.path.join(H.BUILD, "demos.img")
+    pay, psyms = H.build_act(A.sources(), "arkanoid_payload", org=H.PAYLOAD_ORG)
+    if not os.path.exists(img):
+        print("    SKIPPED the flash boot: %s is not built (poe demos)" % img)
+    else:
+        vol = cool8disk.Volume(cool8disk.Image(img), 11)
+        on = [vol.get("ARKANOID.PRG") == bytes(pay)] + \
+             [vol.get(os.path.basename(p)) == open(p, "rb").read() for p in A.DATS]
+        if not all(on):
+            check(False, "arkanoid from flash: the demos disc holds this build and its two data files",
+                  "ARKANOID.PRG, ARKANOID.DAT, ARKSCENE.DAT current: %s -- poe demos" % on)
+        else:
+            code, bsyms = basic_image()
+            m = vm.boot(flash_path=img, render=True)
+            for _ in range(90):
+                m.run_frame()
+            check(m.settle(bsyms["in_raw.rk0"], bsyms["irhead"], bsyms["irtail"], 80_000_000),
+                  "arkanoid from flash: BASIC booted from the demos disc and went idle")
+            H.key(m, bsyms, 'DRIVE 11\r')
+            H.key(m, bsyms, 'SYS "ARKANOID.BIN"')
+            m.key(["\r"])
+            lx = psyms["c_LOGO_X"]
+            want = (pay[psyms["v_logo_map"] - H.PAYLOAD_ORG + 2], psyms["c_B_LOGO"] | 0x10)
+            up = None
+            for i in range(60):
+                m.run_frame(5)
+                v = m.video.vram
+                if (v[lx * 2 + 6 * 128], v[lx * 2 + 6 * 128 + 1]) == want:
+                    up = (i + 1) * 5
+                    break
+            check(up is not None,
+                  "arkanoid from flash: SYS loads it from drive 11, it finds its data files, the logo is up",
+                  "PC $%04X after 300 frames" % m.cpu.pc)
+            # a tap to start, a tap to skip the intro
+            m.kbd.feed([0x29, 0xF0, 0x29])
+            m.run_frame(30)
+            m.kbd.feed([0x29, 0xF0, 0x29])
+            m.run_frame(80)
+            v = m.video.vram
+            cell = (v[1 * 2 + 5 * 128], v[1 * 2 + 5 * 128 + 1])
+            check(cell == (psyms["c_T_BRICK"] + 16, psyms["c_B_BRICK"]),
+                  "arkanoid from flash: space starts it, the intro skipped, round 1 on the screen", str(cell))
+            del m
+
+    # DOH's round: his face drawn over his wall, and sixteen hits
+    g = A.Game(tag="arkanoid_doh")
+    sym = g.syms
+    c_ = lambda n: sym["c_" + n]                       # noqa: E731
+    g.m.run_frame(40)
+    g.poke("start_round", 33)
+    g.tap(A.SPACE)
+    g.m.run_frame(320)
+    dx, dy = c_("DOH_TX"), c_("DOH_TY")
+    t0 = g.m.bus.mem[sym["v_doh_maps"]]
+    check(g.cell(dx, dy) == (t0, c_("B_DOH") | 0x20), "arkanoid: round 33 is DOH, his face from pattern bank 2",
+          str(g.cell(dx, dy)))
+    g.tap(A.SPACE)
+    g.poke("doh_hits", 15)
+    n = g.autopilot(1500, until=lambda: g.byte("doh_state") >= 9)
+    check(g.byte("doh_state") >= 9, "arkanoid: the sixteenth hit on DOH", "%d frames, hits %d" % (n, g.byte("doh_hits")))
+    g.m.run_frame(400)
+    bgt = g.m.bus.mem[sym["v_doh_bgmap"] + dy * 28 + dx]
+    check(g.byte("doh_on") == 0 and g.cell(dx, dy) == (bgt, 0x10), "arkanoid: DOH gone, the black he sat in",
+          "%s, doh_on %d" % (g.cell(dx, dy), g.byte("doh_on")))
+    print()
+
+
 def test_refusals():
     print("  what the compiler refuses, and how it says so")
     cases = [
@@ -2036,7 +2251,7 @@ def main():
     only = [a for a in sys.argv[1:] if not a.startswith("--")]    # e.g. `cobra`: just those
     for t in (test_every_encoding, test_features, test_sieve, test_primes, test_library,
               test_hardware, test_line, test_rainbow, test_cobra, test_cobra2, test_ports, test_keys,
-              test_keytest, test_loader, test_mscoolman, test_slides, test_refusals):
+              test_keytest, test_loader, test_mscoolman, test_arkanoid, test_slides, test_refusals):
         if not only or any(o in t.__name__ for o in only):
             t()
     return H.report()
