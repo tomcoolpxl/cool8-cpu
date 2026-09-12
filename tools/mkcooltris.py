@@ -123,28 +123,106 @@ def surround(level):
 # it, and an eight-step motif whose numbers are degrees away from the
 # chord's own -- None a rest. The step shortens as the levels climb, so
 # the tenth tune is brisker than the first.
-SCALES = {
-    "minor":    [0, 2, 3, 5, 7, 8, 10],
-    "dorian":   [0, 2, 3, 5, 7, 9, 10],
-    "major":    [0, 2, 4, 5, 7, 9, 11],
-    "phrygian": [0, 1, 3, 5, 7, 8, 10],
-    "harmonic": [0, 2, 3, 5, 7, 8, 11],
-}
 VOLS = (10, 12, 6)                     # lead, bass, harmony
-_ = None                               # a rest, in the motifs below
 
-# name, the tonic (MIDI), the scale, four chords, the motif, frames a step
+# Ten tunes, every one written out note by note. The first is the one
+# this port started with, kept as it was; the nine after it are its
+# fellows -- the same shape, a different key and mood each. A tune is
+# thirty-two eighths: a melody, a bass walking on the even steps two
+# notes to a chord, and a third or a fifth between them on the odd ones.
+# A note is its letter, an S or an F if it wants one, and its octave.
+FIRST = (
+    "A4 C5 E5 C5 D5 F5 E5 D5 C5 E5 A5 E5 D5 C5 B4 A4 "
+    "A4 C5 E5 G5 F5 E5 D5 C5 B4 D5 G5 D5 C5 B4 A4 -",
+    "A2 -  A2 -  D3 -  D3 -  C3 -  C3 -  E2 -  E2 -  "
+    "A2 -  A2 -  F2 -  F2 -  G2 -  G2 -  E2 -  E2 -",
+    "-  E4 -  A4 -  A4 -  F4 -  G4 -  C5 -  G4 -  E4 "
+    "-  E4 -  C5 -  C5 -  A4 -  B4 -  G4 -  G4 -  E4",
+)
+SECOND = (                             # D minor, longing
+    "D5 E5 F5 G5 A5 G5 F5 E5 D5 F5 BF5 A5 F5 E5 D5 -  "
+    "G5 A5 BF5 A5 F5 D5 F5 A5 E5 CS5 E5 G5 F5 D5 -  -",
+    "D3 -  D3 -  A2 -  A2 -  BF2 -  BF2 -  F3 -  F3 -  "
+    "G2 -  G2 -  D3 -  D3 -  A2 -  A2 -  D3 -  D3 -",
+    "-  F4 -  A4 -  E4 -  A4 -  D5 -  F5 -  A4 -  C5 "
+    "-  BF4 -  D5 -  A4 -  D5 -  E4 -  A4 -  F4 -  A4",
+)
+THIRD = (                              # E phrygian, dark
+    "E5 F5 G5 F5 E5 D5 C5 D5 E5 G5 B5 A5 G5 F5 E5 -  "
+    "F5 E5 D5 C5 D5 E5 F5 G5 A5 G5 F5 E5 D5 E5 -  -",
+    "E2 -  E2 -  F2 -  F2 -  E2 -  E2 -  D3 -  D3 -  "
+    "C3 -  C3 -  D3 -  D3 -  E2 -  E2 -  E2 -  E2 -",
+    "-  G4 -  B4 -  A4 -  C5 -  G4 -  B4 -  F4 -  A4 "
+    "-  E4 -  G4 -  F4 -  A4 -  G4 -  B4 -  G4 -  B4",
+)
+FOURTH = (                             # C major, bright
+    "C5 E5 G5 E5 D5 F5 B4 D5 C5 E5 A5 G5 F5 E5 D5 C5 "
+    "E5 G5 C6 G5 A5 F5 A5 C6 B5 A5 G5 F5 E5 C5 -  -",
+    "C3 -  C3 -  G2 -  G2 -  A2 -  A2 -  F2 -  F2 -  "
+    "C3 -  C3 -  F2 -  F2 -  G2 -  G2 -  C3 -  C3 -",
+    "-  E4 -  G4 -  D4 -  G4 -  C5 -  E5 -  A4 -  C5 "
+    "-  G4 -  C5 -  A4 -  C5 -  D5 -  G4 -  E4 -  G4",
+)
+FIFTH = (                              # A dorian, hopeful
+    "A4 B4 C5 E5 FS5 E5 D5 B4 C5 E5 A5 G5 E5 D5 B4 -  "
+    "A4 C5 E5 FS5 G5 E5 C5 A4 B4 D5 FS5 A5 G5 E5 A4 -",
+    "A2 -  A2 -  D3 -  D3 -  A2 -  A2 -  G2 -  G2 -  "
+    "FS2 -  FS2 -  C3 -  C3 -  D3 -  D3 -  A2 -  A2 -",
+    "-  C5 -  E5 -  FS4 -  A4 -  E4 -  A4 -  B4 -  D5 "
+    "-  A4 -  C5 -  G4 -  C5 -  FS4 -  A4 -  C5 -  E5",
+)
+SIXTH = (                              # D minor, driving
+    "D5 D5 F5 E5 D5 A4 D5 F5 G5 F5 D5 BF4 CS5 E5 A5 -  "
+    "D5 F5 A5 D6 BF5 A5 F5 D5 C5 E5 G5 C6 A5 E5 D5 -",
+    "D3 -  D3 -  D3 -  D3 -  G2 -  G2 -  A2 -  A2 -  "
+    "D3 -  D3 -  BF2 -  BF2 -  C3 -  C3 -  A2 -  A2 -",
+    "-  A4 -  F4 -  A4 -  D5 -  BF4 -  D5 -  CS5 -  E5 "
+    "-  F4 -  A4 -  D5 -  F5 -  E5 -  G4 -  A4 -  CS5",
+)
+SEVENTH = (                            # E minor, marching
+    "E5 G5 B5 G5 E5 C5 E5 G5 B4 D5 G5 B5 A5 FS5 D5 -  "
+    "E5 B4 E5 G5 C5 E5 G5 C6 B5 A5 GS5 B5 E5 -  -  -",
+    "E2 -  E2 -  C3 -  C3 -  G2 -  G2 -  D3 -  D3 -  "
+    "E2 -  E2 -  C3 -  C3 -  B2 -  B2 -  E2 -  E2 -",
+    "-  B4 -  E5 -  G4 -  C5 -  D5 -  G4 -  A4 -  D5 "
+    "-  G4 -  B4 -  E4 -  G4 -  DS5 -  FS4 -  B4 -  E5",
+)
+EIGHTH = (                             # F lydian, floating
+    "F5 G5 A5 B5 C6 B5 A5 G5 A5 C6 E5 A5 F5 A5 C6 -  "
+    "B5 A5 G5 F5 G5 C6 G5 E5 F5 A5 C6 A5 G5 E5 F5 -",
+    "F2 -  F2 -  G2 -  G2 -  A2 -  A2 -  F2 -  F2 -  "
+    "BF2 -  BF2 -  C3 -  C3 -  F2 -  F2 -  C3 -  C3 -",
+    "-  A4 -  C5 -  B4 -  D5 -  C5 -  E5 -  A4 -  C5 "
+    "-  D5 -  F5 -  E5 -  G5 -  A4 -  C5 -  G4 -  C5",
+)
+NINTH = (                              # A harmonic minor, dramatic
+    "A4 C5 E5 A5 GS5 E5 B4 GS4 A4 C5 E5 A5 B5 GS5 E5 -  "
+    "F5 E5 D5 C5 D5 F5 A5 F5 E5 GS5 B5 E5 A5 -  -  -",
+    "A2 -  A2 -  E2 -  E2 -  A2 -  A2 -  E2 -  E2 -  "
+    "F2 -  F2 -  D3 -  D3 -  E2 -  E2 -  A2 -  A2 -",
+    "-  C5 -  E5 -  B4 -  E5 -  C5 -  A4 -  GS4 -  B4 "
+    "-  A4 -  C5 -  F4 -  A4 -  GS4 -  B4 -  C5 -  E5",
+)
+TENTH = (                              # D dorian, restless
+    "D5 F5 A5 G5 E5 G5 C5 E5 D5 A5 F5 D5 B4 D5 G5 B5 "
+    "A5 E5 C5 A4 C5 E5 G5 C6 A5 F5 D5 F5 E5 D5 -  -",
+    "D3 -  D3 -  C3 -  C3 -  D3 -  D3 -  G2 -  G2 -  "
+    "A2 -  A2 -  C3 -  C3 -  D3 -  D3 -  D3 -  D3 -",
+    "-  F4 -  A4 -  E4 -  G4 -  F4 -  A4 -  B4 -  D5 "
+    "-  C5 -  E5 -  G4 -  C5 -  A4 -  D5 -  F4 -  A4",
+)
+# name, its three voices, frames a step: brisker as the levels climb
 TUNES = [
-    ("first",   57, "minor",    [0, 3, 4, 0], [0, 2, 4, 2, 3, 2, 1, 0], 13),
-    ("second",  62, "minor",    [0, 5, 3, 4], [0, _, 2, 4, _, 3, 2, _], 13),
-    ("third",   59, "dorian",   [0, 6, 3, 4], [4, 3, 2, 0, 2, _, 4, 5], 12),
-    ("fourth",  64, "minor",    [0, 2, 5, 4], [0, 4, 3, 2, _, 1, 2, 4], 12),
-    ("fifth",   55, "harmonic", [0, 3, 6, 4], [0, 1, 2, 4, 3, _, 2, 1], 11),
-    ("sixth",   60, "major",    [0, 4, 5, 3], [0, 2, 4, 5, 4, 2, 0, _], 11),
-    ("seventh", 65, "phrygian", [0, 1, 4, 0], [0, _, 1, 2, 4, 2, 1, 0], 10),
-    ("eighth",  57, "dorian",   [0, 3, 6, 5], [2, 4, 5, 4, 2, 0, _, 2], 10),
-    ("ninth",   62, "harmonic", [0, 4, 3, 4], [4, _, 3, 2, 1, 0, 2, 4], 9),
-    ("tenth",   64, "phrygian", [0, 1, 3, 4], [0, 2, 1, 0, _, 4, 3, 2], 9),
+    ("first",   FIRST,   13),
+    ("second",  SECOND,  13),
+    ("third",   THIRD,   13),
+    ("fourth",  FOURTH,  12),
+    ("fifth",   FIFTH,   12),
+    ("sixth",   SIXTH,   11),
+    ("seventh", SEVENTH, 11),
+    ("eighth",  EIGHTH,  10),
+    ("ninth",   NINTH,   10),
+    ("tenth",   TENTH,    9),
 ]
 
 
@@ -152,30 +230,29 @@ def hz(midi):
     return 440.0 * 2 ** ((midi - 69) / 12.0)
 
 
-def voices_of(t):
-    """A tune's three voices as MIDI notes, None a rest: the motif over
-    each chord an octave up, the chord's root walking under it, and its
-    third between the beats."""
-    _n, root, scale, chords, motif, _s = t
-    sc = SCALES[scale]
+def midi_of(note):
+    """A note's letter, an S or an F if it wants one, and its octave, to
+    its MIDI number: A4 is 69, BF2 is a B flat and FS5 an F sharp."""
+    step = {"C": 0, "D": 2, "E": 4, "F": 5, "G": 7, "A": 9, "B": 11}[note[0]]
+    if note[1] == "S":
+        step += 1
+    elif note[1] == "F":
+        step -= 1
+    return 12 * (int(note[-1]) + 1) + step
 
-    def deg(d, octave=0):
-        return root + sc[d % 7] + 12 * (d // 7) + 12 * octave
-    lead, bass, harm = [], [], []
-    for c in chords:
-        for i, off in enumerate(motif):
-            lead.append(None if off is None else deg(c + off, 1))
-            bass.append(deg(c, -1) if i % 4 == 0 else None)
-            harm.append(deg(c + 2) if i % 4 == 2 else None)
-    return lead, bass, harm
+
+def voices_of(t):
+    """A tune's three voices as MIDI notes, None a rest."""
+    return [[None if n == "-" else midi_of(n) for n in v.split()] for v in t[1]]
 
 
 def tune_stream(t):
     """One tune as the player reads it: a wait, then a mask and (low,
     high, volume) for each voice that changes, and $80 to end."""
-    step = t[5]
+    step = t[2]
     voices = voices_of(t)
     n = len(voices[0])
+    assert all(len(v) == n for v in voices), (t[0], [len(v) for v in voices])
     out, last = [0], [None, None, None]
     for i in range(n):
         mask, data = 0, []
@@ -247,9 +324,9 @@ def act(ts, order, tunes):
     lines.append("")
     lines.append("; the tunes, one for each level as it comes up, on voices 0-2:")
     off, blob = [], []
-    for (name, _root, scale, _ch, _m, step), (stream, frames) in zip(TUNES, tunes):
-        lines.append(";   %-8s %-8s a step of %2d frames, %3d frames round, %3d bytes"
-                     % (name, scale, step, frames, len(stream)))
+    for (name, _v, step), (stream, frames) in zip(TUNES, tunes):
+        lines.append(";   %-8s a step of %2d frames, %3d frames round, %3d bytes"
+                     % (name, step, frames, len(stream)))
         off.append(len(blob))
         blob += stream
     lines.append("CONST N_TUNES = %d" % len(TUNES))
@@ -308,8 +385,8 @@ def main():
     preview(ts, order)
     print("  %d tiles (%d of them glyphs), 7 piece banks, 20 level surrounds" % (len(ts), len(order)))
     print("  %d tunes, %d bytes in all:" % (len(TUNES), sum(len(s) for s, _ in tunes)))
-    for t, (stream, frames) in zip(TUNES, tunes):
-        print("    %-8s %-8s step %2d, %3d frames round, %3d bytes" % (t[0], t[2], t[5], frames, len(stream)))
+    for (name, _v, step), (stream, frames) in zip(TUNES, tunes):
+        print("    %-8s step %2d, %3d frames round, %3d bytes" % (name, step, frames, len(stream)))
     print("  wrote %s and %s" % (os.path.relpath(OUT, ROOT), os.path.relpath(PREVIEW, ROOT)))
     return 0
 

@@ -1645,15 +1645,20 @@ turn into another, so the gate holds every shape to being the same shape
 at each of its four turns. And the name a new best asks for took the
 down key still latched from the soft drop -- which asks whether down is
 *held* and so never takes its latch -- turning the first letter back as
-fast as it was typed; the name entry lets go of its keys as it starts. **Ten tunes, one for every level as it comes up**, all this port's own.
-The generator composes each from a key, a scale, four chords by their
-degree in it and an eight-step motif of degrees away from the chord's
-own: a lead over a walking bass with a third between the beats, four
-bars round and round on voices 0-2. They run through minor, dorian,
-major, phrygian and harmonic minor, and the step shortens from 13 frames
-to 9, so the tenth is brisker than the first; 2,574 bytes for all ten. A
-level plays tune (level mod ten), so the twentieth screen sounds like the
-tenth. The effects are on voices 3 to 5.
+fast as it was typed; the name entry lets go of its keys as it starts. **Ten tunes, one for every level as it comes up**, all this port's own
+and every one written out note by note in `tools/mkcooltris.py`. Each is
+thirty-two eighths on voices 0-2: a melody, a bass walking on the even
+steps two notes to a chord, and a third or a fifth between them on the
+odd ones. The first is the one the port started with, in A minor; the
+nine after it keep its shape in their own keys and moods -- D minor
+longing, E phrygian dark, C major bright, A dorian hopeful, D minor
+driving, E minor marching, F lydian floating, A harmonic minor dramatic,
+D dorian restless -- and the step shortens from 13 frames to 9, so the
+later ones are brisker. A level plays tune (level mod ten), so the
+twentieth screen sounds like the tenth. The effects are on voices 3 to 5.
+(A first attempt had the generator compose nine of them from keys,
+scales and motifs; they were thrown out for being worth less than the
+one written by hand.)
 
 Keys: the cursor keys or A S D move it and soft drop it; the space bar,
 up or X turns it clockwise and Z the other way; M drops it to the ghost;
