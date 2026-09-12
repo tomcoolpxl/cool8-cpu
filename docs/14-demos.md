@@ -1625,13 +1625,25 @@ them. The well is ten by twenty cells of 8 x 8 in mode 2's 40 x 30, the
 same shape the board's is, with the score, rows and level down one side
 and the next piece and the best down the other.
 
-**Kinder than the board in two ways**, both asked for: the shapes come
-from a bag of seven shuffled, so there is no long wait for a long one,
-and a hollow ghost shows where the piece will land. Otherwise it is the
-board's: no hold, no wall kicks, no hard drop, and a piece locks the
-moment it lands. **Chosen**: the entry delay of 12 frames and the
-line-clear flash of three steps; the speed stops at the twentieth level
-and play goes on until the well fills. The tune is this port's own, on
+**Kinder than the board**, all of it asked for: the shapes come from a
+bag of seven shuffled, so there is no long wait for a long one; a hollow
+ghost shows where the piece will land; the space bar drops it there at
+once for two points a cell; and C parks a shape beside the next one,
+once between one shape and the next. No wall kicks, and a piece still
+locks the moment it lands. The levels go on past the twentieth -- two
+frames a row to the twenty-ninth and one after that, as the board's own
+do -- with the twenty colour schemes coming round again, and play goes
+on until the well fills. A new best takes three letters, up and down for
+the letter and right for the next place. **Chosen**: the entry delay of
+12 frames and the line-clear flash of three steps.
+
+**Two found in the making**, both held by the gate now. The J's fourth
+turn was a T: one cell out in the table of turns, which made that shape
+turn into another, so the gate holds every shape to being the same shape
+at each of its four turns. And the name a new best asks for took the
+down key still latched from the soft drop -- which asks whether down is
+*held* and so never takes its latch -- turning the first letter back as
+fast as it was typed; the name entry lets go of its keys as it starts. The tune is this port's own, on
 three voices, 32 steps of an eighth at 140 to the minute, 416 frames
 round; the effects are on voices 3 to 5.
 

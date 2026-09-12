@@ -22,8 +22,9 @@ SOURCE = "demos/cooltris.act"
 ART = os.path.join(H.ROOT, "assets", "cooltris", "cooltris_art.act")
 # make codes: the cursor keys are E0-prefixed
 LEFT, RIGHT, DOWN, UP = [0xE0, 0x6B], [0xE0, 0x74], [0xE0, 0x72], [0xE0, 0x75]
-Z, X, P, SPACE, ESC = [0x1A], [0x22], [0x4D], [0x29], [0x76]
+Z, X, C_HOLD, P, SPACE, ESC = [0x1A], [0x22], [0x21], [0x4D], [0x29], [0x76]
 WX, WY = 15, 5                                   # the well's corner on the map
+GLYPHS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ-.!/ "   # the font's order
 
 
 def sources():
@@ -185,6 +186,31 @@ def main():
         print(g.png("cool_level10"), "level", g.byte("level") + 1)
         four_rows(g, lo=96, hi=1, lv=18)
         print(g.png("cool_level20"), "level", g.byte("level") + 1)
+        return
+    if what == "name":
+        # the well filled but for one column, so the next shape will not
+        # fit, and a score past the ten thousand it starts with: the game
+        # ends and asks for three letters
+        for y in range(20):
+            for x in range(1, 10):
+                g.m.bus.mem[g.addr("well") + y * 10 + x] = 1
+        for i, d in enumerate([0, 0, 0, 5, 3, 0, 0]):
+            g.poke("dig", d, i)
+        over = 0
+        want = g.c("T_FONT") + GLYPHS.index("G")   # the words, not the filling
+        for t in range(400):
+            g.m.run_frame(1)
+            if g.cell(16, 14)[0] == want:
+                over = t
+                break
+        g.m.run_frame(10)
+        show = lambda: "%s cell %s" % ("".join(chr(g.byte("topname", i)) for i in range(3)), g.cell(33, 21))
+        print("  game over after %d frames: %s" % (over, show()))
+        for keys, said in ((UP, "up"), (UP, "up"), (RIGHT, "right"), (SPACE, "space")):
+            g.tap(keys)
+            g.m.run_frame(5)
+            print("  after %-6s %s" % (said, show()))
+        print(g.png("cool_name"), "score", g.score(), "best", sum(g.byte("top", i) * 10 ** i for i in range(7)))
         return
     if what == "rows":
         four_rows(g)

@@ -16,13 +16,18 @@
 ; is bank 0, written again at every level, so the twentieth screen looks
 ; nothing like the first.
 ;
-; **Kinder than the board in two ways**, both asked for: the shapes come
-; from a bag of seven shuffled, so there is no long wait for a long one,
-; and a hollow ghost shows where the piece will land.
+; **Kinder than the board**, all of it asked for: the shapes come from a
+; bag of seven shuffled, so there is no long wait for a long one; a
+; hollow ghost shows where the piece will land; the space bar drops it
+; there at once, two points a cell; and C parks a shape beside the next
+; one, once between one shape and the next. The levels go on past the
+; twentieth, two frames a row to the twenty-ninth and one after that,
+; with the twenty colour schemes coming round again.
 ;
 ; Keys: the cursor keys or A S D move it and drop it, up or X turns it
-; clockwise and Z the other way, P pauses, Esc ends it, and the space
-; bar starts a game.
+; clockwise and Z the other way, the space bar drops it, C parks it, P
+; pauses, Esc ends it. The space bar starts a game; a new best takes
+; three letters, up and down for the letter and right for the next.
 
 CONST PAT_BASE = $1000
 
@@ -47,6 +52,7 @@ CONST KEY_S = $1B
 CONST KEY_D = $23
 CONST KEY_Z = $1A
 CONST KEY_X = $22
+CONST KEY_C = $21                    ; the shape parked
 CONST KEY_P = $4D
 CONST KEY_SPACE = $29
 CONST KEY_ESC = $76
@@ -64,7 +70,7 @@ BYTE ARRAY sh_x(112) = [
   1 0 1 2  1 1 2 1  0 1 2 1  1 0 1 1
   1 2 0 1  1 1 2 2  1 2 0 1  0 0 1 1
   0 1 1 2  2 1 2 1  0 1 1 2  1 0 1 0
-  0 0 1 2  1 2 1 1  0 1 2 2  1 1 0 1
+  0 0 1 2  1 2 1 1  0 1 2 2  1 1 1 0
   2 0 1 2  1 1 1 2  0 1 2 0  0 1 1 1
 ]
 BYTE ARRAY sh_y(112) = [
@@ -73,7 +79,7 @@ BYTE ARRAY sh_y(112) = [
   0 1 1 1  0 1 1 2  1 1 1 2  0 1 1 2
   0 0 1 1  0 1 1 2  1 1 2 2  0 1 1 2
   0 0 1 1  0 1 1 2  1 1 2 2  0 1 1 2
-  0 1 1 1  0 0 1 2  1 1 1 2  0 1 1 2
+  0 1 1 1  0 0 1 2  1 1 1 2  0 1 2 2
   0 1 1 1  0 1 2 2  1 1 1 2  0 0 1 2
 ]
 
@@ -86,6 +92,9 @@ INT gy                               ; where the ghost's box rests
 BYTE level, lines_lo, lines_hi
 BYTE ARRAY dig(7), top(7), tmpd(3)   ; the score and the best, a digit a byte
 BYTE quit, paused
+BYTE hold_p, has_hold, hold_used     ; the shape parked beside the next one
+BYTE ARRAY topname(3)                ; three letters against the best score
+BYTE naming                          ; 1 while those letters are being typed
 BYTE fall_t, das_t, das_d, are_t, soft
 CARD loops                           ; frames of play, for the gate
 
@@ -193,10 +202,17 @@ PROC DrawWell()
 RETURN
 
 ; the level's sixteen for the surround, and the two banks text is in
+; frames a row: the table over the twenty levels, then the board's own
+; way of going on -- two frames a row to the twenty-ninth, one after
+FUNC BYTE Speed()
+  IF level < 20 THEN RETURN (grav(level)) FI
+  IF level < 29 THEN RETURN (2) FI
+RETURN (1)
+
 PROC LevelColours()
   CARD POINTER p, q
   CARD ground, head
-  p = lvl_pal + level * 32
+  p = lvl_pal + (level % 20) * 32    ; the twenty schemes round again
   SetPalette(p, B_SUR << 4, 16)
   ground = *p                        ; entry 0, the ground the text sits on
   q = p + 14                         ; entry 7, the heading's colour
@@ -364,7 +380,56 @@ PROC ShowLevel()
 RETURN
 
 PROC ShowBest()
-  Digits(28, 15, top, 7, B_FIG)
+  BYTE i
+  Digits(28, 22, top, 7, B_FIG)
+  FOR i = 0 TO 2 DO Cell(33 + i, 21, T_FONT + Glyph(topname(i)), B_FIG) OD
+RETURN
+
+; a new best: three letters, up and down to choose one, right for the
+; next, the space bar to have done. The one being typed is the heading's
+; colour, the others the figures'
+PROC EnterName()
+  BYTE at, ch, done, bank, v
+  FOR at = 0 TO 2 DO topname(at) = 65 OD
+  at = 0
+  done = 0
+  naming = 1
+  ; the keys the game was played with, let go of: the soft drop asks
+  ; whether down is held and never takes its latch, so a game that ended
+  ; with it held would have that press turn the first letter back
+  v = KeyHit(KEY_SPACE)
+  v = KeyHit(KEY_UP)
+  v = KeyHit(KEY_DOWN)
+  v = KeyHit(KEY_RIGHT)
+  DO
+    Tick()
+    IF quit THEN
+      naming = 0
+      RETURN
+    FI
+    IF KeyHit(KEY_UP) THEN
+      v = topname(at) + 1
+      IF v > 90 THEN v = 65 FI
+      topname(at) = v
+    FI
+    IF KeyHit(KEY_DOWN) THEN
+      v = topname(at) - 1
+      IF v < 65 THEN v = 90 FI
+      topname(at) = v
+    FI
+    IF KeyHit(KEY_RIGHT) THEN
+      at += 1
+      IF at > 2 THEN done = 1 FI
+    FI
+    IF KeyHit(KEY_SPACE) THEN done = 1 FI
+    FOR ch = 0 TO 2 DO
+      bank = B_FIG
+      IF ch == at THEN bank = B_HEAD FI
+      Cell(33 + ch, 21, T_FONT + Glyph(topname(ch)), bank)
+    OD
+  UNTIL done OR quit OD
+  naming = 0
+  ShowBest()
 RETURN
 
 ; this game's score against the best, digit by digit from the top
@@ -376,6 +441,7 @@ PROC KeepBest()
     IF dig(i) > top(i) THEN
       FOR j = 0 TO 6 DO top(j) = dig(j) OD
       ShowBest()
+      EnterName()
       RETURN
     ELSEIF dig(i) < top(i) THEN
       RETURN
@@ -474,6 +540,18 @@ PROC ShowNext()
   OD
 RETURN
 
+PROC ShowHold()
+  BYTE i, o, x, y
+  FOR y = 0 TO 3 DO
+    FOR x = 0 TO 3 DO Cell(30 + x, 15 + y, T_BG, B_SUR) OD
+  OD
+  IF has_hold == 0 THEN RETURN FI
+  o = hold_p << 4
+  FOR i = 0 TO 3 DO
+    Cell(30 + sh_x(o + i), 15 + sh_y(o + i), T_BLOCK, B_PIECE + hold_p)
+  OD
+RETURN
+
 ; the next shape into the well; 0 if it does not fit -- the well is full
 FUNC BYTE Spawn()
   cur = nxt
@@ -481,11 +559,42 @@ FUNC BYTE Spawn()
   rot = 0
   cx = 3
   cy = -1
+  hold_used = 0                      ; the parking place is free again
   ShowNext()
   IF Fits(cur, rot, cx, cy) == 0 THEN RETURN (0) FI
   Ghost()
   DrawPiece(1)
 RETURN (1)
+
+; the falling shape parked, and whatever was parked brought in instead:
+; once between one shape coming in and the next. 0 if what comes back
+; will not fit -- the well is full
+FUNC BYTE Hold()
+  BYTE p
+  IF hold_used THEN RETURN (1) FI
+  hold_used = 1
+  DrawPiece(0)
+  p = cur
+  IF has_hold THEN
+    cur = hold_p
+    hold_p = p
+    rot = 0
+    cx = 3
+    cy = -1
+    ShowHold()
+    Sfx(1)
+    IF Fits(cur, rot, cx, cy) == 0 THEN RETURN (0) FI
+    Ghost()
+    DrawPiece(1)
+    RETURN (1)
+  FI
+  hold_p = p
+  has_hold = 1
+  ShowHold()
+  Sfx(1)
+  p = Spawn()
+  hold_used = 1                      ; Spawn frees it again: not this shape
+RETURN (p)
 
 ; -------------------------------------------------------------- the rows
 PROC Lock()
@@ -579,13 +688,42 @@ PROC Rows(BYTE n)
   ShowLines()
   t = lines_hi
   t = (t * 100 + lines_lo) / 10
-  IF t > 19 THEN t = 19 FI
+  IF t > 99 THEN t = 99 FI           ; on past twenty, as fast as it goes
   level = t
   IF level <> was THEN
     LevelColours()
     ShowLevel()
     Sfx(5)
   FI
+RETURN
+
+; the shape come to rest: into the well, the rows it fills taken, and
+; the wait before the next comes in
+PROC Land()
+  BYTE n
+  Lock()
+  Sfx(2)
+  n = TakeRows()
+  IF n THEN Rows(n) FI
+  are_t = 12
+RETURN
+
+; straight down to where the ghost is, two points a cell, and locked at
+; once: not the board's, and asked for
+PROC HardDrop()
+  BYTE i, d
+  d = gy - cy
+  IF d THEN
+    DrawPiece(0)
+    cy = gy
+    DrawPiece(1)
+    FOR i = 1 TO d DO
+      AddOne()
+      AddOne()
+    OD
+    ShowScore()
+  FI
+  Land()
 RETURN
 
 ; ------------------------------------------------------------- steering
@@ -659,6 +797,9 @@ PROC NewGame()
   lines_hi = 0
   bagn = 7
   nxt = Deal()
+  has_hold = 0
+  hold_used = 0
+  ShowHold()
   fall_t = 0
   das_t = 0
   das_d = 0
@@ -705,27 +846,27 @@ PROC Play()
       Sideways()
       IF KeyHit(KEY_UP) OR KeyHit(KEY_X) THEN Turn(1) FI
       IF KeyHit(KEY_Z) THEN Turn(0) FI
+      IF KeyHit(KEY_C) THEN alive = Hold() FI
+      IF KeyHit(KEY_SPACE) THEN HardDrop() FI
       soft = 0
       IF KeyHeld(KEY_DOWN) OR KeyHeld(KEY_S) THEN soft = 1 FI
-      spd = grav(level)
+      spd = Speed()
       IF soft AND spd > 2 THEN spd = 2 FI
-      fall_t += 1
-      IF fall_t >= spd THEN
-        fall_t = 0
-        IF Fits(cur, rot, cx, cy + 1) THEN
-          DrawPiece(0)
-          cy += 1
-          DrawPiece(1)
-          IF soft THEN
-            AddOne()
-            ShowScore()
+      IF are_t == 0 AND alive THEN     ; a hard drop has landed it already
+        fall_t += 1
+        IF fall_t >= spd THEN
+          fall_t = 0
+          IF Fits(cur, rot, cx, cy + 1) THEN
+            DrawPiece(0)
+            cy += 1
+            DrawPiece(1)
+            IF soft THEN
+              AddOne()
+              ShowScore()
+            FI
+          ELSE
+            Land()
           FI
-        ELSE
-          Lock()
-          Sfx(2)
-          n = TakeRows()
-          IF n THEN Rows(n) FI
-          are_t = 12
         FI
       FI
     FI
@@ -759,12 +900,17 @@ PROC Panels()
   Text(2, 16, "LEVEL", B_HEAD)
   Box(27, 4, 8, 6)
   Text(28, 5, "NEXT", B_HEAD)
-  Box(27, 13, 8, 2)
-  Text(28, 14, "BEST", B_HEAD)
+  Box(27, 12, 8, 6)
+  Text(28, 13, "HOLD", B_HEAD)
+  ShowHold()
+  Box(27, 20, 8, 2)
+  Text(28, 21, "BEST", B_HEAD)
   ShowBest()
-  Text(28, 19, "Z X TURN", B_HEAD)
-  Text(28, 21, "P PAUSE", B_HEAD)
-  Text(28, 23, "ESC OUT", B_HEAD)
+  Text(28, 25, "Z X TURN", B_HEAD)
+  Text(28, 26, "C HOLD", B_HEAD)
+  Text(28, 27, "SPC DROP", B_HEAD)
+  Text(28, 28, "P PAUSE", B_HEAD)
+  Text(28, 29, "ESC OUT", B_HEAD)
 RETURN
 
 ; the title: the seven shapes in the well, in their colours
@@ -805,6 +951,7 @@ PROC Main()
   LevelColours()
   FOR p = 0 TO 6 DO top(p) = 0 OD
   top(4) = 1                         ; ten thousand to beat
+  FOR p = 0 TO 2 DO topname(p) = 65 OD
   DO
     Title()
     IF quit THEN EXIT FI

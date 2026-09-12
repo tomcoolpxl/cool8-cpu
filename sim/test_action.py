@@ -2414,6 +2414,22 @@ def test_cooltris():
     check(banks == list(range(c("B_PIECE"), c("B_PIECE") + 7)),
           "cooltris: the seven shapes on the front, each in its own colour", str(banks))
 
+    # every shape must be the same shape at each of its four turns: one
+    # cell out of place in the table turns a shape into another one
+    sx = [g.byte("sh_x", i) for i in range(112)]
+    sy = [g.byte("sh_y", i) for i in range(112)]
+
+    def norm(cs):
+        mx, my = min(x for x, _ in cs), min(y for _, y in cs)
+        return sorted((x - mx, y - my) for x, y in cs)
+
+    def turn_of(p, r):
+        o = p * 16 + r * 4
+        return list(zip(sx[o:o + 4], sy[o:o + 4]))
+    bad = ["%s turn %d" % ("IOTSZJL"[p], r) for p in range(7) for r in range(4)
+           if norm([(-y, x) for x, y in turn_of(p, r)]) != norm(turn_of(p, (r + 1) % 4))]
+    check(not bad, "cooltris: every shape is that same shape at each of its four turns", str(bad))
+
     # a piece comes in, and its ghost lies under it
     g.start()
     g.m.run_frame(40)
@@ -2454,25 +2470,102 @@ def test_cooltris():
     check(g.m.palette()[16:16 + 7 * 16] == pieces0, "cooltris: and leaves the shapes their colours",
           str(g.m.palette()[16:20]))
     C.four_rows(g, lo=96, hi=1, lv=18)
-    check(g.byte("level") == 19 and g.byte("grav", 19) == 2,
-          "cooltris: twenty levels, the last of them two frames a row",
-          "level %d, %d frames a row" % (g.byte("level") + 1, g.byte("grav", g.byte("level"))))
+    check(g.byte("level") == 20 and g.byte("grav", 19) == 2,
+          "cooltris: twenty levels in the table, the last at two frames a row, and on past it",
+          "level %d, the table's last %d" % (g.byte("level") + 1, g.byte("grav", 19)))
+    g.poke("level", 34)                # past the twenty-ninth: a row a frame
+    g.fresh()
+    y0 = g.word("cy")
+    g.m.run_frame(6)
+    check(g.word("cy") - y0 >= 5, "cooltris: and past the twenty-ninth level, a row a frame",
+          "%d rows in 6 frames" % (g.word("cy") - y0))
+    g.poke("level", 9)
+
+    # the space bar drops it to the ghost at once, two points a cell
+    g.fresh()
+    g.poke("fall_t", 0)
+    y0 = g.word("cy")
+    s0 = g.score()
+    g.tap(C.SPACE)
+    y1 = g.word("cy")                  # where it came to rest, however far
+    check(g.byte("are_t") > 0 and y1 > y0 and g.score() - s0 == 2 * (y1 - y0),
+          "cooltris: the space bar drops it to the ghost at once, two points a cell",
+          "%d points for %d rows, from %d to %d, entry delay %d"
+          % (g.score() - s0, y1 - y0, y0, y1, g.byte("are_t")))
+
+    # the hold: the shape parked, the next one in, and once a shape only
+    g.fresh()
+    was = g.byte("cur")
+    g.tap(C.C_HOLD)
+    parked, now = g.byte("hold_p"), g.byte("cur")
+    check(parked == was and now != was and g.byte("has_hold") == 1,
+          "cooltris: C parks the shape and brings the next one in", "%d parked, %d in" % (parked, now))
+    g.tap(C.C_HOLD)
+    check(g.byte("cur") == now and g.byte("hold_p") == was,
+          "cooltris: and not again until the next shape comes in", "%d in, %d parked" % (g.byte("cur"), g.byte("hold_p")))
+    for _ in range(600):               # a shape whose hold is free again
+        g.m.run_frame(1)
+        if g.byte("hold_used") == 0 and g.byte("are_t") == 0:
+            break
+    fresh_p, free = g.byte("cur"), g.byte("hold_used")
+    g.tap(C.C_HOLD)
+    check(g.byte("cur") == was and g.byte("hold_p") == fresh_p,
+          "cooltris: the parked shape comes back and the one in hand takes its place",
+          "%d in and %d parked, from %d in with the hold %s"
+          % (g.byte("cur"), g.byte("hold_p"), fresh_p, "free" if free == 0 else "used"))
 
     # the bag: each of the seven in it once
     bag = sorted(g.byte("bag", i) for i in range(7))
     check(bag == list(range(7)), "cooltris: the bag holds each of the seven shapes once", str(bag))
 
     # a full well ends the game: every column but the first, so that no
-    # row is complete and the rows are not simply taken instead
+    # row is complete and the rows are not simply taken instead. The
+    # score is put past the ten thousand it starts with, so that the end
+    # asks for a name as well
+    for i, d in enumerate([0, 0, 0, 5, 3, 0, 0]):
+        g.poke("dig", d, i)
     for y in range(20):
         for x in range(1, 10):
             g.m.bus.mem[g.addr("well") + y * 10 + x] = 1
-    for _ in range(300):
+    want = c("T_FONT") + glyph("G")
+    for _ in range(400):
         g.m.run_frame(1)
-        if g.cell(16, 14)[0] == c("T_FONT") + glyph("G"):
+        if g.cell(16, 14)[0] == want:
             break
-    check(g.cell(16, 14) == (c("T_FONT") + glyph("G"), c("B_HEAD")),
+    check(g.cell(16, 14) == (want, c("B_HEAD")),
           "cooltris: a full well ends the game and says so", str(g.cell(16, 14)))
+
+    # the letters: up for the next one, right for the next place, space
+    # to have done -- pressed once it is asking, which it says itself, and
+    # not while the well is still filling in, or they wait in the latches
+    for _ in range(200):
+        g.m.run_frame(1)
+        if g.byte("naming"):
+            break
+    check(g.byte("naming") == 1, "cooltris: a new best asks for a name", "naming %d" % g.byte("naming"))
+    letters = lambda: "".join(chr(g.byte("topname", i)) for i in range(3))   # noqa: E731
+
+    def press(keys, done, cap=90):
+        """A key, then frames until it has been taken: a press is seen a
+        few frames after the bytes are fed, not the same one."""
+        g.m.kbd.feed(keys)
+        g.m.run_frame(2)
+        g.m.kbd.feed(keys[:-1] + [0xF0, keys[-1]])
+        for _ in range(cap):
+            g.m.run_frame(1)
+            if done():
+                return True
+        return False
+    was = letters()
+    up = press(C.UP, lambda: letters() != was)
+    moved = press(C.RIGHT, lambda: g.cell(33, 21)[1] == c("B_FIG"))
+    ended = press(C.SPACE, lambda: g.byte("naming") == 0)
+    name = letters()
+    best = sum(g.byte("top", i) * 10 ** i for i in range(7))
+    check(up and moved and ended and name == "BAA" and best == 35000
+          and g.cell(33, 21)[0] == c("T_FONT") + glyph("B"),
+          "cooltris: a new best takes three letters and keeps the score",
+          "%r, best %d, cell %s; up %s, on %s, done %s" % (name, best, g.cell(33, 21), up, moved, ended))
     check(0x100 < g.m.cpu.sp <= 0x200, "cooltris: the stack is where it should be", "SP $%04X" % g.m.cpu.sp)
     del g
     print()
