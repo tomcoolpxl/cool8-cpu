@@ -1669,11 +1669,19 @@ def test_arkanoid():
     for _ in range(30):
         g.pokew("vx", 210)
         g.m.run_frame(1)
+        if g.uword("score10") >= s0 + 1000:
+            break                      # the exit taken, and the Vaus walks out
+    far = 0
+    for _ in range(90):
+        g.m.run_frame(1)
+        far = max(far, g.word("vx"))
         if g.byte("round") == 2:
             break
     g.m.run_frame(100)
     check(g.byte("round") == 2 and g.uword("score10") >= s0 + 1000, "arkanoid: out through the exit, 10,000 and round 2",
           "round %d score %d" % (g.byte("round"), g.uword("score10") * 10))
+    check(far >= 230, "arkanoid: and it goes on out through the gap before the round turns, not stopping dead",
+          "the Vaus reached %d" % far)
     g.m.run_frame(300)
     check(g.cell(1, 3) == (tb, bb), "arkanoid: round 2's staircase, its white brick at row 3", str(g.cell(1, 3)))
 

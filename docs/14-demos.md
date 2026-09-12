@@ -1404,6 +1404,14 @@ top-left antenna, under a cone and its shadow in that frame. The same
 frames that caught an enemy say which comes when: cones on the blue
 rounds, pyramids on the green, molecules on the circuit, cubes on the
 grey -- the background and the enemy are one choice, (round - 1) mod 4.
+Round 3's gold was held against the arcade's frame again when it was
+asked after: its eight rows -- green; three white and ten gold; red; ten
+gold and three white; magenta; three blue and ten gold; cyan; ten gold
+and three cyan -- are that frame's, cell for cell, and gold cannot be
+broken there or anywhere, by ball or by laser, nor is it counted towards
+clearing the round
+([StrategyWiki](https://strategywiki.org/wiki/Arkanoid/Gameplay)). The
+way through is the three-brick gap at one end of each gold row.
 
 **Mode 2, the field at one pixel to one.** The arcade's field is 224 x
 240 under its score line and mode 2 is 320 x 240, so the field is
@@ -1467,6 +1475,14 @@ nothing stopped it, and a sprite's y is nine bits, so an enemy that
 rose past the field wrapped to the screen's bottom -- at y -26 and -34
 under and beside the Vaus -- where nothing met it (`up`).
 
+**Out through the exit.** The gap a B opens is taken by driving the Vaus
+into it: the ten thousand lands and the Vaus goes on right, out through
+the gap, before the round turns. The first cut ended the round the
+moment the Vaus reached the gap and left it standing there for some
+seventy frames before it vanished where it stood
+(`python sim/arkanoid.py exit`, which shoots every eighth frame across
+the change).
+
 **DOH** sits in the wall's hole on his red round, cells 10-17 x 5-16,
 drawn from four normal frames with his mouth opening; hit, he flashes
 cyan, and beaten he turns purple in the sheet's twelve dying frames --
@@ -1497,7 +1513,8 @@ dark tile; ROUND over the field and the round-start tune on voice 0; the
 Vaus as cells of the background in its banks, its shadow in the row
 under; 600 frames of the autopilot with a frame of play in every
 vblank; each capsule caught and its power; an enemy through a gate; out
-through the exit into round 2 with 10,000; a ball lost and a life gone;
+through the exit into round 2 with 10,000, the Vaus going on out through
+the gap rather than stopping dead; a ball lost and a life gone;
 the stack where it should be; the Vaus's collisions -- an enemy onto it
 bursting where they meet and not beside it, a ball bouncing off a Vaus
 that came under it late, down to its last row, the ball's body the drawn

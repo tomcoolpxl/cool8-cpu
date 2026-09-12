@@ -2070,9 +2070,22 @@ PROC Play()
         HideCapsule()
         ClearBeams()
         ClearEnemies()
-        IF r == 4 THEN AddScore(1000) FI
-        FOR t = 0 TO 60 DO Tick() OD
-        EraseVaus()
+        IF r == 4 THEN
+          AddScore(1000)
+          ; out through the gap: the Vaus goes on right until the wall has
+          ; taken it, rather than stopping dead where the exit was reached
+          WHILE vx < 232 DO
+            vx += 2
+            VausExtent()
+            ShowVaus()
+            Tick()
+          OD
+          EraseVaus()
+          FOR t = 0 TO 30 DO Tick() OD
+        ELSE
+          FOR t = 0 TO 60 DO Tick() OD
+          EraseVaus()
+        FI
         round += 1
         IF round > 33 THEN round = 1 FI
         EXIT

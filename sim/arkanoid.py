@@ -466,6 +466,27 @@ def main():
         print(g.png("ark_doh_wire"))
         g.m.run_frame(120)
         print(g.png("ark_doh_gone"), "doh_on", g.byte("doh_on"), "score", g.uword("score10") * 10)
+    elif what == "exit":
+        # a B caught, then the Vaus driven right into the exit it opens:
+        # every eighth frame across the change of round, as a player sees it
+        g.drop("B")
+        x = g.word("vx")
+        for _ in range(40):
+            g.pokew("vx", x)
+            g.m.run_frame(1)
+            if not g.byte("cap_on"):
+                break
+        g.autopilot(20)
+        r0, shots = g.byte("round"), 0
+        g.m.kbd.feed(RIGHT)
+        for t in range(500):
+            g.m.run_frame(1)
+            if t % 8 == 0 and shots < 16:
+                print(g.png("ark_exit%02d" % shots), "vx", g.word("vx"), "round", g.byte("round"),
+                      "score", g.uword("score10") * 10, "ex_on", g.byte("ex_on"), "lives", g.byte("lives"))
+                shots += 1
+        g.m.kbd.feed(RIGHT[:-1] + [0xF0, RIGHT[-1]])
+        print("  round %d -> %d" % (r0, g.byte("round")))
     elif what == "enemies":
         g.autopilot(900)
         print(g.png("ark_enemies"), "enemies", [(g.byte("en_on", e), g.word("en_x", e), g.word("en_y", e)) for e in range(3)])
