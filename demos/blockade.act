@@ -1,0 +1,436 @@
+; BLOCKADE -- Gremlin's arcade Blockade (1976) on COOL8, in CoolAction!
+;
+; The first game of the snake kind (docs/14-demos.md): two arrows, each
+; laying a wall behind it; whoever runs into a wall -- the border, their
+; own or the other's -- gives the other a point, and six points win.
+; The picture is the arcade's own: every character is ripped from
+; screenshots of its screen by tools/mkblockade.py into
+; assets/blockade/blockade_art.act, which demos/blockade.parts names.
+;
+; **Mode 2, one to one.** The arcade's screen is 32 x 28 characters of
+; 8 x 8, 256 x 224; mode 2 is 40 x 30 of them, so the field is columns
+; 4-35 and rows 1-28, pixel for pixel.
+;
+; **The trails are the border's pieces.** The cell a head leaves becomes
+; the piece joining the side it came in by and the side it went out by
+; -- a straight, or one of the four corners -- as the arcade draws it.
+;
+; **The sound is the arcade's in kind**: a tone for each player and way
+; it goes, the two players' notes one after the other every step, and a
+; boom of shaped noise for a crash -- Lane Hauck's tone circuit and Bob
+; Pecoraro's explosion. The pitches and the envelope are this port's.
+;
+; Keys: the left player W A S D, the right the cursor keys, and a player
+; alone against the computer either. Space starts two players, C one
+; against the computer, Esc ends it. A press waits for the step that
+; turns the head, and two can wait: a quick turn and turn again both
+; happen.
+
+CONST PAT_BASE = $1000
+CONST FX = 4                         ; the field's first column on the 40 x 30 map
+CONST FY = 1                         ; ...and its first row
+CONST FW = 32                        ; the arcade's 32 x 28 characters
+CONST FH = 28
+CONST WIN = 6                        ; the points a game is played to: the 6 in the top border
+CONST RATE0 = 8                      ; frames a step at a round's start,
+CONST RATE1 = 4                      ; at its fastest,
+CONST FASTER = 24                    ; and steps between: chosen, the arcade's are not known
+CONST KEY_ESC = $76
+CONST KEY_SPACE = $29
+CONST KEY_C = $21
+
+; up, right, down, left: the left player's W D S A, the right's cursor
+; keys, $80 + their $E0-prefixed codes
+BYTE ARRAY keys(8) = [29 35 27 28 245 244 242 235]
+; a step each way, one over: 0 is -1
+BYTE ARRAY dx1(4) = [1 2 1 0]
+BYTE ARRAY dy1(4) = [0 1 2 1]
+; each player's note by the way it goes: the tone circuit's 93,681.5 Hz
+; over a count, 120-129 for the left player and 128-137 for the right,
+; a semitone apart, as the voice's increments of 0.4993 Hz
+CARD ARRAY note(8) = [1564 1525 1489 1454 1466 1432 1400 1370]
+BYTE ARRAY piece(16)                 ; the cell a head leaves, by the way it came and goes
+BYTE ARRAY occ(896)                  ; the field, 32 a row: 0 free
+BYTE ARRAY px(2), py(2), pdir(2), pnext(2), score(2), nx(2), ny(2), head(2)
+BYTE ARRAY tq(4), tn(2)              ; each player's turns waiting for a step, two at most
+BYTE players                         ; 1 against the computer, 2 two players
+BYTE quit, rate, tone_t, boom_t
+CARD steps, loops                    ; a round's steps; frames of play, for the gate
+; the computer's look ahead
+BYTE ARRAY seen(896)
+BYTE gen
+CARD ARRAY q(64)
+
+FUNC CARD At(BYTE x, BYTE y)
+  CARD i
+  i = y                              ; a shift keeps its left side's width
+RETURN ((i << 5) + x)
+
+; a cell of the field, on the map
+PROC Put(BYTE x, BYTE y, BYTE t)
+  CARD a
+  a = FY + y
+  VRAM_ADDR = (a << 7) + ((FX + x) << 1)
+  VRAM_STEP = 1
+  VRAM_DATA = t
+  VRAM_DATA = 0
+RETURN
+
+; the whole map blank
+PROC ClearMap()
+  BYTE r, c
+  CARD a
+  FOR r = 0 TO 29 DO
+    a = r
+    VRAM_ADDR = a << 7
+    VRAM_STEP = 1
+    FOR c = 0 TO 39 DO
+      VRAM_DATA = T_BLANK
+      VRAM_DATA = 0
+    OD
+  OD
+RETURN
+
+PROC Init()
+  ; up, then up, right, down, left: in from below
+  piece(0) = T_VERT
+  piece(1) = T_RD
+  piece(2) = T_VERT
+  piece(3) = T_LD
+  ; right, then each: in from the left
+  piece(4) = T_UL
+  piece(5) = T_HORZ
+  piece(6) = T_LD
+  piece(7) = T_HORZ
+  ; down: in from above
+  piece(8) = T_VERT
+  piece(9) = T_UR
+  piece(10) = T_VERT
+  piece(11) = T_UL
+  ; left: in from the right
+  piece(12) = T_UR
+  piece(13) = T_HORZ
+  piece(14) = T_RD
+  piece(15) = T_HORZ
+  head(0) = T_HEAD1
+  head(1) = T_HEAD2
+RETURN
+
+; ---------------------------------------------------------------- sound
+PROC Quiet()
+  Silence(0)
+  Silence(1)
+  tone_t = 0
+  boom_t = 0
+RETURN
+
+; a step's two notes, the left player's then the right's, two frames each
+PROC Tones()
+  Sound(0, note(pdir(0)), 12, 0)
+  tone_t = 4
+RETURN
+
+; a crash: noise, low and falling away
+PROC Boom()
+  Silence(0)
+  tone_t = 0
+  Sound(1, 700, 15, 1)
+  boom_t = 60
+RETURN
+
+PROC SoundStep()
+  IF tone_t THEN
+    tone_t -= 1
+    IF tone_t == 2 THEN
+      Sound(0, note(4 + pdir(1)), 12, 0)
+    ELSEIF tone_t == 0 THEN
+      Silence(0)
+    FI
+  FI
+  IF boom_t THEN
+    boom_t -= 1
+    IF boom_t THEN Sound(1, 700, boom_t >> 2, 1) ELSE Silence(1) FI
+  FI
+RETURN
+
+; a frame: the vblank, the keys, the sound going on
+PROC Tick()
+  WaitVBlank()
+  KeyPoll()
+  IF KeyHit(KEY_ESC) THEN quit = 1 FI
+  SoundStep()
+RETURN
+
+; ---------------------------------------------------------------- field
+; the border and nothing inside it, the 6 in the top's middle
+PROC Field()
+  BYTE x, y
+  CARD i
+  FOR i = 0 TO 895 DO occ(i) = 0 OD
+  FOR y = 1 TO FH - 2 DO
+    FOR x = 1 TO FW - 2 DO Put(x, y, T_BLANK) OD
+  OD
+  FOR x = 1 TO FW - 2 DO
+    Put(x, 0, T_HORZ)
+    Put(x, FH - 1, T_HORZ)
+    occ(At(x, 0)) = 1
+    occ(At(x, FH - 1)) = 1
+  OD
+  FOR y = 1 TO FH - 2 DO
+    Put(0, y, T_VERT)
+    Put(FW - 1, y, T_VERT)
+    occ(At(0, y)) = 1
+    occ(At(FW - 1, y)) = 1
+  OD
+  Put(0, 0, T_RD)
+  Put(FW - 1, 0, T_LD)
+  Put(0, FH - 1, T_UR)
+  Put(FW - 1, FH - 1, T_UL)
+  occ(At(0, 0)) = 1
+  occ(At(FW - 1, 0)) = 1
+  occ(At(0, FH - 1)) = 1
+  occ(At(FW - 1, FH - 1)) = 1
+  Put(16, 0, T_SIX)
+RETURN
+
+; the two heads where the arcade starts them: the left player's going
+; down from (5, 5), the right's going up from (26, 22)
+PROC Heads()
+  BYTE p
+  px(0) = 5
+  py(0) = 5
+  pdir(0) = 2
+  px(1) = 26
+  py(1) = 22
+  pdir(1) = 0
+  FOR p = 0 TO 1 DO
+    pnext(p) = pdir(p)
+    tn(p) = 0
+    occ(At(px(p), py(p))) = 1
+    Put(px(p), py(p), head(p) + pdir(p))
+  OD
+RETURN
+
+; a player's keys pressed since the frame before, each a turn waiting
+; for a step -- two at most, so a quick turn and turn again are both
+; kept -- and none that sends the head back on itself or the way it
+; goes already, counting the turn before it
+PROC Steer(BYTE p, BYTE k0)
+  BYTE d, q, last, r
+  q = p << 1
+  FOR d = 0 TO 3 DO
+    IF KeyHit(keys(k0 + d)) THEN
+      IF tn(p) < 2 THEN
+        last = pdir(p)
+        IF tn(p) THEN last = tq(q) FI
+        r = (d + 2) & 3
+        IF r <> last AND d <> last THEN
+          tq(q + tn(p)) = d
+          tn(p) += 1
+        FI
+      FI
+    FI
+  OD
+RETURN
+
+; at a step, each player's way: the first turn waiting, or on as it goes
+PROC NextWays()
+  BYTE p, q
+  FOR p = 0 TO 1 DO
+    q = p << 1
+    pnext(p) = pdir(p)
+    IF tn(p) THEN
+      pnext(p) = tq(q)
+      tq(q) = tq(q + 1)
+      tn(p) -= 1
+    FI
+  OD
+RETURN
+
+; both heads a cell on: 0, or who crashed -- 1 the left player, 2 the
+; right, 3 both, as when the two go for the same cell
+FUNC BYTE Move()
+  BYTE p, d, c
+  c = 0
+  FOR p = 0 TO 1 DO
+    d = pnext(p)
+    nx(p) = px(p) + dx1(d) - 1
+    ny(p) = py(p) + dy1(d) - 1
+    IF occ(At(nx(p), ny(p))) THEN c = c | (1 << p) FI
+  OD
+  IF nx(0) == nx(1) AND ny(0) == ny(1) THEN c = 3 FI
+  IF c THEN RETURN (c) FI
+  FOR p = 0 TO 1 DO
+    d = pnext(p)
+    Put(px(p), py(p), piece((pdir(p) << 2) + d))
+    px(p) = nx(p)
+    py(p) = ny(p)
+    occ(At(px(p), py(p))) = 1
+    Put(px(p), py(p), head(p) + d)
+    pdir(p) = d
+  OD
+RETURN (0)
+
+; ------------------------------------------------------------- computer
+; the free cells reachable from cell i, up to 64
+FUNC BYTE Room(CARD i)
+  BYTE h, t, n, d
+  CARD c, j
+  gen += 1
+  IF gen == 0 THEN
+    FOR j = 0 TO 895 DO seen(j) = 0 OD
+    gen = 1
+  FI
+  seen(i) = gen
+  q(0) = i
+  h = 0
+  t = 1
+  n = 0
+  WHILE h < t DO
+    c = q(h)
+    h += 1
+    n += 1
+    FOR d = 0 TO 3 DO
+      IF d == 0 THEN
+        j = c - 32
+      ELSEIF d == 1 THEN
+        j = c + 1
+      ELSEIF d == 2 THEN
+        j = c + 32
+      ELSE
+        j = c - 1
+      FI
+      IF occ(j) == 0 THEN
+        IF seen(j) <> gen THEN
+          IF t < 64 THEN
+            seen(j) = gen
+            q(t) = j
+            t += 1
+          FI
+        FI
+      FI
+    OD
+  OD
+RETURN (n)
+
+; the right player's way when the computer has it: straight on, a
+; quarter left or a quarter right, whichever has the most room behind
+; it -- straight when it is as good, and now and then a turn that is as
+; good, so that it does not only run to the walls
+PROC Think()
+  BYTE k, d, best, n, bestn, x, y
+  best = pdir(1)
+  bestn = 0
+  FOR k = 0 TO 2 DO
+    IF k == 0 THEN
+      d = pdir(1)
+    ELSEIF k == 1 THEN
+      d = (pdir(1) + 3) & 3
+    ELSE
+      d = (pdir(1) + 1) & 3
+    FI
+    x = px(1) + dx1(d) - 1
+    y = py(1) + dy1(d) - 1
+    n = 0
+    IF occ(At(x, y)) == 0 THEN n = Room(At(x, y)) FI
+    IF n > bestn THEN
+      best = d
+      bestn = n
+    ELSEIF n == bestn AND n > 0 THEN
+      IF Rnd(12) == 0 THEN best = d FI
+    FI
+  OD
+  pnext(1) = best
+RETURN
+
+; ----------------------------------------------------------------- play
+; a round: 0 the left player crashed, 1 the right, 2 both, 3 given up
+FUNC BYTE Round()
+  BYTE p, t, c
+  Field()
+  Heads()
+  FOR p = 0 TO 7 DO t = KeyHit(keys(p)) OD
+  FOR t = 0 TO 59 DO Tick() OD
+  IF quit THEN RETURN (3) FI
+  rate = RATE0
+  steps = 0
+  t = 0
+  DO
+    Tick()
+    loops += 1
+    IF quit THEN RETURN (3) FI
+    Steer(0, 0)
+    IF players == 2 THEN Steer(1, 4) ELSE Steer(0, 4) FI
+    t += 1
+    IF t >= rate THEN
+      t = 0
+      NextWays()
+      IF players == 1 THEN Think() FI
+      c = Move()
+      IF c THEN
+        Boom()
+        RETURN (c - 1)
+      FI
+      Tones()
+      steps += 1
+      IF steps % FASTER == 0 THEN
+        IF rate > RATE1 THEN rate -= 1 FI
+      FI
+    FI
+  OD
+RETURN (3)
+
+; rounds until one player has six
+PROC Match()
+  BYTE r, t
+  score(0) = 0
+  score(1) = 0
+  DO
+    r = Round()
+    IF r == 3 THEN RETURN FI
+    IF r == 0 THEN
+      score(1) += 1
+    ELSEIF r == 1 THEN
+      score(0) += 1
+    FI
+    FOR t = 0 TO 89 DO Tick() OD
+    IF quit THEN RETURN FI
+  UNTIL score(0) >= WIN OR score(1) >= WIN OD
+  FOR t = 0 TO 119 DO Tick() OD
+RETURN
+
+; the title: space two players, C one against the computer
+PROC Title()
+  BYTE t
+  Field()
+  Heads()
+  players = 0
+  t = KeyHit(KEY_SPACE)
+  t = KeyHit(KEY_C)
+  DO
+    Tick()
+    IF KeyHit(KEY_SPACE) THEN players = 2 FI
+    IF KeyHit(KEY_C) THEN players = 1 FI
+  UNTIL players OR quit OD
+  rseed = (TMR_L * 256 + TMR_M) | 1
+RETURN
+
+PROC Main()
+  Graphics(2)
+  Cursor(0)
+  VID_BORDER = 0
+  VID_PAT = PAT_BASE
+  SpritesOff()
+  VWrite(PAT_BASE, blk_tiles, N_TILES << 5)
+  SetPalette(blk_pal, 0, 2)
+  ClearMap()
+  Init()
+  DO
+    Title()
+    IF quit THEN EXIT FI
+    Match()
+    IF quit THEN EXIT FI
+  OD
+  Quiet()
+  Reset()
+RETURN

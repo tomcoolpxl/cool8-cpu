@@ -53,7 +53,7 @@ but as two programs: the compiled one tumbles, every frame computed
 |---|---|---|
 | **Demos** | 13 | MAZE, RAINBOW, WAVE, PLASMA, INTRO, BOING, TRIANGLES, MANDEL, COBRA, SYNTH, BENCH, MINIBNCH, BAPPLE, TAIPAN, COOLTRS1, COOLTRS2 |
 | **Software** | 14 | HHGG, ZORK1, PLANET, LGOP, PASCAL |
-| **CoolAction** | 11 | RAINBOW, TRIANGLE, MAZE, PLASMA, WAVE, MANDEL, SYNTH, INTRO, PRIMES — the compiled twins, §4 — COBRA, which shares only its ship and its name with the BASIC's, COBRA2, its camera and sky, and MSCOOLMN, ARKANOID, KEYTEST and SLIDES, which have no BASIC |
+| **CoolAction** | 11 | RAINBOW, TRIANGLE, MAZE, PLASMA, WAVE, MANDEL, SYNTH, INTRO, PRIMES — the compiled twins, §4 — COBRA, which shares only its ship and its name with the BASIC's, COBRA2, its camera and sky, and MSCOOLMN, ARKANOID, BLOCKADE, COOLTRIS, KEYTEST and SLIDES, which have no BASIC |
 
 **Volume 0 is not the user's, and that is the ROM's decision.**
 `sw/boot.asm` walks volume 0's directory for `BOOT.BIN`; it is the 4 KB
@@ -1044,7 +1044,7 @@ drive 11 as bare `.BIN`s: RAINBOW, TRIANGLES, MAZE, PLASMA, WAVE,
 MANDEL, SYNTH and INTRO, each a `demos/name.act` beside its
 `demos/name.bas`; COBRA, which was the ninth and is now a program of
 its own, and COBRA2, its camera and sky, the next two sections; and
-KEYTEST, MSCOOLMN, ARKANOID and SLIDES, which have no BASIC and follow them. **The picture is the contract, not the code.** A port
+KEYTEST, MSCOOLMN, ARKANOID, BLOCKADE, COOLTRIS and SLIDES, which have no BASIC and follow them. **The picture is the contract, not the code.** A port
 may do the work any way the language allows -- and mostly does it the
 BASIC's way, because the BASIC's way was measured -- but
 `sim/test_action.py` runs every pair to the same point and requires
@@ -1513,6 +1513,129 @@ play` (or `powers`, `enemies`, `doh`, `intro`, `profile`) plays it with
 an autopilot and writes the frames as PNG; `touch`, `late`, `vaus` and
 `up` are the collision experiments the gate holds, and print what they
 find.
+
+### `BLOCKADE` — Gremlin's 1976 arcade Blockade, the first snake game, in mode 2
+
+`demos/blockade.act`, under the loader of [D102](01-decisions.md):
+Gremlin's Blockade (October 1976), Lane Hauck's two-player game and the
+start of the snake kind
+([Wikipedia](https://en.wikipedia.org/wiki/Blockade_(video_game))). Two
+arrows each lay a wall behind them; whoever runs into a wall -- the
+border, their own or the other's -- gives the other a point, and the
+first to six wins (the operator could set three to six, and the 6 in
+the top border is that setting). **Its characters are the arcade's own
+pixels**: `tools/mkblockade.py` reads StrategyWiki's 256 x 224
+screenshot of the arcade's screen in `assets/blockade/` -- two colours,
+black and $0F0, on an 8-pixel grid from (0, 0), ten distinct cells there
+against 13 or more at any other offset -- and writes
+`assets/blockade/blockade_art.act`, which `demos/blockade.parts` names;
+`poe check` holds it to the picture.
+
+**The trails are the border's pieces.** The screenshot's trails are
+drawn with the border's own straights and corners, a turn being the
+corner that joins the side the head came in by and the side it left by;
+the generator checks that at all five turns in the picture, and the game
+draws every trail that way. **Mode 2, one to one**: the arcade's screen
+is a 32 x 28 map of 8 x 8 characters (MAME's `blockade.cpp`), so the
+field is columns 4-35 and rows 1-28 of mode 2's 40 x 30. The heads start
+where the arcade's do, read off its frames: the left player going down
+from (5, 5), the right going up from (26, 22). The left player's head is
+a solid arrow and the right's an outlined one; the screenshot has each
+pointing one way, and the other three are that head mirrored or turned a
+quarter -- derived, not seen.
+
+**The sound is the arcade's in kind, not in pitch.** The
+[Golden Age Arcade Historian](http://allincolorforaquarter.blogspot.com/2015/09/the-ultimate-so-far-history-of-gremlin_25.html)
+has Hauck's tone circuit sounding a different pitch for each player and
+direction, and Bob Pecoraro's explosion as white noise from a
+reverse-biased diode shaped by an envelope into a boom; MAME's driver
+has a 555 at 93,681.5 Hz into a preloadable counter, and a sample for
+the boom. So every step sounds the two players' notes one after the
+other -- counts of 120-129 and 128-137 over that 93,681.5 Hz, a semitone
+apart, by the way each goes -- and a crash is a second of low noise
+falling away. **Chosen**, because the arcade's are not known: those
+counts and that envelope; a step every eight frames at a round's start,
+a frame fewer every 24 steps down to four; a press turning the head at the
+next step, two kept waiting, and never back on itself.
+
+**Two players, or one against the computer.** The left player steers
+with W A S D and the right with the cursor keys, and a player alone
+against the computer with either -- the owner's choice over the home
+version's W A S Z and P L ; ., which played wrong to fingers that know
+W A S D. A press waits for the step that turns the head, and two can
+wait, so a quick turn and turn again both happen; the first cut kept
+only the last press, and a U-turn lost its second key. Space starts two
+players and C one against the computer, which steers the right player: straight on, a quarter left or a quarter right, whichever
+has the most free cells behind it by a flood fill of up to 64, straight
+when it is as good, and now and then a turn that is as good.
+
+**The gate** (`sim/test_action.py`, on `sim/blockade.py`): the
+generator's file current; the compiled bytes the same as
+`tools/cool8asm.py`'s; mode 2; the border's corners and sides and the 6;
+the heads where the arcade starts them; a turn drawn with the corner
+joining the ways in and out; a frame of play in every vblank; a crash a
+point to the other player; two heads into one cell a point to neither;
+the computer turning off a wall and outliving a player who never turns;
+six points ending the game; every press turning the head -- at each
+frame of a step, a tap shorter than a frame, a turn and a turn again in
+one step, both players in one frame, a press back on itself ignored, the
+cursor keys for a player alone; the stack. `python sim/blockade.py two` (or
+`title`, `cpu`) plays it and writes the frames as PNG.
+
+### `COOLTRIS` — seven shapes into a well, in twenty levels of colour
+
+`demos/cooltris.act`, under the loader of [D102](01-decisions.md), and
+nothing to do with the two BASIC COOLTRS demos above: a falling-block
+game in the manner of the 1989 NES one, written from its *published
+numbers* and none of its pixels. **The numbers**
+([tetris.wiki](https://tetris.wiki/Tetris_(NES)),
+[its scoring page](https://tetris.wiki/Scoring)): 48 frames a row at the
+first level down through 8, 6, 5, 4, 3 to 2 at the twentieth, ten rows a
+level, 40/100/300/1200 times the level for one to four rows at once, a
+point a cell for a soft drop, and a key that repeats after 16 frames and
+then every 6. **The picture** is `tools/mkcooltris.py`'s own: one
+bevelled block, a hollow ghost of it, eight frame pieces, a background
+weave, and the Namco glyphs Ms. Cool-Man's sheets carry, which Arkanoid
+also borrows. `poe check` holds the art file to the generator.
+
+**A block's colour is its palette bank**, so the seven shapes cost one
+pattern and seven banks of four, and a shape keeps its colour all game.
+The surround -- frame, weave, panels, headings -- is bank 0, written
+again at every level from twenty schemes a hue-step of 63 degrees apart,
+with the two text banks rebuilt from it, so the twentieth screen is a
+different colour from the first while the pieces stay where the eye left
+them. The well is ten by twenty cells of 8 x 8 in mode 2's 40 x 30, the
+same shape the board's is, with the score, rows and level down one side
+and the next piece and the best down the other.
+
+**Kinder than the board in two ways**, both asked for: the shapes come
+from a bag of seven shuffled, so there is no long wait for a long one,
+and a hollow ghost shows where the piece will land. Otherwise it is the
+board's: no hold, no wall kicks, no hard drop, and a piece locks the
+moment it lands. **Chosen**: the entry delay of 12 frames and the
+line-clear flash of three steps; the speed stops at the twentieth level
+and play goes on until the well fills. The tune is this port's own, on
+three voices, 32 steps of an eighth at 140 to the minute, 416 frames
+round; the effects are on voices 3 to 5.
+
+Keys: the cursor keys or A S D move it and drop it, up or X turns it
+clockwise and Z the other way, P pauses, Esc ends it, the space bar
+starts a game.
+
+**Measured**: 12,812 bytes of PRG; a soft-dropped piece reaches the
+floor in 30 to 39 frames; four rows at once on the first level score
+1,200, and 1,229 with the drop counted.
+
+**The gate** (`sim/test_action.py`, on `sim/cooltris.py`): the art file
+current; the compiled bytes the same as `tools/cool8asm.py`'s; mode 2;
+the well framed and the seven shapes on the front each in its own bank;
+a piece falling with its ghost below it in its own colour; a soft drop
+worth a point a cell and the piece locking into the well; four rows at
+once for twelve hundred; ten rows a level, the surround painted afresh
+and the shapes' colours kept; twenty levels with the last at two frames
+a row; the bag holding each shape once; a full well ending the game; the
+stack. `python sim/cooltris.py play` (or `title`, `rows`, `level`) plays
+it and writes the frames as PNG.
 
 ### `SLIDES` — the old test pictures, as fully as mode 6 can show them
 

@@ -1,0 +1,4 @@
+# COOLTRIS compiles behind its art, which tools/mkcooltris.py draws --
+# the block, the ghost, the frame, the weave, the glyphs, the palettes
+# and the tune. One path a line, relative to the repository root.
+assets/cooltris/cooltris_art.act

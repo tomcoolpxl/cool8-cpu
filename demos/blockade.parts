@@ -1,0 +1,4 @@
+# Blockade compiles behind its characters, which tools/mkblockade.py
+# rips from the arcade screenshot in assets/blockade/. One path a line,
+# relative to the repository root.
+assets/blockade/blockade_art.act

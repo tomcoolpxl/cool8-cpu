@@ -1,0 +1,819 @@
+; COOLTRIS -- a falling-block game for COOL8, in CoolAction!
+;
+; Seven shapes fall into a well ten wide and twenty deep; a full row
+; goes and the rest come down; the well filling ends the game. Loosely
+; after the 1989 NES one, whose published numbers this follows -- 48
+; frames a row at level 1 down to 2 at level 20, a level every ten rows,
+; 40/100/300/1200 times the level for one to four rows at once, a point
+; a cell for a soft drop, and a key that repeats after 16 frames then
+; every 6 (tetris.wiki). Its pixels are not: every tile is drawn by
+; tools/mkcooltris.py into assets/cooltris/cooltris_art.act, which
+; demos/cooltris.parts names, and the tune there is this port's own.
+;
+; **A block's colour is its palette bank.** One bevelled tile and seven
+; banks of four give the seven shapes their colours, so a shape looks
+; the same all game; the surround -- frame, weave, panels, headings --
+; is bank 0, written again at every level, so the twentieth screen looks
+; nothing like the first.
+;
+; **Kinder than the board in two ways**, both asked for: the shapes come
+; from a bag of seven shuffled, so there is no long wait for a long one,
+; and a hollow ghost shows where the piece will land.
+;
+; Keys: the cursor keys or A S D move it and drop it, up or X turns it
+; clockwise and Z the other way, P pauses, Esc ends it, and the space
+; bar starts a game.
+
+CONST PAT_BASE = $1000
+
+; the well, in cells of the 40 x 30 map: ten wide, twenty deep
+CONST WX = 15                        ; its first column
+CONST WY = 5                         ; its first row
+CONST WW = 10
+CONST WH = 20
+
+; palette banks: 0 the surround, 1-7 the shapes, 8 figures, 9 headings
+CONST B_SUR = 0
+CONST B_PIECE = 1
+CONST B_FIG = 8
+CONST B_HEAD = 9
+
+CONST KEY_LEFT = $EB
+CONST KEY_RIGHT = $F4
+CONST KEY_DOWN = $F2
+CONST KEY_UP = $F5
+CONST KEY_A = $1C
+CONST KEY_S = $1B
+CONST KEY_D = $23
+CONST KEY_Z = $1A
+CONST KEY_X = $22
+CONST KEY_P = $4D
+CONST KEY_SPACE = $29
+CONST KEY_ESC = $76
+
+; frames a row by level, the NES's table over its levels 0-19
+BYTE ARRAY grav(20) = [48 43 38 33 28 23 18 13 8 6 5 5 5 4 4 4 3 3 3 2]
+; a row's worth of points in tens, by how many went at once
+CARD ARRAY pts(4) = [4 10 30 120]
+
+; the seven shapes: four cells each, four turns each, on a 4 x 4 box.
+; I O T S Z J L, and a turn is a quarter clockwise.
+BYTE ARRAY sh_x(112) = [
+  0 1 2 3  2 2 2 2  0 1 2 3  1 1 1 1
+  1 2 1 2  1 2 1 2  1 2 1 2  1 2 1 2
+  1 0 1 2  1 1 2 1  0 1 2 1  1 0 1 1
+  1 2 0 1  1 1 2 2  1 2 0 1  0 0 1 1
+  0 1 1 2  2 1 2 1  0 1 1 2  1 0 1 0
+  0 0 1 2  1 2 1 1  0 1 2 2  1 1 0 1
+  2 0 1 2  1 1 1 2  0 1 2 0  0 1 1 1
+]
+BYTE ARRAY sh_y(112) = [
+  1 1 1 1  0 1 2 3  2 2 2 2  0 1 2 3
+  0 0 1 1  0 0 1 1  0 0 1 1  0 0 1 1
+  0 1 1 1  0 1 1 2  1 1 1 2  0 1 1 2
+  0 0 1 1  0 1 1 2  1 1 2 2  0 1 1 2
+  0 0 1 1  0 1 1 2  1 1 2 2  0 1 1 2
+  0 1 1 1  0 0 1 2  1 1 1 2  0 1 1 2
+  0 1 1 1  0 1 2 2  1 1 1 2  0 0 1 2
+]
+
+BYTE ARRAY well(200)                 ; 0 empty, else the shape plus one
+BYTE ARRAY bag(7)
+BYTE bagn                            ; the seven shuffled, dealt in turn
+BYTE cur, nxt, rot                   ; the shape falling, the one after, its turn
+INT cx, cy                           ; its box's corner in the well
+INT gy                               ; where the ghost's box rests
+BYTE level, lines_lo, lines_hi
+BYTE ARRAY dig(7), top(7), tmpd(3)   ; the score and the best, a digit a byte
+BYTE quit, paused
+BYTE fall_t, das_t, das_d, are_t, soft
+CARD loops                           ; frames of play, for the gate
+
+; the tune and the effects
+BYTE POINTER mp
+BYTE mwait, mon
+BYTE ARRAY sfx_t(3)
+CARD sfx_pitch
+INT sfx_step
+
+; ------------------------------------------------------------- the screen
+PROC Cell(BYTE col, BYTE row, BYTE t, BYTE attr)
+  CARD a
+  a = row
+  VRAM_ADDR = (a << 7) + (col << 1)
+  VRAM_STEP = 1
+  VRAM_DATA = t
+  VRAM_DATA = attr
+RETURN
+
+FUNC BYTE Glyph(BYTE ch)
+  BYTE i, n
+  n = fontmap(0)
+  FOR i = 1 TO n DO
+    IF fontmap(i) == ch THEN RETURN (i - 1) FI
+  OD
+RETURN (N_FONT - 1)
+
+PROC Text(BYTE col, BYTE row, BYTE POINTER s, BYTE bank)
+  BYTE n
+  n = *s
+  WHILE n > 0 DO
+    s += 1
+    Cell(col, row, T_FONT + Glyph(*s), bank)
+    col += 1
+    n -= 1
+  OD
+RETURN
+
+; a run of digits, most significant first, the leading zeros blanked
+PROC Digits(BYTE col, BYTE row, BYTE POINTER d, BYTE n, BYTE bank)
+  BYTE i, seen, v
+  BYTE POINTER q
+  seen = 0
+  FOR i = 0 TO n - 1 DO
+    q = d + n - 1 - i
+    v = *q
+    IF v THEN seen = 1 FI
+    IF seen == 0 AND i < n - 1 THEN
+      Cell(col + i, row, T_FONT + N_FONT - 1, bank)
+    ELSE
+      Cell(col + i, row, T_FONT + v, bank)
+    FI
+  OD
+RETURN
+
+; a frame round a box w by h, its inside left alone
+PROC Box(BYTE col, BYTE row, BYTE w, BYTE h)
+  BYTE i
+  Cell(col, row, T_FR_TL, B_SUR)
+  Cell(col + w + 1, row, T_FR_TR, B_SUR)
+  Cell(col, row + h + 1, T_FR_BL, B_SUR)
+  Cell(col + w + 1, row + h + 1, T_FR_BR, B_SUR)
+  FOR i = 1 TO w DO
+    Cell(col + i, row, T_FR_T, B_SUR)
+    Cell(col + i, row + h + 1, T_FR_B, B_SUR)
+  OD
+  FOR i = 1 TO h DO
+    Cell(col, row + i, T_FR_L, B_SUR)
+    Cell(col + w + 1, row + i, T_FR_R, B_SUR)
+  OD
+RETURN
+
+PROC Weave()
+  BYTE r, c
+  CARD a
+  FOR r = 0 TO 29 DO
+    a = r
+    VRAM_ADDR = a << 7
+    VRAM_STEP = 1
+    FOR c = 0 TO 39 DO
+      VRAM_DATA = T_BG
+      VRAM_DATA = B_SUR
+    OD
+  OD
+RETURN
+
+; a cell of the well: 0 blank, else a shape's block
+PROC Put(BYTE x, BYTE y, BYTE v)
+  IF v THEN
+    Cell(WX + x, WY + y, T_BLOCK, B_PIECE + v - 1)
+  ELSE
+    Cell(WX + x, WY + y, T_BG, B_SUR)
+  FI
+RETURN
+
+PROC DrawWell()
+  BYTE x, y
+  CARD i
+  FOR y = 0 TO WH - 1 DO
+    i = y
+    i = i * 10
+    FOR x = 0 TO WW - 1 DO Put(x, y, well(i + x)) OD
+  OD
+RETURN
+
+; the level's sixteen for the surround, and the two banks text is in
+PROC LevelColours()
+  CARD POINTER p, q
+  CARD ground, head
+  p = lvl_pal + level * 32
+  SetPalette(p, B_SUR << 4, 16)
+  ground = *p                        ; entry 0, the ground the text sits on
+  q = p + 14                         ; entry 7, the heading's colour
+  head = *q
+  SetColor(B_FIG << 4, ground)
+  SetColor((B_FIG << 4) + 1, $FFF)
+  SetColor(B_HEAD << 4, ground)
+  SetColor((B_HEAD << 4) + 1, head)
+RETURN
+
+; ------------------------------------------------------------- the sound
+PROC MusicStart()
+  mp = tune_data
+  mwait = *mp
+  mp += 1
+  mon = 1
+RETURN
+
+PROC MusicStep()
+  BYTE m, c, lo, hi, vol
+  CARD f
+  IF mon == 0 THEN RETURN FI
+  WHILE mwait == 0 DO
+    m = *mp
+    mp += 1
+    IF m == $80 THEN
+      MusicStart()                   ; round again
+      RETURN
+    FI
+    FOR c = 0 TO 2 DO
+      IF m & (1 << c) THEN
+        lo = *mp
+        mp += 1
+        hi = *mp
+        mp += 1
+        vol = *mp
+        mp += 1
+        f = hi
+        f = (f << 8) | lo
+        IF vol THEN Sound(c, f, vol, 0) ELSE Silence(c) FI
+      FI
+    OD
+    mwait = *mp
+    mp += 1
+  OD
+  mwait -= 1
+RETURN
+
+PROC MusicOff()
+  BYTE c
+  mon = 0
+  FOR c = 0 TO 2 DO Silence(c) OD
+RETURN
+
+; 0 a move, 1 a turn, 2 a piece landing, 3 rows going, 4 four at once,
+; 5 a level, 6 the end
+PROC Sfx(BYTE n)
+  IF n == 0 THEN
+    Sound(3, 900, 6, 0)
+    sfx_t(0) = 2
+  ELSEIF n == 1 THEN
+    Sound(3, 1500, 7, 0)
+    sfx_t(0) = 3
+  ELSEIF n == 2 THEN
+    Sound(4, 500, 9, 1)
+    sfx_t(1) = 4
+  ELSEIF n == 3 THEN
+    sfx_pitch = 1200
+    sfx_step = 240
+    Sound(5, sfx_pitch, 12, 0)
+    sfx_t(2) = 14
+  ELSEIF n == 4 THEN
+    sfx_pitch = 900
+    sfx_step = 300
+    Sound(5, sfx_pitch, 14, 0)
+    sfx_t(2) = 30
+  ELSEIF n == 5 THEN
+    sfx_pitch = 800
+    sfx_step = 200
+    Sound(5, sfx_pitch, 13, 0)
+    sfx_t(2) = 24
+  ELSE
+    sfx_pitch = 1400
+    sfx_step = -22
+    Sound(5, sfx_pitch, 15, 1)
+    sfx_t(2) = 60
+  FI
+RETURN
+
+PROC SfxStep()
+  BYTE v
+  FOR v = 0 TO 2 DO
+    IF sfx_t(v) THEN
+      sfx_t(v) -= 1
+      IF v == 2 AND sfx_t(2) THEN
+        sfx_pitch = sfx_pitch + sfx_step
+        Sound(5, sfx_pitch, (sfx_t(2) >> 2) + 3, 0)
+      FI
+      IF sfx_t(v) == 0 THEN Silence(3 + v) FI
+    FI
+  OD
+RETURN
+
+PROC Quiet()
+  BYTE v
+  MusicOff()
+  FOR v = 3 TO 5 DO Silence(v) OD
+  FOR v = 0 TO 2 DO sfx_t(v) = 0 OD
+RETURN
+
+; a frame, with the sound going on
+PROC Tick()
+  WaitVBlank()
+  KeyPoll()
+  IF KeyHit(KEY_ESC) THEN quit = 1 FI
+  MusicStep()
+  SfxStep()
+RETURN
+
+; ------------------------------------------------------------- the score
+; the score is seven digits, dig(0) the units
+PROC Carry(BYTE i)
+  WHILE dig(i) > 9 DO
+    dig(i) = dig(i) - 10
+    i += 1
+    IF i > 6 THEN RETURN FI
+    dig(i) = dig(i) + 1
+  OD
+RETURN
+
+PROC AddOne()
+  dig(0) = dig(0) + 1
+  Carry(0)
+RETURN
+
+PROC AddTens(CARD tens)
+  BYTE i
+  CARD v
+  v = tens
+  i = 1
+  WHILE v > 0 DO
+    dig(i) = dig(i) + (v % 10)
+    Carry(i)
+    v = v / 10
+    i += 1
+    IF i > 6 THEN RETURN FI
+  OD
+RETURN
+
+PROC ShowScore()
+  Digits(3, 7, dig, 7, B_FIG)
+RETURN
+
+PROC ShowLines()
+  tmpd(0) = lines_lo % 10
+  tmpd(1) = (lines_lo / 10) % 10
+  tmpd(2) = lines_hi
+  Digits(7, 12, tmpd, 3, B_FIG)
+RETURN
+
+PROC ShowLevel()
+  tmpd(0) = (level + 1) % 10
+  tmpd(1) = (level + 1) / 10
+  Digits(8, 17, tmpd, 2, B_FIG)
+RETURN
+
+PROC ShowBest()
+  Digits(28, 15, top, 7, B_FIG)
+RETURN
+
+; this game's score against the best, digit by digit from the top
+PROC KeepBest()
+  BYTE i, j
+  i = 7
+  WHILE i > 0 DO
+    i -= 1
+    IF dig(i) > top(i) THEN
+      FOR j = 0 TO 6 DO top(j) = dig(j) OD
+      ShowBest()
+      RETURN
+    ELSEIF dig(i) < top(i) THEN
+      RETURN
+    FI
+  OD
+RETURN
+
+; ------------------------------------------------------------ the pieces
+PROC Shuffle()
+  BYTE i, j, t
+  FOR i = 0 TO 6 DO bag(i) = i OD
+  i = 7
+  WHILE i > 1 DO
+    i -= 1
+    j = Rnd(i + 1)
+    t = bag(i)
+    bag(i) = bag(j)
+    bag(j) = t
+  OD
+  bagn = 0
+RETURN
+
+FUNC BYTE Deal()
+  BYTE p
+  IF bagn > 6 THEN Shuffle() FI
+  p = bag(bagn)
+  bagn += 1
+RETURN (p)
+
+; is the shape p, turned r, free with its box at (bx, by)?
+FUNC BYTE Fits(BYTE p, BYTE r, INT bx, INT by)
+  BYTE i, o
+  INT x, y
+  CARD w
+  o = (p << 4) + (r << 2)
+  FOR i = 0 TO 3 DO
+    x = bx + sh_x(o + i)
+    y = by + sh_y(o + i)
+    IF x < 0 OR x > WW - 1 OR y > WH - 1 THEN RETURN (0) FI
+    IF y >= 0 THEN
+      w = y
+      IF well(w * 10 + x) THEN RETURN (0) FI
+    FI
+  OD
+RETURN (1)
+
+; the ghost and the piece drawn where they are, or taken away again
+PROC DrawPiece(BYTE show)
+  BYTE i, o, bank
+  INT x, y
+  CARD w
+  o = (cur << 4) + (rot << 2)
+  bank = B_PIECE + cur
+  FOR i = 0 TO 3 DO
+    x = cx + sh_x(o + i)
+    y = gy + sh_y(o + i)
+    IF y >= 0 AND y < WH THEN         ; never outside the well, whatever is asked
+      IF show THEN
+        Cell(WX + x, WY + y, T_GHOST, bank)
+      ELSE
+        w = y
+        Put(x, y, well(w * 10 + x))
+      FI
+    FI
+  OD
+  FOR i = 0 TO 3 DO
+    x = cx + sh_x(o + i)
+    y = cy + sh_y(o + i)
+    IF y >= 0 AND y < WH THEN
+      IF show THEN
+        Cell(WX + x, WY + y, T_BLOCK, bank)
+      ELSE
+        w = y
+        Put(x, y, well(w * 10 + x))
+      FI
+    FI
+  OD
+RETURN
+
+; where the piece would come to rest
+PROC Ghost()
+  INT y
+  y = cy
+  WHILE Fits(cur, rot, cx, y + 1) DO y += 1 OD
+  gy = y
+RETURN
+
+PROC ShowNext()
+  BYTE i, o, x, y
+  FOR y = 0 TO 3 DO
+    FOR x = 0 TO 3 DO Cell(30 + x, 7 + y, T_BG, B_SUR) OD
+  OD
+  o = nxt << 4
+  FOR i = 0 TO 3 DO
+    Cell(30 + sh_x(o + i), 7 + sh_y(o + i), T_BLOCK, B_PIECE + nxt)
+  OD
+RETURN
+
+; the next shape into the well; 0 if it does not fit -- the well is full
+FUNC BYTE Spawn()
+  cur = nxt
+  nxt = Deal()
+  rot = 0
+  cx = 3
+  cy = -1
+  ShowNext()
+  IF Fits(cur, rot, cx, cy) == 0 THEN RETURN (0) FI
+  Ghost()
+  DrawPiece(1)
+RETURN (1)
+
+; -------------------------------------------------------------- the rows
+PROC Lock()
+  BYTE i, o
+  INT x, y
+  CARD w
+  o = (cur << 4) + (rot << 2)
+  FOR i = 0 TO 3 DO
+    x = cx + sh_x(o + i)
+    y = cy + sh_y(o + i)
+    IF y >= 0 THEN
+      w = y
+      well(w * 10 + x) = cur + 1
+    FI
+  OD
+RETURN
+
+FUNC BYTE Full(BYTE y)
+  BYTE x
+  CARD w
+  w = y
+  w = w * 10
+  FOR x = 0 TO WW - 1 DO
+    IF well(w + x) == 0 THEN RETURN (0) FI
+  OD
+RETURN (1)
+
+; the full rows flashed, then taken out and the rest let down
+FUNC BYTE TakeRows()
+  BYTE y, x, n, f, t, src
+  CARD a, b
+  n = 0
+  FOR y = 0 TO WH - 1 DO
+    IF Full(y) THEN n += 1 FI
+  OD
+  IF n == 0 THEN RETURN (0) FI
+  IF n == 4 THEN Sfx(4) ELSE Sfx(3) FI
+  FOR f = 0 TO 2 DO
+    FOR y = 0 TO WH - 1 DO
+      IF Full(y) THEN
+        a = y
+        a = a * 10
+        FOR x = 0 TO WW - 1 DO
+          IF f == 1 THEN
+            Cell(WX + x, WY + y, T_SOLID, B_SUR)
+          ELSE
+            Cell(WX + x, WY + y, T_BLOCK, B_PIECE + well(a + x) - 1)
+          FI
+        OD
+      FI
+    OD
+    FOR t = 0 TO 5 DO Tick() OD
+  OD
+  src = WH - 1
+  y = WH
+  WHILE y > 0 DO
+    y -= 1
+    WHILE src < WH DO
+      IF Full(src) == 0 THEN EXIT FI
+      src -= 1
+    OD
+    a = y
+    a = a * 10
+    b = src
+    b = b * 10
+    FOR x = 0 TO WW - 1 DO
+      IF src < WH THEN
+        well(a + x) = well(b + x)
+      ELSE
+        well(a + x) = 0
+      FI
+    OD
+    src -= 1
+  OD
+  DrawWell()
+RETURN (n)
+
+; so many rows gone: the score, the count, the level
+PROC Rows(BYTE n)
+  BYTE was
+  CARD t
+  t = pts(n - 1)
+  AddTens(t * (level + 1))
+  ShowScore()
+  was = level
+  lines_lo += n
+  WHILE lines_lo > 99 DO
+    lines_lo -= 100
+    lines_hi += 1
+  OD
+  ShowLines()
+  t = lines_hi
+  t = (t * 100 + lines_lo) / 10
+  IF t > 19 THEN t = 19 FI
+  level = t
+  IF level <> was THEN
+    LevelColours()
+    ShowLevel()
+    Sfx(5)
+  FI
+RETURN
+
+; ------------------------------------------------------------- steering
+; across, with the board's repeat: 16 frames held, then every 6
+PROC Sideways()
+  BYTE l, r, d, moved
+  l = 0
+  r = 0
+  IF KeyHeld(KEY_LEFT) OR KeyHeld(KEY_A) THEN l = 1 FI
+  IF KeyHeld(KEY_RIGHT) OR KeyHeld(KEY_D) THEN r = 1 FI
+  IF l AND r THEN
+    l = 0
+    r = 0
+  FI
+  IF l == 0 AND r == 0 THEN
+    das_d = 0
+    das_t = 0
+    RETURN
+  FI
+  d = 1
+  IF l THEN d = 3 FI
+  IF d <> das_d THEN
+    das_d = d
+    das_t = 0
+  ELSE
+    IF das_t < 16 THEN
+      das_t += 1
+      RETURN
+    FI
+    das_t = 10                       ; and every sixth frame after that
+  FI
+  moved = 0
+  IF l THEN
+    IF Fits(cur, rot, cx - 1, cy) THEN
+      DrawPiece(0)
+      cx -= 1
+      moved = 1
+    FI
+  ELSE
+    IF Fits(cur, rot, cx + 1, cy) THEN
+      DrawPiece(0)
+      cx += 1
+      moved = 1
+    FI
+  FI
+  IF moved THEN
+    Ghost()
+    DrawPiece(1)
+    Sfx(0)
+  FI
+RETURN
+
+PROC Turn(BYTE way)
+  BYTE r
+  IF way THEN r = (rot + 1) & 3 ELSE r = (rot + 3) & 3 FI
+  IF Fits(cur, r, cx, cy) == 0 THEN RETURN FI
+  DrawPiece(0)
+  rot = r
+  Ghost()
+  DrawPiece(1)
+  Sfx(1)
+RETURN
+
+; --------------------------------------------------------------- the play
+PROC NewGame()
+  BYTE i
+  FOR i = 0 TO 199 DO well(i) = 0 OD
+  FOR i = 0 TO 6 DO dig(i) = 0 OD
+  level = 0
+  lines_lo = 0
+  lines_hi = 0
+  bagn = 7
+  nxt = Deal()
+  fall_t = 0
+  das_t = 0
+  das_d = 0
+  are_t = 0
+  soft = 0
+RETURN
+
+PROC Pause()
+  BYTE i
+  paused = 1
+  Text(17, 27, "PAUSED", B_HEAD)
+  DO
+    Tick()
+    IF KeyHit(KEY_P) THEN paused = 0 FI
+  UNTIL paused == 0 OR quit OD
+  FOR i = 0 TO 5 DO Cell(17 + i, 27, T_BG, B_SUR) OD
+RETURN
+
+; one game: the piece falls, the keys steer it, a landing locks it and
+; the rows go, until a shape will not fit in the top
+PROC Play()
+  BYTE alive, n, i, spd
+  NewGame()
+  LevelColours()
+  DrawWell()
+  ShowScore()
+  ShowLines()
+  ShowLevel()
+  MusicStart()
+  alive = Spawn()
+  DO
+    Tick()
+    loops += 1
+    IF quit THEN RETURN FI
+    IF alive == 0 THEN EXIT FI
+    IF KeyHit(KEY_P) THEN
+      Pause()
+      IF quit THEN RETURN FI
+    FI
+    IF are_t THEN
+      are_t -= 1
+      IF are_t == 0 THEN alive = Spawn() FI
+    ELSE
+      Sideways()
+      IF KeyHit(KEY_UP) OR KeyHit(KEY_X) THEN Turn(1) FI
+      IF KeyHit(KEY_Z) THEN Turn(0) FI
+      soft = 0
+      IF KeyHeld(KEY_DOWN) OR KeyHeld(KEY_S) THEN soft = 1 FI
+      spd = grav(level)
+      IF soft AND spd > 2 THEN spd = 2 FI
+      fall_t += 1
+      IF fall_t >= spd THEN
+        fall_t = 0
+        IF Fits(cur, rot, cx, cy + 1) THEN
+          DrawPiece(0)
+          cy += 1
+          DrawPiece(1)
+          IF soft THEN
+            AddOne()
+            ShowScore()
+          FI
+        ELSE
+          Lock()
+          Sfx(2)
+          n = TakeRows()
+          IF n THEN Rows(n) FI
+          are_t = 12
+        FI
+      FI
+    FI
+  OD
+  MusicOff()
+  Sfx(6)
+  ; the well fills from the bottom, then the words
+  FOR n = 0 TO WH - 1 DO
+    FOR i = 0 TO WW - 1 DO Cell(WX + i, WY + WH - 1 - n, T_SOLID, B_SUR) OD
+    FOR i = 0 TO 2 DO Tick() OD
+    IF quit THEN RETURN FI
+  OD
+  Text(16, 14, "GAME OVER", B_HEAD)
+  KeepBest()
+  FOR n = 0 TO 179 DO
+    Tick()
+    IF quit THEN RETURN FI
+  OD
+RETURN
+
+; ---------------------------------------------------------------- the face
+PROC Panels()
+  Weave()
+  Box(WX - 1, WY - 1, WW, WH)
+  Text(16, 1, "COOLTRIS", B_HEAD)
+  Box(1, 5, 11, 2)
+  Text(2, 6, "SCORE", B_HEAD)
+  Box(1, 10, 11, 2)
+  Text(2, 11, "ROWS", B_HEAD)
+  Box(1, 15, 11, 2)
+  Text(2, 16, "LEVEL", B_HEAD)
+  Box(27, 4, 8, 6)
+  Text(28, 5, "NEXT", B_HEAD)
+  Box(27, 13, 8, 2)
+  Text(28, 14, "BEST", B_HEAD)
+  ShowBest()
+  Text(28, 19, "Z X TURN", B_HEAD)
+  Text(28, 21, "P PAUSE", B_HEAD)
+  Text(28, 23, "ESC OUT", B_HEAD)
+RETURN
+
+; the title: the seven shapes in the well, in their colours
+PROC Title()
+  BYTE i, p, go, bx, by
+  Panels()
+  FOR p = 0 TO 6 DO
+    bx = WX + 1 + (p & 1) * 5
+    by = WY + 2 + (p >> 1) * 4
+    FOR i = 0 TO 3 DO
+      Cell(bx + sh_x((p << 4) + i), by + sh_y((p << 4) + i), T_BLOCK, B_PIECE + p)
+    OD
+  OD
+  Text(17, 26, "PRESS", B_FIG)       ; under the well, clear of its frame
+  Text(17, 27, "SPACE", B_FIG)
+  go = KeyHit(KEY_SPACE)             ; the press that got here, let go of
+  go = 0
+  DO
+    Tick()
+    IF KeyHit(KEY_SPACE) THEN go = 1 FI
+  UNTIL go OR quit OD
+  rseed = (TMR_L * 256 + TMR_M) | 1
+  Shuffle()
+RETURN
+
+PROC Main()
+  BYTE p
+  Graphics(2)
+  Cursor(0)
+  VID_BORDER = 0
+  VID_PAT = PAT_BASE
+  SpritesOff()
+  VWrite(PAT_BASE, cool_tiles, N_TILES << 5)
+  FOR p = 0 TO 6 DO
+    SetPalette(piece_pal + p * 8, (B_PIECE + p) << 4, 4)
+  OD
+  level = 0
+  LevelColours()
+  FOR p = 0 TO 6 DO top(p) = 0 OD
+  top(4) = 1                         ; ten thousand to beat
+  DO
+    Title()
+    IF quit THEN EXIT FI
+    Panels()
+    Play()
+    IF quit THEN EXIT FI
+    level = 0
+    LevelColours()
+  OD
+  Quiet()
+  Reset()
+RETURN

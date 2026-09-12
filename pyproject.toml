@@ -324,6 +324,18 @@ args = ["--check"]
 about = "Arkanoid's generated art file and its two data files against the ripped arcade sheets, the rounds and the music logs"
 
 [[tool.cool8.jobs.check]]
+id = "blockade"
+run = "tools/mkblockade.py"
+args = ["--check"]
+about = "Blockade's generated art file against the arcade screenshot its characters are ripped from"
+
+[[tool.cool8.jobs.check]]
+id = "cooltris"
+run = "tools/mkcooltris.py"
+args = ["--check"]
+about = "COOLTRIS's drawn art file -- blocks, frame, weave, glyphs, palettes and tune -- against its generator"
+
+[[tool.cool8.jobs.check]]
 id = "pics"
 run = "tools/mkpics.py"
 args = ["--check"]

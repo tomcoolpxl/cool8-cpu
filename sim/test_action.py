@@ -2259,6 +2259,217 @@ def shoot_cobra():
     return 0
 
 
+def test_blockade():
+    """Blockade, on the machine: the arcade's field and heads, a turn
+    drawn with the border's corner, a crash a point to the other player,
+    two heads into one cell a point to neither, the computer finding its
+    way, a frame of play in every vblank, and six points ending the
+    game. Skips, loudly, without the art."""
+    import subprocess
+    import ioregs
+    import blockade as B
+    print("  BLOCKADE")
+    if B.sources() is None:
+        print("    SKIPPED: the art is not here -- tools/mkblockade.py makes "
+              "assets/blockade/blockade_art.act from the screenshot")
+        print()
+        return
+    r = subprocess.run([sys.executable, os.path.join(H.ROOT, "tools", "mkblockade.py"), "--check"],
+                       capture_output=True, text=True)
+    check(r.returncode == 0, "blockade: the art file is what the generator writes",
+          (r.stdout + r.stderr).strip()[-200:])
+    g = B.Game(tag="blockade")
+    same_bytes("blockade", g.prg)
+    print("    %d bytes of PRG" % (len(g.prg) - 2))
+    reg = lambda n: g.m.bus.read(ioregs.addr_of(n))   # noqa: E731
+    c = g.c
+    score = lambda: (g.byte("score", 0), g.byte("score", 1))   # noqa: E731
+
+    # two players: the field as the arcade draws it, the heads where it
+    # starts them
+    g.m.run_frame(30)
+    g.tap(B.SPACE)
+    g.playing()
+    check(reg("VID_MODE") & 0x0F == 2 and reg("VID_PAT_H") == 0x10, "blockade: mode 2, patterns at $1000",
+          "MODE %02X PAT_H %02X" % (reg("VID_MODE"), reg("VID_PAT_H")))
+    got = [g.cell(0, 0), g.cell(31, 0), g.cell(0, 27), g.cell(31, 27), g.cell(1, 0), g.cell(0, 1), g.cell(16, 0)]
+    want = [c(n) for n in ("T_RD", "T_LD", "T_UR", "T_UL", "T_HORZ", "T_VERT", "T_SIX")]
+    check(got == want, "blockade: the border's corners and sides, and the 6 in its top", "%s, want %s" % (got, want))
+    check((g.cell(5, 5), g.cell(26, 22)) == (c("T_HEAD1") + 2, c("T_HEAD2")),
+          "blockade: the heads where the arcade starts them, the left going down, the right up",
+          str((g.cell(5, 5), g.cell(26, 22))))
+
+    # a turn each: the cell turned in is the corner joining the ways in
+    # and out; then both straight on until the right player meets the top
+    f0, l0 = g.m.frames, g.uword("loops")
+    g.steps_until(4)
+    g.tap(B.LEFT_KEYS[1])
+    g.steps_until(6)
+    g.tap(B.RIGHT_KEYS[3])
+    g.steps_until(12)
+    check((g.cell(5, 9), g.cell(26, 16)) == (c("T_UR"), c("T_LD")),
+          "blockade: a turn is drawn with the corner joining the ways in and out, as the arcade's are",
+          str((g.cell(5, 9), g.cell(26, 16))))
+    g.tap(B.LEFT_KEYS[2])
+    g.tap(B.RIGHT_KEYS[0])
+    g.steps_until(10_000)
+    frames, loops = g.m.frames - f0, g.uword("loops") - l0
+    check(loops == frames, "blockade: a frame of play in every one of %d vblanks" % frames,
+          "%d of %d" % (loops, frames))
+    check(g.heads()[1][:2] == (20, 1), "blockade: the right player runs into the top border", str(g.heads()))
+    g.m.run_frame(95)
+    check(score() == (1, 0), "blockade: a crash is a point to the other player", str(score()))
+
+    # the next round: the two heads put facing across one cell, which
+    # both go for -- a point to neither
+    g.playing()
+    g.place(0, 10, 10, 1)
+    g.place(1, 12, 10, 3)
+    g.steps_until(10_000)
+    g.m.run_frame(95)
+    check(score() == (1, 0), "blockade: two heads into one cell, both crash, a point to neither", str(score()))
+
+    # the computer: the right player put two cells under the top border,
+    # going up -- it must turn, and outlive a left player who goes
+    # straight down into the bottom
+    g.playing()
+    g.poke("players", 1)
+    g.place(1, 26, 3, 0)
+    g.steps_until(10_000)
+    n = g.uword("steps")
+    g.m.run_frame(95)
+    check(score() == (1, 1) and n >= 21,
+          "blockade: the computer turns off the wall and outlives a left player who never turns",
+          "score %s after %d steps" % (score(), n))
+
+    # six: the left player at five, the right running into the top again
+    g.playing()
+    g.poke("players", 2)
+    g.poke("score", 5, 0)
+    g.steps_until(4)
+    g.tap(B.LEFT_KEYS[1])
+    g.steps_until(10_000)
+    g.m.run_frame(95)
+    check(score() == (6, 1), "blockade: the sixth point", str(score()))
+    g.m.run_frame(160)
+    l1 = g.uword("loops")
+    g.m.run_frame(30)
+    check(g.byte("players") == 0 and g.uword("loops") == l1,
+          "blockade: six points end the game, and it waits to start again", "players %d" % g.byte("players"))
+
+    # the keys, every way a person presses them (sim/blockade.py's keys)
+    g.tap(B.SPACE)
+    g.playing()
+    for name, ok, detail in B.keys(g):
+        check(ok, "blockade: " + name, detail)
+    check(0x100 < g.m.cpu.sp <= 0x200, "blockade: the stack is where it should be", "SP $%04X" % g.m.cpu.sp)
+    del g
+    print()
+
+
+def test_cooltris():
+    """COOLTRIS, on the machine: the front with the seven shapes each in
+    its own bank, a piece coming in and its ghost under it, a soft drop
+    worth a point a cell, four rows at once for twelve hundred, ten rows
+    a level with the surround painted afresh and the shapes' colours
+    kept, the bag holding each shape once, and a full well ending the
+    game. Skips, loudly, without the art."""
+    import subprocess
+    import ioregs
+    import cooltris as C
+    print("  COOLTRIS")
+    if C.sources() is None:
+        print("    SKIPPED: the art is not here -- tools/mkcooltris.py draws "
+              "assets/cooltris/cooltris_art.act")
+        print()
+        return
+    r = subprocess.run([sys.executable, os.path.join(H.ROOT, "tools", "mkcooltris.py"), "--check"],
+                       capture_output=True, text=True)
+    check(r.returncode == 0, "cooltris: the art file is what the generator draws",
+          (r.stdout + r.stderr).strip()[-200:])
+    g = C.Game(tag="cooltris")
+    same_bytes("cooltris", g.prg)
+    print("    %d bytes of PRG" % (len(g.prg) - 2))
+    reg = lambda n: g.m.bus.read(ioregs.addr_of(n))   # noqa: E731
+    c = g.c
+    glyph = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ-.!/ ".index
+
+    # the front: mode 2, the well framed, the seven shapes in their banks
+    g.m.run_frame(40)
+    check(reg("VID_MODE") & 0x0F == 2 and reg("VID_PAT_H") == 0x10, "cooltris: mode 2, patterns at $1000",
+          "MODE %02X PAT_H %02X" % (reg("VID_MODE"), reg("VID_PAT_H")))
+    corners = (g.cell(14, 4)[0], g.cell(25, 4)[0], g.cell(14, 25)[0], g.cell(25, 25)[0])
+    check(corners == (c("T_FR_TL"), c("T_FR_TR"), c("T_FR_BL"), c("T_FR_BR")),
+          "cooltris: the well is framed, ten wide and twenty deep", str(corners))
+    banks = sorted({g.cell(x, y)[1] for y in range(5, 25) for x in range(15, 25)
+                    if g.cell(x, y)[0] == c("T_BLOCK")})
+    check(banks == list(range(c("B_PIECE"), c("B_PIECE") + 7)),
+          "cooltris: the seven shapes on the front, each in its own colour", str(banks))
+
+    # a piece comes in, and its ghost lies under it
+    g.start()
+    g.m.run_frame(40)
+    cur, rot, cx, cy, gy = g.piece()
+    ghosts = [(x, y) for y in range(20) for x in range(10) if g.cell(15 + x, 5 + y)[0] == c("T_GHOST")]
+    check(gy > cy and len(ghosts) == 4 and all(a[1] == c("B_PIECE") + cur for a in
+                                               [g.cell(15 + x, 5 + y) for x, y in ghosts]),
+          "cooltris: a piece falls and its ghost waits below, in the piece's colour",
+          "piece %s ghost %s" % ((cur, cx, cy, gy), ghosts))
+
+    v = voices(g.m)
+    check(v[0:2] != b"\x00\x00" and (v[3] & 0x40) != 0, "cooltris: its own tune playing on voice 0", v.hex())
+
+    # a soft drop is a point a cell, and the piece locks into the well
+    s0 = g.score()
+    g.m.kbd.feed(C.DOWN)
+    n = g.landed()
+    g.m.kbd.feed([0xE0, 0xF0, 0x72])
+    filled = sum(1 for i in range(200) if g.byte("well", i))
+    check(g.score() > s0 and n < 200 and filled == 4,
+          "cooltris: soft dropped, a point a cell, and it locks into the well",
+          "%d points in %d frames, %d cells" % (g.score() - s0, n, filled))
+
+    # four rows at once: twelve hundred at the first level
+    s0 = g.score()
+    C.four_rows(g)
+    check(g.byte("lines_lo") == 4 and g.score() - s0 >= 1200,
+          "cooltris: four rows at once, twelve hundred and four rows",
+          "%d points, %d rows" % (g.score() - s0, g.byte("lines_lo")))
+
+    # ten rows a level: the surround painted afresh, the shapes' colours kept
+    sur0 = g.m.palette()[:16]
+    pieces0 = g.m.palette()[16:16 + 7 * 16]
+    C.four_rows(g, lo=86, lv=8)
+    check(g.byte("level") == 9, "cooltris: ten rows a level", "level %d" % (g.byte("level") + 1))
+    check(g.m.palette()[:16] != sur0, "cooltris: a level paints the surround afresh",
+          "%s -> %s" % (sur0[:3], g.m.palette()[:3]))
+    check(g.m.palette()[16:16 + 7 * 16] == pieces0, "cooltris: and leaves the shapes their colours",
+          str(g.m.palette()[16:20]))
+    C.four_rows(g, lo=96, hi=1, lv=18)
+    check(g.byte("level") == 19 and g.byte("grav", 19) == 2,
+          "cooltris: twenty levels, the last of them two frames a row",
+          "level %d, %d frames a row" % (g.byte("level") + 1, g.byte("grav", g.byte("level"))))
+
+    # the bag: each of the seven in it once
+    bag = sorted(g.byte("bag", i) for i in range(7))
+    check(bag == list(range(7)), "cooltris: the bag holds each of the seven shapes once", str(bag))
+
+    # a full well ends the game: every column but the first, so that no
+    # row is complete and the rows are not simply taken instead
+    for y in range(20):
+        for x in range(1, 10):
+            g.m.bus.mem[g.addr("well") + y * 10 + x] = 1
+    for _ in range(300):
+        g.m.run_frame(1)
+        if g.cell(16, 14)[0] == c("T_FONT") + glyph("G"):
+            break
+    check(g.cell(16, 14) == (c("T_FONT") + glyph("G"), c("B_HEAD")),
+          "cooltris: a full well ends the game and says so", str(g.cell(16, 14)))
+    check(0x100 < g.m.cpu.sp <= 0x200, "cooltris: the stack is where it should be", "SP $%04X" % g.m.cpu.sp)
+    del g
+    print()
+
+
 def main():
     if "--profile" in sys.argv:
         return profile_sieve()
@@ -2271,7 +2482,7 @@ def main():
     only = [a for a in sys.argv[1:] if not a.startswith("--")]    # e.g. `cobra`: just those
     for t in (test_every_encoding, test_features, test_sieve, test_primes, test_library,
               test_hardware, test_line, test_rainbow, test_cobra, test_cobra2, test_ports, test_keys,
-              test_keytest, test_loader, test_mscoolman, test_arkanoid, test_slides, test_refusals):
+              test_keytest, test_loader, test_mscoolman, test_arkanoid, test_blockade, test_cooltris, test_slides, test_refusals):
         if not only or any(o in t.__name__ for o in only):
             t()
     return H.report()
