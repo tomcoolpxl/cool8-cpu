@@ -63,25 +63,30 @@ BYTE ARRAY grav(20) = [48 43 38 33 28 23 18 13 8 6 5 5 5 4 4 4 3 3 3 2]
 ; a row's worth of points in tens, by how many went at once
 CARD ARRAY pts(4) = [4 10 30 120]
 
-; the seven shapes: four cells each, four turns each, on a 4 x 4 box.
-; I O T S Z J L, and a turn is a quarter clockwise.
+; the seven shapes: four cells each, four turns each, on a 4 x 4 box, in
+; the order I O T S Z J L, a turn being a quarter clockwise. These are
+; the Nintendo rotation system's own grids, read off the diagram on
+; tetris.wiki's Nintendo Rotation System page and held to it by the gate.
+; The I, the S and the Z have two forms only and the O has one, so their
+; later turns repeat the earlier ones in the same place -- a half turn
+; puts them back where they were rather than a row lower.
 BYTE ARRAY sh_x(112) = [
-  0 1 2 3  2 2 2 2  0 1 2 3  1 1 1 1
+  0 1 2 3  2 2 2 2  0 1 2 3  2 2 2 2
   1 2 1 2  1 2 1 2  1 2 1 2  1 2 1 2
-  1 0 1 2  1 1 2 1  0 1 2 1  1 0 1 1
-  1 2 0 1  1 1 2 2  1 2 0 1  0 0 1 1
-  0 1 1 2  2 1 2 1  0 1 1 2  1 0 1 0
-  0 0 1 2  1 2 1 1  0 1 2 2  1 1 1 0
-  2 0 1 2  1 1 1 2  0 1 2 0  0 1 1 1
+  0 1 2 1  1 0 1 1  1 0 1 2  1 1 2 1
+  1 2 0 1  1 1 2 2  1 2 0 1  1 1 2 2
+  0 1 1 2  2 1 2 1  0 1 1 2  2 1 2 1
+  0 1 2 2  1 1 0 1  0 0 1 2  1 2 1 1
+  0 1 2 0  0 1 1 1  2 0 1 2  1 1 1 2
 ]
 BYTE ARRAY sh_y(112) = [
-  1 1 1 1  0 1 2 3  2 2 2 2  0 1 2 3
-  0 0 1 1  0 0 1 1  0 0 1 1  0 0 1 1
-  0 1 1 1  0 1 1 2  1 1 1 2  0 1 1 2
-  0 0 1 1  0 1 1 2  1 1 2 2  0 1 1 2
-  0 0 1 1  0 1 1 2  1 1 2 2  0 1 1 2
-  0 1 1 1  0 0 1 2  1 1 1 2  0 1 2 2
-  0 1 1 1  0 1 2 2  1 1 1 2  0 0 1 2
+  2 2 2 2  0 1 2 3  2 2 2 2  0 1 2 3
+  1 1 2 2  1 1 2 2  1 1 2 2  1 1 2 2
+  1 1 1 2  0 1 1 2  0 1 1 1  0 1 1 2
+  1 1 2 2  0 1 1 2  1 1 2 2  0 1 1 2
+  1 1 2 2  0 1 1 2  1 1 2 2  0 1 1 2
+  1 1 1 2  0 1 2 2  0 1 1 1  0 0 1 2
+  1 1 1 2  0 0 1 2  0 1 1 1  0 1 2 2
 ]
 
 BYTE ARRAY well(200)                 ; 0 empty, else the shape plus one
@@ -103,6 +108,8 @@ CARD loops                           ; frames of play, for the gate
 BYTE POINTER mp
 BYTE mwait, mon, cur_tune            ; the tune playing: one for each level
 BYTE tune_cycle                      ; 1 on the front, where they follow on
+BYTE tune_plays                      ; ...each twice before the next
+BYTE ARRAY rn_y(10), rn_s(10), rn_c(10), rn_t(10)   ; the blocks raining down it
 BYTE ARRAY sfx_t(3)
 CARD sfx_pitch
 INT sfx_step
@@ -226,8 +233,10 @@ PROC LevelColours()
 RETURN
 
 ; ------------------------------------------------------------- the sound
-; tune n of the ten, from the start
+; tune n of the ten, from the start; the count of times through it
+; stands unless this is another tune
 PROC MusicStart(BYTE n)
+  IF n <> cur_tune THEN tune_plays = 0 FI
   cur_tune = n
   mp = tune_data + tune_off(n)
   mwait = *mp
@@ -244,9 +253,14 @@ PROC MusicStep()
     mp += 1
     IF m == $80 THEN
       IF tune_cycle THEN
-        MusicStart((cur_tune + 1) % N_TUNES)   ; the next of the ten
+        tune_plays += 1
+        IF tune_plays >= 2 THEN      ; twice through, then the next of the ten
+          MusicStart((cur_tune + 1) % N_TUNES)
+        ELSE
+          MusicStart(cur_tune)
+        FI
       ELSE
-        MusicStart(cur_tune)         ; round again
+        MusicStart(cur_tune)         ; in play a level keeps its own
       FI
       RETURN
     FI
@@ -929,7 +943,39 @@ PROC Panels()
   Text(28, 29, "OUT ESC", B_HEAD)
 RETURN
 
-; which of the ten is playing, under the shapes on the front
+; the front's rain: a block to each column of the well, each falling at
+; its own pace and in its own colour, and a new pace and colour when it
+; reaches the bottom
+PROC RainStart()
+  BYTE i
+  FOR i = 0 TO WW - 1 DO
+    rn_y(i) = Rnd(WH)
+    rn_s(i) = 2 + Rnd(5)
+    rn_c(i) = Rnd(7)
+    rn_t(i) = 0
+  OD
+RETURN
+
+PROC RainStep()
+  BYTE i, y
+  FOR i = 0 TO WW - 1 DO
+    rn_t(i) += 1
+    IF rn_t(i) >= rn_s(i) THEN
+      rn_t(i) = 0
+      Put(i, rn_y(i), 0)
+      y = rn_y(i) + 1
+      IF y >= WH THEN
+        y = 0
+        rn_s(i) = 2 + Rnd(5)
+        rn_c(i) = Rnd(7)
+      FI
+      rn_y(i) = y
+      Cell(WX + i, WY + y, T_BLOCK, B_PIECE + rn_c(i))
+    FI
+  OD
+RETURN
+
+; which of the ten is playing, under the rain on the front
 PROC ShowTune()
   tmpd(0) = (cur_tune + 1) % 10
   tmpd(1) = (cur_tune + 1) / 10
@@ -940,15 +986,9 @@ RETURN
 ; the title: the seven shapes in the well, in their colours, and the ten
 ; tunes one after another with C for the next
 PROC Title()
-  BYTE i, p, go, bx, by, shown
+  BYTE i, go, shown
   Panels()
-  FOR p = 0 TO 6 DO
-    bx = WX + 1 + (p & 1) * 5
-    by = WY + 2 + (p >> 1) * 4
-    FOR i = 0 TO 3 DO
-      Cell(bx + sh_x((p << 4) + i), by + sh_y((p << 4) + i), T_BLOCK, B_PIECE + p)
-    OD
-  OD
+  RainStart()
   Text(17, 26, "PRESS", B_FIG)       ; under the well, clear of its frame
   Text(17, 27, "SPACE", B_FIG)
   go = KeyHit(KEY_SPACE)             ; the presses that got here, let go of
@@ -959,6 +999,7 @@ PROC Title()
   MusicStart(0)
   DO
     Tick()
+    RainStep()
     IF cur_tune <> shown THEN
       shown = cur_tune
       ShowTune()

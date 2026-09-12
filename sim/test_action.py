@@ -2409,10 +2409,19 @@ def test_cooltris():
     corners = (g.cell(14, 4)[0], g.cell(25, 4)[0], g.cell(14, 25)[0], g.cell(25, 25)[0])
     check(corners == (c("T_FR_TL"), c("T_FR_TR"), c("T_FR_BL"), c("T_FR_BR")),
           "cooltris: the well is framed, ten wide and twenty deep", str(corners))
-    banks = sorted({g.cell(x, y)[1] for y in range(5, 25) for x in range(15, 25)
-                    if g.cell(x, y)[0] == c("T_BLOCK")})
-    check(banks == list(range(c("B_PIECE"), c("B_PIECE") + 7)),
-          "cooltris: the seven shapes on the front, each in its own colour", str(banks))
+    def rain():
+        """The blocks in the well now: where they are and in which bank."""
+        return {(x, y): g.cell(15 + x, 5 + y)[1] for y in range(20) for x in range(10)
+                if g.cell(15 + x, 5 + y)[0] == c("T_BLOCK")}
+    before = rain()
+    g.m.run_frame(10)
+    after = rain()
+    banks = set(before.values()) | set(after.values())
+    cols = {x for x, _ in before}
+    check(4 <= len(before) <= 10 and len(cols) == len(before) and before != after
+          and banks <= set(range(c("B_PIECE"), c("B_PIECE") + 7)),
+          "cooltris: the front rains blocks down the well, one to a column, in the shapes' colours",
+          "%d blocks in %d columns, banks %s, moving %s" % (len(before), len(cols), sorted(banks), before != after))
 
     # every shape must be the same shape at each of its four turns: one
     # cell out of place in the table turns a shape into another one
@@ -2430,17 +2439,48 @@ def test_cooltris():
            if norm([(-y, x) for x, y in turn_of(p, r)]) != norm(turn_of(p, (r + 1) % 4))]
     check(not bad, "cooltris: every shape is that same shape at each of its four turns", str(bad))
 
+    # and the turns are the Nintendo rotation system's own, cell for cell:
+    # these grids were read off the diagram on tetris.wiki's Nintendo
+    # Rotation System page. The I, the S and the Z have two forms and the
+    # O one, so their later turns repeat the earlier ones in place -- the
+    # fault that walked a piece down the well when it was turned twice.
+    two = lambda a, b: [a, b, a, b]                            # noqa: E731
+    NRS = {
+        "I": two([(0, 2), (1, 2), (2, 2), (3, 2)], [(2, 0), (2, 1), (2, 2), (2, 3)]),
+        "O": [[(1, 1), (2, 1), (1, 2), (2, 2)]] * 4,
+        "T": [[(0, 1), (1, 1), (2, 1), (1, 2)], [(1, 0), (0, 1), (1, 1), (1, 2)],
+              [(1, 0), (0, 1), (1, 1), (2, 1)], [(1, 0), (1, 1), (2, 1), (1, 2)]],
+        "S": two([(1, 1), (2, 1), (0, 2), (1, 2)], [(1, 0), (1, 1), (2, 1), (2, 2)]),
+        "Z": two([(0, 1), (1, 1), (1, 2), (2, 2)], [(2, 0), (1, 1), (2, 1), (1, 2)]),
+        "J": [[(0, 1), (1, 1), (2, 1), (2, 2)], [(1, 0), (1, 1), (0, 2), (1, 2)],
+              [(0, 0), (0, 1), (1, 1), (2, 1)], [(1, 0), (2, 0), (1, 1), (1, 2)]],
+        "L": [[(0, 1), (1, 1), (2, 1), (0, 2)], [(0, 0), (1, 0), (1, 1), (1, 2)],
+              [(2, 0), (0, 1), (1, 1), (2, 1)], [(1, 0), (1, 1), (1, 2), (2, 2)]],
+    }
+    off = ["%s turn %d: %s, the board's %s" % ("IOTSZJL"[p], r, sorted(turn_of(p, r)), sorted(NRS["IOTSZJL"[p]][r]))
+           for p in range(7) for r in range(4) if sorted(turn_of(p, r)) != sorted(NRS["IOTSZJL"[p]][r])]
+    check(not off, "cooltris: and they are the board's own turns, cell for cell", str(off[:3]))
+
     # the front plays the ten one after another, and C skips on
     check(g.byte("tune_cycle") == 1 and g.byte("cur_tune") == 0,
           "cooltris: the front plays the ten tunes one after another, from the first",
           "tune %d, cycling %d" % (g.byte("cur_tune"), g.byte("tune_cycle")))
+    n = 0                              # the first is 416 frames round, twice over
+    for _ in range(1100):
+        g.m.run_frame(1)
+        n += 1
+        if g.byte("cur_tune") != 0:
+            break
+    check(g.byte("cur_tune") == 1 and 700 < n < 1000,
+          "cooltris: and each of them twice before the next", "%d frames to the second tune" % n)
+    t0 = g.byte("cur_tune")
     g.tap(C.C_HOLD)
     for _ in range(90):
         g.m.run_frame(1)
-        if g.byte("cur_tune") != 0:
+        if g.byte("cur_tune") != t0:
             break
-    check(g.byte("cur_tune") == 1, "cooltris: and C on the front skips to the next of them",
-          "tune %d" % g.byte("cur_tune"))
+    check(g.byte("cur_tune") == (t0 + 1) % 10, "cooltris: and C on the front skips to the next of them",
+          "tune %d after %d" % (g.byte("cur_tune"), t0))
 
     # a piece comes in, and its ghost lies under it
     g.start()

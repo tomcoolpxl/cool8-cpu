@@ -1639,10 +1639,19 @@ just played can be read. A new best takes three letters, up and down for
 the letter and right for the next place. **Chosen**: the entry delay of
 12 frames and the line-clear flash of three steps.
 
-**Two found in the making**, both held by the gate now. The J's fourth
-turn was a T: one cell out in the table of turns, which made that shape
-turn into another, so the gate holds every shape to being the same shape
-at each of its four turns. And the name a new best asks for took the
+**The turns are the board's own.** They are the Nintendo rotation
+system's grids, read off the diagram on
+[tetris.wiki](https://tetris.wiki/Nintendo_Rotation_System) cell by cell
+and held to it by the gate: the I, the S and the Z have two forms, the O
+one, and the T, the J and the L four. Two goes at the table by hand got
+it wrong first -- the J's fourth turn was a T, one cell out, and the I,
+S and Z had four forms of which the third and fourth sat a row below the
+first and second, so turning one twice walked it down the well. Taking
+the published grids whole ended both.
+
+**Two more found in the making**, both held by the gate now. The J's
+fourth turn was a T, so the gate holds every shape to being the same
+shape at each of its four turns. And the name a new best asks for took the
 down key still latched from the soft drop -- which asks whether down is
 *held* and so never takes its latch -- turning the first letter back as
 fast as it was typed; the name entry lets go of its keys as it starts. **Ten tunes, one for every level as it comes up**, all this port's own
@@ -1656,6 +1665,10 @@ driving, E minor marching, F lydian floating, A harmonic minor dramatic,
 D dorian restless -- and the step shortens from 13 frames to 9, so the
 later ones are brisker. A level plays tune (level mod ten), so the
 twentieth screen sounds like the tenth. The effects are on voices 3 to 5.
+On the front they play one after another, each twice before the next,
+with C to skip on and the number under PRESS SPACE; behind the words,
+blocks rain down the well, one to a column, each at its own pace and in
+its own colour.
 (A first attempt had the generator compose nine of them from keys,
 scales and motifs; they were thrown out for being worth less than the
 one written by hand.)
