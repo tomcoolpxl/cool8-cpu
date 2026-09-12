@@ -116,47 +116,78 @@ def surround(level):
     ]
 
 
-# --------------------------------------------------------------- the tune
-# Mine, on three voices: a minor riff over a walking bass, four bars round
-# and round. Notes are name + octave, `-` a rest, and each step is an
-# eighth at 140 beats a minute -- 13 frames of the machine's 60.
-STEP = 13
-LEAD = ("A4 C5 E5 C5 D5 F5 E5 D5 C5 E5 A5 E5 D5 C5 B4 A4 "
-        "A4 C5 E5 G5 F5 E5 D5 C5 B4 D5 G5 D5 C5 B4 A4 -")
-BASS = ("A2 -  A2 -  D3 -  D3 -  C3 -  C3 -  E2 -  E2 -  "
-        "A2 -  A2 -  F2 -  F2 -  G2 -  G2 -  E2 -  E2 -")
-HARM = ("-  E4 -  A4 -  A4 -  F4 -  G4 -  C5 -  G4 -  E4 "
-        "-  E4 -  C5 -  C5 -  A4 -  B4 -  G4 -  G4 -  E4")
+# -------------------------------------------------------------- the tunes
+# Mine, all of them, and one for every level as it comes up: a lead over a
+# walking bass with a third between the beats, four bars round and round
+# on voices 0-2. A tune is a key, a scale, four chords by their degree in
+# it, and an eight-step motif whose numbers are degrees away from the
+# chord's own -- None a rest. The step shortens as the levels climb, so
+# the tenth tune is brisker than the first.
+SCALES = {
+    "minor":    [0, 2, 3, 5, 7, 8, 10],
+    "dorian":   [0, 2, 3, 5, 7, 9, 10],
+    "major":    [0, 2, 4, 5, 7, 9, 11],
+    "phrygian": [0, 1, 3, 5, 7, 8, 10],
+    "harmonic": [0, 2, 3, 5, 7, 8, 11],
+}
 VOLS = (10, 12, 6)                     # lead, bass, harmony
+_ = None                               # a rest, in the motifs below
+
+# name, the tonic (MIDI), the scale, four chords, the motif, frames a step
+TUNES = [
+    ("first",   57, "minor",    [0, 3, 4, 0], [0, 2, 4, 2, 3, 2, 1, 0], 13),
+    ("second",  62, "minor",    [0, 5, 3, 4], [0, _, 2, 4, _, 3, 2, _], 13),
+    ("third",   59, "dorian",   [0, 6, 3, 4], [4, 3, 2, 0, 2, _, 4, 5], 12),
+    ("fourth",  64, "minor",    [0, 2, 5, 4], [0, 4, 3, 2, _, 1, 2, 4], 12),
+    ("fifth",   55, "harmonic", [0, 3, 6, 4], [0, 1, 2, 4, 3, _, 2, 1], 11),
+    ("sixth",   60, "major",    [0, 4, 5, 3], [0, 2, 4, 5, 4, 2, 0, _], 11),
+    ("seventh", 65, "phrygian", [0, 1, 4, 0], [0, _, 1, 2, 4, 2, 1, 0], 10),
+    ("eighth",  57, "dorian",   [0, 3, 6, 5], [2, 4, 5, 4, 2, 0, _, 2], 10),
+    ("ninth",   62, "harmonic", [0, 4, 3, 4], [4, _, 3, 2, 1, 0, 2, 4], 9),
+    ("tenth",   64, "phrygian", [0, 1, 3, 4], [0, 2, 1, 0, _, 4, 3, 2], 9),
+]
 
 
-def inc(note):
-    """A note name to the voice's phase increment: its pitch over the
-    engine's 0.4993 Hz a step."""
-    if note == "-":
-        return 0
-    step = {"C": 0, "D": 2, "E": 4, "F": 5, "G": 7, "A": 9, "B": 11}[note[0]]
-    midi = 12 * (int(note[-1]) + 1) + step
-    return round(440.0 * 2 ** ((midi - 69) / 12.0) / 0.4993)
+def hz(midi):
+    return 440.0 * 2 ** ((midi - 69) / 12.0)
 
 
-def tune_stream():
-    """The stream, wait byte first, as the player reads it."""
-    voices = [LEAD.split(), BASS.split(), HARM.split()]
+def voices_of(t):
+    """A tune's three voices as MIDI notes, None a rest: the motif over
+    each chord an octave up, the chord's root walking under it, and its
+    third between the beats."""
+    _n, root, scale, chords, motif, _s = t
+    sc = SCALES[scale]
+
+    def deg(d, octave=0):
+        return root + sc[d % 7] + 12 * (d // 7) + 12 * octave
+    lead, bass, harm = [], [], []
+    for c in chords:
+        for i, off in enumerate(motif):
+            lead.append(None if off is None else deg(c + off, 1))
+            bass.append(deg(c, -1) if i % 4 == 0 else None)
+            harm.append(deg(c + 2) if i % 4 == 2 else None)
+    return lead, bass, harm
+
+
+def tune_stream(t):
+    """One tune as the player reads it: a wait, then a mask and (low,
+    high, volume) for each voice that changes, and $80 to end."""
+    step = t[5]
+    voices = voices_of(t)
     n = len(voices[0])
-    assert all(len(v) == n for v in voices), [len(v) for v in voices]
     out, last = [0], [None, None, None]
     for i in range(n):
         mask, data = 0, []
         for c, v in enumerate(voices):
             if v[i] != last[c]:
                 mask |= 1 << c
-                f = inc(v[i])
-                data += [f & 255, f >> 8, 0 if f == 0 else VOLS[c]]
+                f = 0 if v[i] is None else round(hz(v[i]) / 0.4993)
+                data += [f & 255, f >> 8, 0 if v[i] is None else VOLS[c]]
                 last[c] = v[i]
-        out += [mask] + data + [STEP - 1]
+        out += [mask] + data + [step - 1]
     out += [0x80]
-    return out, n * STEP
+    return out, n * step
 
 
 def tiles():
@@ -178,7 +209,7 @@ def tiles():
     return out, order
 
 
-def act(ts, order, stream, frames):
+def act(ts, order, tunes):
     lines = [
         "; COOLTRIS's art, written by tools/mkcooltris.py -- run it, do not",
         "; edit this. A tile is 8 x 8 at 4 bpp, high nibble the left pixel.",
@@ -214,11 +245,18 @@ def act(ts, order, stream, frames):
         lines.append("  " + " ".join("$%03X" % c for c in surround(lv)))
     lines.append("]")
     lines.append("")
-    lines.append("; the tune: %d steps, %d frames round, on voices 0-2" % (len(LEAD.split()), frames))
-    lines.append("CONST TUNE_FRAMES = %d" % frames)
-    lines.append("BYTE ARRAY tune_data(%d) = [" % len(stream))
-    for i in range(0, len(stream), 24):
-        lines.append("  " + " ".join(str(x) for x in stream[i:i + 24]))
+    lines.append("; the tunes, one for each level as it comes up, on voices 0-2:")
+    off, blob = [], []
+    for (name, _root, scale, _ch, _m, step), (stream, frames) in zip(TUNES, tunes):
+        lines.append(";   %-8s %-8s a step of %2d frames, %3d frames round, %3d bytes"
+                     % (name, scale, step, frames, len(stream)))
+        off.append(len(blob))
+        blob += stream
+    lines.append("CONST N_TUNES = %d" % len(TUNES))
+    lines.append("CARD ARRAY tune_off(%d) = [%s]" % (len(off), " ".join(str(x) for x in off)))
+    lines.append("BYTE ARRAY tune_data(%d) = [" % len(blob))
+    for i in range(0, len(blob), 24):
+        lines.append("  " + " ".join(str(x) for x in blob[i:i + 24]))
     lines.append("]")
     return "\n".join(lines) + "\n"
 
@@ -255,8 +293,8 @@ def preview(ts, order):
 
 def main():
     ts, order = tiles()
-    stream, frames = tune_stream()
-    text = act(ts, order, stream, frames)
+    tunes = [tune_stream(t) for t in TUNES]
+    text = act(ts, order, tunes)
     if "--check" in sys.argv:
         have = io.open(OUT, encoding="utf-8").read() if os.path.exists(OUT) else ""
         if have != text:
@@ -269,7 +307,9 @@ def main():
     io.open(OUT, "w", encoding="utf-8", newline="\n").write(text)
     preview(ts, order)
     print("  %d tiles (%d of them glyphs), 7 piece banks, 20 level surrounds" % (len(ts), len(order)))
-    print("  the tune: %d steps, %d frames round, %d bytes" % (len(LEAD.split()), frames, len(stream)))
+    print("  %d tunes, %d bytes in all:" % (len(TUNES), sum(len(s) for s, _ in tunes)))
+    for t, (stream, frames) in zip(TUNES, tunes):
+        print("    %-8s %-8s step %2d, %3d frames round, %3d bytes" % (t[0], t[2], t[5], frames, len(stream)))
     print("  wrote %s and %s" % (os.path.relpath(OUT, ROOT), os.path.relpath(PREVIEW, ROOT)))
     return 0
 

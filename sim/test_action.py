@@ -2430,6 +2430,18 @@ def test_cooltris():
            if norm([(-y, x) for x, y in turn_of(p, r)]) != norm(turn_of(p, (r + 1) % 4))]
     check(not bad, "cooltris: every shape is that same shape at each of its four turns", str(bad))
 
+    # the front plays the ten one after another, and C skips on
+    check(g.byte("tune_cycle") == 1 and g.byte("cur_tune") == 0,
+          "cooltris: the front plays the ten tunes one after another, from the first",
+          "tune %d, cycling %d" % (g.byte("cur_tune"), g.byte("tune_cycle")))
+    g.tap(C.C_HOLD)
+    for _ in range(90):
+        g.m.run_frame(1)
+        if g.byte("cur_tune") != 0:
+            break
+    check(g.byte("cur_tune") == 1, "cooltris: and C on the front skips to the next of them",
+          "tune %d" % g.byte("cur_tune"))
+
     # a piece comes in, and its ghost lies under it
     g.start()
     g.m.run_frame(40)
@@ -2465,6 +2477,9 @@ def test_cooltris():
     pieces0 = g.m.palette()[16:16 + 7 * 16]
     C.four_rows(g, lo=86, lv=8)
     check(g.byte("level") == 9, "cooltris: ten rows a level", "level %d" % (g.byte("level") + 1))
+    check(g.byte("cur_tune") == 9 and c("N_TUNES") == 10,
+          "cooltris: every level brings its own tune, ten of them and then round again",
+          "level %d playing tune %d of %d" % (g.byte("level") + 1, g.byte("cur_tune"), c("N_TUNES")))
     check(g.m.palette()[:16] != sur0, "cooltris: a level paints the surround afresh",
           "%s -> %s" % (sur0[:3], g.m.palette()[:3]))
     check(g.m.palette()[16:16 + 7 * 16] == pieces0, "cooltris: and leaves the shapes their colours",
@@ -2486,10 +2501,10 @@ def test_cooltris():
     g.poke("fall_t", 0)
     y0 = g.word("cy")
     s0 = g.score()
-    g.tap(C.SPACE)
+    g.tap(C.M_DROP)
     y1 = g.word("cy")                  # where it came to rest, however far
     check(g.byte("are_t") > 0 and y1 > y0 and g.score() - s0 == 2 * (y1 - y0),
-          "cooltris: the space bar drops it to the ghost at once, two points a cell",
+          "cooltris: M drops it to the ghost at once, two points a cell",
           "%d points for %d rows, from %d to %d, entry delay %d"
           % (g.score() - s0, y1 - y0, y0, y1, g.byte("are_t")))
 

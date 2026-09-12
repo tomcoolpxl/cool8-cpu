@@ -22,7 +22,8 @@ SOURCE = "demos/cooltris.act"
 ART = os.path.join(H.ROOT, "assets", "cooltris", "cooltris_art.act")
 # make codes: the cursor keys are E0-prefixed
 LEFT, RIGHT, DOWN, UP = [0xE0, 0x6B], [0xE0, 0x74], [0xE0, 0x72], [0xE0, 0x75]
-Z, X, C_HOLD, P, SPACE, ESC = [0x1A], [0x22], [0x21], [0x4D], [0x29], [0x76]
+Z, X, C_HOLD, M_DROP = [0x1A], [0x22], [0x21], [0x3A]
+P, SPACE, ESC = [0x4D], [0x29], [0x76]
 WX, WY = 15, 5                                   # the well's corner on the map
 GLYPHS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ-.!/ "   # the font's order
 

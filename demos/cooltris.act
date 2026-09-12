@@ -53,6 +53,7 @@ CONST KEY_D = $23
 CONST KEY_Z = $1A
 CONST KEY_X = $22
 CONST KEY_C = $21                    ; the shape parked
+CONST KEY_M = $3A                    ; ...and dropped
 CONST KEY_P = $4D
 CONST KEY_SPACE = $29
 CONST KEY_ESC = $76
@@ -100,7 +101,8 @@ CARD loops                           ; frames of play, for the gate
 
 ; the tune and the effects
 BYTE POINTER mp
-BYTE mwait, mon
+BYTE mwait, mon, cur_tune            ; the tune playing: one for each level
+BYTE tune_cycle                      ; 1 on the front, where they follow on
 BYTE ARRAY sfx_t(3)
 CARD sfx_pitch
 INT sfx_step
@@ -224,8 +226,10 @@ PROC LevelColours()
 RETURN
 
 ; ------------------------------------------------------------- the sound
-PROC MusicStart()
-  mp = tune_data
+; tune n of the ten, from the start
+PROC MusicStart(BYTE n)
+  cur_tune = n
+  mp = tune_data + tune_off(n)
   mwait = *mp
   mp += 1
   mon = 1
@@ -239,7 +243,11 @@ PROC MusicStep()
     m = *mp
     mp += 1
     IF m == $80 THEN
-      MusicStart()                   ; round again
+      IF tune_cycle THEN
+        MusicStart((cur_tune + 1) % N_TUNES)   ; the next of the ten
+      ELSE
+        MusicStart(cur_tune)         ; round again
+      FI
       RETURN
     FI
     FOR c = 0 TO 2 DO
@@ -693,6 +701,7 @@ PROC Rows(BYTE n)
   IF level <> was THEN
     LevelColours()
     ShowLevel()
+    MusicStart(level % N_TUNES)      ; a tune of its own for every level
     Sfx(5)
   FI
 RETURN
@@ -828,7 +837,7 @@ PROC Play()
   ShowScore()
   ShowLines()
   ShowLevel()
-  MusicStart()
+  MusicStart(level % N_TUNES)
   alive = Spawn()
   DO
     Tick()
@@ -844,10 +853,10 @@ PROC Play()
       IF are_t == 0 THEN alive = Spawn() FI
     ELSE
       Sideways()
-      IF KeyHit(KEY_UP) OR KeyHit(KEY_X) THEN Turn(1) FI
+      IF KeyHit(KEY_UP) OR KeyHit(KEY_X) OR KeyHit(KEY_SPACE) THEN Turn(1) FI
       IF KeyHit(KEY_Z) THEN Turn(0) FI
       IF KeyHit(KEY_C) THEN alive = Hold() FI
-      IF KeyHit(KEY_SPACE) THEN HardDrop() FI
+      IF KeyHit(KEY_M) THEN HardDrop() FI
       soft = 0
       IF KeyHeld(KEY_DOWN) OR KeyHeld(KEY_S) THEN soft = 1 FI
       spd = Speed()
@@ -880,11 +889,18 @@ PROC Play()
     IF quit THEN RETURN FI
   OD
   Text(16, 14, "GAME OVER", B_HEAD)
+  Text(16, 16, "SCORE", B_HEAD)      ; what the game was worth, where it is seen
+  Digits(16, 17, dig, 7, B_FIG)
   KeepBest()
-  FOR n = 0 TO 179 DO
+  ; and it stays up until the space bar, or four seconds
+  i = KeyHit(KEY_SPACE)
+  n = 0
+  DO
     Tick()
     IF quit THEN RETURN FI
-  OD
+    n += 1
+    IF KeyHit(KEY_SPACE) THEN n = 250 FI
+  UNTIL n > 240 OD
 RETURN
 
 ; ---------------------------------------------------------------- the face
@@ -906,16 +922,25 @@ PROC Panels()
   Box(27, 20, 8, 2)
   Text(28, 21, "BEST", B_HEAD)
   ShowBest()
-  Text(28, 25, "Z X TURN", B_HEAD)
-  Text(28, 26, "C HOLD", B_HEAD)
-  Text(28, 27, "SPC DROP", B_HEAD)
-  Text(28, 28, "P PAUSE", B_HEAD)
-  Text(28, 29, "ESC OUT", B_HEAD)
+  Text(28, 25, "TURN Z X SPC", B_HEAD)
+  Text(28, 26, "DROP M", B_HEAD)
+  Text(28, 27, "HOLD C", B_HEAD)
+  Text(28, 28, "PAUSE P", B_HEAD)
+  Text(28, 29, "OUT ESC", B_HEAD)
 RETURN
 
-; the title: the seven shapes in the well, in their colours
+; which of the ten is playing, under the shapes on the front
+PROC ShowTune()
+  tmpd(0) = (cur_tune + 1) % 10
+  tmpd(1) = (cur_tune + 1) / 10
+  Text(16, 28, "TUNE", B_HEAD)
+  Digits(21, 28, tmpd, 2, B_FIG)
+RETURN
+
+; the title: the seven shapes in the well, in their colours, and the ten
+; tunes one after another with C for the next
 PROC Title()
-  BYTE i, p, go, bx, by
+  BYTE i, p, go, bx, by, shown
   Panels()
   FOR p = 0 TO 6 DO
     bx = WX + 1 + (p & 1) * 5
@@ -926,12 +951,22 @@ PROC Title()
   OD
   Text(17, 26, "PRESS", B_FIG)       ; under the well, clear of its frame
   Text(17, 27, "SPACE", B_FIG)
-  go = KeyHit(KEY_SPACE)             ; the press that got here, let go of
+  go = KeyHit(KEY_SPACE)             ; the presses that got here, let go of
+  go = KeyHit(KEY_C)
   go = 0
+  shown = 255
+  tune_cycle = 1                     ; here they follow one another
+  MusicStart(0)
   DO
     Tick()
+    IF cur_tune <> shown THEN
+      shown = cur_tune
+      ShowTune()
+    FI
+    IF KeyHit(KEY_C) THEN MusicStart((cur_tune + 1) % N_TUNES) FI
     IF KeyHit(KEY_SPACE) THEN go = 1 FI
   UNTIL go OR quit OD
+  tune_cycle = 0                     ; in play a level keeps its own
   rseed = (TMR_L * 256 + TMR_M) | 1
   Shuffle()
 RETURN

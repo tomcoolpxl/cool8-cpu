@@ -1633,7 +1633,9 @@ once between one shape and the next. No wall kicks, and a piece still
 locks the moment it lands. The levels go on past the twentieth -- two
 frames a row to the twenty-ninth and one after that, as the board's own
 do -- with the twenty colour schemes coming round again, and play goes
-on until the well fills. A new best takes three letters, up and down for
+on until the well fills. When it does, the score stays on the screen
+under GAME OVER until the space bar or four seconds, so that the game
+just played can be read. A new best takes three letters, up and down for
 the letter and right for the next place. **Chosen**: the entry delay of
 12 frames and the line-clear flash of three steps.
 
@@ -1643,13 +1645,20 @@ turn into another, so the gate holds every shape to being the same shape
 at each of its four turns. And the name a new best asks for took the
 down key still latched from the soft drop -- which asks whether down is
 *held* and so never takes its latch -- turning the first letter back as
-fast as it was typed; the name entry lets go of its keys as it starts. The tune is this port's own, on
-three voices, 32 steps of an eighth at 140 to the minute, 416 frames
-round; the effects are on voices 3 to 5.
+fast as it was typed; the name entry lets go of its keys as it starts. **Ten tunes, one for every level as it comes up**, all this port's own.
+The generator composes each from a key, a scale, four chords by their
+degree in it and an eight-step motif of degrees away from the chord's
+own: a lead over a walking bass with a third between the beats, four
+bars round and round on voices 0-2. They run through minor, dorian,
+major, phrygian and harmonic minor, and the step shortens from 13 frames
+to 9, so the tenth is brisker than the first; 2,574 bytes for all ten. A
+level plays tune (level mod ten), so the twentieth screen sounds like the
+tenth. The effects are on voices 3 to 5.
 
-Keys: the cursor keys or A S D move it and drop it, up or X turns it
-clockwise and Z the other way, P pauses, Esc ends it, the space bar
-starts a game.
+Keys: the cursor keys or A S D move it and soft drop it; the space bar,
+up or X turns it clockwise and Z the other way; M drops it to the ghost;
+C parks it; P pauses; Esc ends it. The space bar starts a game, and a
+new best takes three letters.
 
 **Measured**: 12,812 bytes of PRG; a soft-dropped piece reaches the
 floor in 30 to 39 frames; four rows at once on the first level score
@@ -1659,7 +1668,9 @@ floor in 30 to 39 frames; four rows at once on the first level score
 current; the compiled bytes the same as `tools/cool8asm.py`'s; mode 2;
 the well framed and the seven shapes on the front each in its own bank;
 a piece falling with its ghost below it in its own colour; a soft drop
-worth a point a cell and the piece locking into the well; four rows at
+worth a point a cell and the piece locking into the well; M dropping it
+to the ghost at once for two points a cell; C parking a shape, refusing
+a second time and giving it back; every level bringing its own tune; four rows at
 once for twelve hundred; ten rows a level, the surround painted afresh
 and the shapes' colours kept; twenty levels with the last at two frames
 a row; the bag holding each shape once; a full well ending the game; the
