@@ -1751,7 +1751,10 @@ def test_galaga():
     # a volley into it: each hit scored and exploded, and when the
     # explosions -- overlapping, one at the right edge, where a span reaches
     # x 255 -- are over, not a pixel of them left and none of the characters
-    # beside them marked
+    # beside them marked; the score set a hundred short of 20,000, so the
+    # first bee also brings the first extra fighter
+    g.pokew("score10", 1990)
+    lives0 = g.byte("lives")
     s0 = g.uword("score10")
     on0 = sum(g.byte("sl_on", i) for i in range(g.c("NSLOT")))
     for col in (0, 3, 4, 5, 9, 2):
@@ -1763,9 +1766,11 @@ def test_galaga():
     bad = g.bitmap_diff()
     on1 = sum(g.byte("sl_on", i) for i in range(g.c("NSLOT")))
     got = (g.uword("score10") - s0) * 10
-    check(not bad and on1 < on0 and got == 50 * (on0 - on1) and g.byte("booms") == 0,
-          "galaga: shots at the formation score 50 a bee and leave no explosion behind",
-          "%d characters shot for %d points; %d pixels differ: %s" % (on0 - on1, got, len(bad), bad[:4]))
+    check(not bad and on1 < on0 and got == 50 * (on0 - on1) and g.byte("booms") == 0
+          and g.byte("lives") == lives0 + 1 and g.uword("ext10") == 7000,
+          "galaga: shots at the formation score 50 a bee, leave no explosion behind, and 20,000 brings a fighter",
+          "%d characters shot for %d points; %d pixels differ: %s; lives %d of %d, next at %d"
+          % (on0 - on1, got, len(bad), bad[:4], g.byte("lives"), lives0, g.uword("ext10") * 10))
     del g
 
     # the sound: a new game's start theme on voices 0-2, frame for frame as

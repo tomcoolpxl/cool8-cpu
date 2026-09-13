@@ -903,7 +903,16 @@ def build():
     bds = [backdrop(b) for b in BACKDROPS]
     for k, (_, rows) in enumerate(bds):
         dat.add("BD%d" % k, pack_band(rows))
-    return dict(mus=music(), snd=sounds(), fl=flights(), pats=pats, common=common, ncommon=ncommon,
+    # the stages' waves and the levels' tunes: one of each is wanted at a
+    # time, so the game loads it from here rather than holding them all
+    mus, fl = music(), flights()
+    dat.add("WAVES", fl["waves"])
+    moffs, mblob = [], []
+    for _, stream, _, _ in mus[0]:
+        moffs.append(len(mblob))
+        mblob += stream
+    dat.add("MUSIC", mblob)
+    return dict(mus=mus, moffs=moffs + [len(mblob)], snd=sounds(), fl=fl, pats=pats, common=common, ncommon=ncommon,
                 specials=specials, p_swap=p_swap, n_swap=n_swap, fimgs=imgs, fblob=fblob, foffs=foffs, bds=bds,
                 shot=shot[0], bomb=bomb[0], arts=arts, ablob=ablob, aoffs=aoffs,
                 font=font(t), dat=dat, sheet=s)
@@ -1013,8 +1022,10 @@ def act(o):
     w("; $7F the last, else a path token and an object id; the stage's kind (1 a")
     w("; challenging stage) and its ten parameter nibbles")
     w("CONST STAGES = %d" % STAGES)
-    arr(w, "BYTE ARRAY st_waves(%d)" % len(fl["waves"]), fl["waves"], per=24, fmt="$%02X")
-    arr(w, "CARD ARRAY st_woff(%d)" % STAGES, fl["woffs"])
+    w("; (the WAVES block; st_woff has the end after the last)")
+    ends = fl["woffs"] + [len(fl["waves"])]
+    w("CONST WAVES_MAX = %d" % max(b - a for a, b in zip(ends, ends[1:])))
+    arr(w, "CARD ARRAY st_woff(%d)" % (STAGES + 1), ends)
     arr(w, "BYTE ARRAY st_kind(%d)" % STAGES, fl["kinds"])
     arr(w, "BYTE ARRAY st_parm(%d)" % len(fl["parms"]), fl["parms"], per=10)
     w("; each stage's two header bytes: a flyer's steps between bomb chances, and")
@@ -1049,14 +1060,13 @@ def act(o):
     arr(w, "BYTE ARRAY snd_tune(%d)" % len(sd["offs"]), [1 if i in TUNES else 0 for i in range(len(sd["offs"]))])
     w("")
     blobs, incs = o["mus"]
-    w("; the levels' music: each tune's offset, and a note's increment from MIDI 24 up")
-    off, blob = [], []
+    w("; the levels' music, in the MUSIC block: each tune's offset, the end after")
+    w("; the last; and a note's increment from MIDI 24 up")
     for name, stream, n, step in blobs:
         w(";   %-7s %3d eighths of %2d frames, %4d frames round, %4d bytes" % (name, n, step, n * step, len(stream)))
-        off.append(len(blob))
-        blob += stream
-    arr(w, "CARD ARRAY mus_off(%d)" % len(off), off)
-    arr(w, "BYTE ARRAY mus_data(%d)" % len(blob), blob, per=24)
+    mo = o["moffs"]
+    w("CONST MUS_MAX = %d" % max(b - a for a, b in zip(mo, mo[1:])))
+    arr(w, "CARD ARRAY mus_off(%d)" % len(mo), mo)
     arr(w, "CARD ARRAY note_inc(%d)" % len(incs), incs, per=12)
     w("")
     w("; the fighter's shot: one sprite, its 3 x 8 in columns 2-4")

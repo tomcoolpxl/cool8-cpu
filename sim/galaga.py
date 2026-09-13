@@ -572,8 +572,30 @@ def compare_dives(g, stage, frames, kill_every=0):
     return n, began, hit, bad, lost, cont
 
 
+def sizes():
+    """Where the PRG's bytes are: each symbol's span to the next, the
+    largest first, and the totals of code and of data."""
+    src = sources()
+    prg, syms = H.try_build_act(src, "gal_sizes")
+    org = prg[0] | (prg[1] << 8)
+    end = org + len(prg) - 2
+    # constants are not places, and a routine's local labels are its own
+    marks = sorted((a, n) for n, a in syms.items() if org <= a < end and not n.startswith("c_"))
+    by = {}
+    for (a, n), (b, _) in zip(marks, marks[1:] + [(end, None)]):
+        key = n.split(".")[0]
+        by[key] = by.get(key, 0) + b - a
+    spans = [(z, n) for n, z in by.items() if z]
+    data = sum(z for z, n in spans if n.startswith(("v_", "a_", "str_")))
+    print("PRG %d bytes: %d in data, %d in code" % (len(prg) - 2, data, len(prg) - 2 - data))
+    for z, n in sorted(spans, reverse=True)[:40]:
+        print("  %6d  %s" % (z, n))
+
+
 def main():
     what = sys.argv[1] if len(sys.argv) > 1 else "play"
+    if what == "sizes":
+        return sizes()
     g = Game(tag="gal_" + "_".join(sys.argv[1:]))
     print("PRG %d bytes, %04X-%04X" % (len(g.prg) - 2, g.org, g.end))
     g.m.run_frame(30)

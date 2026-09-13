@@ -107,6 +107,29 @@ PROC Stream(CARD off, BYTE hi, CARD vaddr, CARD n)
   FlashClose()
 RETURN
 
+; Load(off, hi, dst, n): n bytes of the data file from hi:off into memory
+; at dst -- a stage's waves, a level's tune
+CARD ld_dst
+PROC Load(CARD off, BYTE hi, CARD dst, CARD n)
+  CARD a
+  BYTE h
+  a = dat_lo + off
+  h = dat_hi + hi
+  IF a < off THEN h += 1 FI
+  FlashOpen(a, h)
+  st_n = n
+  ld_dst = dst
+  ASM
+    LDW  X,[v_st_n]
+    LDW  Y,[v_ld_dst]
+.l: LD   R0,[v_FLS_DATA]
+    ST   [Y+],R0
+    DECW X
+    BNE  .l
+  ENDASM
+  FlashClose()
+RETURN
+
 ; ---------------------------------------------------------------- music
 ; The level's own tune (tools/mkgalaga.py writes them out): eighths of a
 ; few frames each, three tone tracks and the drums. A note rises to its
@@ -141,9 +164,15 @@ PROC MusicStop()
   dr_k = 0
 RETURN
 
+BYTE ARRAY mus_data(MUS_MAX)          ; the level's tune, loaded from the MUSIC block
+BYTE mus_level                       ; the tune loaded, 255 none
 PROC MusicStart(BYTE n)
   MusicStop()
-  mus_p = mus_off(n)
+  IF n != mus_level THEN
+    Load(D_MUSIC + mus_off(n), DH_MUSIC, mus_data, mus_off(n + 1) - mus_off(n))
+    mus_level = n
+  FI
+  mus_p = 0
   mus_step = mus_data(mus_p)
   mus_p += 1
   mus_loop = mus_p
@@ -1211,7 +1240,8 @@ BYTE cobj, cap_ph, cap_k
 CARD cap_t
 BYTE bomb_flags                      ; the mask a sortie is given, by the stage and the enemies left
 
-; the launcher, f_2916
+; the launcher, f_2916, on the stage's waves loaded from the WAVES block
+BYTE ARRAY st_wv(WAVES_MAX)
 CARD wv_p
 BYTE launching
 BYTE wave_no                         ; the wave launching, 0-4
@@ -1545,6 +1575,7 @@ PROC FlyStep(BYTE k)
         a = col_x(obj_col(obj >> 1)) + 17
         w = a >> 1
         fl_x(k) = (fl_x(k) & $FF) | (w << 8)
+        IF cont_bomb THEN PlaySound(S_DIVE) FI
         p += 1
         consume = 1
         EXIT
@@ -1944,6 +1975,7 @@ RETURN
 PROC FirstDive(BYTE obj, BYTE last, CARD path)
   WHILE obj <= last DO
     IF Resting(obj) THEN
+      PlaySound(S_DIVE)
       Dive(obj, path, (obj & 2) << 6)
       RETURN
     FI
@@ -2034,7 +2066,10 @@ PROC Sorties()
     e = pool_o(i)
     IF e != 255 THEN
       pool_o(i) = 255
-      IF Resting(e & $7F) THEN Dive(e & $7F, pool_path, e & $80) FI
+      IF Resting(e & $7F) THEN
+        Dive(e & $7F, pool_path, e & $80)
+        PlaySound(S_DIVE)
+      FI
       RETURN
     FI
   OD
@@ -2097,7 +2132,7 @@ RETURN
 PROC Launcher()
   BYTE tok, raw, obj, k
   IF launching == 0 THEN RETURN FI
-  tok = st_waves(wv_p)
+  tok = st_wv(wv_p)
   IF tok == $7F THEN
     IF flying_nbr == 0 THEN
       launching = 0
@@ -2113,14 +2148,14 @@ PROC Launcher()
       RETURN
     FI
     IF st_kind((stage - 1) % STAGES) AND gt(0) THEN RETURN FI
-    IF wv_p != st_woff((stage - 1) % STAGES) THEN wave_no += 1 FI
+    IF wv_p THEN wave_no += 1 FI
     wv_p += 1
     RETURN
   FI
   IF (tok & $80) == 0 AND (frm & 7) != 0 THEN RETURN FI
   k = FreeFlyer()
   IF k == 255 THEN RETURN FI
-  raw = st_waves(wv_p + 1)
+  raw = st_wv(wv_p + 1)
   obj = raw
   IF raw & $78 == $78 THEN obj = raw & $BF FI
   wv_p += 2
@@ -2252,6 +2287,8 @@ RETURN (0)
 ; ---------------------------------------------------------------- scoring
 ; the arcade's scores are all tens, so the score is kept in tens
 CARD score10, hi10
+BYTE lives                           ; fighters in hand, the one in play not counted
+BYTE xtra                            ; a fighter was added: the panel to redraw
 BYTE score_shown
 
 ; points in tens for a character at rest: bee 50, butterfly 80, boss 150
@@ -2260,10 +2297,16 @@ FUNC BYTE RestPoints(BYTE kind)
   IF kind == FM_GOEI6 THEN RETURN (8) FI
 RETURN (15)
 
+CARD ext10                            ; the next extra fighter's score, in tens: 20,000, then 70,000 and every 70,000
 PROC AddScore(CARD tens)
   score10 += tens
   IF score10 > hi10 THEN hi10 = score10 FI
   score_shown = 0
+  IF score10 >= ext10 THEN
+    IF ext10 == 2000 THEN ext10 = 7000 ELSE ext10 += 7000 FI
+    lives += 1
+    xtra = 1
+  FI
 RETURN
 
 PROC ShowScore()
@@ -2511,7 +2554,6 @@ PROC Collide()
 RETURN
 
 ; ------------------------------------------------------------ the screen
-BYTE lives                           ; fighters in hand, the one in play not counted
 CARD stage_frames                    ; frames since the stage's first, for the gate
 BYTE ARRAY txtbuf(24)
 
@@ -2654,7 +2696,9 @@ PROC StageStart()
   stage_frames = 0
   flying = 0
   flying_nbr = 0
-  wv_p = st_woff((stage - 1) % STAGES)
+  k = (stage - 1) % STAGES
+  Load(D_WAVES + st_woff(k), DH_WAVES, st_wv, st_woff(k + 1) - st_woff(k))
+  wv_p = 0
   launching = 1
   ; stg_init_env and c_2C00: the stage's parameters, its timers, no dives
   ; until the waves are in
@@ -2827,6 +2871,7 @@ PROC Play()
   ftr_on = 1
   game_over = 0
   score10 = 0
+  ext10 = 2000
   score_shown = 0
   ShowScore()
   StageIntro()
@@ -2845,6 +2890,11 @@ PROC Play()
     Collide()
     Afterlife()
     ShowScore()
+    IF xtra THEN
+      xtra = 0
+      Lives()
+      PlaySound(S_EXTEND)
+    FI
     IF game_over THEN EXIT FI
     IF StageDone() AND ftr_dead == 0 THEN
       IF st_kind((stage - 1) % STAGES) THEN
@@ -2909,6 +2959,7 @@ PROC Main()
     RETURN
   FI
   Stream(D_SPR, DH_SPR, SPR_BASE, N_SPR)
+  mus_level = 255
   SetPalette(gal_pal, 0, 16)
   SetPalette(gal_pal, 240, 16)
   FOR i = 0 TO 31 DO SpriteHide(i) OD
