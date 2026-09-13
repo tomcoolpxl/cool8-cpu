@@ -107,6 +107,126 @@ PROC Stream(CARD off, BYTE hi, CARD vaddr, CARD n)
   FlashClose()
 RETURN
 
+; ---------------------------------------------------------------- music
+; The level's own tune (tools/mkgalaga.py writes them out): eighths of a
+; few frames each, three tone tracks and the drums. A note rises to its
+; track's peak and falls to its sustain frame by frame, faster once let
+; go -- a held lead with a vibrato once it has sounded a while, a bass
+; that punches and fades, an arpeggio that is plucked -- and the drums
+; are shaped noise and a falling kick on voice 7. The tone tracks give
+; voices 0-2 to the arcade's tunes whenever one plays, and go on beneath.
+BYTE mus_on, mus_step, mus_t
+CARD mus_p, mus_loop
+CARD ARRAY mv_inc(3)                 ; each track's note, and its voice now
+BYTE ARRAY mv_vol(3), mv_gate(3), mv_age(3)
+BYTE ARRAY mv_peak(3) = [9 10 7]
+BYTE ARRAY mv_sus(3) = [7 5 0]
+BYTE ARRAY mv_dec(3) = [4 3 1]       ; frames a volume step while held
+BYTE ARRAY mv_rel(3) = [2 2 2]       ; volume a frame once let go
+CARD ARRAY mv_out(3)                 ; the increment played, the vibrato in it
+BYTE dr_k, dr_t, dr_cur
+CARD dr_inc
+; the drums, by number: 1 hat, 2 snare, 3 kick, 4 open hat, 5 crash
+CARD ARRAY dr_pitch(6) = [0 12000 3000 420 12000 7000]
+BYTE ARRAY dr_vol(6) = [0 6 10 12 7 10]
+BYTE ARRAY dr_fall(6) = [0 3 2 2 1 1]
+
+PROC MusicStop()
+  BYTE c
+  mus_on = 0
+  FOR c = 0 TO 2 DO
+    mv_vol(c) = 0
+    mv_gate(c) = 0
+  OD
+  dr_k = 0
+RETURN
+
+PROC MusicStart(BYTE n)
+  MusicStop()
+  mus_p = mus_off(n)
+  mus_step = mus_data(mus_p)
+  mus_p += 1
+  mus_loop = mus_p
+  mus_t = 1
+  mus_on = 1
+RETURN
+
+PROC MusicEighth()
+  BYTE m, c, b
+  m = mus_data(mus_p)
+  IF m & $80 THEN
+    mus_p = mus_loop
+    m = mus_data(mus_p)
+  FI
+  mus_p += 1
+  FOR c = 0 TO 2 DO
+    IF m & (1 << c) THEN
+      b = mus_data(mus_p)
+      mus_p += 1
+      IF b THEN
+        mv_inc(c) = note_inc(b - 1)
+        mv_vol(c) = mv_peak(c)
+        mv_gate(c) = 1
+        mv_age(c) = 0
+      ELSE
+        mv_gate(c) = 0
+      FI
+    FI
+  OD
+  IF m & 8 THEN
+    dr_k = mus_data(mus_p)
+    mus_p += 1
+    dr_t = 0
+    dr_inc = dr_pitch(dr_k)
+  FI
+RETURN
+
+; MusicFrame: a frame of the tune -- the eighth if it is due, the
+; envelopes, the vibrato, the drum
+PROC MusicFrame()
+  BYTE c, v, ph
+  CARD i, d
+  INT dv
+  IF mus_on == 0 THEN RETURN FI
+  mus_t -= 1
+  IF mus_t == 0 THEN
+    MusicEighth()
+    mus_t = mus_step
+  FI
+  FOR c = 0 TO 2 DO
+    v = mv_vol(c)
+    IF v THEN
+      IF mv_age(c) < 255 THEN mv_age(c) += 1 FI
+      IF mv_gate(c) THEN
+        IF v > mv_sus(c) AND mv_age(c) % mv_dec(c) == 0 THEN v -= 1 FI
+      ELSEIF v > mv_rel(c) THEN
+        v -= mv_rel(c)
+      ELSE
+        v = 0
+      FI
+      mv_vol(c) = v
+    FI
+    i = mv_inc(c)
+    IF c == 0 AND mv_age(0) > 12 THEN
+      ph = (mv_age(0) >> 2) & 3
+      d = i >> 7
+      IF ph == 1 THEN i += d ELSEIF ph == 3 THEN i -= d FI
+    FI
+    mv_out(c) = i
+  OD
+  IF dr_k THEN
+    dv = dr_vol(dr_k)
+    dv = dv - dr_t * dr_fall(dr_k)
+    IF dv <= 0 THEN
+      dr_k = 0
+    ELSE
+      dr_cur = dv
+      IF dr_k == 3 THEN dr_inc = dr_inc - (dr_inc >> 3) FI
+      dr_t += 1
+    FI
+  FI
+RETURN
+
 ; ---------------------------------------------------------------- sound
 ; The arcade's sounds are streams tools/galaga_sound.py rendered from its
 ; sound CPU's driver: each frame every sound playing moves on through its
@@ -161,6 +281,7 @@ PROC SoundsOff()
   BYTE i
   FOR i = 0 TO NSND - 1 DO snd_on(i) = 0 OD
   boom_snd = 0
+  MusicStop()
 RETURN
 
 ; SndAdvance(id): a frame of one sound's stream
@@ -235,7 +356,19 @@ PROC SoundFrame()
       FI
     FI
   OD
+  MusicFrame()
+  IF TuneOn() == 0 AND mus_on THEN
+    FOR v = 0 TO 2 DO
+      mix_inc(v) = mv_out(v)
+      mix_vol(v) = mv_vol(v)
+    OD
+  FI
   FOR v = 0 TO 5 DO Voice(v, mix_inc(v), mix_vol(v), 0) OD
+  IF dr_k AND mus_on THEN
+    IF dr_k == 3 THEN Voice(7, dr_inc, dr_cur, 0) ELSE Voice(7, dr_inc, dr_cur, 1) FI
+  ELSE
+    Voice(7, 0, 0, 0)
+  FI
   IF boom_snd THEN
     boom_snd -= 1
     Voice(6, 180 + boom_snd * 6, boom_snd / 6, 1)
@@ -1926,6 +2059,7 @@ PROC StageStart()
   wv_p = st_woff((stage - 1) % STAGES)
   launching = 1
   Positions()
+  MusicStart(level_bd)
 RETURN
 
 ; StageDone: nothing left of the stage -- the launcher finished, nothing
@@ -1961,6 +2095,7 @@ PROC StageIntro()
   FI
   Panel()
   StopSound(S_PULSE)
+  MusicStop()
   IF stage == 1 THEN
     ; a new game: the start theme under PLAYER 1, then the stage
     PlaySound(S_START)

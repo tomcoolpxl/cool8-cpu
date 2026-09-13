@@ -676,6 +676,163 @@ def sounds():
                                                         for sid in range(len(S.SND_PARMS))])
 
 
+# ------------------------------------------------------------------ music
+# The levels' own music -- the arcade has none in play; the owner asked
+# for a tune a level -- written out note by note, an eighth at a time and
+# a bar a line, in COOL SWEEPER's notation (tools/mkcoolsw.py reads it):
+# a note is its letter, a # or a b and its octave, "-" holds, "." lets
+# go; the drums are k a kick, s a snare, h a hat, o an open hat, c a
+# crash. Three tone tracks on voices 0-2 -- lead, bass, arpeggio -- and
+# the drums on voice 7; an arcade tune, when one plays, has the voices.
+
+# Level 1, the blue planet: E minor, heroic, driving.
+# A: Em C D B | Em C Am B7.  B: C D Em Em | Am B Em B
+BLUE = dict(step=8, parts=dict(
+    lead="""
+        E5 - B4 - E5 - G5 - | G5 - E5 - C5 - E5 - | F#5 - - - A5 - F#5 - | D#5 - - - F#5 - B5 -
+        E5 - B4 - E5 - G5 - | C6 - B5 - A5 - G5 - | A5 - G5 - F#5 - E5 - | D#5 - - - - - . .
+        E5 - G5 - C6 - B5 - | A5 - F#5 - D5 - F#5 - | G5 - - - E5 - B4 - | E5 - G5 - B5 - A5 G5
+        A5 - C6 - E6 - C6 - | B5 - A5 - F#5 - D#5 - | E5 - - - G5 - B5 - | A5 - G5 - F#5 - D#5 -
+    """,
+    bass="""
+        E2 E3 E2 E3 E2 E3 E2 E3 | C2 C3 C2 C3 C2 C3 C2 C3 | D2 D3 D2 D3 D2 D3 D2 D3 | B1 B2 B1 B2 B1 B2 B1 B2
+        E2 E3 E2 E3 E2 E3 E2 E3 | C2 C3 C2 C3 C2 C3 C2 C3 | A1 A2 A1 A2 A1 A2 A1 A2 | B1 B2 B1 B2 B1 B2 D#2 F#2
+        C2 C3 C2 C3 C2 C3 C2 C3 | D2 D3 D2 D3 D2 D3 D2 D3 | E2 E3 E2 E3 E2 E3 E2 E3 | E2 E3 E2 E3 G2 G3 B1 B2
+        A1 A2 A1 A2 A1 A2 A1 A2 | B1 B2 B1 B2 B1 B2 B1 B2 | E2 E3 E2 E3 E2 E3 E2 E3 | B1 B2 B1 B2 A1 A2 B1 B2
+    """,
+    arp="""
+        E4 G4 B4 G4 E4 G4 B4 G4 | C4 E4 G4 E4 C4 E4 G4 E4 | D4 F#4 A4 F#4 D4 F#4 A4 F#4 | B3 D#4 F#4 D#4 B3 D#4 F#4 D#4
+        E4 G4 B4 G4 E4 G4 B4 G4 | C4 E4 G4 E4 C4 E4 G4 E4 | A3 C4 E4 C4 A3 C4 E4 C4 | B3 D#4 F#4 A4 F#4 D#4 B3 .
+        C4 E4 G4 C5 G4 E4 C4 E4 | D4 F#4 A4 D5 A4 F#4 D4 F#4 | E4 G4 B4 E5 B4 G4 E4 G4 | E4 G4 B4 E5 B4 G4 E4 G4
+        A3 C4 E4 A4 E4 C4 A3 C4 | B3 D#4 F#4 B4 F#4 D#4 B3 D#4 | E4 G4 B4 E5 B4 G4 E4 G4 | B3 D#4 F#4 B4 A4 F#4 D#4 B3
+    """,
+    drums="""
+        k - h - s - h - | k - h k s - h - | k - h - s - h - | k - h k s - s s
+        k - h - s - h - | k - h k s - h - | k - h - s - h - | k - s - s s s s
+        c - h - s - h - | k - h k s - h - | k - h - s - h - | k - h k s - h o
+        k - h - s - h - | k - h k s - h - | k - h - s - h - | k s k s s s s s
+    """))
+
+# Level 2, the nebula: D dorian, floating, the arpeggio doing the moving.
+# A: Dm C Dm G | Dm C Dm G.  B: Bb C Dm Dm | Bb C Am A
+NEBULA = dict(step=10, parts=dict(
+    lead="""
+        A4 - - - D5 - - - | E5 - - - G5 - E5 - | F5 - - - D5 - - - | B4 - - - D5 - - -
+        A5 - - - F5 - D5 - | G5 - - - E5 - C5 - | D5 - F5 - A5 - C6 - | B5 - - - - - . .
+        D6 - - - C6 - Bb5 - | C6 - - - G5 - E5 - | F5 - - - A5 - - - | D5 - - - - - . .
+        F5 - Bb5 - D6 - Bb5 - | E5 - G5 - C6 - G5 - | A5 - - - E5 - C5 - | C#5 - - - E5 - A5 -
+    """,
+    bass="""
+        D2 - - - A2 - - - | C2 - - - G2 - - - | D2 - - - A2 - - - | G1 - - - D2 - - -
+        D2 - - - A2 - - - | C2 - - - G2 - - - | D2 - - - A2 - - - | G1 - - - D2 - B1 -
+        Bb1 - - - F2 - - - | C2 - - - G2 - - - | D2 - - - A2 - - - | D2 - - - A2 - F2 -
+        Bb1 - - - F2 - - - | C2 - - - G2 - - - | A1 - - - E2 - - - | A1 - - - E2 - C#2 -
+    """,
+    arp="""
+        D4 F4 A4 D5 A4 F4 D4 F4 | C4 E4 G4 C5 G4 E4 C4 E4 | D4 F4 A4 D5 A4 F4 D4 F4 | G3 B3 D4 G4 D4 B3 G3 B3
+        D4 F4 A4 D5 A4 F4 D4 F4 | C4 E4 G4 C5 G4 E4 C4 E4 | D4 F4 A4 D5 A4 F4 D4 F4 | G3 B3 D4 G4 B4 G4 D4 B3
+        Bb3 D4 F4 Bb4 F4 D4 Bb3 D4 | C4 E4 G4 C5 G4 E4 C4 E4 | D4 F4 A4 D5 A4 F4 D4 F4 | D4 F4 A4 D5 F5 D5 A4 F4
+        Bb3 D4 F4 Bb4 F4 D4 Bb3 D4 | C4 E4 G4 C5 G4 E4 C4 E4 | A3 C4 E4 A4 E4 C4 A3 C4 | A3 C#4 E4 A4 E4 C#4 A3 C#4
+    """,
+    drums="""
+        k - h - - - h - | - - h - s - h - | k - h - - - h - | - - h - s - h h
+        k - h - - - h - | - - h - s - h - | k - h - - - h - | - - h - s - s -
+        k - h - - - h - | - - h - s - h - | k - h - - - h - | - - h - s - h o
+        k - h - - - h - | - - h - s - h - | k - h - - - h - | - - s - s - s s
+    """))
+
+# Level 3, the red ridge: A minor, a march, dotted and square.
+# A: Am Am F G | Am Am Dm E.  B: F G Am Am | F G E E
+RIDGE = dict(step=8, parts=dict(
+    lead="""
+        A4 - - A4 C5 - E5 - | A5 - G5 - E5 - C5 - | F5 - - F5 A5 - C6 - | B5 - - - G5 - D5 -
+        A4 - - A4 C5 - E5 - | A5 - C6 - B5 - A5 - | F5 - E5 - D5 - F5 - | E5 - - - G#5 - B5 -
+        C6 - - - A5 - F5 - | D6 - - - B5 - G5 - | E6 - D6 - C6 - B5 - | A5 - - - E5 - A5 -
+        F5 - A5 - C6 - A5 - | G5 - B5 - D6 - B5 - | G#5 - B5 - E6 - D6 - | B5 - - - G#5 - . .
+    """,
+    bass="""
+        A2 . A2 . E2 . A2 . | A2 . A2 . E2 . A2 . | F2 . F2 . C3 . F2 . | G2 . G2 . D3 . G2 .
+        A2 . A2 . E2 . A2 . | A2 . A2 . E2 . A2 . | D2 . D2 . A2 . D2 . | E2 . E2 . B2 . E2 .
+        F2 . F2 . C3 . F2 . | G2 . G2 . D3 . G2 . | A2 . A2 . E2 . A2 . | A2 . A2 . E2 . A2 .
+        F2 . F2 . C3 . F2 . | G2 . G2 . D3 . G2 . | E2 . E2 . B2 . E2 . | E2 . E2 . G#2 . B2 .
+    """,
+    arp="""
+        . C4 . E4 . C4 . E4 | . C4 . E4 . C4 . E4 | . A3 . C4 . A3 . C4 | . B3 . D4 . B3 . D4
+        . C4 . E4 . C4 . E4 | . C4 . E4 . C4 . E4 | . F4 . A4 . F4 . A4 | . G#3 . B3 . G#3 . B3
+        . A4 . C5 . A4 . C5 | . B4 . D5 . B4 . D5 | . C5 . E5 . C5 . E5 | . C5 . E5 . A4 . C5
+        . A4 . C5 . A4 . C5 | . B4 . D5 . B4 . D5 | . G#4 . B4 . G#4 . B4 | . G#4 . B4 . E4 . .
+    """,
+    drums="""
+        k - s k k - s - | k - s k k - s - | k - s k k - s - | k - s k s s s s
+        k - s k k - s - | k - s k k - s - | k - s k k - s - | k - s - s s s s
+        c - s k k - s - | k - s k k - s - | k - s k k - s - | k - s k k - s h
+        k - s k k - s - | k - s k k - s - | k - s k k - s - | k s s s s s c -
+    """))
+
+# Level 4, the gold giant: C major, fast, the whole band.
+# A: C G Am F | C G F G.  B: Am F C G | Am F G G
+GIANT = dict(step=7, parts=dict(
+    lead="""
+        E5 - G5 - C6 - G5 - | D6 - - - B5 - G5 - | C6 - B5 - A5 - E5 - | F5 - A5 - C6 - A5 -
+        G5 - C6 - E6 - C6 - | D6 - B5 - G5 - B5 - | A5 - C6 - F6 - E6 - | D6 - - - - - . .
+        E6 - - - C6 - A5 - | F6 - - - C6 - A5 - | G6 - E6 - C6 - E6 - | D6 - B5 - G5 - B5 -
+        C6 - E6 - A6 - E6 - | F6 - E6 - D6 - C6 - | B5 - D6 - G6 - F6 - | D6 - B5 - G5 - . .
+    """,
+    bass="""
+        C2 C3 G2 C3 C2 C3 G2 C3 | G1 G2 D2 G2 G1 G2 D2 G2 | A1 A2 E2 A2 A1 A2 E2 A2 | F1 F2 C2 F2 F1 F2 C2 F2
+        C2 C3 G2 C3 C2 C3 G2 C3 | G1 G2 D2 G2 G1 G2 D2 G2 | F1 F2 C2 F2 F1 F2 C2 F2 | G1 G2 D2 G2 G1 G2 B1 D2
+        A1 A2 E2 A2 A1 A2 E2 A2 | F1 F2 C2 F2 F1 F2 C2 F2 | C2 C3 G2 C3 C2 C3 G2 C3 | G1 G2 D2 G2 G1 G2 D2 G2
+        A1 A2 E2 A2 A1 A2 E2 A2 | F1 F2 C2 F2 F1 F2 C2 F2 | G1 G2 D2 G2 G1 G2 D2 G2 | G1 G2 D2 G2 B1 D2 G2 B2
+    """,
+    arp="""
+        C4 E4 G4 C5 E5 C5 G4 E4 | G3 B3 D4 G4 B4 G4 D4 B3 | A3 C4 E4 A4 C5 A4 E4 C4 | F3 A3 C4 F4 A4 F4 C4 A3
+        C4 E4 G4 C5 E5 C5 G4 E4 | G3 B3 D4 G4 B4 G4 D4 B3 | F3 A3 C4 F4 A4 F4 C4 A3 | G3 B3 D4 G4 B4 D5 G5 D5
+        A3 C4 E4 A4 C5 A4 E4 C4 | F3 A3 C4 F4 A4 F4 C4 A3 | C4 E4 G4 C5 E5 C5 G4 E4 | G3 B3 D4 G4 B4 G4 D4 B3
+        A3 C4 E4 A4 C5 A4 E4 C4 | F3 A3 C4 F4 A4 F4 C4 A3 | G3 B3 D4 G4 B4 G4 D4 B3 | G3 B3 D4 G4 B4 D5 G5 .
+    """,
+    drums="""
+        k h s h k k s h | k h s h k k s h | k h s h k k s h | k h s h k k s s
+        k h s h k k s h | k h s h k k s h | k h s h k k s h | k s s s s s s s
+        c h s h k k s h | k h s h k k s h | k h s h k k s h | k h s h k k s o
+        k h s h k k s h | k h s h k k s h | k h s h k k s h | c - s s s s c -
+    """))
+
+MUSIC = [("blue", BLUE), ("nebula", NEBULA), ("ridge", RIDGE), ("giant", GIANT)]
+MTRACKS = ["lead", "bass", "arp", "drums"]
+
+
+def music():
+    """Each level's tune as the game's player reads it: frames an eighth,
+    then for each eighth a mask -- bit n for track n with something new --
+    and the bytes it names: a note as MIDI less 23 (0 lets the voice go), a
+    drum as its number; $80 goes round again."""
+    import mkcoolsw as C
+    blobs = []
+    for name, t in MUSIC:
+        tracks = [C.track_steps(n, t["parts"][n]) for n in MTRACKS]
+        n = len(tracks[0])
+        assert all(len(tr) == n for tr in tracks), (name, [len(tr) for tr in tracks])
+        out = [t["step"]]
+        for i in range(n):
+            mask, data = 0, []
+            for c, tr in enumerate(tracks):
+                v = tr[i]
+                if c == 3:
+                    if v is not None:
+                        mask |= 1 << c
+                        data.append(v)
+                elif v == "off":
+                    mask |= 1 << c
+                    data.append(0)
+                elif v != "hold":
+                    mask |= 1 << c
+                    data.append(v - C.LOW_MIDI + 1)
+            out += [mask] + data
+        out.append(0x80)
+        blobs.append((name, out, n, t["step"]))
+    return blobs, C.note_incs()
+
+
 # ------------------------------------------------------------------ build
 class Dat:
     def __init__(self):
@@ -704,7 +861,7 @@ def build():
     bds = [backdrop(b) for b in BACKDROPS]
     for k, (_, rows) in enumerate(bds):
         dat.add("BD%d" % k, pack_band(rows))
-    return dict(snd=sounds(), fl=flights(), pats=pats, common=common, ncommon=ncommon, fimgs=imgs, fblob=fblob, foffs=foffs, bds=bds,
+    return dict(mus=music(), snd=sounds(), fl=flights(), pats=pats, common=common, ncommon=ncommon, fimgs=imgs, fblob=fblob, foffs=foffs, bds=bds,
                 shot=shot[0], arts=arts, ablob=ablob, aoffs=aoffs,
                 font=font(t), dat=dat, sheet=s)
 
@@ -828,6 +985,17 @@ def act(o):
     w("; 0 the effects, on voices 3-5, 1 the tunes, on 0-2")
     arr(w, "BYTE ARRAY snd_order(%d)" % len(SND_ORDER), SND_ORDER, fmt="$%02X")
     arr(w, "BYTE ARRAY snd_tune(%d)" % len(sd["offs"]), [1 if i in TUNES else 0 for i in range(len(sd["offs"]))])
+    w("")
+    blobs, incs = o["mus"]
+    w("; the levels' music: each tune's offset, and a note's increment from MIDI 24 up")
+    off, blob = [], []
+    for name, stream, n, step in blobs:
+        w(";   %-7s %3d eighths of %2d frames, %4d frames round, %4d bytes" % (name, n, step, n * step, len(stream)))
+        off.append(len(blob))
+        blob += stream
+    arr(w, "CARD ARRAY mus_off(%d)" % len(off), off)
+    arr(w, "BYTE ARRAY mus_data(%d)" % len(blob), blob, per=24)
+    arr(w, "CARD ARRAY note_inc(%d)" % len(incs), incs, per=12)
     w("")
     w("; the fighter's shot: one sprite, its 3 x 8 in columns 2-4")
     w("CONST P_SHOT = %d" % o["shot"])

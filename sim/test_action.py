@@ -1770,6 +1770,40 @@ def test_galaga():
     check(n > 400 and nbad == 0, "galaga: the start theme plays the arcade's notes, frame for frame",
           "%d of %d frames differ (lag %d): %s" % (nbad, n, lag, first))
 
+    # the level's own tune in play: voices 0-2 on its notes, the drums on 7
+    import mkgalaga as A
+    blobs, incs = A.music()
+    tune = set()
+    stream = blobs[0][1]
+    i = 1
+    while stream[i] != 0x80:
+        m = stream[i]
+        i += 1
+        for c in range(4):
+            if m & (1 << c):
+                if c < 3 and stream[i]:
+                    tune.add(incs[stream[i] - 1])
+                i += 1
+    h = G.Game(tag="galaga3", render=False)
+    h.start()
+    seen, drums, ok = set(), 0, True
+    for _ in range(240):
+        h.m.run_frame(1)
+        snd = h.m.sound()
+        if h.byte("mus_on") and not any(h.byte("snd_on", k) for k in (0x0B, 0x0D, 0x09, 0x11, 0x0E, 0x14, 0x0A, 0x07, 0x10)):
+            for v in range(3):
+                inc, vol = snd[8 * v] | (snd[8 * v + 1] << 8), snd[8 * v + 4] & 15
+                if vol:
+                    seen.add(inc)
+        drums += snd[8 * 7 + 4] & 15 > 0
+    base = {x for x in seen if x in tune}
+    vib = {x for x in seen if x not in tune and any(abs(x - n) <= (n >> 7) for n in tune)}
+    check(h.byte("mus_on") and len(base) >= 8 and seen <= base | vib and drums > 20,
+          "galaga: the level's tune plays its own notes on voices 0-2, and its drums on 7",
+          "%d notes of the tune heard, %d other pitches, %d frames of drum"
+          % (len(base), len(seen - base - vib), drums))
+    del h
+
     # the backdrop's own eight colours written on the row above the band,
     # the arcade's back at the vertical blank, and nothing else; and the
     # work of the frames the waves fly in
