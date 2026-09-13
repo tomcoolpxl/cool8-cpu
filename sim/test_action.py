@@ -1728,8 +1728,24 @@ def test_galaga():
         bad = g.bitmap_diff()
         if bad:
             break
-    check(not bad and g.byte("br_cnt") != 0, "galaga: the formation breathes and flaps without a pixel left behind",
+    check(not bad and g.byte("br_cnt") != 0,
+          "galaga: the formation breathes and flaps over the backdrop without a pixel left behind",
           "%d pixels differ: %s, breath at %02X" % (len(bad), bad[:4], g.byte("br_cnt")))
+
+    # the backdrop's own eight colours written on the row above the band,
+    # the arcade's back at the vertical blank, and nothing else
+    by = g.c("BAND_Y")
+    band = [(g.byte("bd_pal", 2 * i) << 8) | g.byte("bd_pal", 2 * i + 1) for i in range(8)]
+    top = [g.uword("gal_pal", i) for i in range(g.c("SAFE"), 16)]
+    log = g.split(3)
+    lines = {}
+    for ln, e, v in log:
+        lines.setdefault(ln, []).append((e, v))
+    want = {2 * by - 2: list(zip(range(8, 16), band)), 480: list(zip(range(8, 16), top))}
+    check(set(lines) == set(want) and all(lines[ln] == want[ln] * (len(lines[ln]) // 8) for ln in want)
+          and len(log) >= 32,
+          "galaga: the band's colours from the row above it, the arcade's from the vertical blank",
+          "lines %s, %d commits" % (sorted(lines), len(log)))
 
     costs, (work, p) = g.frame_work(64)
     check(max(costs) < G.FRAME, "galaga: every frame's work inside its frame",

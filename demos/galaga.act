@@ -44,12 +44,16 @@ CONST KEY_SPACE = $29
 CONST KEY_ESC = $76
 CONST KEY_P = $4D
 
-; colours: the PROM's entry k is index k + 1 (tools/mkgalaga.py)
+; colours: tools/mkgalaga.py's order -- 0-7 are the ones the bitmap uses
+; low on the field, which a backdrop's raster split leaves alone
 CONST C_WHITE = 1
 CONST C_RED = 2
 CONST C_YELLOW = 3
-CONST C_CYAN = 7
-CONST C_BLUE = 12
+CONST C_CYAN = 4
+CONST C_BEAM = 5
+CONST C_BLUE = 6
+CONST C_ORANGE = 7
+CONST C_GREEN = 12
 
 ; sprite descriptors: a lower number is drawn over a higher one
 CONST SP_FIGHTER = 0                 ; four
@@ -57,6 +61,7 @@ CONST SP_SHOT = 4                    ; two
 
 ; --------------------------------------------------------------- the game
 CARD loops                           ; frames of play the loop has run, for the gate
+BYTE level_bd                        ; the backdrop showing, 0-3
 CARD score, hiscore
 BYTE quit
 
@@ -524,7 +529,7 @@ FUNC BYTE Covered(BYTE x, BYTE y)
   OD
 RETURN (0)
 
-BYTE ARRAY st_cols(7) = [C_WHITE C_RED C_YELLOW C_CYAN C_BLUE 10 13]
+BYTE ARRAY st_cols(7) = [C_WHITE C_RED C_YELLOW C_CYAN C_BEAM C_BLUE C_ORANGE]
 
 PROC StarsInit()
   BYTE i
@@ -556,7 +561,7 @@ PROC StarsErase()
 RETURN
 
 PROC StarsDraw()
-  BYTE i, x, y, top, bot, phase
+  BYTE i, x, y, top, bot, phase, show
   CARD px
   st_bank += 1
   phase = (st_bank >> 5) & 1
@@ -571,7 +576,12 @@ PROC StarsDraw()
     st_y(i) = y
     IF (i & 1) == phase THEN
       x = st_x(i)
-      IF y < top OR y >= bot OR Covered(x, y) == 0 THEN
+      IF y >= BAND_Y THEN
+        show = BandPixel(x, y) == 0      ; behind the horizon
+      ELSE
+        show = y < top OR y >= bot OR Covered(x, y) == 0
+      FI
+      IF show THEN
         px = x
         PIX_X = px + FX
         PIX_Y = y
@@ -580,6 +590,124 @@ PROC StarsDraw()
       FI
     FI
   OD
+RETURN
+
+; ---------------------------------------------------------- the backdrop
+; A level's horizon is a band of BAND_H rows along the bottom of the
+; field, in sixteen colours whose first SAFE are the arcade's and whose
+; last eight are the band's own. The raster interrupt writes those eight
+; a row above the band and the vertical blank puts the arcade's back, so
+; the formation above keeps its colours and the band has its own; nothing
+; the bitmap draws low on the field uses the last eight. The band's
+; pixels are also kept in RAM, two to a byte as the bitmap holds them,
+; for what draws over it to ask and to put back.
+CONST BD_RAM = $D000                 ; the band's copy: BAND_H x 112 bytes, above the PRG
+BYTE ARRAY bd_ram(8064) = BD_RAM
+CARD ARRAY bd_d(4) = [D_BD0 D_BD1 D_BD2 D_BD3]
+BYTE ARRAY bd_dh(4) = [DH_BD0 DH_BD1 DH_BD2 DH_BD3]
+BYTE ARRAY isr_top(16), isr_band(16) ; entries SAFE-15, as PAL_DATA takes them: high, low
+BYTE isr_seen
+
+; BandPixel(x, y): the backdrop's colour at the field's (x, y), y in the band
+FUNC BYTE BandPixel(BYTE x, BYTE y)
+  CARD a
+  BYTE b
+  a = y - BAND_Y
+  a = (a << 7) - (a << 4) + (x >> 1)   ; 112 a row
+  b = bd_ram(a)
+  IF x & 1 THEN RETURN (b & $0F) FI
+RETURN (b >> 4)
+
+; Irq: the vector's handler. The raster compare matches the line counter's
+; low byte, so it fires twice a frame -- at the raw line 256 above the
+; band's too -- and the first is let go.
+PROC Irq()
+  ASM
+        PUSH R0
+        PUSH R1
+        PUSHW Y
+        LD   R0,[v_VID_IRQ]
+        BTST R0,#$02
+        BEQ  .rast
+        MOV  R1,#$32                 ; the blank acknowledged, both kept enabled
+        ST   [v_VID_IRQ],R1
+        CLR  R1
+        ST   [v_isr_seen],R1
+        LDW  Y,#v_isr_top
+        BRA  .pal
+.rast:  BTST R0,#$01
+        BEQ  .out
+        MOV  R1,#$31
+        ST   [v_VID_IRQ],R1
+        LD   R1,[v_isr_seen]
+        BNE  .band
+        MOV  R1,#1
+        ST   [v_isr_seen],R1
+        BRA  .out
+.band:  LDW  Y,#v_isr_band
+.pal:   MOV  R0,#c_SAFE
+        ST   [v_PAL_IDX],R0
+        MOV  R1,#16
+.l:     LD   R0,[Y+]
+        ST   [v_PAL_DATA],R0
+        SUB  R1,#1
+        BNE  .l
+.out:   POPW Y
+        POP  R1
+        POP  R0
+        RETI
+  ENDASM
+RETURN
+
+PROC IrqOn()
+  TakeKeys()                         ; its DI, once, before this
+  ASM
+        DI
+        LDW  X,#Irq
+        STW  [$FFFC],X
+  ENDASM
+  VID_RCMP = ((BAND_Y - 1) << 1) & 255
+  VID_IRQ = $33
+  ASM
+        EI
+  ENDASM
+RETURN
+
+; PalSplit(k): the two halves the handler writes -- the arcade's last
+; eight, and level k's
+PROC PalSplit(BYTE k)
+  BYTE i, j
+  CARD v, a
+  j = 0
+  FOR i = SAFE TO 15 DO
+    v = gal_pal(i)
+    isr_top(j) = v >> 8
+    isr_top(j + 1) = v
+    j += 2
+  OD
+  a = k
+  a = a << 4
+  FOR i = 0 TO 15 DO isr_band(i) = bd_pal(a + i) OD
+RETURN
+
+; LoadBackdrop(k): level k's band from the data file into RAM, then into
+; the bitmap row by row, and its colours to the handler
+PROC LoadBackdrop(BYTE k)
+  BYTE r
+  CARD a, v
+  a = dat_lo + bd_d(k)
+  r = dat_hi + bd_dh(k)
+  IF a < bd_d(k) THEN r += 1 FI
+  FlashOpen(a, r)
+  FlashRead(bd_ram, 8064)
+  FlashClose()
+  a = 0
+  FOR r = 0 TO BAND_H - 1 DO
+    v = BAND_Y + r
+    VWrite((v << 7) + (v << 5) + (FX >> 1), bd_ram + a, 112)
+    a += 112
+  OD
+  PalSplit(k)
 RETURN
 
 ; ----------------------------------------------------------- the fighter
@@ -615,6 +743,7 @@ PROC Play()
   BYTE i, t
   Clg(0)
   Hud()
+  LoadBackdrop(level_bd)
   SlotsInit()
   StarsInit()
   br_cnt = 0
@@ -660,6 +789,7 @@ PROC Main()
   SetPalette(gal_pal, 240, 16)
   FOR i = 0 TO 31 DO SpriteHide(i) OD
   SpritesOn(15)
+  IrqOn()
   hiscore = 20000
   Play()
   SpritesOff()

@@ -139,37 +139,62 @@ class Game:
             self.m.breakpoints.discard(a)
         assert why == "breakpoint", why
 
+    def array(self, n, count):
+        """A byte array of the program's, in one read."""
+        return self.m.bus.mem[self.addr(n):self.addr(n) + count]
+
     def bitmap_diff(self):
         """The field's pixels that are not what the program's own state says
         should be there -- each character at rest drawn where its slot says
-        it is drawn, each star it says is lit -- as (x, y, have, want); an
-        empty list is a bitmap no list left a pixel behind in."""
+        it is drawn, each star it says is lit, and the band's backdrop as
+        its copy in RAM holds it -- as (x, y, have, want); an empty list is
+        a bitmap no list left a pixel behind in. VRAM and the arrays are read
+        once each: the client's reads are a round trip apiece."""
         import mkgalaga as A
         if not hasattr(self, "_fimgs"):
             s = A.Sheet("sprites")
             self._fimgs = [A.grid_cell(s, c, A.ROWS[n]) for n, c in A.FORMATION]
-        fx = self.c("FX")
-        want = {}
-        for i in range(self.c("NSLOT")):
-            if self.byte("sl_on", i):
-                img = self._fimgs[self.byte("sl_fr", i)]
-                x0, y0 = fx + self.byte("sl_x", i), self.byte("sl_y", i)
+        fx, fw = self.c("FX"), self.c("FW")
+        want = [[0] * fw for _ in range(240)]
+        by, bh = self.c("BAND_Y"), self.c("BAND_H")
+        bram = self.m.bus.mem[self.c("BD_RAM"):self.c("BD_RAM") + bh * 112]
+        for y in range(bh):
+            row = want[by + y]
+            for x in range(224):
+                b = bram[y * 112 + (x >> 1)]
+                row[x] = b >> 4 if x % 2 == 0 else b & 15
+        ns = self.c("NSLOT")
+        on, fr, sx, sy = (self.array(n, ns) for n in ("sl_on", "sl_fr", "sl_x", "sl_y"))
+        for i in range(ns):
+            if on[i]:
+                img = self._fimgs[fr[i]]
                 for y in range(16):
                     for x in range(16):
                         if img[y][x]:
-                            want[(x0 + x, y0 + y)] = img[y][x]
-        for i in range(self.c("NSTAR")):
-            if self.byte("st_on", i):
-                p = (fx + self.byte("st_x", i), self.byte("st_y", i))
-                assert p not in want, "star %d lit on a character's pixel %s" % (i, p)
-                want[p] = self.byte("st_c", i)
+                            want[sy[i] + y][sx[i] + x] = img[y][x]
+        n = self.c("NSTAR")
+        son, stx, sty, stc = (self.array(k, n) for k in ("st_on", "st_x", "st_y", "st_c"))
+        for i in range(n):
+            if son[i]:
+                assert want[sty[i]][stx[i]] == 0, "star %d lit on a drawn pixel %d,%d" % (i, stx[i], sty[i])
+                want[sty[i]][stx[i]] = stc[i]
+        vram = self.m.video.vram[0:240 * 160]
         out = []
         for y in range(240):
-            for x in range(fx, fx + self.c("FW")):
-                have = self.pixel(x, y)
-                if have != want.get((x, y), 0):
-                    out.append((x, y, have, want.get((x, y), 0)))
+            for x in range(fw):
+                sxx = fx + x
+                b = vram[y * 160 + (sxx >> 1)]
+                have = b >> 4 if sxx % 2 == 0 else b & 15
+                if have != want[y][x]:
+                    out.append((sxx, y, have, want[y][x]))
         return out
+
+    def split(self, frames=3):
+        """Which raw raster lines the palette's last eight were written on,
+        and with what, over so many frames: [(line, entry, $0RGB)]."""
+        self.m.pal_log_start()
+        self.m.run_frame(frames)
+        return [(ln, e, v) for _, ln, e, v in self.m.pal_log()]
 
     def png(self, name):
         path = os.path.join(H.BUILD, name + ".png")
@@ -187,6 +212,16 @@ def main():
         for i in range(4):
             g.m.run_frame(60)
             print(g.png("gal_play%d" % i), "loops", g.uword("loops"), "frames", g.m.frames)
+    elif what == "levels":
+        for k in range(4):
+            h = Game(tag="gal_levels%d" % k)
+            h.poke("level_bd", k)
+            h.m.run_frame(90)
+            print(h.png("gal_level%d" % k))
+    elif what == "split":
+        log = g.split()
+        print("%d commits; lines %s" % (len(log), sorted(set(ln for ln, _, _ in log))))
+        print(log[:20])
     elif what == "bitmap":
         for i in range(12):
             g.m.run_frame(37)

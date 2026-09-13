@@ -7052,3 +7052,23 @@ turns in the rest.
 32 but not the eight a line that a row of ten breaks; mode 2 with the
 formation moved only in whole tiles, which is not Galaga's motion; and
 mode 5's double buffer, whose 192 lines cannot hold a portrait game.
+
+**The backdrops: a raster split, and the palette ordered for it.** Each
+of the four levels has a horizon along the bottom of the field, 224 x 72
+from row 168, cut from published pixel art (assets/galaga/README.md). In
+one bank of sixteen there is no room for the arcade's fifteen and a
+picture's own, so the bank is split in time rather than in index: the
+palette is ordered so its first eight are the only colours anything the
+bitmap draws low on the field uses -- the stars, the bombs, the
+explosions, the beam, the score, read off the sheet: black, DEDEDE,
+FF0000, FFFF00, 00FFDE, 00B8DE, 0068DE, FF9700 -- and a band takes the
+last eight. The vector's handler writes them on the row above the band
+and the arcade's back at the vertical blank, sixteen stores each; the
+compare matches the line counter's low byte, so it also fires 256 lines
+higher and that first match is let go. The machine's palette log holds
+it to raw line 334 and line 480 exactly. The band's pixels are kept in
+RAM at `$D000` as the bitmap holds them, for the stars to stay behind
+and for what draws over the band to put back. **Rejected**: a fade from
+space over the band's first rows, the split stepping the eight through a
+quarter, a half and three quarters -- at twelve bits it drew stripes --
+in favour of windows of the art with dark space along their top.

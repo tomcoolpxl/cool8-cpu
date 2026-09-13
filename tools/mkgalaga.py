@@ -115,14 +115,18 @@ def show_colours(name):
 
 
 # ---------------------------------------------------------------- palette
-# The colour PROM, in its own order (PROMcolors: BB GGG RRR through the
-# board's resistors), with entry 10 -- 219700, which nothing on the
-# board draws -- given to the tractor beam's 00B8DE, a colour of the
-# character PROM's that the sheet's beam frames use. Index 0 here is
-# black and transparent; PROM entry k is index k + 1, so one sixteen is
-# both the sprite bank and the bitmap's bank 0.
-PROM = [0xDEDEDE, 0xFF0000, 0xFFFF00, 0xFF9700, 0xFFB800, 0xFF00DE, 0x00FFDE, 0xB8B8DE,
-        0xDE4700, 0x00FF00, 0x00B8DE, 0x0068DE, 0x9700DE, 0x0000DE, 0x009797]
+# The colour PROM (computerarcheology's PROMcolors: BB GGG RRR through
+# the board's resistors) has fifteen colours and black, and entry 10 --
+# 219700 -- is drawn by nothing; the tractor beam's 00B8DE, a colour of
+# the character PROM's that the sheet's beam frames use, takes its place.
+# Index 0 is black and transparent, and the order is this program's: the
+# first eight are the colours anything drawn into the bitmap low on the
+# field uses -- the stars, the bombs, the explosions, the beam, the score
+# -- and the last eight are the ones a level's backdrop may take over
+# below its raster split, so the split rewrites one run of eight entries.
+PROM = [0xDEDEDE, 0xFF0000, 0xFFFF00, 0x00FFDE, 0x00B8DE, 0x0068DE, 0xFF9700,
+        0xFFB800, 0xFF00DE, 0xB8B8DE, 0xDE4700, 0x00FF00, 0x9700DE, 0x0000DE, 0x009797]
+SAFE = 8                                # indices 0-7 survive the split
 # sheet colours that are not the PROM's, and the entry each is drawn with
 ALIAS = {0xFFFFFF: 0xDEDEDE, 0xB800DE: 0x9700DE}
 
@@ -380,6 +384,91 @@ def font(t):
 GLYPHS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ-%.!@# "
 
 
+# -------------------------------------------------------------- backdrops
+# A level's horizon: a band along the bottom of the field, cut from the
+# published art in assets/galaga/backdrops/ (README.md there credits it)
+# at one pixel to one -- after an exact integer reduction where the art
+# was drawn large -- and put into sixteen colours whose first eight are
+# the palette's own, so the stars, the bombs, the explosions and the beam
+# look the same over it, and whose last eight are the band's: the game's
+# raster split writes them a row above the band and puts the arcade's
+# back at the vertical blank. Each window is chosen with dark space along
+# its top, so the band rises out of the sky rather than starting on a
+# line.
+BAND_Y, BAND_H = 168, 72
+BACKDROPS = [
+    # file, reduction, and the band's top-left in the reduced picture
+    ("chikyuu_16_edge_0.png", 1, 16, 146),
+    ("green_nebula_arne16_-_512x512_0.png", 1, 240, 366),
+    ("rocky-far-mountains_0.png", 5, 16, 44),
+    ("planet-only-alt2-alpha.png", 2, -16, 36),
+]
+
+
+def rgb_of(v):
+    return ((v >> 8) & 15, (v >> 4) & 15, v & 15)
+
+
+def backdrop(entry):
+    """(sixteen 12-bit colours, BAND_H rows of 224 indices) for a level."""
+    from PIL import Image
+    fn, red, x0, y0 = entry
+    im = Image.open(os.path.join(ART, "backdrops", fn)).convert("RGBA")
+    if red > 1:
+        assert im.width % red == 0 and im.height % red == 0, fn
+        im = im.resize((im.width // red, im.height // red), Image.NEAREST)
+    px = im.load()
+    band = []
+    counts = {}
+    for y in range(BAND_H):
+        row = []
+        for x in range(224):
+            # beyond the picture's edge is black space
+            inside = 0 <= x0 + x < im.width and 0 <= y0 + y < im.height
+            r, g, b, a = px[x0 + x, y0 + y] if inside else (0, 0, 0, 0)
+            v = 0 if a < 128 else q4((r << 16) | (g << 8) | b)
+            row.append(v)
+            counts[v] = counts.get(v, 0) + 1
+        band.append(row)
+    fixed = PAL[:SAFE]
+    free = [[rgb_of(v), n] for v, n in counts.items() if v not in fixed]
+    # the closest two, weighted, merged until eight are left
+    while len(free) > 16 - SAFE:
+        best = None
+        for i in range(len(free)):
+            for j in range(i + 1, len(free)):
+                (a, na), (b, nb) = free[i], free[j]
+                d = sum((p - q) ** 2 for p, q in zip(a, b)) * na * nb / (na + nb)
+                if best is None or d < best[0]:
+                    best = (d, i, j)
+        _, i, j = best
+        (a, na), (b, nb) = free[i], free[j]
+        free[i] = [tuple((p * na + q * nb) / (na + nb) for p, q in zip(a, b)), na + nb]
+        del free[j]
+    pal = list(fixed) + [(round(c[0]) << 8) | (round(c[1]) << 4) | round(c[2]) for c, _ in free]
+    pal += [0] * (16 - len(pal))
+    rgbs = [rgb_of(v) for v in pal]
+    cache = {}
+    out = []
+    for row in band:
+        o = []
+        for v in row:
+            if v not in cache:
+                c = rgb_of(v)
+                cache[v] = min(range(16), key=lambda k: (sum((p - q) ** 2 for p, q in zip(c, rgbs[k])), k))
+            o.append(cache[v])
+        out.append(o)
+    return pal, out
+
+
+def pack_band(rows):
+    """The band as the bitmap holds it: two pixels a byte, the left high."""
+    out = []
+    for r in rows:
+        out += [(r[x] << 4) | r[x + 1] for x in range(0, 224, 2)]
+    return out
+
+
 # ------------------------------------------------------------------ build
 class Dat:
     def __init__(self):
@@ -402,7 +491,10 @@ def build():
     for q in pats.pats:
         blob += double(q)
     dat.add("SPR", blob)
-    return dict(pats=pats, common=common, ncommon=ncommon, fimgs=imgs, fblob=fblob, foffs=foffs,
+    bds = [backdrop(b) for b in BACKDROPS]
+    for k, (_, rows) in enumerate(bds):
+        dat.add("BD%d" % k, pack_band(rows))
+    return dict(pats=pats, common=common, ncommon=ncommon, fimgs=imgs, fblob=fblob, foffs=foffs, bds=bds,
                 font=font(t), dat=dat, sheet=s)
 
 
@@ -428,6 +520,18 @@ def act(o):
     w("")
     w("; the colour PROM, black first: the sprite bank and the bitmap's bank 0")
     arr(w, "CARD ARRAY gal_pal(16)", PAL, fmt="$%03X")
+    w("")
+    w("; the levels' backdrops: a band of %d rows from row %d, in GALAGA.DAT's" % (BAND_H, BAND_Y))
+    w("; BD blocks, and its palette -- the first %d the arcade's, the rest the band's" % SAFE)
+    w("CONST BAND_Y = %d" % BAND_Y)
+    w("CONST BAND_H = %d" % BAND_H)
+    w("CONST SAFE = %d" % SAFE)
+    w("; for each level its own eight, as PAL_DATA takes them -- the high byte first")
+    bp = []
+    for pal, _ in o["bds"]:
+        for v in pal[SAFE:]:
+            bp += [v >> 8, v & 255]
+    arr(w, "BYTE ARRAY bd_pal(%d)" % len(bp), bp, fmt="$%02X")
     w("")
     names = []
     for n, _ in o["common"]:
@@ -540,6 +644,23 @@ def preview(o):
             for x in range(8):
                 put(2 + i * 9 + x, 130 + y, i)
     im.save(PREVIEW)
+    bands_preview(o)
+
+
+def bands_preview(o):
+    """The four backdrops as the band shows them, one under another."""
+    from PIL import Image
+    S = 3
+    im = Image.new("RGB", (224 * S, (BAND_H + 4) * S * len(o["bds"])), (24, 24, 40))
+    px = im.load()
+    for k, (pal, rows) in enumerate(o["bds"]):
+        for y, row in enumerate(rows):
+            for x, v in enumerate(row):
+                c = rgb_of(pal[v])
+                for a in range(S):
+                    for b in range(S):
+                        px[x * S + a, (k * (BAND_H + 4) + y) * S + b] = (c[0] * 17, c[1] * 17, c[2] * 17)
+    im.save(os.path.join(ART, "preview_backdrops.png"))
 
 
 def check(o, s):
