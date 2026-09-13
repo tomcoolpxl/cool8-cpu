@@ -1912,13 +1912,49 @@ RETURN
 
 ; ----------------------------------------------------------- the fighter
 
+; the fighter's life: 0 in play, 1 exploded and waiting, the frames since
+BYTE ftr_dead
+CARD ftr_t
+BYTE game_over
+
 PROC Fighter()
+  IF ftr_dead THEN RETURN FI
   IF KeyHeld(KEY_LEFT) OR KeyHeld(KEY_Z) THEN fx -= 2 FI
   IF KeyHeld(KEY_RIGHT) OR KeyHeld(KEY_X) THEN fx += 2 FI
   IF fx < 1 THEN fx = 1 FI
   IF fx > 191 + 16 THEN fx = 191 + 16 FI
   IF KeyHit(KEY_SPACE) THEN Fire() FI
   ShowChar(SP_FIGHTER, F_FIGHTER + 6, 0, 0, fx + FX, FIGHTER_Y)
+RETURN
+
+; FighterHit: the fighter gone in its explosion, the noise of it
+PROC FighterHit()
+  IF ftr_dead THEN RETURN FI
+  ftr_dead = 1
+  ftr_t = 0
+  HideChar(SP_FIGHTER)
+  Boom(A_PBOOM0, N_PBOOM, fx + 8, FIGHTER_Y + 8)
+  boom_snd = 90
+RETURN
+
+; Collide: whatever flies into the fighter is destroyed with it. The boxes'
+; middles, twelve pixels either way
+PROC Collide()
+  BYTE k
+  INT dx, dy
+  IF ftr_dead THEN RETURN FI
+  FOR k = 0 TO NFLY - 1 DO
+    IF fl_state(k) == 3 OR fl_state(k) == 7 OR fl_state(k) == 9 THEN
+      dx = fl_sx(k) - fx
+      dy = fl_sy(k) - FIGHTER_Y
+      IF dx > -12 AND dx < 12 AND dy > -12 AND dy < 12 THEN
+        IF fl_char(k) == F_BOSS THEN fl_char(k) = F_BOSS_HIT FI
+        ShootFlyer(k)
+        FighterHit()
+        RETURN
+      FI
+    FI
+  OD
 RETURN
 
 ; ------------------------------------------------------------ the screen
@@ -2113,6 +2149,32 @@ PROC StageIntro()
   FieldTextOff()
 RETURN
 
+; Afterlife: the frames after the fighter's explosion -- two seconds and a
+; half, then READY and a fighter from the panel, or GAME OVER when the
+; panel is empty
+PROC Afterlife()
+  IF ftr_dead == 0 THEN RETURN FI
+  ftr_t += 1
+  IF ftr_t == 150 THEN
+    IF lives == 0 THEN
+      FieldText("GAME OVER", 0, C_RED)
+      ftr_dead = 2                   ; no fighter left to come
+    ELSE
+      lives -= 1
+      Panel()
+      FieldText("READY", 0, C_RED)
+    FI
+  ELSEIF ftr_t == 270 THEN
+    FieldTextOff()
+    IF ftr_dead == 2 THEN
+      game_over = 1
+    ELSE
+      ftr_dead = 0
+      fx = 104
+    FI
+  FI
+RETURN
+
 PROC Play()
   Clg(0)
   Hud()
@@ -2122,6 +2184,8 @@ PROC Play()
   fx = 104
   stage = 1
   lives = 2
+  ftr_dead = 0
+  game_over = 0
   score10 = 0
   score_shown = 0
   ShowScore()
@@ -2138,13 +2202,17 @@ PROC Play()
     StarsDraw()
     Fighter()
     Shots()
+    Collide()
+    Afterlife()
     ShowScore()
-    IF StageDone() THEN
+    IF game_over THEN EXIT FI
+    IF StageDone() AND ftr_dead == 0 THEN
       stage += 1
       StageIntro()
       StageStart()
     FI
   OD
+  SoundsOff()
 RETURN
 
 ; Title: the arcade's attract words and its score table, the backdrops'

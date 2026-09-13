@@ -116,6 +116,19 @@ class Game:
         self.poke("stage", n - 1)
         self.until(lambda: self.byte("stage") == n and self.byte("launching") == 1, 600)
 
+    def crash(self):
+        """A flyer that is not yet homing moved onto the fighter, in the
+        arcade's coordinates its motion keeps: the slot's index, or None."""
+        n = self.c("NFLY")
+        for k in range(n):
+            if self.byte("fl_state", k) in (3, 7) and not self.byte("fl_fl", k) & 0x40:
+                x8 = self.word("fx") + 17
+                y9 = self.c("FIGHTER_Y") + 56          # the one-for-one rows' mapping, near enough here
+                self.pokew("fl_x", (x8 >> 1) << 8, k)
+                self.pokew("fl_y", ((0x161 - 297) >> 1) << 8, k)
+                return k
+        return None
+
     def until(self, pred, cap=600):
         for t in range(cap):
             if pred():
@@ -457,6 +470,13 @@ def main():
     elif what == "sound":
         # the start theme on voices 0-2 against the rendered streams
         print(sound_check())
+    elif what == "death":
+        g.until(lambda: g.crash() is not None, 200)
+        g.until(lambda: g.byte("ftr_dead"), 10)
+        g.m.run_frame(6)
+        print(g.png("gal_death"), "dead", g.byte("ftr_dead"), "lives", g.byte("lives"))
+        g.until(lambda: g.byte("ftr_dead") == 0, 400)
+        print("back in play: lives", g.byte("lives"), "fx", g.word("fx"))
     elif what == "split":
         log = g.split()
         print("%d commits; lines %s" % (len(log), sorted(set(ln for ln, _, _ in log))))

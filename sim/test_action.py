@@ -1825,6 +1825,21 @@ def test_galaga():
     check(max(costs) < G.FRAME, "galaga: every frame's work inside its frame, the waves flying",
           "busiest %d clocks of %d; %s" % (max(costs), G.FRAME, p.report(top=6)))
     print("    work per frame over 160 frames of waves: mean %d, busiest %d clocks" % (sum(costs) // len(costs), max(costs)))
+
+    # something flying into the fighter: both destroyed, the fighter's
+    # explosion over the backdrop put back from its copy to the pixel, and a
+    # fighter from the panel after READY
+    lives = g.byte("lives")
+    k = g.until(lambda: g.crash() is not None, 300)
+    g.until(lambda: g.byte("ftr_dead"), 10)
+    dead = g.byte("ftr_dead")
+    g.until(lambda: g.byte("booms") == 0, 120)
+    g.at_rest()
+    bad = g.bitmap_diff()
+    back = g.until(lambda: g.byte("ftr_dead") == 0, 400)
+    check(k is not None and dead == 1 and not bad and back is not None and g.byte("lives") == lives - 1,
+          "galaga: a crash destroys both, the explosion over the backdrop leaves nothing, and a fighter comes back",
+          "dead %d, %d pixels differ %s, back %s, lives %d of %d" % (dead, len(bad), bad[:3], back, g.byte("lives"), lives))
     print()
 
 
