@@ -1695,8 +1695,10 @@ def test_galaga():
     on the arcade's own paths, every one held frame by frame to
     tools/galaga_paths.py, and all home; the formation drawn into the bitmap
     exactly where the program says, breathing and flapping, and a volley
-    into it leaving nothing behind; the backdrop's raster split; every
-    frame's work inside its frame. Skips, loudly, without the art."""
+    into it leaving nothing behind; the dives, the escorts, the bombs and
+    continuous bombing held frame by frame to tools/galaga_dives.py; the
+    backdrop's raster split; every frame's work inside its frame. Skips,
+    loudly, without the art."""
     import subprocess
     import ioregs
     import galaga as G
@@ -1717,11 +1719,13 @@ def test_galaga():
 
     # stage 1 from its first frame: each object held to the reference
     # machine launched on the frame the game launched it -- those a full set
-    # of flyers kept waiting included -- and all forty home
+    # of flyers kept waiting included -- and all forty home. The dives are
+    # kept off as they come on, so that the formation stays whole for the
+    # bitmap's checks below (they are held to their reference further on)
     g.m.run_frame(20)
     title = g.byte("launching") == 0 and reg("VID_MODE") & 0x0F == 4
     g.start()
-    same, bad = G.compare_flights(g, 1, 1500)
+    same, bad = G.compare_flights(g, 1, 1500, each=lambda: g.byte("dv_on") and g.poke("dv_on", 0))
     on = sum(g.byte("sl_on", i) for i in range(g.c("NSLOT")))
     check(title and reg("VID_MODE") & 0x0F == 4 and reg("SPR_CTRL") & 0xF1 == 0xF1,
           "galaga: the title in mode 4, space, and play with the sprite engine on bank 15",
@@ -1852,17 +1856,51 @@ def test_galaga():
     print("    challenging stage 11 by the autopilot: %d hits" % hits)
     del c
 
+    # the attack, frame by frame against tools/galaga_dives.py: stage 1 with
+    # the fighter at the right and a bee or butterfly at rest taken every 20
+    # frames, down to continuous bombing -- the sorties, the boss's escorts,
+    # the capture boss's hold, every bomb; and stage 16, the fighter at the
+    # left, where six flyers and the bombs want more sprites than there are
+    # and the bombs and dives the game has none for are left out of both
+    d = G.Game(tag="galaga5", render=False)
+    d.start()
+    d.pokew("fx", 207)
+    n, began, hit, bad, lost, cont = G.compare_dives(d, 1, 3000, kill_every=20)
+    check(n == 3000 and began and not bad and not lost and cont > 500,
+          "galaga: stage 1's dives, escorts and bombs, down to continuous bombing, are the arcade's frame for frame",
+          "%d frames, dives from %s, %d differ: %s; %d lost, %d frames of continuous bombing"
+          % (n, began, len(bad), bad[:1], lost, cont))
+    print("    stage 1: dives from frame %d, %d frames of continuous bombing" % (began, cont))
+    del d
+    d = G.Game(tag="galaga6", render=False)
+    d.start()
+    d.goto_stage(16)
+    d.pokew("fx", 1)
+    n, began, hit, bad, lost, cont = G.compare_dives(d, 16, 3000)
+    costs, (work, p) = d.frame_work(120, spare=True)
+    check(n == 3000 and began and not bad and lost > 0,
+          "galaga: stage 16's attack is the arcade's where the sprites allow, frame for frame",
+          "%d frames, dives from %s, %d differ: %s; %d lost" % (n, began, len(bad), bad[:1], lost))
+    check(max(costs) < G.FRAME, "galaga: every frame's work inside its frame in stage 16's attack",
+          "busiest %d clocks of %d; %s" % (max(costs), G.FRAME, p.report(top=6)))
+    print("    stage 16: %d bombs and dives without a sprite; work per frame mean %d, busiest %d clocks"
+          % (lost, sum(costs) // len(costs), max(costs)))
+    del d
+
     # something flying into the fighter: both destroyed, the fighter's
     # explosion over the backdrop put back from its copy to the pixel, and a
-    # fighter from the panel after READY
+    # fighter from the panel after READY once nothing flies. While waves
+    # come in only their transients can ram it, so the launcher is stopped
+    # first and the flyer is an attacker
     lives = g.byte("lives")
+    g.poke("launching", 0)
     k = g.until(lambda: g.crash() is not None, 300)
     g.until(lambda: g.byte("ftr_dead"), 10)
     dead = g.byte("ftr_dead")
     g.until(lambda: g.byte("booms") == 0, 120)
     g.at_rest()
     bad = g.bitmap_diff()
-    back = g.until(lambda: g.byte("ftr_dead") == 0, 400)
+    back = g.until(lambda: g.byte("ftr_dead") == 0, 1200)
     check(k is not None and dead == 1 and not bad and back is not None and g.byte("lives") == lives - 1,
           "galaga: a crash destroys both, the explosion over the backdrop leaves nothing, and a fighter comes back",
           "dead %d, %d pixels differ %s, back %s, lives %d of %d" % (dead, len(bad), bad[:3], back, g.byte("lives"), lives))

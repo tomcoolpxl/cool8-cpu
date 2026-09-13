@@ -756,6 +756,7 @@ BYTE ARRAY sl_row(NSLOT), sl_col(NSLOT), sl_kind(NSLOT)
 BYTE ARRAY sl_on(NSLOT)              ; drawn in the bitmap
 BYTE ARRAY sl_fr(NSLOT)              ; the frame drawn: a formation frame
 BYTE ARRAY sl_x(NSLOT), sl_y(NSLOT)  ; where it is drawn, the field's top-left
+BYTE ARRAY sl_wait(NSLOT)            ; visits left of a turn upright the bitmap took over (Settle)
 BYTE flap                            ; 0 or 1: the wing frame everyone shows
 
 PROC SlotsInit()
@@ -790,6 +791,7 @@ PROC SlotsInit()
   FOR i = 0 TO 59 DO slot_at(i) = 255 OD
   FOR i = 0 TO NSLOT - 1 DO
     sl_on(i) = 0
+    sl_wait(i) = 0
     slot_at(sl_row(i) * 10 + sl_col(i)) = i
   OD
 RETURN
@@ -1195,8 +1197,19 @@ BYTE ARRAY fl_x8(NFLY)               ; the arcade's sprite X and Y, as displayed
 CARD ARRAY fl_y9(NFLY)
 INT ARRAY fl_sx(NFLY), fl_sy(NFLY)   ; where that is on this screen, the box's top-left
 BYTE flying, flying_nbr              ; slots moving this frame, and last frame
-BYTE cont_bomb                       ; FA's continuous bombing: not yet
+BYTE cont_bomb                       ; FA's continuous bombing: divers loop instead of going home
 BYTE stage                           ; 1 up
+BYTE ARRAY fl_be(NFLY), fl_bf(NFLY)  ; b0E and b0F: steps to the next bomb chance, and the chances' mask
+BYTE ARRAY sp(10)                    ; the stage's ten parameter nibbles
+BYTE ARRAY gt(4)                     ; the arcade's game timers, counted down every 32nd frame
+BYTE en_cnt, en_nbr                  ; the enemies being counted, and those last counted
+BYTE ftr_on                          ; the fighter in play: it fires, it is hit, the enemies dive and bomb
+BYTE hdr0                            ; the stage's steps between a flyer's bomb chances
+; the capture sortie: its boss, and the beam's course -- 1 turning to face
+; down, 2 holding
+BYTE cobj, cap_ph, cap_k
+CARD cap_t
+BYTE bomb_flags                      ; the mask a sortie is given, by the stage and the enemies left
 
 ; the launcher, f_2916
 CARD wv_p
@@ -1208,12 +1221,6 @@ BYTE ch_hits
 BYTE ARRAY ch_kills(5)
 ; the sway, f_2A90, before the breathing takes over
 BYTE sway_on, nest_inh
-
-FUNC BYTE StParm(BYTE n)
-  CARD i
-  i = stage - 1
-  i = (i << 3) + (i << 1) + n
-RETURN (st_parm(i))
 
 ; Div(hl, c): the arcade's c_0EAA, HL / C by seventeen restoring steps,
 ; bit for bit -- including what it does with a zero
@@ -1363,6 +1370,121 @@ PROC FlyHome(BYTE k)
   fl_fl(k) = fl_fl(k) | $40
 RETURN
 
+; ------------------------------------------------------------- the bombs
+; The arcade's eight (f_1EA4, and f_08D3's l_0D8D): a flyer has a chance
+; at every so many steps, and its mask says which chances drop one --
+; while it is high enough, the fighter is in play and no flying boss has
+; just been shot. A bomb is aimed at where the fighter is when it drops,
+; falls two and a half pixels a frame, and moves across by a fraction a
+; frame of up to a pixel and a half. Its sprite is 31 or 30, or one of
+; the four of a flyer's slot that is free -- the slot then not a flyer's
+; again until its bombs are gone.
+CONST NBOMB = 8
+BYTE ARRAY bo_on(NBOMB), bo_x(NBOMB), bo_rate(NBOMB), bo_rem(NBOMB), bo_sp(NBOMB)
+CARD ARRAY bo_y(NBOMB)
+BYTE ARRAY fl_bm(NFLY)               ; which of a slot's four sprites bombs have, a bit each
+BYTE bo_own                          ; 31 and 30 taken: bits 0 and 1
+
+; Settle(k): flyer k, turning upright at its slot, given to the bitmap
+; now because its sprites are wanted -- the arcade's own has left its
+; motion slot already. The visits its turn had left are counted down
+; there, so it is at rest when the arcade's would be.
+PROC Settle(BYTE k)
+  BYTE slot, w
+  slot = obj_slot(fl_obj(k) >> 1)
+  IF fl_ctrl(k) & 1 THEN w = fl_code(k) + 8 ELSE w = 7 - fl_code(k) FI
+  FlyFree(k)
+  SlotShow(slot)
+  sl_wait(slot) = w
+RETURN
+
+; BombSprite: a sprite for a bomb -- 31, 30, or a slot's from the last
+; slot back, one only settling giving its sprites up -- or 255
+FUNC BYTE BombSprite()
+  BYTE k, q
+  IF (bo_own & 1) == 0 THEN
+    bo_own = bo_own | 1
+    RETURN (31)
+  FI
+  IF (bo_own & 2) == 0 THEN
+    bo_own = bo_own | 2
+    RETURN (30)
+  FI
+  k = NFLY
+  WHILE k DO
+    k -= 1
+    IF (fl_state(k) == 0 OR fl_state(k) == 2) AND fl_bm(k) != 15 THEN
+      IF fl_state(k) == 2 THEN Settle(k) FI
+      q = 0
+      WHILE fl_bm(k) & (1 << q) DO q += 1 OD
+      fl_bm(k) = fl_bm(k) | (1 << q)
+      RETURN (SP_FLY + (k << 2) + q)
+    FI
+  OD
+RETURN (255)
+
+; BombOff(n): bomb n gone, its sprite given back
+PROC BombOff(BYTE n)
+  BYTE d
+  d = bo_sp(n)
+  bo_on(n) = 0
+  SpriteHide(d)
+  IF d >= 30 THEN
+    bo_own = bo_own & ~(1 << (31 - d))
+  ELSE
+    d = d - SP_FLY
+    fl_bm(d >> 2) = fl_bm(d >> 2) & ~(1 << (d & 3))
+  FI
+RETURN
+
+; Drop(k): a bomb from flyer k, aimed as l_0D8D aims it -- the fighter's
+; distance over the height, by the arcade's own division
+PROC Drop(BYTE k)
+  BYTE n, x, f, d, sgn, yy, dy
+  CARD q
+  FOR n = 0 TO NBOMB - 1 DO
+    IF bo_on(n) == 0 THEN
+      d = BombSprite()
+      IF d == 255 THEN RETURN FI
+      bo_sp(n) = d
+      x = fl_x8(k)
+      bo_on(n) = 1
+      bo_x(n) = x
+      bo_y(n) = fl_y9(k)
+      f = fx + 17
+      sgn = 0
+      IF f < x THEN
+        sgn = $80
+        d = x - f
+      ELSE
+        d = f - x
+      FI
+      yy = fl_y9(k) >> 1
+      IF yy > $95 THEN dy = yy - $95 ELSE dy = $95 - yy FI
+      q = d
+      q = Div((q << 8) | ($69 + (n << 1)), dy)
+      q = (q + (q >> 2)) >> 2
+      IF q > $60 THEN q = $60 FI
+      bo_rate(n) = sgn | (q >> 1)
+      bo_rem(n) = 0
+      RETURN
+    FI
+  OD
+RETURN
+
+; Chance(k): the countdown to flyer k's next chance, after every step
+PROC Chance(BYTE k)
+  BYTE b
+  fl_be(k) -= 1
+  IF fl_be(k) THEN RETURN FI
+  b = fl_bf(k)
+  fl_bf(k) = b >> 1
+  IF b & 1 AND ftr_on AND gt(1) == 0 THEN
+    IF (fl_y(k) >> 8) >= $4C THEN Drop(k) FI
+  FI
+  fl_be(k) = hdr0
+RETURN
+
 FUNC CARD Word(CARD p)
   CARD w
   w = fl_rom(p + 1)
@@ -1438,6 +1560,8 @@ PROC FlyStep(BYTE k)
         IF fl_fl(k) & $80 THEN a = 0 - (a + $80) FI
         fl_a4(k) = a << 2
         fl_a5(k) = a >> 6
+        fl_be(k) = $1E
+        fl_bf(k) = bomb_flags
         p += 2
         consume = 1
         EXIT
@@ -1451,6 +1575,10 @@ PROC FlyStep(BYTE k)
         w = AngleTo($48, a >> 1, fl_y(k) >> 8, fl_x(k) >> 8)
         fl_a4(k) = w
         fl_a5(k) = w >> 8
+        IF obj == cobj THEN
+          cap_ph = 1                 ; f_21CB takes the capture boss over
+          cap_k = k
+        FI
         p += 1
       ELSEIF t == $F3 THEN
         a = fx + 17
@@ -1477,7 +1605,7 @@ PROC FlyStep(BYTE k)
         consume = 1
         EXIT
       ELSE
-        IF t == $F0 THEN a = StParm(8) ELSE a = StParm(9) FI
+        IF t == $F0 THEN a = sp(8) ELSE a = sp(9) FI
         IF a THEN p = Word(p + 1) ELSE p += 3 FI
         consume = 1
         EXIT
@@ -1499,6 +1627,7 @@ PROC FlyStep(BYTE k)
       w = fl_t7(k)
       fl_x(k) = w << 8
       FlyPosn(k)
+      Chance(k)
       RETURN
     FI
   FI
@@ -1549,13 +1678,23 @@ PROC FlyStep(BYTE k)
     FI
   FI
   FlyPosn(k)
+  Chance(k)
 RETURN
 
 ; FlyStates: c_23E0, which visits each object every fourth frame -- the
 ; odd frames, half the ids at a time
+BYTE ARRAY sl_ax(44), sl_ay(44)      ; a character at rest's arcade sprite X and Y, refreshed as c_23E0 does
 PROC FlyStates()
-  BYTE k, obj, st, r, c, slot
-  IF frm & 1 == 0 THEN RETURN FI
+  BYTE k, obj, st, r, c, slot, h, cnt
+  IF frm & 1 == 0 THEN
+    IF frm & 2 THEN
+      en_nbr = en_cnt
+      en_cnt = 0
+    FI
+    RETURN
+  FI
+  h = (frm & 2) >> 1
+  cnt = en_cnt
   FOR k = 0 TO NFLY - 1 DO
     st = fl_state(k)
     obj = fl_obj(k)
@@ -1565,10 +1704,12 @@ PROC FlyStates()
       IF st == 9 THEN
         fl_ox(k) = col_x(c) - col_x0(c)
         fl_oy(k) = row_off(r)
+        cnt += 1
       ELSEIF st == 7 THEN
         fl_state(k) = 3
+        cnt += 1
       ELSEIF st == 3 THEN
-        IF fl_x8(k) >= $F4 OR (fl_y9(k) >> 1) < $0B OR (fl_y9(k) >> 1) >= $A5 THEN FlyFree(k) FI
+        IF fl_x8(k) >= $F4 OR (fl_y9(k) >> 1) < $0B OR (fl_y9(k) >> 1) >= $A5 THEN FlyFree(k) ELSE cnt += 1 FI
       ELSEIF st == 2 THEN
         ; arrived: the tile turned upright a step at a time, on the slot
         IF fl_ctrl(k) & 1 THEN
@@ -1583,8 +1724,62 @@ PROC FlyStates()
         IF fl_state(k) == 2 THEN
           fl_sx(k) = col_x(c)
           fl_sy(k) = row_y(r)
+          cnt += 1                   ; once it is at rest, it is counted below
         FI
       FI
+    FI
+  OD
+  ; the characters at rest in this half: counted, their sprites where
+  ; their slots are
+  k = h
+  WHILE k < 48 DO
+    slot = obj_slot(k)
+    IF slot != 255 THEN
+      IF sl_on(slot) THEN
+        sl_ax(slot) = col_x(sl_col(slot)) + 17
+        sl_ay(slot) = row_y(sl_row(slot)) + 56
+        IF sl_wait(slot) THEN sl_wait(slot) -= 1 FI
+        cnt += 1
+      FI
+    FI
+    k += 2
+  OD
+  ; the bombs in this half gone off the field
+  k = h
+  WHILE k < NBOMB DO
+    IF bo_on(k) THEN
+      r = bo_y(k) >> 1
+      IF bo_x(k) >= $F4 OR r < $0B OR bo_y(k) >= $14A THEN BombOff(k) FI
+    FI
+    k += 2
+  OD
+  en_cnt = cnt
+RETURN
+
+; Bombs: f_1EA4, a frame of every bomb's fall
+PROC Bombs()
+  BYTE n, a, dx
+  FOR n = 0 TO NBOMB - 1 DO
+    IF bo_on(n) THEN
+      a = (bo_rate(n) & $7E) + bo_rem(n)
+      bo_rem(n) = a & $1F
+      dx = (a >> 5) & 7
+      IF bo_rate(n) & $80 THEN bo_x(n) -= dx ELSE bo_x(n) += dx FI
+      bo_y(n) = (bo_y(n) + 2 + (frm & 1)) & $1FF
+    FI
+  OD
+RETURN
+
+PROC BombsDraw()
+  BYTE n
+  INT y
+  CARD x
+  FOR n = 0 TO NBOMB - 1 DO
+    IF bo_on(n) THEN
+      y = MapY(bo_y(n)) + 4
+      x = bo_x(n)
+      x = x + FX - 13
+      SetSprite(bo_sp(n), x << 1, y << 1, SPR_BASE + (P_BOMB << 7), 1, 0)
     FI
   OD
 RETURN
@@ -1624,6 +1819,13 @@ PROC Launch(BYTE k, BYTE obj, BYTE raw, BYTE tok)
   fl_obj(k) = obj
   fl_code(k) = 6
   fl_ctrl(k) = 0
+  ; the side entries' first chance comes later; d_2908 says which ids bomb
+  IF tok & 1 THEN fl_be(k) = $44 ELSE fl_be(k) = $08 FI
+  fl_bf(k) = 0
+  IF obj >= $08 AND (obj & $38) != $38 THEN
+    i = (obj - 8) >> 1
+    IF dv_bombs(i >> 3) & ($80 >> (i & 7)) THEN fl_bf(k) = st_hdr((((stage - 1) % STAGES) << 1) + 1) FI
+  FI
   IF obj < $08 THEN
     fl_char(k) = F_CAPTURED
   ELSEIF st_kind((stage - 1) % STAGES) AND (obj < $30 OR obj >= $40) THEN
@@ -1641,12 +1843,256 @@ PROC Launch(BYTE k, BYTE obj, BYTE raw, BYTE tok)
   FlyPosn(k)
 RETURN
 
+; ------------------------------------------------------------ the dives
+; f_1B65: three timers -- the boss's, the red butterflies', the bees' --
+; counted down in that order every sixteenth frame, the first to run out
+; sending the first at rest of its kind down its path, unless as many as
+; the stage allows are already flying. The reloads come from f_0857's
+; tables by the enemies left and the stage's time. Every other boss sortie
+; is a capture; the rest take up to two escorts from the butterflies under
+; the boss, the three launched a frame apart from a pool of four.
+BYTE dv_on, dv_max, cflag, wingm
+CARD pool_path, cap_len
+BYTE ARRAY dv_tm(3), dv_rl(3), pool_o(4)
+BYTE ARRAY boss_sc(4)                ; each boss's worth shot flying, in tens: 40, 80 or 160 by its escorts
+BYTE ARRAY boss_b(4) = [$32 $36 $34 $30]
+
+; Params: f_0857, every frame
+PROC Params()
+  BYTE tens, i
+  IF gt(2) < $3C THEN dv_max = sp(5) FI
+  tens = en_nbr / 10
+  bomb_flags = dv_tab((sp(0) << 2) + tens)
+  IF cont_bomb THEN
+    FOR i = 0 TO 2 DO dv_rl(i) = 2 OD
+    RETURN
+  FI
+  dv_rl(0) = dv_tab(32 + (sp(1) << 2) + tens)
+  i = 0
+  IF gt(2) < $28 THEN i = 1 FI
+  IF gt(2) == 0 THEN i = 2 FI
+  dv_rl(1) = dv_red(sp(2) * 3 + i)
+  dv_rl(2) = dv_bee(sp(3) * 3 + i)
+RETURN
+
+FUNC BYTE Resting(BYTE obj)
+  BYTE slot
+  slot = obj_slot(obj >> 1)
+  IF slot == 255 THEN RETURN (0) FI
+  IF sl_wait(slot) THEN RETURN (0) FI
+RETURN (sl_on(slot))
+
+; FreeFlyer: the first slot not flying and whose sprites no bomb has
 FUNC BYTE FreeFlyer()
-  BYTE k
-  FOR k = 0 TO NFLY - 1 DO
-    IF fl_state(k) == 0 THEN RETURN (k) FI
+  BYTE k, want
+  ; first a slot not flying; then one only settling, which gives it up
+  FOR want = 0 TO 2 STEP 2 DO
+    FOR k = 0 TO NFLY - 1 DO
+      IF fl_state(k) == want AND fl_bm(k) == 0 THEN
+        IF want THEN Settle(k) FI
+        RETURN (k)
+      FI
+    OD
   OD
 RETURN (255)
+
+; Dive(obj, path, mirror): j_108A -- a character at rest out of the bitmap
+; and onto a path, from where its sprite last was, heading up
+PROC Dive(BYTE obj, CARD path, BYTE mirror)
+  BYTE k, slot, a, kind
+  CARD w
+  k = FreeFlyer()
+  IF k == 255 THEN RETURN FI
+  slot = obj_slot(obj >> 1)
+  a = sl_ay(slot) >> 1
+  a = 0 - (a + $50)
+  w = a
+  w = w << 8
+  IF (sl_ay(slot) & 1) == 0 THEN w += $80 FI
+  fl_y(k) = w
+  a = sl_ax(slot)
+  w = a >> 1
+  w = w << 8
+  IF a & 1 THEN w += $80 FI
+  fl_x(k) = w
+  fl_a4(k) = 0
+  fl_a5(k) = 1
+  fl_p(k) = path
+  fl_n(k) = 1
+  fl_fl(k) = mirror
+  fl_on(k) = 1
+  fl_state(k) = 9
+  fl_obj(k) = obj
+  fl_code(k) = 6
+  fl_ctrl(k) = 0
+  fl_be(k) = $1E
+  fl_bf(k) = bomb_flags
+  kind = sl_kind(slot)
+  IF kind == FM_ZAKO6 THEN
+    fl_char(k) = F_ZAKO
+  ELSEIF kind == FM_GOEI6 THEN
+    fl_char(k) = F_GOEI
+  ELSEIF kind == FM_BOSS6 THEN
+    fl_char(k) = F_BOSS
+  ELSE
+    fl_char(k) = F_BOSS_HIT
+  FI
+  SlotHide(slot)
+RETURN
+
+; FirstDive(obj, last, path): the first of those ids at rest, down the path
+PROC FirstDive(BYTE obj, BYTE last, CARD path)
+  WHILE obj <= last DO
+    IF Resting(obj) THEN
+      Dive(obj, path, (obj & 2) << 6)
+      RETURN
+    FI
+    obj += 2
+  OD
+RETURN
+
+; Pool(boss, ixl, b, cc, path): j_1CAE -- the boss and 2 - ixl escorts (none
+; when ixl is 2) from the butterflies either side of b, in c_1D03's order,
+; queued to launch a frame apart with the boss's mirror
+PROC Pool(BYTE e, BYTE ixl, BYTE b, BYTE cc, CARD path)
+  BYTE m, k, cy
+  m = (e & 2) << 6
+  pool_o(0) = e | m
+  pool_path = path
+  k = (e & 6) >> 1
+  IF ixl == 0 THEN
+    boss_sc(k) = 160
+  ELSEIF ixl == 1 THEN
+    boss_sc(k) = 80
+  ELSE
+    boss_sc(k) = 40
+    RETURN
+  FI
+  b += 1
+  k = 1
+  WHILE k < 3 - ixl DO
+    cy = cc & 1
+    cc = (cc >> 1) | (cy << 7)
+    IF cy == 0 THEN
+      b -= 1
+      cy = cc & 1
+      cc = (cc >> 1) | (cy << 7)
+      IF cy == 0 THEN b -= 1 FI
+    FI
+    pool_o(k) = dv_wing(b) | m
+    b -= 1
+    k += 1
+  OD
+RETURN
+
+; BossSortie: case_bmbr_boss
+PROC BossSortie()
+  BYTE o, c, i, ixl, cc, b, a, ok
+  IF cflag == 0 THEN
+    wingm += 1
+    IF (wingm & 1) == 0 THEN
+      FOR o = $30 TO $36 DO
+        IF (o & 1) == 0 AND Resting(o) THEN
+          cflag = 1
+          cobj = o
+          Pool(o, 2, 0, 0, FL_ATK_CAPTURE)
+          RETURN
+        FI
+      OD
+      RETURN
+    FI
+  FI
+  c = 0
+  FOR i = 0 TO 5 DO c = (c << 1) | Resting(dv_wing(i)) OD
+  FOR ixl = 0 TO 1 DO
+    cc = c
+    FOR b = 4 TO 7 DO
+      ; B counts 4 down to 1: its boss is boss_b(B - 1)
+      i = 8 - b
+      a = cc & 7
+      IF ixl == 0 THEN ok = a == 3 OR a >= 5 ELSE ok = a FI
+      IF ok AND Resting(boss_b(i - 1)) THEN
+        Pool(boss_b(i - 1), ixl, i, cc, FL_ATK_BOSS)
+        RETURN
+      FI
+      cc = cc >> 1
+    OD
+  OD
+  FOR o = $30 TO $36 DO
+    IF (o & 1) == 0 AND Resting(o) THEN
+      Pool(o, 2, 0, 0, FL_ATK_BOSS)
+      RETURN
+    FI
+  OD
+RETURN
+
+; Sorties: f_1B65
+PROC Sorties()
+  BYTE i, e, n
+  IF ftr_on == 0 THEN RETURN FI
+  FOR i = 0 TO 3 DO
+    e = pool_o(i)
+    IF e != 255 THEN
+      pool_o(i) = 255
+      IF Resting(e & $7F) THEN Dive(e & $7F, pool_path, e & $80) FI
+      RETURN
+    FI
+  OD
+  IF frm & 15 THEN RETURN FI
+  n = 0
+  DO
+    dv_tm(n) -= 1
+    IF dv_tm(n) == 0 THEN EXIT FI
+    n += 1
+    IF n == 3 THEN RETURN FI
+  OD
+  IF flying_nbr >= dv_max THEN
+    dv_tm(n) = 1
+    RETURN
+  FI
+  dv_tm(n) = dv_rl(n)
+  IF n == 2 THEN
+    FirstDive($08, $2E, FL_ATK_YLLW)
+  ELSEIF n == 1 THEN
+    FirstDive($40, $5E, FL_ATK_RED)
+  ELSE
+    BossSortie()
+  FI
+RETURN
+
+; Capture: f_21CB and f_2222's hold on the capture boss's motion -- turned
+; to face down once its path has slowed it, then held there while the beam
+; would go out, stay and come back
+PROC Capture()
+  BYTE k, a
+  IF cap_ph == 0 THEN RETURN FI
+  k = cap_k
+  IF fl_state(k) != 9 OR fl_obj(k) != cobj THEN
+    cflag = 0
+    cap_ph = 0
+    RETURN
+  FI
+  IF cap_ph == 1 THEN
+    IF fl_vo(k) THEN RETURN FI
+    IF fl_a5(k) & 1 THEN fl_dl(k) = $F4 ELSE fl_dl(k) = $0C FI
+    a = ((fl_a5(k) & 1) << 7) | (fl_a4(k) >> 1)
+    a = a - $78
+    IF a < $10 THEN
+      fl_dl(k) = 0
+      cap_ph = 2
+      cap_t = 0
+    FI
+    RETURN
+  FI
+  fl_n(k) = $FF
+  cap_t += 1
+  IF cap_t >= cap_len THEN
+    fl_n(k) = 1
+    cflag = 0
+    cobj = 1
+    cap_ph = 0
+  FI
+RETURN
 
 PROC Launcher()
   BYTE tok, raw, obj, k
@@ -1656,14 +2102,19 @@ PROC Launcher()
     IF flying_nbr == 0 THEN
       launching = 0
       nest_inh = 1
+      dv_on = 1
     FI
     RETURN
   FI
   IF tok == $7E THEN
-    IF flying_nbr == 0 THEN
-      IF wv_p != st_woff((stage - 1) % STAGES) THEN wave_no += 1 FI
-      wv_p += 1
+    IF ftr_on == 0 THEN RETURN FI
+    IF flying_nbr THEN
+      gt(0) = 2
+      RETURN
     FI
+    IF st_kind((stage - 1) % STAGES) AND gt(0) THEN RETURN FI
+    IF wv_p != st_woff((stage - 1) % STAGES) THEN wave_no += 1 FI
+    wv_p += 1
     RETURN
   FI
   IF (tok & $80) == 0 AND (frm & 7) != 0 THEN RETURN FI
@@ -1682,6 +2133,7 @@ RETURN
 PROC FlyFrame()
   BYTE k
   frm += 1
+  Params()
   Launcher()
   IF breathing AND frm & 3 == 0 THEN
     Breathe()
@@ -1690,12 +2142,23 @@ PROC FlyFrame()
   IF sway_on AND (frm - 1) & 3 == 0 THEN Sway() FI
   Positions()
   FlyStates()
+  Bombs()
+  IF dv_on THEN Sorties() FI
+  IF frm & 31 == 0 THEN
+    FOR k = 0 TO 3 DO
+      IF gt(k) THEN gt(k) -= 1 FI
+    OD
+  FI
+  Capture()
+  cont_bomb = 0
+  IF en_nbr < sp(7) THEN cont_bomb = ftr_on FI
   flying_nbr = flying
   flying = 0
   FOR k = 0 TO NFLY - 1 DO
     IF fl_on(k) THEN FlyStep(k) FI
   OD
   FlyDraw()
+  BombsDraw()
 RETURN
 
 ; ------------------------------------------------------------ explosions
@@ -1838,16 +2301,19 @@ PROC ShootSlot(BYTE i)
   Boom(A_EBOOM0, N_EBOOM, sl_x(i) + 8, sl_y(i) + 8)
 RETURN
 
-; FlyAt(x, y): the flyer whose box a shot's head at the field's (x, y)
-; is in over the six pixels it moved -- the box's middle 12 x 14
-FUNC BYTE FlyAt(INT x, INT y)
-  BYTE k
-  INT dx, dy
+; FlyAt(x, y9): hitd_det_rckt -- the flyer a rocket at the arcade's (x, y9)
+; hits: five pixels either way across, and Y's halves three below to two above
+FUNC BYTE FlyAt(BYTE x, CARD y9)
+  BYTE k, d, ry
+  ry = y9 >> 1
   FOR k = 0 TO NFLY - 1 DO
     IF fl_state(k) THEN
-      dx = x - fl_sx(k)
-      dy = y - fl_sy(k)
-      IF dx >= 2 AND dx < 14 AND dy >= -5 AND dy < 15 THEN RETURN (k) FI
+      d = fl_y9(k) >> 1
+      d = d - ry + 3
+      IF d < 6 THEN
+        d = fl_x8(k) - x + 5
+        IF d < 11 THEN RETURN (k) FI
+      FI
     FI
   OD
 RETURN (255)
@@ -1856,24 +2322,41 @@ RETURN (255)
 ; stays so in the formation; otherwise the points for it in the air, an
 ; explosion, and its place in the formation stays empty
 PROC ShootFlyer(BYTE k)
-  BYTE slot, w
+  BYTE slot, w, obj
   CARD pts
-  slot = obj_slot(fl_obj(k) >> 1)
+  obj = fl_obj(k)
+  slot = obj_slot(obj >> 1)
   IF fl_char(k) == F_BOSS THEN
     fl_char(k) = F_BOSS_HIT
     IF slot != 255 THEN sl_kind(slot) = FM_BOSS_HIT6 FI
     PlaySound(S_BOSSHIT)
     RETURN
   FI
+  IF obj == cobj THEN
+    cflag = 0
+    cobj = 1
+  FI
   IF fl_char(k) == F_ZAKO THEN
-    pts = 10
+    pts = 5
     PlaySound(S_ZAKO)
-  ELSEIF fl_char(k) == F_GOEI THEN
-    pts = 16
-    PlaySound(S_GOEI)
-  ELSE
-    pts = 40
+  ELSEIF fl_char(k) == F_BOSS_HIT THEN
+    pts = 15
     PlaySound(S_BOSS)
+  ELSE
+    pts = 8
+    PlaySound(S_GOEI)
+  FI
+  ; flying, twice as much; a boss that is not a transient, its escorts' worth
+  IF fl_state(k) != 2 THEN
+    pts = pts << 1
+    IF pts == 30 AND (obj & $38) != $38 THEN
+      pts = boss_sc((obj & 6) >> 1)
+      gt(1) = 6
+      w = A_P400
+      IF pts == 80 THEN w = A_P800 FI
+      IF pts == 160 THEN w = A_P1600 FI
+      Popup(w, fl_sx(k) + 8, fl_sy(k) + 8)
+    FI
   FI
   AddScore(pts)
   Boom(A_EBOOM0, N_EBOOM, fl_sx(k) + 8, fl_sy(k) + 8)
@@ -1900,8 +2383,8 @@ RETURN
 ; Two at most, as the arcade's, six pixels a frame; each tests the column
 ; of pixels its head has passed through since the last frame
 CONST NSHOT = 2
-BYTE ARRAY sh_on(NSHOT)
-INT ARRAY sh_x(NSHOT), sh_y(NSHOT)   ; the field's top-left of its 8 x 8 box; the shot is columns 2-4
+BYTE ARRAY sh_on(NSHOT), sh_x(NSHOT) ; the arcade's sprite X of the rocket -- the fighter's when it was fired
+CARD ARRAY sh_y(NSHOT)               ; and its Y, six less a frame
 
 PROC Fire()
   BYTE i
@@ -1909,27 +2392,29 @@ PROC Fire()
     IF sh_on(i) == 0 THEN
       PlaySound(S_SHOT)
       sh_on(i) = 1
-      sh_x(i) = fx + 4
-      sh_y(i) = FIGHTER_Y - 6
+      sh_x(i) = fx + 17
+      sh_y(i) = $129
       RETURN
     FI
   OD
 RETURN
 
 PROC Shots()
-  BYTE i, k, j
+  BYTE i, k, j, x
   INT y
-  CARD pat
+  CARD pat, y9, sx
   pat = SPR_BASE + (P_SHOT << 7)
   FOR i = 0 TO NSHOT - 1 DO
     IF sh_on(i) THEN
-      y = sh_y(i) - 6
-      sh_y(i) = y
-      IF y < 0 THEN
+      y9 = sh_y(i) - 6
+      sh_y(i) = y9
+      y = MapY(y9) + 4
+      x = sh_x(i) - 10               ; the field's column of the rocket's middle
+      IF y9 < 40 THEN
         sh_on(i) = 0
         SpriteHide(SP_SHOT + i)
       ELSE
-        j = FlyAt(sh_x(i) + 3, y)
+        j = FlyAt(sh_x(i), y9)
         IF j != 255 THEN
           ShootFlyer(j)
           sh_on(i) = 0
@@ -1937,7 +2422,7 @@ PROC Shots()
         FI
         IF sh_on(i) THEN
           FOR k = 0 TO 5 DO
-            j = SlotAt(sh_x(i) + 3, y + k)
+            IF y + k >= 0 THEN j = SlotAt(x, y + k) ELSE j = 255 FI
             IF j != 255 THEN
               ShootSlot(j)
               sh_on(i) = 0
@@ -1946,7 +2431,10 @@ PROC Shots()
             FI
           OD
         FI
-        IF sh_on(i) THEN SetSprite(SP_SHOT + i, (sh_x(i) + FX) << 1, y << 1, pat, 1, 0) FI
+        IF sh_on(i) THEN
+          sx = x
+          SetSprite(SP_SHOT + i, (sx - 3 + FX) << 1, y << 1, pat, 1, 0)
+        FI
       FI
     FI
   OD
@@ -1954,49 +2442,72 @@ RETURN
 
 ; ----------------------------------------------------------- the fighter
 
-; the fighter's life: 0 in play, 1 exploded and waiting, the frames since
+; the fighter's life, as the arcade's restart runs it: 0 in play, 1 its
+; explosion's four counts, 2 READY until nothing flies, 3 back on the
+; field for three counts before it may fire, 4 GAME OVER's counts
 BYTE ftr_dead
-CARD ftr_t
 BYTE game_over
 
 PROC Fighter()
-  IF ftr_dead THEN RETURN FI
+  IF ftr_dead AND ftr_dead != 3 THEN RETURN FI
   IF KeyHeld(KEY_LEFT) OR KeyHeld(KEY_Z) THEN fx -= 2 FI
   IF KeyHeld(KEY_RIGHT) OR KeyHeld(KEY_X) THEN fx += 2 FI
   IF fx < 1 THEN fx = 1 FI
   IF fx > 191 + 16 THEN fx = 191 + 16 FI
-  IF KeyHit(KEY_SPACE) THEN Fire() FI
+  IF ftr_on AND KeyHit(KEY_SPACE) THEN Fire() FI
   ShowChar(SP_FIGHTER, F_FIGHTER + 6, 0, 0, fx + FX, FIGHTER_Y)
 RETURN
 
-; FighterHit: the fighter gone in its explosion, the noise of it
+; FighterHit: the fighter gone in its explosion, the noise of it; the
+; waves stop, the divers go home, nothing more is dropped
 PROC FighterHit()
   IF ftr_dead THEN RETURN FI
   ftr_dead = 1
-  ftr_t = 0
+  ftr_on = 0
+  gt(3) = 4
   HideChar(SP_FIGHTER)
   Boom(A_PBOOM0, N_PBOOM, fx + 8, FIGHTER_Y + 8)
   boom_snd = 90
 RETURN
 
-; Collide: whatever flies into the fighter is destroyed with it. The boxes'
-; middles, twelve pixels either way
+; Touch(x, y9): hitd_det_fghtr -- whether a sprite at the arcade's (x, y9)
+; meets the fighter: six pixels either way across, three halves up or down
+FUNC BYTE Touch(BYTE x, CARD y9)
+  BYTE d
+  d = x - fx - 17 + 6
+  IF d > 12 THEN RETURN (0) FI
+  d = y9 >> 1
+  d = d - $91
+RETURN (d < 7)
+
+; Collide: f_05EE -- whatever flies into the fighter is destroyed with it,
+; but a green boss only turns blue; while the waves come in, only their
+; transients can. The first bomb that touches it is gone with it.
 PROC Collide()
-  BYTE k
-  INT dx, dy
-  IF ftr_dead THEN RETURN FI
+  BYTE k, hit, obj
+  IF ftr_on == 0 THEN RETURN FI
+  hit = 0
   FOR k = 0 TO NFLY - 1 DO
     IF fl_state(k) == 3 OR fl_state(k) == 7 OR fl_state(k) == 9 THEN
-      dx = fl_sx(k) - fx
-      dy = fl_sy(k) - FIGHTER_Y
-      IF dx > -12 AND dx < 12 AND dy > -12 AND dy < 12 THEN
-        IF fl_char(k) == F_BOSS THEN fl_char(k) = F_BOSS_HIT FI
-        ShootFlyer(k)
-        FighterHit()
-        RETURN
+      obj = fl_obj(k)
+      IF launching == 0 OR (obj & $38) == $38 THEN
+        IF Touch(fl_x8(k), fl_y9(k)) THEN
+          hit = 1
+          ShootFlyer(k)
+        FI
       FI
     FI
   OD
+  FOR k = 0 TO NBOMB - 1 DO
+    IF bo_on(k) THEN
+      IF Touch(bo_x(k), bo_y(k)) THEN
+        BombOff(k)
+        hit = 1
+        EXIT
+      FI
+    FI
+  OD
+  IF hit THEN FighterHit() FI
 RETURN
 
 ; ------------------------------------------------------------ the screen
@@ -2040,10 +2551,11 @@ PROC PanelArt(BYTE k, CARD x, BYTE y)
   DrawDelta()
 RETURN
 
-PROC Panel()
-  BYTE i, n, k, y
+; Lives: the fighters in hand, their rows cleared first
+PROC Lives()
+  BYTE i, y
   CARD x
-  Fill(272, 0, 48, 160)
+  Fill(272, 0, 48, 40)
   y = 8
   x = 275
   FOR i = 1 TO lives DO
@@ -2056,6 +2568,13 @@ PROC Panel()
       FI
     FI
   OD
+RETURN
+
+PROC Panel()
+  BYTE n, k, y
+  CARD x
+  Fill(272, 40, 48, 120)
+  Lives()
   n = stage
   x = 319
   y = 48
@@ -2117,7 +2636,8 @@ RETURN
 ; StageStart: the formation empty, the columns at rest, the launcher on
 ; the stage's waves and the sway on until the last is home
 PROC StageStart()
-  BYTE i
+  BYTE i, k
+  CARD w
   FOR i = 0 TO NSLOT - 1 DO SlotHide(i) OD
   SlotsInit()
   FOR i = 0 TO 9 DO col_off(i) = 0 OD
@@ -2136,6 +2656,38 @@ PROC StageStart()
   flying_nbr = 0
   wv_p = st_woff((stage - 1) % STAGES)
   launching = 1
+  ; stg_init_env and c_2C00: the stage's parameters, its timers, no dives
+  ; until the waves are in
+  k = (stage - 1) % STAGES
+  hdr0 = st_hdr(k << 1)
+  w = k
+  w = (w << 3) + (w << 1)
+  FOR i = 0 TO 9 DO sp(i) = st_parm(w + i) OD
+  dv_max = sp(4)
+  cap_len = sp(6)
+  cap_len = cap_len * 20 + 65
+  gt(0) = 2
+  gt(1) = 0
+  gt(2) = 120
+  gt(3) = 0
+  dv_tm(0) = 22
+  dv_tm(1) = 2
+  dv_tm(2) = 2
+  FOR i = 0 TO 3 DO
+    pool_o(i) = 255
+    boss_sc(i) = 40
+  OD
+  dv_on = 0
+  cflag = 0
+  cobj = 1
+  wingm = 0
+  cap_ph = 0
+  en_cnt = 0
+  en_nbr = 0
+  cont_bomb = 0
+  FOR i = 0 TO NBOMB - 1 DO
+    IF bo_on(i) THEN BombOff(i) FI
+  OD
   wave_no = 0
   ch_hits = 0
   FOR i = 0 TO 4 DO ch_kills(i) = 0 OD
@@ -2148,6 +2700,9 @@ RETURN
 FUNC BYTE StageDone()
   BYTE i
   IF launching OR booms THEN RETURN (0) FI
+  FOR i = 0 TO NBOMB - 1 DO
+    IF bo_on(i) THEN RETURN (0) FI
+  OD
   FOR i = 0 TO NSLOT - 1 DO
     IF sl_on(i) THEN RETURN (0) FI
   OD
@@ -2197,29 +2752,37 @@ PROC StageIntro()
   FieldTextOff()
 RETURN
 
-; Afterlife: the frames after the fighter's explosion -- two seconds and a
-; half, then READY and a fighter from the panel, or GAME OVER when the
-; panel is empty
+; Afterlife: gctl_stg_restart_hdlr -- four counts for the explosion, then
+; READY and, once nothing is flying, a fighter from the panel in the
+; middle; three counts more and it is in play, the stage's time thirty
+; longer. With the panel empty, GAME OVER.
 PROC Afterlife()
-  IF ftr_dead == 0 THEN RETURN FI
-  ftr_t += 1
-  IF ftr_t == 150 THEN
+  IF ftr_dead == 0 OR gt(3) THEN RETURN FI
+  IF ftr_dead == 1 THEN
     IF lives == 0 THEN
       FieldText("GAME OVER", 0, C_RED)
-      ftr_dead = 2                   ; no fighter left to come
+      ftr_dead = 4
+      gt(3) = 6
     ELSE
       lives -= 1
-      Panel()
+      Lives()
       FieldText("READY", 0, C_RED)
+      ftr_dead = 2
     FI
-  ELSEIF ftr_t == 270 THEN
+  ELSEIF ftr_dead == 2 THEN
+    IF flying_nbr == 0 THEN
+      fx = $7A - 17
+      IF gt(2) < 90 THEN gt(2) += 30 ELSE gt(2) = 120 FI
+      gt(3) = 3
+      ftr_dead = 3
+    FI
+  ELSEIF ftr_dead == 3 THEN
     FieldTextOff()
-    IF ftr_dead == 2 THEN
-      game_over = 1
-    ELSE
-      ftr_dead = 0
-      fx = 104
-    FI
+    ftr_dead = 0
+    ftr_on = 1
+  ELSE
+    FieldTextOff()
+    game_over = 1
   FI
 RETURN
 
@@ -2261,6 +2824,7 @@ PROC Play()
   stage = 1
   lives = 2
   ftr_dead = 0
+  ftr_on = 1
   game_over = 0
   score10 = 0
   score_shown = 0

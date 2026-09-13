@@ -170,15 +170,19 @@ class Game:
             self.m.run_frame(1)
         return None
 
-    def frame_work(self, frames):
+    def frame_work(self, frames, spare=False):
         """The clocks each of so many frames spent on something other than
-        waiting for the next, and the profile of the busiest."""
+        waiting for the next, and the profile of the busiest; `spare` plays
+        them with spared_frame."""
         import dbg
         worst, costs = None, []
         for _ in range(frames):
             p = dbg.Profile(self.syms, self.org, self.end)
             p.start(self.m)
-            self.m.run_frame(1)
+            if spare:
+                self.spared_frame()
+            else:
+                self.m.run_frame(1)
             p.collect(self.m)
             work = p.total - p.of("WaitVBlank")
             costs.append(work)
@@ -281,15 +285,17 @@ class Game:
                     out.append((sxx, y, have, want[y][x]))
         return out
 
-    def flights(self, frames):
+    def flights(self, frames, each=None):
         """Every moving flyer's arcade sprite position after each of so many
         frames of play, from the stage's start: {obj: [(frame, x, y9)]}, the
         frame counted from the stage's first (`stage_frames`), and the frame
-        each object was launched on."""
+        each object was launched on. `each()` is called after every frame."""
         n = self.c("NFLY")
         tracks, launched, seen = {}, {}, set()
         for f in range(frames):
             self.m.run_frame(1)
+            if each:
+                each()
             self.at_rest()
             loops = self.uword("stage_frames")
             on, obj, x8 = (self.array(k, n) for k in ("fl_on", "fl_obj", "fl_x8"))
@@ -302,6 +308,58 @@ class Game:
                 if on[k]:
                     tracks.setdefault(obj[k], []).append((loops, x8[k], y9[2 * k] | (y9[2 * k + 1] << 8)))
         return tracks, launched
+
+    def spared_frame(self):
+        """A frame of play in which the fighter cannot be destroyed: each
+        call of FighterHit returned from at its first instruction, as the
+        reference's `fighter_dies=False` leaves its fighter. Ends at the
+        loop's next WaitVBlank, as at_rest does; returns the calls skipped."""
+        wv, hit = self.syms["WaitVBlank"], self.syms["FighterHit"]
+        skipped = 0
+        if self.m.cpu.pc == wv:
+            self.m.tick()
+        self.m.breakpoints.update((wv, hit))
+        try:
+            while True:
+                why = self.m.run(budget=4_000_000)
+                assert why == "breakpoint", why
+                if self.m.cpu.pc == wv:
+                    return skipped
+                sp = self.m.cpu.sp
+                self.m.cpu.pc = self.m.bus.mem[sp] | (self.m.bus.mem[sp + 1] << 8)
+                self.m.cpu.sp = sp + 2
+                skipped += 1
+        finally:
+            self.m.breakpoints.discard(wv)
+            self.m.breakpoints.discard(hit)
+
+    def attack(self, frames, until=None, spare=False, each=None):
+        """What flies and falls after each of so many frames of play, from
+        wherever the game is: [(stage frame, dives on, fighter's state,
+        sorted [(obj, x, y9)] of the moving flyers, sorted [(x, y9)] of the
+        bombs), the flyers' states, which sprites of each bombs have]. Stops early when `until()` says so; `spare` plays the
+        frames with spared_frame; `each()` is called before every frame."""
+        n, nb = self.c("NFLY"), self.c("NBOMB")
+        out = []
+        for f in range(frames):
+            if each:
+                each()
+            if spare:
+                self.spared_frame()
+            else:
+                self.m.run_frame(1)
+                self.at_rest()
+            on, obj, x8 = (self.array(k, n) for k in ("fl_on", "fl_obj", "fl_x8"))
+            y9 = self.m.bus.mem[self.addr("fl_y9"):self.addr("fl_y9") + 2 * n]
+            bon, bx = self.array("bo_on", nb), self.array("bo_x", nb)
+            by = self.m.bus.mem[self.addr("bo_y"):self.addr("bo_y") + 2 * nb]
+            out.append((self.uword("stage_frames"), self.byte("dv_on"), self.byte("ftr_dead"),
+                        sorted((obj[k], x8[k], y9[2 * k] | (y9[2 * k + 1] << 8)) for k in range(n) if on[k]),
+                        sorted((bx[k], by[2 * k] | (by[2 * k + 1] << 8)) for k in range(nb) if bon[k]),
+                        list(self.array("fl_state", n)), list(self.array("fl_bm", n))))
+            if until and until():
+                break
+        return out
 
     def split(self, frames=3):
         """Which raw raster lines the palette's last eight were written on,
@@ -353,7 +411,7 @@ def sound_check():
     return len(rows), len(bad), lag, bad[:3]
 
 
-def compare_flights(g, stage, frames):
+def compare_flights(g, stage, frames, each=None):
     """The game's flights of a stage from its first frame, each object held
     to tools/galaga_paths.py's machine flying it from the frame the game
     launched it on -- so an object a full set of flyers kept waiting is
@@ -361,7 +419,7 @@ def compare_flights(g, stage, frames):
     Returns (objects that matched, [(obj, what differed)])."""
     import random
     import galaga_paths as P
-    tracks, launched = g.flights(frames)
+    tracks, launched = g.flights(frames, each)
     _, _, table = P.build_wave_table(stage, 3, random.Random(stage))
     token = {}
     i = 0
@@ -401,9 +459,122 @@ def compare_flights(g, stage, frames):
     return same, bad
 
 
+def compare_dives(g, stage, frames, kill_every=0):
+    """A stage from its first frame, the fighter left where it starts and
+    spared, against tools/galaga_dives.py's machine: every frame's moving
+    flyers and falling bombs, up to the first time an enemy flies into the
+    fighter -- a bomb that touches it is gone in both, and nothing else. The
+    machine's entry is the game's -- each object launched on the frame the
+    game launched it, the dives enabled on the game's frame -- since six
+    flyers hold a wave back where the arcade's twelve do not; from there
+    the machine decides everything. Returns (frames compared, the frame the
+    dives began, the frame an enemy reached the fighter or None,
+    [(frame, what differed)], the bombs and dives the game had no sprites
+    left for, the frames compared with continuous bombing on)."""
+    import random
+    import galaga_dives as D
+    fx8 = g.word("fx") + 17
+    kills = {}
+
+    def kill():
+        # every kill_every frames of the dives, the first bee or butterfly
+        # at rest is gone from the formation -- its count, not its picture
+        f = g.uword("stage_frames")
+        if not kill_every or not g.byte("dv_on") or f % kill_every:
+            return
+        for obj in list(range(0x08, 0x30, 2)) + list(range(0x40, 0x60, 2)):
+            slot = g.byte("obj_slot", obj >> 1)
+            if slot != 255 and g.byte("sl_on", slot) and not g.byte("sl_wait", slot):
+                g.poke("sl_on", 0, slot)
+                kills[f + 1] = obj
+                return
+    have = g.attack(frames, spare=True, each=kill)
+    launched, began, before = {}, None, set()
+    for f, on, dead, flyers, bombs, _, _ in have:
+        if began is None and on:
+            began = f
+        now = set(obj for obj, _, _ in flyers)
+        if began is None:
+            for obj in sorted(now - before):
+                launched.setdefault(f, []).append(obj)
+        before = now
+    hit = None
+    _, _, table = D.gp.build_wave_table(stage, 3, random.Random(stage))
+    entries, i = [], 0
+    while i < len(table):
+        if table[i] in (0x7E, 0x7F):
+            i += 1
+            continue
+        raw = table[i + 1]
+        entries.append((raw & ~0x40 if (raw & 0x78) == 0x78 else raw, table[i]))
+        i += 2
+
+    class Follow(D.AttackMachine):
+        def f_2916(self):
+            for obj in launched.get(self.tick, []):
+                sl = next(s for s in self.slots if not s.b[0x13] & 1)
+                want, tok = entries.pop(0)
+                assert want == obj, "frame %d: the game launched %02X where the waves have %02X" % (self.tick, obj, want)
+                s = self.launch_entry(sl.idx, obj, tok)
+                s.b[0x0F] = 0 if (obj & 0x38) == 0x38 else (self.hdr1 if D.BOMB_FLAG.get(obj, 0) else 0)
+            if self.tick == began:
+                self.f2916_active = False
+                self.f1A80_active = self.f1B65_active = True
+                self.form.nestlr_inh = 1
+                self.attack_start_tick = self.tick
+
+    def shoot(mm):
+        if mm.tick in kills:
+            assert mm.state[kills[mm.tick]] == 1, "frame %d: %02X is not at rest in the reference" % (mm.tick, kills[mm.tick])
+            mm.shoot(kills[mm.tick])
+    m = Follow(stage, 3, lambda t: fx8, 0, stage, entry_fighter_x=fx8, hooks=(shoot,))
+    bad, n, lost, cont = [], 0, 0, 0
+    for f, on, dead, flyers, bombs, states, bm in have:
+        while m.tick < f:
+            m.step()
+        if any(e["kind"] == "collision_enemy" for e in m.events):
+            hit = f
+            break
+        # a diver the reference launched this frame that the game had no
+        # slot for -- each flying, or holding bombs -- stays at rest in the
+        # game: put back in the reference too
+        if all(st in (3, 7, 9) or b for st, b in zip(states, bm)):
+            for e in m.events:
+                if e["kind"] == "launch" and e["tick"] == f and e["obj"] not in [o for o, _, _ in flyers]:
+                    sl = next(sl for sl in m.slots if sl.b[0x13] & 1 and sl.b[0x10] == e["obj"])
+                    sl.b[0x13] = 0
+                    m.state[e["obj"]] = 1
+                    m.spr_x[e["obj"]], m.spr_y[e["obj"]] = m.form.slot_xy(e["obj"])
+                    m.flying_cnt -= 1
+                    lost += 1
+        divers = sorted((sl.b[0x10], m.spr_x[sl.b[0x10]], m.spr_y[sl.b[0x10]]) for sl in m.slots if sl.b[0x13] & 1)
+        # a bomb the reference dropped this frame that the game had no
+        # sprite for -- twenty-six less four a flying slot and one a bomb
+        # left none -- is not dropped in the game: taken out of the
+        # reference too, so that what follows is still compared
+        # (a bomb the fighter took this frame still had its sprite at the
+        # drop, and a flyer home this frame may have been flying then)
+        taken = sum(1 for e in m.events if e["kind"] == "collision_bomb" and e["tick"] == f)
+        home = sum(1 for e in m.events if e["kind"] == "home" and e["tick"] == f)
+        if divers == flyers and 26 - 4 * (sum(st in (3, 7, 9) for st in states) + home) - len(bombs) - taken <= 0:
+            for e in m.events:
+                if e["kind"] == "bomb" and e["tick"] == f:
+                    bo = D.BOMB_OBJS[e["bomb"]]
+                    if (m.spr_x[bo], m.spr_y[bo]) not in bombs:
+                        m.state[bo], m.spr_x[bo] = 0x80, 0
+                        lost += 1
+        falling = sorted((m.spr_x[bo], m.spr_y[bo]) for bo in D.BOMB_OBJS if m.state[bo] == 6 and m.spr_x[bo])
+        n += 1
+        cont += m.cont_bomb
+        if (divers, falling) != (flyers, bombs):
+            bad.append((f, "reference %s %s, game %s %s, the game's flyers' states %s"
+                        % (divers, falling, flyers, bombs, have[[h[0] for h in have].index(f)][5])))
+    return n, began, hit, bad, lost, cont
+
+
 def main():
     what = sys.argv[1] if len(sys.argv) > 1 else "play"
-    g = Game(tag="gal_" + what)
+    g = Game(tag="gal_" + "_".join(sys.argv[1:]))
     print("PRG %d bytes, %04X-%04X" % (len(g.prg) - 2, g.org, g.end))
     g.m.run_frame(30)
     print(g.png("gal_title"))
@@ -501,6 +672,43 @@ def main():
         for obj, why in bad:
             print("obj %02X: %s" % (obj, why))
         print("%d objects fly the reference's path exactly, frame for frame; %d do not" % (same, len(bad)))
+    elif what == "dives":
+        n = int(sys.argv[2]) if len(sys.argv) > 2 else 1
+        if n > 1:
+            g.goto_stage(n)
+        frames = int(sys.argv[3]) if len(sys.argv) > 3 else 1200
+        kill_every = int(sys.argv[5]) if len(sys.argv) > 5 else 0
+        if len(sys.argv) > 4:
+            g.pokew("fx", int(sys.argv[4]))
+        count, began, hit, bad, lost, cont = compare_dives(g, n, frames, kill_every)
+        print("stage %d: dives began at frame %s, an enemy reached the fighter at %s; %d frames compared, %d differ;"
+              " %d bombs and dives the sprites ran out for; %d frames of continuous bombing; %d enemies left"
+              % (n, began, hit, count, len(bad), lost, cont, g.byte("en_nbr")))
+        for f, why in bad[:6]:
+            print("  frame %d: %s" % (f, why))
+        print(g.png("gal_dives%d" % n))
+    elif what == "bombs":
+        # stage n from frame a to b: the flyers' states, the bombs and whose sprites they have
+        n, a, b = (int(v) for v in sys.argv[2:5])
+        if n > 1:
+            g.goto_stage(n)
+        if len(sys.argv) > 5:
+            g.pokew("fx", int(sys.argv[5]))
+        while g.uword("stage_frames") < a:
+            g.spared_frame()
+        while g.uword("stage_frames") <= b:
+            g.spared_frame()
+            nb = g.c("NBOMB")
+            print(g.uword("stage_frames"), "states", list(g.array("fl_state", 6)), "fl_bm", list(g.array("fl_bm", 6)),
+                  "own", g.byte("bo_own"), "on", list(g.array("bo_on", nb)), "sp", list(g.array("bo_sp", nb)),
+                  "be", list(g.array("fl_be", 6)), "bf", list(g.array("fl_bf", 6)), "gt1", g.byte("gt", 1))
+    elif what == "attack":
+        # the autopilot into the dives: a picture every 90 frames once they are on
+        g.autopilot(3000, until=lambda: g.byte("dv_on"))
+        for i in range(4):
+            g.autopilot(90)
+            print(g.png("gal_attack%d" % i), "score", g.uword("score10") * 10, "lives", g.byte("lives"),
+                  "dead", g.byte("ftr_dead"), "enemies", g.byte("en_nbr"))
     elif what == "sound":
         # the start theme on voices 0-2 against the rendered streams
         print(sound_check())
@@ -537,7 +745,15 @@ def main():
         print("intro frames, thousands of clocks:", " ".join("%d" % (c // 1000) for c in costs))
         print(p.report(top=8))
     elif what == "profile":
-        costs, (work, p) = g.frame_work(240)
+        # profile [stage] [frames first, the fighter at the left and spared]
+        if len(sys.argv) > 2:
+            n = int(sys.argv[2])
+            if n > 1:
+                g.goto_stage(n)
+            g.pokew("fx", 1)
+            for _ in range(int(sys.argv[3]) if len(sys.argv) > 3 else 0):
+                g.spared_frame()
+        costs, (work, p) = g.frame_work(240, spare=len(sys.argv) > 2)
         print("work per frame over %d frames: mean %d, max %d clocks (%.0f%% of a frame)"
               % (len(costs), sum(costs) // len(costs), max(costs), 100 * max(costs) / FRAME))
         print("the frames, in thousands of clocks:")

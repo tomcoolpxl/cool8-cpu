@@ -5,23 +5,23 @@
 
 CONST D_SPR = 0
 CONST DH_SPR = 0
-CONST N_SPR = 19584
-CONST D_SW_DRAGONFLY = 19584
+CONST N_SPR = 19712
+CONST D_SW_DRAGONFLY = 19712
 CONST DH_SW_DRAGONFLY = 0
 CONST N_SW_DRAGONFLY = 3072
-CONST D_SW_SCORPION = 22656
+CONST D_SW_SCORPION = 22784
 CONST DH_SW_SCORPION = 0
 CONST N_SW_SCORPION = 3584
-CONST D_BD0 = 26240
+CONST D_BD0 = 26368
 CONST DH_BD0 = 0
 CONST N_BD0 = 7168
-CONST D_BD1 = 33408
+CONST D_BD1 = 33536
 CONST DH_BD1 = 0
 CONST N_BD1 = 7168
-CONST D_BD2 = 40576
+CONST D_BD2 = 40704
 CONST DH_BD2 = 0
 CONST N_BD2 = 7168
-CONST D_BD3 = 47744
+CONST D_BD3 = 47872
 CONST DH_BD3 = 0
 CONST N_BD3 = 7168
 
@@ -33,7 +33,7 @@ CARD ARRAY gal_pal(16) = [
 ; the levels' backdrops: a band of 64 rows from row 176, in GALAGA.DAT's
 ; BD blocks, and its palette -- the first 8 the arcade's, the rest the band's
 ; the band's copy is kept in VRAM right above the sprite patterns
-CONST BD_VRAM = $E280
+CONST BD_VRAM = $E300
 CONST BAND_Y = 176
 CONST BAND_H = 64
 CONST SAFE = 8
@@ -56,7 +56,7 @@ CONST F_GOEI = 31
 CONST F_CAPTURED = 39
 CONST F_DRAGONFLY = 46
 CONST F_SCORPION = 53
-CONST SPR_PATS = 153
+CONST SPR_PATS = 154
 ; the butterfly's and the captured fighter's patterns, which a challenging
 ; stage's creature (SW_ blocks) takes over; its frames come last
 CONST P_SWAP = 102
@@ -721,6 +721,36 @@ BYTE ARRAY st_parm(160) = [
   0 0 0 0 0 0 6 0 0 0
   4 2 7 8 4 5 6 9 1 1
 ]
+; each stage's two header bytes: a flyer's steps between bomb chances, and
+; the bombs an entering one may drop -- a mask, a bit a chance
+BYTE ARRAY st_hdr(32) = [
+  $14 $00 $14 $01 $FF $00 $14 $01 $14 $01 $14 $01 $FF $00 $14 $01
+  $14 $01 $14 $00 $FF $00 $14 $01 $14 $01 $14 $01 $FF $00 $14 $03
+]
+; the attack phase's tables (tools/galaga_dives.py): d_0909, a sortie's bomb
+; mask by the stage's row and the enemies left in tens, and from 32 on
+; d_0929, the boss timer's reload; the red and bee timers' reloads by row
+; and the stage's time; the escorts' ids, left to right as bit 5 down;
+; d_2908, which entering ids may bomb, a bit each from $08, MSB first
+BYTE ARRAY dv_tab(45) = [
+  $03 $03 $01 $01 $03 $03 $03 $01 $07 $03 $03 $01 $07 $03 $03 $03
+  $07 $07 $03 $03 $0F $07 $03 $03 $0F $07 $07 $03 $0F $07 $07 $07
+  $06 $0A $0F $0F $04 $08 $0D $0D $04 $06 $0A $0A $3A
+]
+BYTE ARRAY dv_red(30) = [
+  9 7 5 8 6 4 7 5 4 6 4 3 5 3 3
+  4 3 3 4 2 2 3 3 2 3 2 2 2 2 2
+]
+BYTE ARRAY dv_bee(30) = [
+  6 5 4 5 4 3 5 3 3 4 3 2 4 2 2
+  3 3 2 3 2 1 2 2 1 2 1 1 1 1 1
+]
+BYTE ARRAY dv_wing(6) = [
+  $4A $52 $5A $58 $50 $48
+]
+BYTE ARRAY dv_bombs(6) = [
+  $A5 $5A $A9 $0F $0A $50
+]
 
 ; the arcade's sounds, rendered by tools/galaga_sound.py: for each, its
 ; stream's offset, first voice, voices, and whether it loops; a stream is
@@ -1160,6 +1190,8 @@ CARD ARRAY note_inc(84) = [
 
 ; the fighter's shot: one sprite, its 3 x 8 in columns 2-4
 CONST P_SHOT = 152
+; the enemy's bomb: the same, a sprite of the bombs' own, 31 down
+CONST P_BOMB = 153
 
 ; the other pictures the bitmap holds, each one list in fm_delta's format
 ; from its box's top-left: art_off(k), k being

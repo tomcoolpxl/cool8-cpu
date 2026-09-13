@@ -614,17 +614,18 @@ def flights():
         else:
             slot = 24 + (r - 4) * 10 + c
         obj_slot.append(slot)
-    waves, woffs, kinds, parms = [], [], [], []
+    waves, woffs, kinds, parms, hdrs = [], [], [], [], []
     for st in range(1, STAGES + 1):
         kind, _, _ = P.stage_row(st, RANK)
-        _, _, table = P.build_wave_table(st, RANK, random.Random(st))
+        h0, h1, table = P.build_wave_table(st, RANK, random.Random(st))
+        hdrs += [h0, h1]
         woffs.append(len(waves))
         waves += table
         kinds.append(1 if kind == "challenge" else 0)
         parms += P.stage_parms(st, RANK)[:10]
     return dict(blob=blob, starts=starts, sels=sels, start_bytes=list(P.DB_2A6C), obj_row=obj_row,
                 obj_col=obj_col, obj_slot=obj_slot, waves=waves, woffs=woffs, kinds=kinds, parms=parms,
-                origins=list(P.DB_FMTN_HPOS_ORIG), atk_yllw=reloc(P.LABEL_ADDR["db_flv_atk_yllw"]),
+                origins=list(P.DB_FMTN_HPOS_ORIG), hdrs=hdrs, atk_yllw=reloc(P.LABEL_ADDR["db_flv_atk_yllw"]),
                 atk_red=reloc(P.LABEL_ADDR["db_flv_atk_red"]), atk_boss=reloc(P.LABEL_ADDR["db_flv_0411"]),
                 atk_capture=reloc(P.LABEL_ADDR["db_0454"]), rogue=reloc(P.LABEL_ADDR["db_fltv_rogefgter"]))
 
@@ -865,6 +866,10 @@ def build():
     common = sprite_set(s, COMMON, pats)
     shot = pats.find(box_image(s, SHOT[0] - 2, SHOT[1], 8, 8))
     assert shot[1] == 0
+    bomb_img = box_image(s, BOMB[0] - 2, BOMB[1], 8, 8)
+    assert all(not v for r in bomb_img for x, v in enumerate(r) if not 2 <= x <= 4)
+    bomb = pats.find(bomb_img)
+    assert bomb[1] == 0
     ncommon = len(pats.pats)
     # the butterfly's and captured fighter's patterns: one run, used by nothing else
     used = {}
@@ -900,7 +905,7 @@ def build():
         dat.add("BD%d" % k, pack_band(rows))
     return dict(mus=music(), snd=sounds(), fl=flights(), pats=pats, common=common, ncommon=ncommon,
                 specials=specials, p_swap=p_swap, n_swap=n_swap, fimgs=imgs, fblob=fblob, foffs=foffs, bds=bds,
-                shot=shot[0], arts=arts, ablob=ablob, aoffs=aoffs,
+                shot=shot[0], bomb=bomb[0], arts=arts, ablob=ablob, aoffs=aoffs,
                 font=font(t), dat=dat, sheet=s)
 
 
@@ -1012,6 +1017,20 @@ def act(o):
     arr(w, "CARD ARRAY st_woff(%d)" % STAGES, fl["woffs"])
     arr(w, "BYTE ARRAY st_kind(%d)" % STAGES, fl["kinds"])
     arr(w, "BYTE ARRAY st_parm(%d)" % len(fl["parms"]), fl["parms"], per=10)
+    w("; each stage's two header bytes: a flyer's steps between bomb chances, and")
+    w("; the bombs an entering one may drop -- a mask, a bit a chance")
+    arr(w, "BYTE ARRAY st_hdr(%d)" % len(fl["hdrs"]), fl["hdrs"], per=16, fmt="$%02X")
+    import galaga_dives as D
+    w("; the attack phase's tables (tools/galaga_dives.py): d_0909, a sortie's bomb")
+    w("; mask by the stage's row and the enemies left in tens, and from 32 on")
+    w("; d_0929, the boss timer's reload; the red and bee timers' reloads by row")
+    w("; and the stage's time; the escorts' ids, left to right as bit 5 down;")
+    w("; d_2908, which entering ids may bomb, a bit each from $08, MSB first")
+    arr(w, "BYTE ARRAY dv_tab(%d)" % len(D.D_0909), D.D_0909, per=16, fmt="$%02X")
+    arr(w, "BYTE ARRAY dv_red(%d)" % len(D.D_08CD), D.D_08CD, per=15)
+    arr(w, "BYTE ARRAY dv_bee(%d)" % len(D.D_08EB), D.D_08EB, per=15)
+    arr(w, "BYTE ARRAY dv_wing(6)", list(D.D_1D2C_WINGMEN), fmt="$%02X")
+    arr(w, "BYTE ARRAY dv_bombs(6)", list(D.D_2908), fmt="$%02X")
     w("")
     sd = o["snd"]
     w("; the arcade's sounds, rendered by tools/galaga_sound.py: for each, its")
@@ -1042,6 +1061,8 @@ def act(o):
     w("")
     w("; the fighter's shot: one sprite, its 3 x 8 in columns 2-4")
     w("CONST P_SHOT = %d" % o["shot"])
+    w("; the enemy's bomb: the same, a sprite of the bombs' own, 31 down")
+    w("CONST P_BOMB = %d" % o["bomb"])
     w("")
     w("; the other pictures the bitmap holds, each one list in fm_delta's format")
     w("; from its box's top-left: art_off(k), k being")

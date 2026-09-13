@@ -7113,3 +7113,56 @@ stage's frame. The arcade's portrait playfield is 256 rows and this one
 the 120 below into 88, so paths keep their shape above and are pressed a
 little below. **Not yet**: the clone token F2 (the morphing attackers), the
 capture beam's timing, and FA's continuous bombing.
+
+## D115 -- GALAGA's attack is the arcade's scheduler, and the bombs share the flyers' sprites
+
+**Who dives, when, and what they drop are ported, not tuned.**
+`tools/galaga_dives.py` extends the reference machine of D114 with the
+rest of the attack phase, from the same disassembly: f_0857's per-frame
+reloads (the stage's parameter nibbles into d_0909/d_0929, d_08CD and
+d_08EB, by the enemies left and the stage's timer), f_1B65's three sortie
+timers -- boss, red, bee, ticked every sixteenth frame, the first to run
+out firing and starving the others while the stage's flyer limit blocks
+it -- with the first character at rest in id order sent (the formation
+peels from the outside in; nothing is random), the boss's escorts chosen
+from the butterflies under it and launched from a pool a frame apart with
+the bonus fixed at launch (1600, 800, 400), every other boss sortie a
+capture whose hold f_21CB/f_2222 impose, the bombs' countdown and mask per
+flyer with l_0D8D's aim (the fighter's distance over the height by the
+arcade's division, capped at a pixel and a half a frame), f_1EA4's fall,
+continuous bombing through FA, c_23E0's enemy count and off-field culling,
+the fighter's and the rockets' hit windows (hitd_det_fghtr, hitd_det_rckt)
+in the arcade's sprite coordinates, and the restart's counts (four for the
+explosion, READY until nothing flies, three more). `tools/mkgalaga.py`
+emits the tables; `demos/galaga.act` ports the routines.
+
+**The bombs are sprites, and there are not enough.** A bomb over the
+formation's bitmap would have to be drawn and put back through characters
+that move under it every frame, so each is one descriptor. D113 left two
+spare. A bomb takes 31 or 30, or any of the four of a flyer slot that is
+not flying -- the slot then not a flyer's until its bombs are gone -- and a
+slot whose character is only turning upright at home gives its sprites up:
+the character goes into the bitmap at once and counts down the visits its
+turn had left there (`sl_wait`), not at rest for the scheduler until the
+arcade's would be. The arcade's settling object holds no motion slot, so
+this is also what brought the six flyers closer to its twelve: stage 1's
+entry now enables the dives at frame 1,327 (1,375 before; the arcade's
+895). Past that the budget is simply spent: six flyers and two bombs are
+all 26, and a bomb or a dive with no sprite left is not made.
+
+**Measured**: the gate plays stage 1 with the fighter at the right, spared
+(FighterHit returned from at a breakpoint, as the reference's
+`fighter_dies=False`), a resting bee or butterfly removed every 20 frames,
+and holds every frame's flyers and bombs to the reference following the
+game's entry launches: 3,000 of 3,000 frames identical, 944 of them in
+continuous bombing. Stage 16 with the fighter at the left: 3,000 of 3,000
+identical once the 38 bombs and dives the game had no sprite for are left
+out of the reference on the frame they were made. Stage 16's attack costs
+80,474 clocks a frame on average, 106,569 at the busiest, of 139,583. The
+READY frame's whole-panel clear took 129,674 on its own and now clears
+only the lives' rows. PRG 50,791 bytes before, 55,354 after.
+
+**Not yet**: the capture beam itself and a caught fighter (the boss's hold
+is flown, nothing is drawn or caught), the rescue and the dual fighter,
+the bonus bee's trio and the morph clones (f_1A80, token F2), and the extra
+fighters at 20,000 and 70,000.
