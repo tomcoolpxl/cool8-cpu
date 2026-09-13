@@ -1897,6 +1897,34 @@ def test_galaga():
     # fighter from the panel after READY once nothing flies. While waves
     # come in only their transients can ram it, so the launcher is stopped
     # first and the flyer is an attacker
+    # the capture: stage 1 played on with the fighter left in the middle,
+    # spared bombs and rammers but not the beam -- the beam out below its
+    # boss in the three blues, the fighter taken up it, FIGHTER CAPTURED,
+    # the red fighter into the place above its boss, and once the beam is
+    # gone not a pixel of it left
+    h = G.Game(tag="galaga7", render=False)
+    h.start()
+    h.pokew("fx", 104)
+    blues = []
+
+    def look(k):
+        if k == "beam":
+            h.at_rest()
+            fx0, x0 = h.c("FX"), h.byte("cap_x") - 32
+            blues.append(sum(h.pixel(fx0 + x0 + x, h.c("BEAM_Y") + y) in (4, 5, 6)
+                             for x in range(46) for y in range(0, h.c("BEAM_H"), 3)))
+    ev = h.capture(seen=look)
+    h.at_rest()
+    bad = h.bitmap_diff()
+    held = [i for i in range(4) if h.byte("sl_on", i)]
+    check(set(ev) == {"beam", "pull", "text", "home", "after"} and blues and blues[0] > 200 and len(held) == 1
+          and not bad,
+          "galaga: a capture boss's beam takes the fighter, FIGHTER CAPTURED, and the red fighter joins the formation",
+          "events %s, %s beam pixels, captured in slots %s, %d pixels differ: %s" % (ev, blues, held, len(bad), bad[:4]))
+    print("    the capture: beam out at frame %s, the fighter taken up at %s, home at %s"
+          % (ev.get("beam"), ev.get("pull"), ev.get("home")))
+    del h
+
     # P holds everything and P again lets it go
     f0 = g.uword("stage_frames")
     g.tap([0x4D])

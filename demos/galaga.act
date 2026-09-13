@@ -277,6 +277,9 @@ CONST S_DIVE = $13
 CONST S_PERFECT = $14
 CONST S_BADGE = $15
 CONST S_EXTEND = $0A
+CONST S_BEAM = $05
+CONST S_TRACTOR = $06
+CONST S_CAPTURED = $09
 
 BYTE ARRAY snd_on(NSND), snd_wait(NSND)
 CARD ARRAY snd_p(NSND)
@@ -1054,6 +1057,9 @@ PROC StarsDraw()
         show = y + LAG < top OR y >= bot OR Covered(x, y) == 0
       FI
       IF show AND booms THEN show = InBoom(x, y) == 0 FI
+      IF show AND cap_ph == 2 AND y >= BEAM_Y AND y < BEAM_Y + BEAM_H THEN
+        show = x < cap_x - 32 OR x >= cap_x + 14
+      FI
       IF show AND tx_y THEN
         IF y >= tx_y AND y < tx_y + 8 THEN show = 0 FI
       FI
@@ -1235,9 +1241,18 @@ BYTE en_cnt, en_nbr                  ; the enemies being counted, and those last
 BYTE ftr_on                          ; the fighter in play: it fires, it is hit, the enemies dive and bomb
 BYTE hdr0                            ; the stage's steps between a flyer's bomb chances
 ; the capture sortie: its boss, and the beam's course -- 1 turning to face
-; down, 2 holding
-BYTE cobj, cap_ph, cap_k
+; down, 2 the beam out (f_2222); the beam's X, its counters as the arcade's
+; ds5_928A_captr_status keeps them, the step period, whether the fighter
+; reached the boss
+BYTE cobj, cap_ob, cap_ph, cap_k, cap_x, cap_s1, cap_s2, cap_fl, cap_pull, cap_con, cap_home, cap_n, bm_ph
 CARD cap_t
+; the fighter's life, as the arcade's restart runs it: 0 in play, 1 its
+; explosion's four counts, 2 READY until nothing flies, 3 back on the
+; field for three counts before it may fire, 4 GAME OVER's counts, 5 in
+; the beam; and, while it is pulled up, its sprite Y, tile and flips
+BYTE ftr_dead
+CARD ftr_y9
+BYTE ftr_code, ftr_ctrl
 BYTE bomb_flags                      ; the mask a sortie is given, by the stage and the enemies left
 
 ; the launcher, f_2916, on the stage's waves loaded from the WAVES block
@@ -1609,6 +1624,7 @@ PROC FlyStep(BYTE k)
         IF obj == cobj THEN
           cap_ph = 1                 ; f_21CB takes the capture boss over
           cap_k = k
+          cap_x = a
         FI
         p += 1
       ELSEIF t == $F3 THEN
@@ -1965,6 +1981,8 @@ PROC Dive(BYTE obj, CARD path, BYTE mirror)
     fl_char(k) = F_GOEI
   ELSEIF kind == FM_BOSS6 THEN
     fl_char(k) = F_BOSS
+  ELSEIF kind == FM_CAPTURED6 THEN
+    fl_char(k) = F_CAPTURED
   ELSE
     fl_char(k) = F_BOSS_HIT
   FI
@@ -1998,6 +2016,7 @@ PROC Pool(BYTE e, BYTE ixl, BYTE b, BYTE cc, CARD path)
     boss_sc(k) = 80
   ELSE
     boss_sc(k) = 40
+    IF Resting(e & 7) THEN pool_o(1) = (e & 7) | m FI
     RETURN
   FI
   b += 1
@@ -2015,6 +2034,8 @@ PROC Pool(BYTE e, BYTE ixl, BYTE b, BYTE cc, CARD path)
     b -= 1
     k += 1
   OD
+  ; l_1CE3: the boss's captured fighter, at rest, goes with it
+  IF Resting(e & 7) THEN pool_o(k) = (e & 7) | m FI
 RETURN
 
 ; BossSortie: case_bmbr_boss
@@ -2056,6 +2077,7 @@ PROC BossSortie()
       RETURN
     FI
   OD
+  FirstDive(0, 6, FL_ROGUE)
 RETURN
 
 ; Sorties: f_1B65
@@ -2095,19 +2117,64 @@ PROC Sorties()
   FI
 RETURN
 
-; Capture: f_21CB and f_2222's hold on the capture boss's motion -- turned
-; to face down once its path has slowed it, then held there while the beam
-; would go out, stay and come back
+; BeamRow(i, draw): tile row i of the beam (0-9) drawn in its blues turned
+; by bm_ph, or put back to what is under it
+PROC BeamRow(BYTE i, BYTE draw)
+  BYTE r, n, j, b, c, y, x, m
+  CARD p, sx
+  FOR r = bm_step(i) TO bm_step(i + 1) - 1 DO
+    p = bm_roff(r)
+    n = bm_rows(p)
+    y = BEAM_Y + r
+    FOR j = 1 TO n DO
+      x = cap_x - 32 + bm_rows(p + 1)
+      b = bm_rows(p + 2)
+      p += 2
+      sx = x
+      PIX_X = sx + FX
+      PIX_Y = y
+      c = ((b >> 6) + bm_ph) % 3 + BEAM_C
+      FOR m = 1 TO b & $3F DO
+        IF draw THEN
+          PIX_DATA = c
+        ELSEIF y >= BAND_Y THEN
+          PIX_DATA = BandPixel(x, y)
+        ELSE
+          PIX_DATA = 0
+        FI
+        x += 1
+      OD
+    OD
+  OD
+RETURN
+
+; Caught: the fighter under the beam taken -- no longer steered, nor hit,
+; and pulled up (Pull) -- its own routine, so that the gate can spare it
+PROC Caught()
+  ftr_dead = 5
+  ftr_y9 = $129
+  ftr_code = 6
+  ftr_ctrl = 0
+  cap_pull = 1
+  cap_fl = $0A
+  StopSound(S_BEAM)
+  PlaySound(S_TRACTOR)
+RETURN
+
+; Capture: f_21CB, the capture boss turned to face down once its path has
+; slowed it; then f_2222, the beam -- a tile row every so many frames, ten,
+; held 64 frames while it takes a fighter under it, taken back a row at a
+; time -- and after it the boss goes on, or home with the fighter
 PROC Capture()
-  BYTE k, a
+  BYTE k, a, low
   IF cap_ph == 0 THEN RETURN FI
   k = cap_k
-  IF fl_state(k) != 9 OR fl_obj(k) != cobj THEN
-    cflag = 0
-    cap_ph = 0
-    RETURN
-  FI
   IF cap_ph == 1 THEN
+    IF fl_state(k) != 9 OR fl_obj(k) != cobj THEN
+      cflag = 0
+      cap_ph = 0
+      RETURN
+    FI
     IF fl_vo(k) THEN RETURN FI
     IF fl_a5(k) & 1 THEN fl_dl(k) = $F4 ELSE fl_dl(k) = $0C FI
     a = ((fl_a5(k) & 1) << 7) | (fl_a4(k) >> 1)
@@ -2115,18 +2182,77 @@ PROC Capture()
     IF a < $10 THEN
       fl_dl(k) = 0
       cap_ph = 2
-      cap_t = 0
+      cap_fl = sp(6)
+      cap_s1 = 0
+      cap_s2 = 1
+      cap_con = 0
     FI
     RETURN
   FI
-  fl_n(k) = $FF
-  cap_t += 1
-  IF cap_t >= cap_len THEN
-    fl_n(k) = 1
-    cflag = 0
-    cobj = 1
-    cap_ph = 0
+  ; the beam's blues turn every fourth frame, a tile row a frame redrawn
+  IF frm & 3 == 0 THEN bm_ph += 1 FI
+  low = cap_s1 & $0F
+  IF (cap_s1 & $C0) == 0 AND low THEN BeamRow(frm % low, 1) FI
+  IF cap_s1 == $40 THEN BeamRow(frm % 10, 1) FI
+  ; its boss shot while it is out: taken back quickly
+  IF (cap_s1 & $80) == 0 AND (fl_state(k) != 9 OR fl_obj(k) != cobj) THEN
+    cap_fl = 3
+    cap_s1 = $80
+    cap_s2 = 1
+    IF cap_pull THEN cap_pull = 2 FI
+    StopSound(S_BEAM)
   FI
+  cap_s2 -= 1
+  IF cap_s2 THEN
+    IF cap_s1 == $40 AND ftr_dead == 0 THEN
+      a = cap_x - fx - 17 + $1B
+      IF a < $36 THEN Caught() FI
+    FI
+    RETURN
+  FI
+  cap_s2 = cap_fl
+  IF cap_s1 & $80 THEN
+    cap_s1 += 1
+    low = cap_s1 & $0F
+    IF low == $0B THEN
+      cap_ph = 0
+      cflag = 0
+      StopSound(S_TRACTOR)
+    ELSE
+      BeamRow(low - 1, 0)
+    FI
+    RETURN
+  FI
+  IF snd_on(S_BEAM) == 0 AND ftr_dead != 5 THEN PlaySound(S_BEAM) FI
+  fl_n(k) = $FF
+  cap_s1 += 1
+  low = cap_s1 & $0F
+  IF low == $0B THEN
+    IF cap_s1 & $40 THEN
+      IF cap_con AND (cap_s1 & $20) == 0 THEN
+        cap_s1 = $68
+        RETURN
+      FI
+      cap_ph = 0
+      StopSound(S_BEAM)
+      StopSound(S_TRACTOR)
+      IF cap_con THEN
+        fl_p(k) = FL_CBOSS           ; home, the fighter with it
+        cap_home = 1
+        cap_n = 0
+        cap_ob = cobj
+      ELSE
+        cflag = 0
+        cobj = 1
+        fl_n(k) = 1
+      FI
+    ELSE
+      cap_s1 = $40
+      cap_s2 = $40
+    FI
+    RETURN
+  FI
+  IF cap_s1 & $40 THEN BeamRow(10 - low, 0) ELSE BeamRow(low - 1, 1) FI
 RETURN
 
 PROC Launcher()
@@ -2295,6 +2421,7 @@ BYTE score_shown
 FUNC BYTE RestPoints(BYTE kind)
   IF kind == FM_ZAKO6 THEN RETURN (5) FI
   IF kind == FM_GOEI6 THEN RETURN (8) FI
+  IF kind == FM_CAPTURED6 THEN RETURN (50) FI
 RETURN (15)
 
 CARD ext10                            ; the next extra fighter's score, in tens: 20,000, then 70,000 and every 70,000
@@ -2384,6 +2511,9 @@ PROC ShootFlyer(BYTE k)
     PlaySound(S_ZAKO)
   ELSEIF fl_char(k) == F_BOSS_HIT THEN
     pts = 15
+    PlaySound(S_BOSS)
+  ELSEIF fl_char(k) == F_CAPTURED THEN
+    pts = 50
     PlaySound(S_BOSS)
   ELSE
     pts = 8
@@ -2489,13 +2619,18 @@ RETURN
 
 ; ----------------------------------------------------------- the fighter
 
-; the fighter's life, as the arcade's restart runs it: 0 in play, 1 its
-; explosion's four counts, 2 READY until nothing flies, 3 back on the
-; field for three counts before it may fire, 4 GAME OVER's counts
-BYTE ftr_dead
 BYTE game_over
 
 PROC Fighter()
+  BYTE fr
+  IF ftr_dead == 5 THEN
+    IF ftr_on AND KeyHit(KEY_SPACE) THEN Fire() FI
+    IF cap_home THEN RETURN FI
+    fr = F_FIGHTER
+    IF cap_con OR ftr_y9 <= $E0 THEN fr = F_CAPTURED FI
+    ShowChar(SP_FIGHTER, fr + ftr_code, ftr_ctrl & 2, ftr_ctrl & 1, fx + FX, MapY(ftr_y9))
+    RETURN
+  FI
   IF ftr_dead AND ftr_dead != 3 THEN RETURN FI
   IF KeyHeld(KEY_LEFT) OR KeyHeld(KEY_Z) THEN fx -= 2 FI
   IF KeyHeld(KEY_RIGHT) OR KeyHeld(KEY_X) THEN fx += 2 FI
@@ -2532,7 +2667,7 @@ RETURN (d < 7)
 ; transients can. The first bomb that touches it is gone with it.
 PROC Collide()
   BYTE k, hit, obj
-  IF ftr_on == 0 THEN RETURN FI
+  IF ftr_on == 0 OR ftr_dead THEN RETURN FI
   hit = 0
   FOR k = 0 TO NFLY - 1 DO
     IF fl_state(k) == 3 OR fl_state(k) == 7 OR fl_state(k) == 9 THEN
@@ -2672,6 +2807,119 @@ PROC FieldTextOff()
   FI
 RETURN
 
+; Spin: c_2188 -- a tile a frame round towards upright and over, the flips
+; following; 1 once it is upright again with nothing left to pull
+FUNC BYTE Spin()
+  BYTE c, a
+  c = ftr_ctrl ^ (ftr_ctrl >> 1)
+  a = ftr_code
+  IF a == 6 AND c == 0 AND cap_pull == 2 THEN RETURN (1) FI
+  DO
+    IF c & 1 THEN
+      IF a THEN
+        ftr_code = a - 1
+        EXIT
+      FI
+    ELSEIF a != 6 THEN
+      ftr_code = a + 1
+      EXIT
+    FI
+    IF c == 0 THEN c = 3 ELSE c -= 1 FI
+  OD
+  IF c & 2 THEN c = c ^ 1 FI
+  ftr_ctrl = c
+RETURN (0)
+
+; Pull: f_20F2 -- the fighter taken up spinning a pixel a frame towards the
+; boss above it, its rockets gone at 230 and red and the boss's at 224; if
+; the boss is shot first, dropped back to its row and given back
+PROC Pull()
+  BYTE d, k
+  IF cap_pull == 0 THEN RETURN FI
+  k = cap_k
+  IF Spin() THEN
+    IF ftr_on THEN
+      ; the boss was shot: down to the fighter's row, then given back
+      IF ftr_y9 == $129 THEN
+        cap_pull = 0
+        ftr_dead = 0
+      ELSE
+        ftr_y9 += 1
+      FI
+    ELSE
+      cap_con = 1
+      cap_pull = 0
+    FI
+    RETURN
+  FI
+  IF cap_s1 & $80 THEN
+    ; the boss shot: back down
+    IF ftr_y9 != $129 THEN ftr_y9 += 1 FI
+    RETURN
+  FI
+  IF cap_pull == 2 THEN RETURN FI
+  d = fl_x8(k) - fx - 17
+  IF d THEN
+    IF d & $80 THEN fx -= 1 ELSE fx += 1 FI
+  FI
+  ftr_y9 -= 1
+  IF ftr_y9 == $E6 THEN ftr_on = 0 FI
+  IF ftr_y9 == $E0 THEN cap_pull = 2 FI
+RETURN
+
+; CapturedHome: f_19B2 -- FIGHTER CAPTURED, the boss held while it shows;
+; then the red fighter below the boss all the way home, and up into the
+; place above it; then the player's fighter is lost
+PROC CapturedHome()
+  BYTE slot
+  IF cap_home == 0 THEN RETURN FI
+  IF cap_home == 1 THEN
+    FieldText("FIGHTER CAPTURED", 0, C_RED)
+    gt(1) = 6
+    cap_home = 2
+    RETURN
+  FI
+  IF gt(1) THEN
+    IF gt(1) == 4 THEN
+      gt(1) = 3
+      PlaySound(S_CAPTURED)
+    FI
+    fl_n(cap_k) = 4
+  ELSEIF tx_y THEN
+    FieldTextOff()
+  FI
+  IF cobj != cap_ob THEN
+    ; its boss shot on the way home: the rescue is not here yet, so the
+    ; red fighter is simply gone, and with it the player's
+    cap_home = 0
+    HideChar(SP_FIGHTER)
+    FieldTextOff()
+    ftr_dead = 1
+    gt(3) = 2
+    RETURN
+  FI
+  IF fl_state(cap_k) == 9 AND fl_obj(cap_k) == cobj THEN
+    fx = fl_x8(cap_k) - 17
+    ftr_y9 = fl_y9(cap_k) + 16
+  ELSE
+    ftr_code = 6
+    cap_n += 1
+    IF cap_n > $24 THEN
+      cap_home = 0
+      HideChar(SP_FIGHTER)
+      slot = obj_slot(cap_ob >> 1) - 4
+      SlotShow(slot)
+      cobj = 1
+      cflag = 0
+      ftr_dead = 1
+      gt(3) = 2
+      RETURN
+    FI
+    ftr_y9 -= 1
+  FI
+  ShowChar(SP_FIGHTER, F_CAPTURED + 6, 0, 0, fx + FX, MapY(ftr_y9))
+RETURN
+
 PROC Frame1()
   WaitVBlank()
   KeyPoll()
@@ -2730,6 +2978,8 @@ PROC StageStart()
   cobj = 1
   wingm = 0
   cap_ph = 0
+  cap_pull = 0
+  cap_home = 0
   en_cnt = 0
   en_nbr = 0
   cont_bomb = 0
@@ -2805,7 +3055,7 @@ RETURN
 ; middle; three counts more and it is in play, the stage's time thirty
 ; longer. With the panel empty, GAME OVER.
 PROC Afterlife()
-  IF ftr_dead == 0 OR gt(3) THEN RETURN FI
+  IF ftr_dead == 0 OR ftr_dead == 5 OR gt(3) THEN RETURN FI
   IF ftr_dead == 1 THEN
     IF lives == 0 THEN
       FieldText("GAME OVER", 0, C_RED)
@@ -2928,6 +3178,8 @@ PROC Play()
     stage_frames += 1
     StarsErase()
     FlyFrame()
+    CapturedHome()
+    Pull()
     FmStep(frm & 3)
     Booms()
     StarsDraw()

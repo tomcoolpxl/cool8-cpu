@@ -7173,3 +7173,40 @@ $95FF, 154 patterns to $E2FF, the band's copy to $FEFF. No set of
 patterns is free during a combat stage, when every kind of character can
 be in the air; the challenging stages' creatures go over the
 butterfly's only because a challenging stage has no dives.
+
+## D116 -- GALAGA's capture: the arcade's beam routines, the beam drawn into the bitmap
+
+**Ported from the ROM, routine by routine**: f_21CB turns the capture
+boss to face down once its path has slowed it; f_2222 runs the beam from
+the arcade's ds5_928A_captr_status counters -- a tile row every p6 frames,
+ten, a 64-frame hold in which a fighter whose X is within [-27, +26] of
+the beam's is taken, the rows taken back, then the boss goes on or, with
+the fighter, home by db_flv_cboss; f_20F2 and c_2188 pull the fighter up
+a pixel a frame spinning, its rockets off at sprite Y 230 and red at 224;
+f_19B2 shows FIGHTER CAPTURED for six counts with the boss held, keeps the
+red fighter 16 below the boss all the way home, moves it up 36 frames and
+puts it at rest in the row above; the player's fighter is then lost by
+the restart's counts. A captured fighter at rest joins its boss's pool
+(l_1CE3) and dives alone when no boss is left (the rogue path), and is
+worth 500 at rest and 1,000 flying. The beam sounds (05, 06) and the
+capture's tune (09) are the rendered arcade streams.
+
+**The beam is the sheet's, drawn into the bitmap.** The arcade draws it in
+playfield tiles and turns their colours every four frames; the sheet's
+three frames are the same shape in the three blues turned, so the
+generator keeps one, fitted to this screen's pressed rows (68 rows from
+row 163 for the arcade's 80 from Y 225, where the boss always holds), as
+runs of one blue: 565 bytes. The game draws a tile row as the arcade adds
+one, turns the blues itself by redrawing a row a frame, and takes a row
+back by putting back what is under it -- black, or the band's copy -- and
+the stars keep out of its box. The gate holds the bitmap to the program's
+state, pixel for pixel, once the beam has gone.
+
+**The gate** plays stage 1 with the fighter left in the middle, spared
+bombs and rammers but not the beam (Caught is a routine of its own so the
+harness can spare it too, which keeps the dives' frame-by-frame comparison
+of D115 to its reference's `fighter_dies=False`), and sees the beam out in
+its blues, the fighter taken, the text, the red fighter at rest above its
+boss, and no pixel of the beam left. PRG 53,412 bytes before, 55,768
+after. **Not yet**: the rescue and the dual fighter (f_2000); a boss shot
+on its way home with a fighter takes the fighter with it.

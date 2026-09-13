@@ -1880,10 +1880,15 @@ fired, the hits, and the hit-miss ratio to a tenth of a percent.
 wave waits for a slot, and stage 1's dives begin at frame 1,327 rather
 than 895. The sprites are 32: six flyers and two bombs spend them, and a
 bomb or a dive with none left is not made -- on stage 16 some forty in a
-minute. **Not there yet**: the capture beam and a caught fighter (the
-capture boss flies its hold and nothing is drawn), the rescue and the
-dual fighter, the bonus bee's transformations (their creatures' patterns
-have no room in VRAM), the name entry, and a second player.
+minute. **The capture is the arcade's** ([D116](01-decisions.md)): the
+boss's tractor beam, the sheet's own, grows a row at a time over the
+backdrop, holds, and takes a fighter under it up, spinning, turning red;
+FIGHTER CAPTURED; and the red fighter goes home with its boss into the
+place above it, dives with it, and is worth 500 there and 1,000 in the
+air. **Not there yet**: the rescue and the dual fighter (a boss shot on
+its way home with a captured fighter takes the fighter with it), the
+bonus bee's transformations (their creatures' patterns have no room in
+VRAM), the name entry, and a second player.
 
 **The sound** is the arcade's effects and jingles, each rendered frame by
 frame from the driver's model and mixed in the driver's order -- tunes
@@ -1904,12 +1909,14 @@ inside its frame; challenging stage 11's creature, tally and payment;
 **stage 1's attack held to `tools/galaga_dives.py` frame by frame for
 3,000 frames** -- every flyer and every bomb, down to continuous bombing
 -- and stage 16's the same wherever the sprites allow; a crash, the
-explosion over the backdrop put back, and a fighter after READY; P
+explosion over the backdrop put back, and a fighter after READY; a
+capture -- the beam in its blues, the fighter taken, FIGHTER CAPTURED,
+the red fighter in its place, the bitmap exact once the beam is gone; P
 pausing and going on; the last fighter lost and the results; then
 the path a person takes -- the real ROM booting the demos disc, `DRIVE
 11` and `SYS "GALAGA.BIN"`, the title up, space, and stage 1. `python
 sim/galaga.py play` (or `levels`, `attack`, `challenge n`, `death`,
-`results`, `profile [stage frames]`) plays it and writes the frames as PNG;
+`results`, `capture`, `profile [stage frames]`) plays it and writes the frames as PNG;
 `flights`, `dives stage frames [x [every]]`, `bitmap`, `shoot`, `split`
 and `sound` are the comparisons the gate makes; `sizes` says where the
 program's bytes are.

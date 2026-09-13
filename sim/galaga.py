@@ -318,16 +318,17 @@ class Game:
                     tracks.setdefault(obj[k], []).append((loops, x8[k], y9[2 * k] | (y9[2 * k + 1] << 8)))
         return tracks, launched
 
-    def spared_frame(self):
-        """A frame of play in which the fighter cannot be destroyed: each
-        call of FighterHit returned from at its first instruction, as the
-        reference's `fighter_dies=False` leaves its fighter. Ends at the
+    def spared_frame(self, catch=False):
+        """A frame of play in which the fighter cannot be destroyed or
+        captured: each call of FighterHit and of Caught returned from at its
+        first instruction, as the reference's `fighter_dies=False` leaves
+        its fighter -- or, with `catch`, only destroyed. Ends at the
         loop's next WaitVBlank, as at_rest does; returns the calls skipped."""
-        wv, hit = self.syms["WaitVBlank"], self.syms["FighterHit"]
+        wv, hit, caught = self.syms["WaitVBlank"], self.syms["FighterHit"], self.syms["Caught"]
         skipped = 0
         if self.m.cpu.pc == wv:
             self.m.tick()
-        self.m.breakpoints.update((wv, hit))
+        self.m.breakpoints.update((wv, hit) if catch else (wv, hit, caught))
         try:
             while True:
                 why = self.m.run(budget=4_000_000)
@@ -341,6 +342,36 @@ class Game:
         finally:
             self.m.breakpoints.discard(wv)
             self.m.breakpoints.discard(hit)
+            self.m.breakpoints.discard(caught)
+
+    def capture(self, frames=6000, seen=None):
+        """Plays on, the fighter left where it is and spared bombs and
+        rammers but not the beam, until a capture boss has taken it and gone
+        home and the next fighter is on its way: {event: stage frame} for
+        beam (fully out), pull, text, home and after, with `seen(event)`
+        called at each."""
+        out = {}
+        for f in range(frames):
+            self.spared_frame(catch=True)
+            s1, dead, home, pull = self.byte("cap_s1"), self.byte("ftr_dead"), self.byte("cap_home"), self.byte("cap_pull")
+            key = None
+            if self.byte("cap_ph") == 2 and s1 == 0x40 and "beam" not in out:
+                key = "beam"
+            elif dead == 5 and pull == 1 and self.uword("ftr_y9") < 0x110 and "pull" not in out:
+                key = "pull"
+            elif home == 2 and self.byte("tx_y") and "text" not in out:
+                key = "text"
+            elif home == 2 and not self.byte("tx_y") and self.byte("cap_n") > 20 and "home" not in out:
+                key = "home"
+            elif "home" in out and dead in (1, 2, 3) and "after" not in out:
+                key = "after"
+            if key:
+                out[key] = self.uword("stage_frames")
+                if seen:
+                    seen(key)
+            if "after" in out:
+                break
+        return out
 
     def attack(self, frames, until=None, spare=False, each=None):
         """What flies and falls after each of so many frames of play, from
@@ -743,6 +774,13 @@ def main():
     elif what == "sound":
         # the start theme on voices 0-2 against the rendered streams
         print(sound_check())
+    elif what == "capture":
+        # the fighter left still, spared bombs but not the beam: the capture
+        # boss's beam, the fighter taken up, FIGHTER CAPTURED, and home
+        g.pokew("fx", 104)
+        ev = g.capture(seen=lambda k: print(k, g.uword("stage_frames"), g.png("gal_capture_" + k)))
+        print(ev, "captured fighters at rest in slots", [i for i in range(4) if g.byte("sl_on", i)],
+              "lives", g.byte("lives"))
     elif what == "results":
         # the game given up to the last fighter: GAME OVER and the results
         g.poke("lives", 0)

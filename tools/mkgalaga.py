@@ -508,6 +508,49 @@ PANEL = [("LIFE", (290, 173, 13, 14)), ("B1", (307, 176, 7, 12)), ("B5", (317, 1
          ("P1000", (397, 122, 16, 7)), ("P1500", (415, 122, 16, 7)), ("P1600", (343, 140, 17, 7)),
          ("P2000", (368, 140, 20, 7)), ("P3000", (402, 140, 20, 7))]
 SHOT = (313, 122)                       # the fighter's: a blue head, a white eye, a red trail
+# the capture boss's tractor beam: the first of the sheet's three frames,
+# which differ only by the turn of its three blues -- the arcade cycles the
+# tiles' colours -- so the game turns them itself. The boss holds with its
+# box's bottom at sprite Y 225 (tools/galaga_dives.py: y9 209 while the
+# beam is out, on every capture), and the beam's 80 rows hang from there,
+# pressed into this screen's rows as the flights are
+BEAM = (290, 36, 46, 80)
+BEAM_Y9 = 225
+
+
+def map_y(y9):
+    """demos/galaga.act's MapY: the arcade's sprite Y as this screen's row."""
+    ay = y9 - 56
+    if ay > 136:
+        ay = 136 + ((ay - 136) * 215 >> 8)
+    return ay
+
+
+def beam(s):
+    """The beam as the screen shows it: for each of its screen rows, the
+    runs of one colour (x, n, colour 0-2 of the three blues); and the first
+    screen row of each of its ten tile rows, the steps it grows by."""
+    img = box_image(s, *BEAM)
+    blues = sorted({v for r in img for v in r if v})
+    assert len(blues) == 3, blues
+    top = map_y(BEAM_Y9)
+    rows, steps = [], []
+    for sy in range(top, map_y(BEAM_Y9 + BEAM[3] - 1) + 1):
+        y9 = next(v for v in range(BEAM_Y9, BEAM_Y9 + BEAM[3]) if map_y(v) == sy)
+        r = img[y9 - BEAM_Y9]
+        runs, x = [], 0
+        while x < len(r):
+            if r[x]:
+                a = x
+                while x < len(r) and r[x] == r[a]:
+                    x += 1
+                runs.append((a, x - a, blues.index(r[a])))
+            else:
+                x += 1
+        rows.append(runs)
+    for i in range(11):
+        steps.append(map_y(BEAM_Y9 + 8 * i) - top if i < 10 else len(rows))
+    return top, blues, rows, steps
 
 
 def box_image(s, x0, y0, w, h):
@@ -627,7 +670,8 @@ def flights():
                 obj_col=obj_col, obj_slot=obj_slot, waves=waves, woffs=woffs, kinds=kinds, parms=parms,
                 origins=list(P.DB_FMTN_HPOS_ORIG), hdrs=hdrs, atk_yllw=reloc(P.LABEL_ADDR["db_flv_atk_yllw"]),
                 atk_red=reloc(P.LABEL_ADDR["db_flv_atk_red"]), atk_boss=reloc(P.LABEL_ADDR["db_flv_0411"]),
-                atk_capture=reloc(P.LABEL_ADDR["db_0454"]), rogue=reloc(P.LABEL_ADDR["db_fltv_rogefgter"]))
+                atk_capture=reloc(P.LABEL_ADDR["db_0454"]), rogue=reloc(P.LABEL_ADDR["db_fltv_rogefgter"]),
+                cboss=reloc(P.LABEL_ADDR["db_flv_cboss"]))
 
 
 # ------------------------------------------------------------------ sound
@@ -914,7 +958,7 @@ def build():
     dat.add("MUSIC", mblob)
     return dict(mus=mus, moffs=moffs + [len(mblob)], snd=sounds(), fl=fl, pats=pats, common=common, ncommon=ncommon,
                 specials=specials, p_swap=p_swap, n_swap=n_swap, fimgs=imgs, fblob=fblob, foffs=foffs, bds=bds,
-                shot=shot[0], bomb=bomb[0], arts=arts, ablob=ablob, aoffs=aoffs,
+                shot=shot[0], bomb=bomb[0], beam=beam(s), arts=arts, ablob=ablob, aoffs=aoffs,
                 font=font(t), dat=dat, sheet=s)
 
 
@@ -1009,7 +1053,7 @@ def act(o):
     arr(w, "CARD ARRAY fl_path(24)", fl["starts"])
     arr(w, "BYTE ARRAY fl_sel(24)", fl["sels"])
     arr(w, "BYTE ARRAY fl_start(%d)" % len(fl["start_bytes"]), fl["start_bytes"], fmt="$%02X")
-    for k in ("atk_yllw", "atk_red", "atk_boss", "atk_capture", "rogue"):
+    for k in ("atk_yllw", "atk_red", "atk_boss", "atk_capture", "rogue", "cboss"):
         w("CONST FL_%s = %d" % (k.upper(), fl[k]))
     w("; the formation's origins as the arcade holds them: ten columns' sprite X,")
     w("; six rows' raw bytes (Y as Yint >> 1)")
@@ -1071,6 +1115,24 @@ def act(o):
     w("")
     w("; the fighter's shot: one sprite, its 3 x 8 in columns 2-4")
     w("CONST P_SHOT = %d" % o["shot"])
+    top, blues, rows, steps = o["beam"]
+    w("; the tractor beam, row by row from screen row BEAM_Y: each row its count")
+    w("; of runs and then two bytes a run -- x, and n with the blue (0-2 of")
+    w("; BEAM_C) in bits 7:6; bm_step(i) the row tile row i starts on")
+    w("CONST BEAM_Y = %d" % top)
+    w("CONST BEAM_W = %d" % BEAM[2])
+    w("CONST BEAM_C = %d" % blues[0])
+    blob, offs = [], []
+    for runs in rows:
+        offs.append(len(blob))
+        blob.append(len(runs))
+        for x, n, c in runs:
+            assert n < 64
+            blob += [x, n | (c << 6)]
+    w("CONST BEAM_H = %d" % len(rows))
+    arr(w, "BYTE ARRAY bm_rows(%d)" % len(blob), blob, per=24)
+    arr(w, "CARD ARRAY bm_roff(%d)" % len(offs), offs, per=16)
+    arr(w, "BYTE ARRAY bm_step(11)", steps)
     w("; the enemy's bomb: the same, a sprite of the bombs' own, 31 down")
     w("CONST P_BOMB = %d" % o["bomb"])
     w("")
