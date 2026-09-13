@@ -1826,6 +1826,22 @@ def test_galaga():
           "busiest %d clocks of %d; %s" % (max(costs), G.FRAME, p.report(top=6)))
     print("    work per frame over 160 frames of waves: mean %d, busiest %d clocks" % (sum(costs) // len(costs), max(costs)))
 
+    # the first challenging stage played by the autopilot: its hits tallied
+    # and paid a hundred each (or ten thousand for all forty) after it
+    c = G.Game(tag="galaga4", render=False)
+    c.start()
+    c.goto_stage(3)
+    c.autopilot(2400, until=lambda: c.byte("launching") == 0 and not any(c.byte("fl_state", k) for k in range(6))
+                and c.byte("booms") == 0)
+    hits, before = c.byte("ch_hits"), c.uword("score10")
+    c.until(lambda: c.byte("stage") == 4, 900)
+    paid = (c.uword("score10") - before) * 10
+    check(c.byte("stage") == 4 and hits > 0 and paid == (10000 if hits == 40 else 100 * hits),
+          "galaga: a challenging stage tallies its hits and pays for them before the next",
+          "stage %d, %d hits, %d paid" % (c.byte("stage"), hits, paid))
+    print("    challenging stage 3 by the autopilot: %d hits" % hits)
+    del c
+
     # something flying into the fighter: both destroyed, the fighter's
     # explosion over the backdrop put back from its copy to the pixel, and a
     # fighter from the panel after READY

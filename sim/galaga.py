@@ -116,6 +116,40 @@ class Game:
         self.poke("stage", n - 1)
         self.until(lambda: self.byte("stage") == n and self.byte("launching") == 1, 600)
 
+    def autopilot(self, frames, until=None):
+        """Plays: the fighter put under the lowest thing flying -- or the
+        lowest column of the formation -- and firing whenever a shot is
+        free. Stops early when `until()` says so; returns the frames run."""
+        n = self.c("NFLY")
+        for t in range(frames):
+            st = self.array("fl_state", n)
+            sy = self.m.bus.mem[self.addr("fl_sy"):self.addr("fl_sy") + 2 * n]
+            sx = self.m.bus.mem[self.addr("fl_sx"):self.addr("fl_sx") + 2 * n]
+            best = None
+            for k in range(n):
+                if st[k] in (3, 7, 9):
+                    y = sy[2 * k] | (sy[2 * k + 1] << 8)
+                    x = sx[2 * k] | (sx[2 * k + 1] << 8)
+                    y = y - 65536 if y >= 32768 else y
+                    x = x - 65536 if x >= 32768 else x
+                    if 0 <= y < 200 and -8 < x < 216 and (best is None or y > best[1]):
+                        best = (x, y)
+            if best is None:
+                on = [i for i in range(self.c("NSLOT")) if self.byte("sl_on", i)]
+                if on:
+                    i = max(on, key=lambda i: self.byte("sl_y", i))
+                    best = (self.byte("sl_x", i), 0)
+            if best is not None:
+                self.pokew("fx", max(1, min(207, best[0])))
+            if t % 3 == 0:
+                self.m.kbd.feed(SPACE)
+            elif t % 3 == 1:
+                self.m.kbd.feed([0xF0] + SPACE)
+            self.m.run_frame(1)
+            if until and until():
+                return t + 1
+        return frames
+
     def crash(self):
         """A flyer that is not yet homing moved onto the fighter, in the
         arcade's coordinates its motion keeps: the slot's index, or None."""
@@ -477,6 +511,10 @@ def main():
         print(g.png("gal_death"), "dead", g.byte("ftr_dead"), "lives", g.byte("lives"))
         g.until(lambda: g.byte("ftr_dead") == 0, 400)
         print("back in play: lives", g.byte("lives"), "fx", g.word("fx"))
+    elif what == "challenge":
+        g.goto_stage(3)
+        g.autopilot(2400, until=lambda: g.byte("stage") != 3 or "HITS" in "")
+        print("stage now", g.byte("stage"), "hits", g.byte("ch_hits"), "score", g.uword("score10") * 10)
     elif what == "split":
         log = g.split()
         print("%d commits; lines %s" % (len(log), sorted(set(ln for ln, _, _ in log))))

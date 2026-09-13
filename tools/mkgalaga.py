@@ -488,10 +488,16 @@ PLAYER_BOOM = [(147, 175, 3, 30), (180, 208, 3, 32), (213, 244, 1, 32), (248, 27
 ENEMY_BOOM = [(300, 306, 12, 19), (333, 344, 10, 22), (365, 380, 9, 24), (394, 420, 3, 30), (426, 456, 1, 32)]
 BOMB = (313, 140, 3, 8)                 # the enemy's shot: white, a red body
 # the panel's pictures, which stay above the band: a fighter in hand, and
-# the stage badges for 1, 5, 10, 20, 30 and 50 stages
+# the stage badges for 1, 5, 10, 20, 30 and 50 stages; and the score
+# pop-ups, whose 1500 is green, a colour the band takes -- drawn only
+# where a formation's enemy was, above it
 PANEL = [("LIFE", (290, 173, 13, 14)), ("B1", (307, 176, 7, 12)), ("B5", (317, 174, 7, 14)),
          ("B10", (328, 174, 13, 14)), ("B20", (345, 172, 15, 16)), ("B30", (363, 172, 15, 16)),
-         ("B50", (381, 172, 15, 16))]
+         ("B50", (381, 172, 15, 16)),
+         # the score pop-ups
+         ("P150", (344, 122, 15, 7)), ("P400", (361, 122, 16, 7)), ("P800", (379, 122, 16, 7)),
+         ("P1000", (397, 122, 16, 7)), ("P1500", (415, 122, 16, 7)), ("P1600", (343, 140, 17, 7)),
+         ("P2000", (368, 140, 20, 7)), ("P3000", (402, 140, 20, 7))]
 SHOT = (313, 122)                       # the fighter's: a blue head, a white eye, a red trail
 
 

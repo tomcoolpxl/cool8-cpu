@@ -803,6 +803,7 @@ RETURN
 ; the explosions in the bitmap, below
 CONST NBOOM = 4
 BYTE ARRAY bm_on(NBOOM), bm_art(NBOOM), bm_n(NBOOM), bm_f(NBOOM), bm_t(NBOOM), bm_x(NBOOM), bm_y(NBOOM)
+BYTE ARRAY bm_len(NBOOM)             ; frames each picture holds: 4 for an explosion, 60 for a score
 BYTE booms                           ; how many are on, so the stars and the formation need ask only then
 
 ; NearBoom(x, y): whether a character's box at the field's (x, y) meets an
@@ -1200,6 +1201,11 @@ BYTE stage                           ; 1 up
 ; the launcher, f_2916
 CARD wv_p
 BYTE launching
+BYTE wave_no                         ; the wave launching, 0-4
+BYTE ARRAY fl_wave(NFLY)
+; a challenging stage's tally: hits, and each wave's
+BYTE ch_hits
+BYTE ARRAY ch_kills(5)
 ; the sway, f_2A90, before the breathing takes over
 BYTE sway_on, nest_inh
 
@@ -1647,7 +1653,10 @@ PROC Launcher()
     RETURN
   FI
   IF tok == $7E THEN
-    IF flying_nbr == 0 THEN wv_p += 1 FI
+    IF flying_nbr == 0 THEN
+      IF wv_p != st_woff((stage - 1) % STAGES) THEN wave_no += 1 FI
+      wv_p += 1
+    FI
     RETURN
   FI
   IF (tok & $80) == 0 AND (frm & 7) != 0 THEN RETURN FI
@@ -1658,6 +1667,7 @@ PROC Launcher()
   IF raw & $78 == $78 THEN obj = raw & $BF FI
   wv_p += 2
   Launch(k, obj, raw, tok)
+  fl_wave(k) = wave_no
 RETURN
 
 ; FlyFrame: a frame of the arcade's order -- the launcher, the breathing,
@@ -1692,11 +1702,14 @@ FUNC BYTE Clamp(INT v, BYTE hi)
 RETURN (v)
 
 ; Boom(first, n, cx, cy): n frames from art first, centred on the field's (cx, cy)
+BYTE boom_len
 PROC Boom(BYTE first, BYTE n, INT cx, INT cy)
   BYTE i
   FOR i = 0 TO NBOOM - 1 DO
     IF bm_on(i) == 0 THEN
       bm_on(i) = 1
+      IF boom_len THEN bm_len(i) = boom_len ELSE bm_len(i) = 4 FI
+      boom_len = 0
       bm_art(i) = first
       bm_n(i) = n
       bm_f(i) = 0
@@ -1733,7 +1746,7 @@ PROC Booms()
   FOR i = 0 TO NBOOM - 1 DO
     IF bm_on(i) THEN
       bm_t(i) += 1
-      IF bm_t(i) == 4 THEN
+      IF bm_t(i) == bm_len(i) THEN
         bm_t(i) = 0
         k = bm_art(i) + bm_f(i)
         ArtDraw(k, bm_x(i), bm_y(i), 2)
@@ -1748,6 +1761,12 @@ PROC Booms()
       FI
     FI
   OD
+RETURN
+
+; Popup(art, cx, cy): a score shown where it was won, for a second
+PROC Popup(BYTE art, INT cx, INT cy)
+  boom_len = 60
+  Boom(art, 1, cx, cy)
 RETURN
 
 ; InBoom(x, y): whether an explosion's box holds that pixel
@@ -1830,7 +1849,7 @@ RETURN (255)
 ; stays so in the formation; otherwise the points for it in the air, an
 ; explosion, and its place in the formation stays empty
 PROC ShootFlyer(BYTE k)
-  BYTE slot
+  BYTE slot, w
   CARD pts
   slot = obj_slot(fl_obj(k) >> 1)
   IF fl_char(k) == F_BOSS THEN
@@ -1851,6 +1870,22 @@ PROC ShootFlyer(BYTE k)
   FI
   AddScore(pts)
   Boom(A_EBOOM0, N_EBOOM, fl_sx(k) + 8, fl_sy(k) + 8)
+  IF st_kind((stage - 1) % STAGES) THEN
+    ch_hits += 1
+    w = fl_wave(k)
+    ch_kills(w) += 1
+    IF ch_kills(w) == 8 THEN
+      ; the arcade's d_stage_chllg_rnd_attrib: 1000 on the first two
+      ; challenging stages, 1500 on the next two
+      IF stage < 9 THEN
+        AddScore(100)
+        Popup(A_P1000, fl_sx(k) + 8, fl_sy(k) + 8)
+      ELSE
+        AddScore(150)
+        Popup(A_P1500, fl_sx(k) + 8, fl_sy(k) + 8)
+      FI
+    FI
+  FI
   FlyFree(k)
 RETURN
 
@@ -2094,6 +2129,9 @@ PROC StageStart()
   flying_nbr = 0
   wv_p = st_woff((stage - 1) % STAGES)
   launching = 1
+  wave_no = 0
+  ch_hits = 0
+  FOR i = 0 TO 4 DO ch_kills(i) = 0 OD
   Positions()
   MusicStart(level_bd)
 RETURN
@@ -2175,6 +2213,34 @@ PROC Afterlife()
   FI
 RETURN
 
+; Results: a challenging stage's tally -- the hits, and a hundred for
+; each, or for all forty the PERFECT and ten thousand
+PROC Results()
+  BYTE i
+  CARD bonus
+  MusicStop()
+  StopSound(S_PULSE)
+  FieldText("NUMBER OF HITS", ch_hits, C_CYAN)
+  FOR i = 1 TO 90 DO Idle() OD
+  FieldTextOff()
+  IF ch_hits == 40 THEN
+    PlaySound(S_PERFECT)
+    FieldText("PERFECT !", 0, C_RED)
+    FOR i = 1 TO 90 DO Idle() OD
+    FieldTextOff()
+    FieldText("SPECIAL BONUS 10000", 0, C_YELLOW)
+    AddScore(1000)
+  ELSE
+    PlaySound(S_RESULTS)
+    bonus = ch_hits
+    FieldText("BONUS", bonus * 100, C_YELLOW)
+    AddScore(bonus * 10)
+  FI
+  ShowScore()
+  FOR i = 1 TO 150 DO Idle() OD
+  FieldTextOff()
+RETURN
+
 PROC Play()
   Clg(0)
   Hud()
@@ -2207,6 +2273,7 @@ PROC Play()
     ShowScore()
     IF game_over THEN EXIT FI
     IF StageDone() AND ftr_dead == 0 THEN
+      IF st_kind((stage - 1) % STAGES) THEN Results() FI
       stage += 1
       StageIntro()
       StageStart()
