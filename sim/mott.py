@@ -25,6 +25,7 @@ DATS = [os.path.join(ART, "MTHEME%d.DAT" % i) for i in range(3)]
 NAMES = os.path.join(ART, "MNAMES.DAT")
 HELP = os.path.join(ART, "MPAGES.DAT")
 LEVELS = os.path.join(ART, "MLEVELS.DAT")
+MUSIC = os.path.join(ART, "MMUSIC.DAT")
 # make codes: the cursor keys are E0-prefixed
 LEFT, RIGHT, DOWN, UP = [0xE0, 0x6B], [0xE0, 0x74], [0xE0, 0x72], [0xE0, 0x75]
 KP = {1: [0x69], 2: [0x72], 3: [0x7A], 4: [0x6B], 5: [0x73], 6: [0x74], 7: [0x6C], 8: [0x75], 9: [0x7D]}
@@ -53,7 +54,7 @@ STEP = {8: (0, -1), 9: (1, -1), 6: (1, 0), 3: (1, 1), 2: (0, 1), 1: (-1, 1), 4: 
 
 def sources():
     """The files that compile the game, or None without the art."""
-    if not os.path.exists(os.path.join(ART, "mott_art.act")) or not all(os.path.exists(p) for p in DATS + [NAMES, HELP, LEVELS]):
+    if not os.path.exists(os.path.join(ART, "mott_art.act")) or not all(os.path.exists(p) for p in DATS + [NAMES, HELP, LEVELS, MUSIC]):
         return None
     return H.act_sources(SOURCE)
 
@@ -66,7 +67,7 @@ def flash_image(name="mott"):
     disk.make_image(img)
     im = disk.Image(img)
     vol = disk.Volume(im, disk.MOTT_VOL)
-    for p in DATS + [NAMES, HELP, LEVELS]:
+    for p in DATS + [NAMES, HELP, LEVELS, MUSIC]:
         vol.add(p, os.path.basename(p))
     if H.act_strings(name):
         vol.add(H.act_strings(name), "MOTT.STR")
@@ -217,7 +218,8 @@ class Game:
         """A monster of type t poked onto a free slot at (x, y)."""
         i = next(i for i in range(20) if not self.byte("mstat", i))
         lvl = self.byte("m_lvl", t)
-        for n, v in (("mtype", t), ("mx", x), ("my", y), ("mlev", lvl), ("mstat", state), ("mmove", 0)):
+        for n, v in (("mtype", t), ("mx", x), ("my", y), ("mlev", lvl), ("mstat", state), ("mmove", 0),
+                     ("msl", 0), ("mflee", 0)):
             self.poke(n, v, i)
         hp = hp if hp is not None else max(1, lvl * 4)
         self.poke("mhp", hp, i)
@@ -381,6 +383,8 @@ class Game:
                 self.tap(KEY_S)
                 continue
             self.tap(KP[keys[0]])
+        l0 = self.uword("loops")                # the last step's turn finished and drawn, not caught half way
+        self.until(lambda: self.uword("loops") != l0, 120)
         return self.hero() == goal
 
     def png(self, name):
@@ -450,6 +454,155 @@ class Game:
             if self.messages() == m and self.text(32, 1, 8) != "--More--":
                 break
         return " / ".join(seen)
+
+
+PASSABLE = {K_FLOOR, K_CORR, K_DOORC, K_DOORO, K_DOORWAY, K_UP, K_DOWN, K_FOUNTAIN, 12, 13, 14}
+
+
+def reach(lv, start, secrets):
+    """The cells a hero at start can walk to -- a shut door opens, a door
+    is never passed diagonally -- with the secret doors and passages found
+    or not."""
+    from collections import deque
+    ok = PASSABLE | ({K_SDOOR, K_SCORR} if secrets else set())
+    door = {K_DOORC, K_DOORO, K_SDOOR}
+    seen = {start}
+    q = deque([start])
+    while q:
+        x, y = q.popleft()
+        for dx, dy in STEP.values():
+            nx, ny = x + dx, y + dy
+            if not (0 <= nx < LW and 0 <= ny < LH) or (nx, ny) in seen:
+                continue
+            k = lv[ny * LW + nx] & 15
+            if k not in ok:
+                continue
+            if dx and dy and (k in door or lv[y * LW + x] & 15 in door):
+                continue
+            seen.add((nx, ny))
+            q.append((nx, ny))
+    return seen
+
+
+def survey(g, n, say=True):
+    """n levels made by the game's own MakeLevel and MakeCave, called on
+    the running machine, and each searched from its stairs up: a cell no
+    walk reaches even with every secret found is a level that cannot be
+    finished; a corridor with one way on is a dead end; a room of stairs
+    with no door nor corridor to be seen from them is a hero shut in on
+    arriving. The stairs down behind a secret, somewhere, is NetHack's."""
+    bad, behind, shut, secrets, ups, dead, shops, chances = [], 0, 0, 0, set(), 0, 0, 0.0
+    syms = {k.lower(): v for k, v in g.syms.items()}
+    for i in range(n):
+        cave = i % 4 == 3
+        d = 1 + i % 11
+        if cave:
+            g.poke("lvl", g.c("L_MINES") + i % 3)
+            g.poke("depth", 3 + i % 3)
+            H.call(g.m, syms, "MakeCave", at=0xFEE0)
+        else:
+            g.poke("lvl", d)
+            g.poke("depth", d)
+            H.call(g.m, syms, "MakeLevel", at=0xFEE0)
+        lv = g.level()
+        up, dn = (g.byte("upx"), g.byte("upy")), (g.byte("dnx"), g.byte("dny"))
+        if not (0 <= up[0] < LW and 0 <= up[1] < LH) or lv[up[1] * LW + up[0]] & 15 != K_UP:
+            bad.append((i, "cave" if cave else d, "no stairs up where upx, upy say", up))
+            continue
+        cells = {(x, y) for y in range(LH) for x in range(LW) if lv[y * LW + x] & 15 in PASSABLE | {K_SDOOR, K_SCORR}}
+        found = reach(lv, up, True)
+        lost = cells - found
+        if lost:
+            bad.append((i, "cave" if cave else d, "unreachable even with the secrets found", sorted(lost)[:6], len(lost)))
+        secrets += sum(1 for v in lv if v & 15 in (K_SDOOR, K_SCORR))
+        ups.add(up)
+        if not cave and d > 1:
+            chances += min(1.0, 3.0 / d)       # mklev's rn2(depth) < 3
+            shops += g.byte("shroom") != 255
+        has_dn = lv[dn[1] * LW + dn[0]] & 15 == K_DOWN
+        if has_dn and dn not in reach(lv, up, False):
+            behind += 1
+        if cave:
+            continue
+        for (x, y) in found:
+            if lv[y * LW + x] & 15 == K_CORR:
+                ways = sum(1 for dx, dy in ((0, 1), (1, 0), (0, -1), (-1, 0))
+                           if 0 <= x + dx < LW and 0 <= y + dy < LH
+                           and lv[(y + dy) * LW + x + dx] & 15 in PASSABLE | {K_SDOOR, K_SCORR})
+                dead += ways <= 1
+        for s in [up] + ([dn] if has_dn else []):
+            if not any(lv[y * LW + x] & 15 in (K_CORR, K_DOORO, K_DOORC, K_DOORWAY) for (x, y) in reach(lv, s, False)):
+                shut += 1
+    st = dict(levels=n, bad=bad, dead=dead, shut=shut, behind=behind, secrets=secrets, ups=len(ups), shops=shops,
+              chances=chances)
+    if say:
+        print("%(shops)d shops where the dice allowed %(chances).0f; "
+              "%(levels)d levels: %(ups)d places for the stairs up, %(secrets)d secret doors and passages; "
+              "%(behind)d with the stairs down behind a secret; %(dead)d dead ends; %(shut)d rooms of stairs shut in; "
+              "%(n_bad)d that cannot be finished" % dict(st, n_bad=len(bad)))
+        for b in bad[:20]:
+            print("   ", b)
+    return st
+
+
+def follow(g, levels, say=True):
+    """The hero walked to the stairs down of level after level, nothing
+    else on them, and how far behind the pet is at each step: how often it
+    is beside the hero, how far it falls, and how often it is beside the
+    stairs when the hero gets there, to come along."""
+    dists, beside_at_stairs, lost, waits = [], 0, 0, 0
+    for n in range(levels):
+        g.clear_monsters()
+        pet = g.pet()
+        if pet is None:
+            hx, hy = g.hero()
+            spot = next((hx + s[0], hy + s[1]) for s in STEP.values() if g.kind(hx + s[0], hy + s[1]) == K_FLOOR
+                        and not g.byte("mat", (hy + s[1]) * LW + hx + s[0]))
+            g.put_monster(g.c("M_KITTEN"), spot[0], spot[1], hp=30, state=S_LIVE | S_PET)
+            lost += 1
+        for i in range(LW * LH):                 # the secrets open and the traps gone, so the walk is the pet's test
+            k = g.byte("lv", i) & 15
+            if k in (K_SDOOR, K_SCORR):
+                g.poke("lv", (g.byte("lv", i) & 0xF0) | (K_DOORC if k == K_SDOOR else K_CORR), i)
+        g.clear_traps()
+        goal = (g.byte("dnx"), g.byte("dny"))
+        for _ in range(300):
+            if g.hero() == goal:
+                break
+            if g.text(32, 1, 8) == "--More--":
+                g.tap(SPACE)
+                continue
+            keys = g.path(goal)
+            if not keys:
+                g.tap(KEY_S)
+                continue
+            g.clear_monsters()
+            g.sturdy()
+            g.tap(KP[keys[0]])
+            p = g.pet()
+            if p:
+                dists.append(max(abs(p[2] - g.hero()[0]), abs(p[3] - g.hero()[1])))
+        waited = 0
+        for waited in range(4):                  # a player waits a turn or three for the pet before going down
+            p = g.pet()
+            near = p and max(abs(p[2] - goal[0]), abs(p[3] - goal[1])) <= 1
+            if near or waited == 3:
+                break
+            g.tap(KEY_S)
+            g.play(frames=2, cap=4)
+        beside_at_stairs += bool(near)
+        waits += waited if near else 0
+        if say:
+            print("  level %d: %d steps, pet %s" % (g.byte("lvl"), len(dists),
+                                                  "beside the stairs after %d turns waited" % waited if near else "not at the stairs"))
+        g.stairs(DOT, goal)
+    st = dict(steps=len(dists), beside=sum(1 for d in dists if d <= 1), within3=sum(1 for d in dists if d <= 3),
+              worst=max(dists) if dists else 0, at_stairs=beside_at_stairs, levels=levels, lost=lost, waits=waits)
+    if say:
+        print("%(steps)d steps: pet beside the hero on %(beside)d, within 3 on %(within3)d, furthest %(worst)d; "
+              "beside the stairs down within 3 turns on %(at_stairs)d of %(levels)d levels, %(waits)d turns waited in all "
+              "(a new kitten given %(lost)d times)" % st)
+    return st
 
 
 def MY_NAME(g, t):
@@ -685,6 +838,10 @@ def main():
         print("back down: lvl", g.byte("lvl"), "hero", g.hero())
         g.stairs(DOT, (g.byte("dnx"), g.byte("dny")))
         print(g.png("yd_delphi"), "lvl", g.byte("lvl"), "depth", g.byte("depth"), "monsters", g.monsters())
+    if what == "follow":
+        follow(g, int(sys.argv[3]) if len(sys.argv) > 3 else 8)
+    if what == "reach":
+        survey(g, int(sys.argv[3]) if len(sys.argv) > 3 else 400)
     if what == "deep":
         for d in (5, 9):
             g.poke("depth", d - 1)

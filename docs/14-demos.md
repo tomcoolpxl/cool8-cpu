@@ -1866,8 +1866,12 @@ comes back exactly as it was left.
 
 **The level is Rogue's**: nine cells of a three by three grid, most of
 them a room and up to two only a turn in a corridor; one cell joined to
-a neighbour not yet joined until all nine are, then up to three loops
-more; a corridor leaves a room by a door in its wall, half of them an
+a neighbour not yet joined until all nine are; a turn joined to a second
+neighbour if it has only one, and where its two corridors leave it the
+same way and lie over each other, the stub they leave filled back to
+rock, so no corridor ends in nothing; then four to six loops more, as
+NetHack's `makecorridors()` digs four or more besides the ones that join
+every room; a corridor leaves a room by a door in its wall, half of them an
 empty doorway, a third shut, the rest open. Lit rooms are seen whole
 from inside or from a doorway -- nine in ten on levels 1-4, seven in
 ten on 5-8, half on 9-12 -- and anywhere else the hero sees the eight
@@ -1914,8 +1918,18 @@ for the Rogue, bandit now.
 - **Mending** is a hit point every 42/(level+2)+1 turns below level ten.
 - **The pet** -- the Valkyrie's and Wizard's a kitten, the Rogue's a
   little dog -- fights hostiles beside it that are not two levels above
-  it, stays near the hero, comes down the stairs if it is beside the
-  hero, changes places when the hero walks into it, and grows as
+  it, and follows as NetHack's `dog_move()` does: towards the hero when
+  three or more away, or two and the hero in a corridor or a doorway, and
+  about the hero otherwise; and when it cannot see the hero, towards the
+  newest of the hero's last 32 steps beside it (`settrack()` and
+  `gettrack()`), so it comes round corners and through doors after the
+  hero instead of pressing against the wall between. Measured along ten
+  levels walked stairs to stairs (`python sim/mott.py follow 1 10`): it
+  used to step only where it was nearer in a straight line, and was beside
+  the hero on 18 of 282 steps, as far as 18 behind, and beside the stairs
+  down on none of the ten; now beside on 123 of 244, never more than 4
+  behind, and beside the stairs within three turns' wait on eight. It
+  comes down the stairs if it is beside the hero, changes places when the hero walks into it, and grows as
   NetHack's `grow_up()` has it: hit points on each kill, a level at eight
   a level, a housecat or dog at level 4 and a large cat or dog at 6. A
   monster the pet bites bites back.
@@ -1998,7 +2012,20 @@ and one cell in 35 of the corridors dug after every room is joined is a
 secret passage, drawn as rock; `s` searches the eight cells round the
 hero, finding a secret door or passage one time in seven and a hidden trap
 one in eight, luck pushing the odds as `rnl()` does, and magic mapping
-finds the passages but not the doors. Every room of a level gets a trap
+finds the passages but not the doors. **A room with stairs is never
+shut in by secret doors alone**: if every door it has is secret, one is
+made a plain shut door, so a hero arriving can always see a way out;
+the other rooms can be closets, as NetHack's can. Measured on 600 levels
+the game made itself (`python sim/mott.py reach 0 600`, which calls
+`MakeLevel` and `MakeCave` on the running machine and walks each): before,
+282 corridors that ended in nothing and, on 74 of the 450 room levels,
+a stairs-up room from which fewer than 60 cells, and not the stairs
+down, could be reached without a search, because a spanning walk and one to three loops
+leave most rooms one door, and one door in eight is secret; after, no
+dead end, no room of stairs without a door or corridor to be seen, and
+every cell of every level reached once the secrets are found. On 121 of
+the 450 the stairs down are still behind a secret somewhere, always at
+the end of a corridor that runs into a wall -- where to search. Every room of a level gets a trap
 while a die of 8 less a sixth of the depth comes up 0, eleven of
 NetHack's kinds by `mktrap()`'s choice, each with DawnLike's picture of
 it and hidden until it goes off or is found: an arrow trap (thitu() at
@@ -2157,6 +2184,67 @@ on the level below; the hero cannot squeeze diagonally between boulders
 and walls; nothing teleports and nothing digs. The top of the second
 holds an amulet of life saving and gold.
 
+**The Amulet and the climb back, as NetHack runs its endgame's pieces.**
+Level 12 holds the Amulet of Mott in a room away from the stairs, and
+the Wizard of Mott -- monst.c's Wizard of Yendor, level 30, armour class
+-8, more than a hero of the twelve levels can hope to kill -- asleep
+beside it. Carrying it, the Wizard wakes one turn in forty, as
+`amulet()` has it ("You get the feeling that something is watching
+you."); his blow is `AD_SAMU`, and one in twenty steals the Amulet and
+takes him elsewhere with it, and only killing him gets it back. Once it
+has been lifted, every 50 to 250 turns `intervene()`: a vague
+nervousness, a black glow cursing things, every monster on the level
+woken, a nasty -- an ettin, a troll, an owlbear, a vampire lord -- beside
+the hero, or the Wizard back ("So thou thought thou couldst elude me,
+fool."); and a successful prayer's timeout grows by another `rnz(1000)`.
+Climbing the dungeon's stairs with it above level 9, one time in four, "A
+mysterious force momentarily surrounds you..." and the hero goes down
+instead -- up to three levels for the lawful, two for the neutral, one
+for the chaotic -- or somewhere else on the level. Up the stairs of level
+1 with it, the hero climbs out into the sunlight and the game is won:
+the hero's picture where the grave would be, INTO THE SUN, and how long
+it took.
+
+**Platino**, DawnLike's author's own creature, whom his licence asks be
+hidden well in any game that uses the tiles, is the last of the
+creatures: harmless, never generated, and he pops up only beside a hero
+who writes his name in the dust.
+
+**Music by depth, and sounds.** Ten tunes written for the game -- the
+title's march, the halls' walking A minor, the caverns' slow Phrygian,
+the depths' pulse in C minor, the mines' digging song, the town's lilt,
+Sokoban's staccato puzzle, Delphi's arpeggios, and a death and a victory
+that do not loop -- are in `MMUSIC.DAT` on drive 9, 786 bytes, as events
+of three voices: a lead, a bass and a harmony, each note fading to half.
+`tools/mkmott.py` writes them from note names. The player reads a step
+from the flash when it is due, in the frame loop, which never runs while
+another stream is open. **The music is not played all the time**: the
+title's plays on, but a part of the dungeon's plays twice through when
+the hero comes into it -- the halls, the caverns, the depths, the Mines,
+the town, Sokoban, Delphi -- and then the dungeon is quiet; another level
+of the same part does not start it again.
+
+**What is heard instead, and not all the time either.** On a fourth
+voice, a sound is a pitch swept and faded, or swelled and faded, noise
+or tone, repeated with its pitch a little off each time: a blow landing
+or missing, a kill, the hero hurt, a level gained, a door, gold, a trap,
+the stairs, a wand or a spell, a prayer's end, a fountain, a boulder.
+A monster's blow sounds as its kind -- a bite, a claw's scratch, a
+weapon's clang, a sting, the thud of a butt, a kick or a squeeze. In the
+quiet, one of the part's two noises comes 20 to 37 seconds apart: in the
+halls footsteps or a drip, in the caverns a drip or the wind, in the
+depths a rumble or the wind, in the Mines a pick or a drip, in the town
+footsteps or a creak, in Sokoban a creak or a drip, at Delphi bubbling or
+the wind -- counted by dice of their own, so how long a player waits
+never changes the game's. And NetHack's own: a fight out of sight is
+heard, `noises()`, "You hear some noises in the distance.", once in ten
+turns unless it has come nearer or gone further; and `dosounds()`, a
+fountain on the level one turn in 400 ("You hear bubbling water."), a
+tended shop the hero is not in one in 200 ("You hear the chime of a cash
+register."), a temple one in 200 ("You hear someone praising" its god),
+and the Oracle out of sight one in 400 ("You hear convulsive ravings."),
+each with a sound of its own.
+
 **Where milestone 5 is not NetHack.** The Mines are three levels, not
 eight, with a town and no Mines' End luckstone; Sokoban two levels, not
 four, with a prize, not a zoo, and no luck penalty for its rules broken;
@@ -2217,6 +2305,12 @@ holds the four special levels, 1,100 bytes each, cells, rooms, stairs and
 up to twenty features, and `MPAGES.DAT` the Oracle's pages beside the
 keys ([D111](01-decisions.md#d111--motts-special-levels-drawn-in-the-tool-proven-and-read-from-the-disc)).
 
+**Memory at the end of milestone 6.** The Amulet's run, Platino and the
+victory took 1,192 bytes, the music and the sounds 1,209, the quiet and
+what is heard in it 1,347, the corridors that end nowhere and the rooms
+of stairs shut in put right 516, the pet following the hero's steps 313:
+**59,650 bytes**, its last byte at `$FD01`, **510 free** below `$FF00`.
+
 **The grave**: when the hit points run out, "You die...", then DawnLike's
 gravestone and who died, what killed them, on which level, at which
 experience level, after how many turns and with how much gold.
@@ -2230,7 +2324,7 @@ experience level, after how many turns and with how much gold.
 | **3 — done** | the things by NetHack's numbers: the pack, wielding, wearing, gold; potions, scrolls, wands and rings under appearances shuffled each game; blessed, uncursed, cursed; what each does |
 | **4 — done** | shops and their keeper; altars and prayer; fountains; traps and secret doors; Elbereth in the dust; `?` |
 | **5 — done** | the special levels: the Oracle, a small Sokoban up from below it, and a cave branch after the Gnomish Mines with a town |
-| 6 | the Amulet on level 12 and the climb back; music by depth and the effects; the Platino sprite hidden, as DawnLike's author asks |
+| **6 — done** | the Amulet on level 12 and the climb back; music by depth and the effects; the Platino sprite hidden, as DawnLike's author asks |
 
 Chosen with the owner and not in it: hunger (so food is not a clock);
 saving (a game is one sitting, as the first roguelikes were).
@@ -2253,11 +2347,11 @@ restarts the machine.
 
 **Measured**: milestone 1, 13,742 bytes of PRG, the art table included;
 milestone 2, 26,289; milestone 3, 45,525, and 39,334 after the room
-was made; milestone 4, 49,438; milestone 5, **55,073**. On drive 9
-three theme files of 32,768 bytes, `MNAMES.DAT` of 11,952 (249 names at
-48 bytes), `MPAGES.DAT` of 5,520 (six pages), `MLEVELS.DAT` of 4,400
-(four levels) and `MOTT.STR` of 8,893 (292 strings); the loader of 1,044
-on drive 11.
+was made; milestone 4, 49,438; milestone 5, 55,073; milestone 6,
+**59,650**. On drive 9 three theme files of 32,768 bytes, `MNAMES.DAT` of
+12,000 (250 names at 48 bytes), `MPAGES.DAT` of 5,520 (six pages),
+`MLEVELS.DAT` of 4,400 (four levels), `MMUSIC.DAT` of 786 (ten tunes) and
+`MOTT.STR` of 9,647 (316 strings); the loader of 1,044 on drive 11.
 
 **The gate** (`sim/test_action.py`, on `sim/mott.py`): the art table
 and theme files what the sheets make; the compiled bytes the same as
@@ -2326,11 +2420,29 @@ puzzles solved through the keyboard, push by push, as `sokoban_solve()`
 finds them, the stairs up reached and the prize taken; Delphi with the
 Oracle, four fountains and four centaurs at peace; a minor consultation
 for fifty, a rumour and five experience, and a major one for 550 with a
-page over the map; the stack; and from the demos disc, MOTT.PRG, its themes, names, pages, levels and strings on drive 9,
+page over the map; the stack. Milestone 6: the title's tune playing, the
+halls' twice through and then quiet, and not again on the next level of
+the halls; a noise of the halls' when its count comes round, and the next
+20 seconds or more off; a jackal's bite sounding as a bite; the pet's
+fight out of sight heard as noises in the distance; a fountain on the
+level heard, bubbling; the depths' tune and the stairs' sound; level 12's Amulet with the
+Wizard asleep beside it; the Amulet taken and the Wizard's malice set; his
+blow stealing it and his carrying it off, and killed, his dropping it; an
+intervention when the count runs out and the next set; the mysterious
+force sending the hero down on the stairs; Platino written for and
+appearing; up the stairs of level 1 with the Amulet into the sunlight,
+the game won and the victory's tune; a cursed ring dropped when it is
+not worn, and worn, neither dropped nor taken off; 160 levels made by the
+game's own routines, every cell reached with the secrets found, no
+corridor a dead end, and no room of stairs without a door or corridor to
+be seen; a Wizard's kitten keeping up along three levels walked stairs to
+stairs, never more than six behind and beside the stairs down to come
+along on two of them; and from the demos disc, MOTT.PRG, its themes, names, pages, levels, music and strings on drive 9,
 only the loader on 11, and `SYS "MOTT.BIN"` from BASIC finding its
 program and its theme there. `python sim/mott.py walk` (or `title`,
 `stairs`, `deep`, `fight`, `scene`, `tour`, `shop`, `branches`) plays it and writes the
-frames as PNG.
+frames as PNG; `reach 0 n` makes n levels and says what a walk over each finds, and
+`follow role n` walks n levels stairs to stairs and says how the pet kept up.
 
 ### `SLIDES` — the old test pictures, as fully as mode 6 can show them
 

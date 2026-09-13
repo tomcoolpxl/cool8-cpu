@@ -3228,7 +3228,9 @@ def test_mott():
     dim = [i for i, v in enumerate(lv) if v & Y.F_SEEN and not v & Y.F_VIS]
     check(g.hero() == (downs[0] % Y.LW, downs[0] // Y.LW) and dim and not g.wrong_pics(),
           "mott: walked to the stairs down, the window following, what was left behind remembered and dimmed",
-          "hero %s, %d remembered, wrong pictures %s" % (g.hero(), len(dim), g.wrong_pics()[:3]))
+          "hero %s, stairs %s, %d remembered, wrong pictures %s" % (g.hero(), (downs[0] % Y.LW, downs[0] // Y.LW), len(dim),
+                                                                     [(p, g.byte("lv", p[1] * Y.LW + p[0]), g.cell_pic(*p), g.want_pic(*p))
+                                                                      for p in g.wrong_pics()[:3]]))
 
     # down and back: the same level and the same monsters, as they were left
     before = [v & 127 for v in g.level()]
@@ -3271,7 +3273,7 @@ def test_mott():
         shots.append((g.byte("depth"), g.byte("theme"), patterns() == dat[t], not g.wrong_pics()))
         lo, hi = d // 6, (d + 6) // 2
         deep += [(d, MY.CREATURES[t2][1]) for _i, t2, _x, _y, _hp, st in g.monsters()
-                 if not st & Y.S_PET and t2 != c("M_SHOPKEEPER") and not lo <= MY.CREATURES[t2][9] <= hi]
+                 if not st & Y.S_PET and t2 not in (c("M_SHOPKEEPER"), c("M_WIZARDOFMOTT")) and not lo <= MY.CREATURES[t2][9] <= hi]
     kinds = [v & 15 for v in g.level()]
     check(shots[0] == (5, 1, True, True) and shots[1] == (9, 2, True, True),
           "mott: depth 5 brings the caverns' theme and depth 9 the depths', each streamed from the drive", str(shots))
@@ -3453,6 +3455,8 @@ def test_mott():
     else:
         k2, (lx, ly) = line
         tgt = g.put_monster(c("M_JACKAL"), hx + 2 * lx, hy + 2 * ly, hp=250)
+        at = (hy + 2 * ly) * Y.LW + hx + 2 * lx        # in view, even when the first room is a dark one
+        g.poke("lv", g.byte("lv", at) | Y.F_VIS | Y.F_SEEN, at)
         pw0 = g.byte("upw")
         g.shifted(Y.KEY_Z)
         g.m.run_frame(2)
@@ -3638,10 +3642,13 @@ def test_mott():
     line = next(((k, s) for k, s in Y.STEP.items() if not (s[0] and s[1]) and g.kind(hx + s[0], hy + s[1]) == Y.K_FLOOR), None)
     if line:
         g.command(KEY_F, direction=line[0])
+        l0 = g.uword("loops")                          # the flight drawn to its end, two frames a cell
+        g.until(lambda: g.uword("loops") != l0, 120)
         left = sum(q for _k, t, q, _f, _e in g.pack() if t == o("DAGGER"))
         down = sum(ob[4] for ob in g.objs() if ob[1] == o("DAGGER"))
         check(left < carried and left + down == carried, "mott: f fires daggers, and each lands on the floor",
-              "%d of %d left, %d down" % (left, carried, down))
+              "%d of %d left, %d down; %d things on the level, pack %s, said %s" % (
+                  left, carried, down, len(g.objs()), [(p[1], p[2]) for p in g.pack()], g.messages()))
 
     # the amulet of life saving takes a death
     g.clear_monsters(keep_pet=False)
@@ -4170,6 +4177,267 @@ def test_mott():
     check(0x100 < g.m.cpu.sp <= 0x200, "mott: the stack is where it should be after milestone 5", "SP $%04X" % g.m.cpu.sp)
     del g
 
+    # ------------------------------------------------------ milestone 6
+    g = Y.Game(tag="mott6")
+    c = g.c
+    g.m.run_frame(120)
+    snd = g.m.sound()
+    check(g.byte("mtune") == c("TU_TITLE") and g.byte("mon") and any(snd[8 * v + 5] & 0x40 for v in range(3)),
+          "mott: the title plays its tune from MMUSIC.DAT", "tune %d, on %d" % (g.byte("mtune"), g.byte("mon")))
+    g.start(0)
+    g.m.run_frame(10)
+    check(g.byte("mtune") == c("TU_HALLS") and g.byte("mon"), "mott: the halls play theirs", str(g.byte("mtune")))
+    g.sturdy()
+    g.m.run_frame(1000)
+    check(g.byte("mon") == 0 and g.byte("mtune") == c("TU_HALLS"),
+          "mott: twice through on coming into them, and then the halls are quiet", "on %d" % g.byte("mon"))
+    g.clear_monsters(keep_pet=False)
+    g.stairs(Y.DOT, (g.byte("dnx"), g.byte("dny")))
+    check(g.byte("lvl") == 2 and g.byte("mon") == 0, "mott: and the next level of the halls does not start it again",
+          "lvl %d, on %d" % (g.byte("lvl"), g.byte("mon")))
+    g.clear_monsters(keep_pet=False)
+    g.word_poke("ambt", 1)
+    heard = g.until(lambda: g.byte("sxk") in (c("SX_STEPS"), c("SX_DRIP")) and g.m.sound()[8 * 3 + 5] & 0x40, 120)
+    check(heard is not None and g.uword("ambt") >= 1100,
+          "mott: in the quiet, when the count comes round, one of the halls' own noises -- footsteps, a drip -- and the next 20 seconds or more off",
+          "sound %d, next %d" % (g.byte("sxk"), g.uword("ambt")))
+
+    # a monster's blow sounds as its kind: a bite
+    hx, hy = g.hero()
+    nb = next((hx + s[0], hy + s[1]) for s in Y.STEP.values() if g.kind(hx + s[0], hy + s[1]) in (Y.K_FLOOR, Y.K_CORR))
+    jk = g.put_monster(c("M_JACKAL"), nb[0], nb[1], hp=200)
+    bit = False
+    for _ in range(30):
+        g.sturdy()
+        g.tap(Y.KEY_S)
+        if "bites!" in g.messages():
+            bit = g.byte("sxk") == c("SX_BITE")
+            break
+        g.play(frames=2, cap=4)
+    check(bit, "mott: a jackal's bite sounds as a bite", "sound %d" % g.byte("sxk"))
+    g.poke("mstat", 0, jk)
+    g.poke("mat", 0, nb[1] * Y.LW + nb[0])
+
+    # a fight out of sight is heard: NetHack's noises()
+    lv = g.level()
+    hx, hy = g.hero()
+    spots = [(x, y) for y in range(Y.LH) for x in range(Y.LW - 1)
+             if all(lv[y * Y.LW + x + i] & 15 in (Y.K_FLOOR, Y.K_CORR) and not lv[y * Y.LW + x + i] & 128 for i in (0, 1))
+             and max(abs(x - hx), abs(y - hy)) > 6]
+    fx, fy = spots[0]
+    g.put_monster(c("M_LITTLEDOG"), fx, fy, hp=200, state=Y.S_LIVE | Y.S_PET)
+    nt = g.put_monster(c("M_NEWT"), fx + 1, fy, hp=200)
+    g.poke("msl", 255, nt)
+    heard = ""
+    for _ in range(40):
+        g.sturdy()
+        g.tap(Y.KEY_S)
+        if "You hear some noises" in g.messages():
+            heard = g.messages() if g.byte("sxk") == c("SX_NOISES") else "wrong sound"
+            break
+        g.play(frames=2, cap=4)
+    check("You hear some noises in the distance." in heard, "mott: the pet fighting out of sight is heard, some noises in the distance", heard)
+
+    # what the level holds is heard now and then: NetHack's dosounds(), a fountain
+    g.clear_monsters(keep_pet=False)
+    g.poke("shroom", 255)
+    g.poke("troom", 255)
+    lv = g.level()
+    hx, hy = g.hero()
+    fx, fy = next((x, y) for y in range(Y.LH) for x in range(Y.LW)
+                  if lv[y * Y.LW + x] & 15 == Y.K_FLOOR and (x, y) != (hx, hy))
+    g.set_kind(fx, fy, c("K_FOUNTAIN"))
+    heard, turns = "", 0
+    for turns in range(2000):
+        g.sturdy()
+        g.tap(Y.KEY_S)
+        m = g.messages()
+        if "You hear" in m:
+            heard = m if g.byte("sxk") == c("SX_BUBBLE") else "wrong sound"
+            break
+        if g.text(32, 1, 8) == "--More--":
+            g.tap(Y.SPACE)
+    check(any(w in heard for w in ("bubbling water.", "water falling on coins.", "the splashing of a naiad.")),
+          "mott: a fountain on the level is heard now and then, and bubbles", "%s after %d turns" % (heard, turns + 1))
+    g.set_kind(fx, fy, Y.K_FLOOR)
+    g.sturdy()
+    g.poke("lvl", 11)
+    g.poke("depth", 11)
+    g.clear_monsters(keep_pet=False)
+    g.stairs(Y.DOT, (g.byte("dnx"), g.byte("dny")))
+    amu = next((o_ for o_ in g.objs() if o_[1] == c("O_MOTT")), None)
+    wiz = next((m for m in g.monsters() if m[1] == c("M_WIZARDOFMOTT")), None)
+    check(g.byte("mtune") == c("TU_DEPTHS") and g.byte("sxt") > 0,
+          "mott: the depths play theirs, and the stairs made their sound", "tune %d, sound %d" % (g.byte("mtune"), g.byte("sxt")))
+    check(g.byte("lvl") == 12 and amu and wiz and max(abs(wiz[2] - amu[2]), abs(wiz[3] - amu[3])) == 1
+          and g.byte("msl", wiz[0]) > 200,
+          "mott: level 12 holds the Amulet of Mott, and the Wizard of Mott asleep beside it", "%s %s" % (amu, wiz))
+    for m in g.monsters():
+        if m[1] != c("M_WIZARDOFMOTT"):
+            g.poke("mstat", 0, m[0])
+            g.poke("mat", 0, m[3] * Y.LW + m[2])
+    g.poke("px", amu[2])
+    g.poke("py", amu[3])
+    g.redraw()
+    g.tap(Y.COMMA)
+    said = g.play()
+    check(any(p[1] == c("O_MOTT") for p in g.pack()) and g.byte("udemi") == 1 and 49 <= g.uword("udg") <= 300,
+          "mott: the Amulet taken, and the Wizard's malice set to come in 50 to 300 turns", said)
+
+    # the Wizard's blow steals it, one in twenty; killing him drops it
+    wi = wiz[0]
+    g.poke("msl", 0, wi)
+    g.poke("mhp", 250, wi)
+    said = ""
+    for _ in range(120):
+        if not any(p[1] == c("O_MOTT") for p in g.pack()):
+            break
+        g.sturdy()
+        g.poke("upara", 0)
+        if max(abs(g.byte("mx", wi) - g.hero()[0]), abs(g.byte("my", wi) - g.hero()[1])) > 1:
+            hx, hy = g.hero()
+            spot = next(((hx + s[0], hy + s[1]) for s in Y.STEP.values()
+                         if g.kind(hx + s[0], hy + s[1]) == Y.K_FLOOR and not g.byte("mat", (hy + s[1]) * Y.LW + hx + s[0])), None)
+            g.poke("mat", 0, g.byte("my", wi) * Y.LW + g.byte("mx", wi))
+            g.poke("mx", spot[0], wi)
+            g.poke("my", spot[1], wi)
+            g.poke("mat", wi + 1, spot[1] * Y.LW + spot[0])
+        g.tap(Y.DOT)
+        said = g.play(frames=2, cap=6)
+    carried = [o_ for o_ in g.objs() if o_[1] == c("O_MOTT") and o_[2] == 255 and o_[3] == wi]
+    check(carried and "stole" in flat(said) and "Amulet of Mott" in flat(said),
+          "mott: the Wizard of Mott's blow steals the Amulet, and he carries it off", said)
+    g.sturdy()
+    hx, hy = g.hero()
+    spot = next(((k, hx + s[0], hy + s[1]) for k, s in Y.STEP.items()
+                 if g.kind(hx + s[0], hy + s[1]) == Y.K_FLOOR and not g.byte("mat", (hy + s[1]) * Y.LW + hx + s[0])))
+    g.poke("mat", 0, g.byte("my", wi) * Y.LW + g.byte("mx", wi))
+    g.poke("mx", spot[1], wi)
+    g.poke("my", spot[2], wi)
+    g.poke("mat", wi + 1, spot[2] * Y.LW + spot[1])
+    g.poke("mhp", 1, wi)
+    g.poke("msl", 50, wi)
+    g.poke("ulev", 20)
+    for _ in range(20):
+        if not g.byte("mstat", wi):
+            break
+        g.tap(Y.KP[spot[0]])
+        g.play(frames=2, cap=4)
+    dropped = [o_ for o_ in g.objs() if o_[1] == c("O_MOTT") and (o_[2], o_[3]) == (spot[1], spot[2])]
+    check(not g.byte("mstat", wi) and dropped, "mott: and killed, he drops it where he fell", str(dropped))
+    g.poke("px", spot[1])
+    g.poke("py", spot[2])
+    g.redraw()
+    g.tap(Y.COMMA)
+    g.play()
+
+    # his malice comes when it is due
+    g.word_poke("udg", 0)
+    said = ""
+    for _ in range(3):
+        g.tap(Y.DOT)
+        said += " / " + g.play(frames=3, cap=6)
+    check(49 <= g.uword("udg") <= 250 and g.byte("wantint") == 0,
+          "mott: when the count runs out the Wizard intervenes, and the next is set 50 to 250 turns off", said[-100:])
+
+    # the mysterious force on the stairs up
+    forced, tries = False, 0
+    if not any(p[1] == c("O_MOTT") for p in g.pack()):   # the Wizard, come back, may have it again
+        g.give(c("O_MOTT"))
+    g.poke("lvl", 6)
+    g.poke("depth", 6)
+    for tries in range(40):
+        g.clear_monsters(keep_pet=False)
+        lv0 = g.byte("lvl")
+        g.stairs(Y.COMMA, (g.byte("upx"), g.byte("upy")))
+        said = flat(g.messages())
+        if "mysterious force" in said:
+            forced = g.byte("lvl") > lv0 - 1
+            break
+        g.stairs(Y.DOT, (g.byte("dnx"), g.byte("dny")))
+    check(forced, "mott: carrying it up the stairs, a mysterious force sometimes sends the hero down instead",
+          "%d tries, lvl %d" % (tries + 1, g.byte("lvl")))
+
+    # Platino, hidden as DawnLike's author asks
+    g.clear_monsters(keep_pet=False)
+    hx, hy = g.hero()
+    g.set_kind(hx, hy, Y.K_FLOOR)
+    g.shifted(Y.KEY_E)
+    g.m.run_frame(6)
+    g.play(cap=4)
+    g.type_text("Platino")
+    g.tap(Y.ENTER)
+    said = g.play()
+    plat = [m for m in g.monsters() if m[1] == c("M_PLATINO")]
+    check(plat and "Platino pops up" in flat(said),
+          "mott: Platino, DawnLike's author's own, appears only to one who writes his name in the dust", said)
+
+    # a cursed ring: dropped if it is not worn; worn, it cannot be dropped nor taken off
+    g.clear_monsters(keep_pet=False)
+    g.clear_objs()
+    rk = g.give(c("O_RPROTECTION"), f=Y.OF_CURSE)
+    g.command(Y.KEY_D, rk)
+    loose = g.play()
+    dropped = not any(p[1] == c("O_RPROTECTION") for p in g.pack())
+    g.tap(Y.COMMA)
+    g.play()
+    rk = next(p[0] for p in g.pack() if p[1] == c("O_RPROTECTION"))
+    g.command(Y.KEY_P, rk, shift=True)
+    g.play()
+    g.command(Y.KEY_D, rk)
+    worn = g.play()
+    g.command(Y.KEY_R, rk, shift=True)
+    stuck = g.play()
+    check(dropped and "You drop" in loose and "cannot drop something you are wearing" in flat(worn)
+          and "It won't come off!" in flat(stuck) and g.byte("uleft") == rk,
+          "mott: a cursed ring not worn is dropped; worn, it cannot be dropped, and will not come off", " / ".join((loose, worn, stuck)))
+    g.poke("it", 255, rk)
+    g.poke("uleft", 255)
+
+    # out of the dungeon with the Amulet: the game is won
+    g.poke("lvl", 1)
+    g.poke("depth", 1)
+    g.poke("made", 0, 1)
+    g.poke("made", 0, 2)                                # 2 was walked into, and left by a poke, not its stairs
+    g.clear_monsters(keep_pet=False)
+    amk =next(p[0] for p in g.pack() if p[1] == c("O_MOTT"))
+    g.poke("it", 255, amk)                              # put by, so the force does not turn the climb to 1 back
+    g.stairs(Y.DOT, (g.byte("dnx"), g.byte("dny")))
+    g.stairs(Y.COMMA, (g.byte("upx"), g.byte("upy")))
+    g.poke("it", c("O_MOTT"), amk)
+    g.clear_monsters(keep_pet=False)
+    g.poke("px", g.byte("upx"))
+    g.poke("py", g.byte("upy"))
+    g.redraw()
+    g.shifted(Y.COMMA)
+    g.m.run_frame(10)
+    first = flat(g.messages())
+    g.tap(Y.SPACE)
+    g.m.run_frame(20)
+    words = " ".join(g.text(0, r, 40) for r in range(30))
+    check("sunlight" in first and g.byte("won") == 1 and g.byte("phase") == 2 and "INTO THE SUN" in words
+          and g.byte("mtune") == c("TU_VICTORY")
+          and "escaped with the Amulet of Mott" in words,
+          "mott: up the stairs of level 1 with the Amulet: out into the sunlight, and the game won",
+          "%s (lvl %d at %s, up %d,%d)" % (first, g.byte("lvl"), g.hero(), g.byte("upx"), g.byte("upy")))
+
+    # levels made by the game's own MakeLevel and MakeCave: none unfinishable, no dead end, no stairs shut in
+    st = Y.survey(g, 160, say=False)
+    check(not st["bad"] and st["dead"] == 0 and st["shut"] == 0 and st["ups"] > 60 and st["secrets"] > 100,
+          "mott: 160 levels made, every cell reached with the secrets found, no corridor a dead end, and no room of"
+          " stairs without a door or corridor to be seen", str(dict(st, bad=st["bad"][:3])))
+    del g
+
+    # the pet follows round corners and through doors: three levels walked stairs to stairs
+    g = Y.Game(tag="mottpet")
+    g.start(1)
+    g.m.run_frame(10)
+    st = Y.follow(g, 3, say=False)
+    check(st["worst"] <= 6 and st["beside"] * 3 >= st["steps"] and st["at_stairs"] >= 2,
+          "mott: the kitten keeps up along three levels' walks, round corners and through doors, and is beside the"
+          " stairs down to come along", str(st))
+    del g
+
     # the path a person takes: MOTT.BIN on the CoolAction disc, the program on drive 9
     import cool8rsvm as vm
     import cool8disk
@@ -4183,7 +4451,7 @@ def test_mott():
     home, v11 = cool8disk.Volume(im, cool8disk.MOTT_VOL), cool8disk.Volume(im, cool8disk.ACTION_VOL)
     check(home.find("MOTT.PRG") and home.get("MOTT.PRG") == bytes(prg) and all(home.get(os.path.basename(p)) == d for p, d in zip(Y.DATS, dat))
           and home.get("MNAMES.DAT") == names and home.get("MPAGES.DAT") == open(Y.HELP, "rb").read()
-          and home.get("MLEVELS.DAT") == open(Y.LEVELS, "rb").read()
+          and home.get("MLEVELS.DAT") == open(Y.LEVELS, "rb").read() and home.get("MMUSIC.DAT") == open(Y.MUSIC, "rb").read()
           and home.get("MOTT.STR") == open(H.act_strings("mott_payload"), "rb").read()
           and v11.find("MOTT.BIN") and not v11.find("MOTT.PRG"),
           "mott: the demos disc has MOTT.PRG and its themes on drive 9, and only MOTT.BIN on drive 11",

@@ -572,6 +572,7 @@ def call(m, syms, routine, regs=(), at=0x0200, budget=20_000_000):
         if v is not None:
             setattr(m.cpu, "r%d" % i, v)
     m.cpu.pc = at
+    m.cpu.halted = False                        # the HALT of a call before would stop this one at once
     why = m.run(budget=budget)
     if why != "halt":
         raise SystemExit("%s did not return: %s, pc $%04X"

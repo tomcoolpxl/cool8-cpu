@@ -96,7 +96,7 @@ ROLES = [("VALK", "Valkyrie", 4, 0), ("WIZ", "Wizard", 6, 0), ("ROGUE", "Rogue",
 # danger is the one players know; an effect the game does not have does
 # its dice and nothing more.
 A_BITE, A_CLAW, A_WEAP, A_STNG, A_TUCH, A_BUTT, A_HUGS, A_PASV, A_KICK = range(1, 10)
-E_PHYS, E_POIS, E_PLYS, E_ACID, E_SLEE, E_DRLI, E_STUN, E_SGLD, E_SITM = range(9)
+E_PHYS, E_POIS, E_PLYS, E_ACID, E_SLEE, E_DRLI, E_STUN, E_SGLD, E_SITM, E_SAMU = range(10)
 NOHANDS, FLY, REGEN, SGROUP, LGROUP, NOGEN, PET, PEACE = 1, 2, 4, 8, 16, 32, 64, 128
 
 CREATURES = [
@@ -170,10 +170,12 @@ CREATURES = [
     ("WATCHMAN", "watchman", "Humanoid", 4, 5, 6, 10, 10, 0, 8, NOGEN | PEACE, [(A_WEAP, E_PHYS, 1, 8)]),
     ("PRIEST", "aligned priest", "Humanoid", 0, 23, 12, 12, 10, 0, 15, NOGEN | PEACE,
      [(A_WEAP, E_PHYS, 4, 10), (A_KICK, E_PHYS, 1, 4)]),
-    ("WIZARDOFMOTT", "Wizard of Mott", "Undead", 1, 7, 30, 12, -8, 0, 34, NOGEN, [(A_WEAP, E_PHYS, 2, 12)]),
+    ("WIZARDOFMOTT", "Wizard of Mott", "Undead", 1, 7, 30, 12, -8, 0, 34, NOGEN, [(A_WEAP, E_SAMU, 2, 12)]),
+    # DawnLike's author asks that his Platino be hidden well in any game that
+    # uses the tiles: he is the last creature, harmless, and never made but
+    # by writing his name in the dust
+    ("PLATINO", "Platino", "Reptile", 3, 12, 0, 12, 10, 0, 0, NOGEN | PEACE, []),
 ]
-# DawnLike's easter egg, which its author asks be hidden in the game
-PLATINO = ("Reptile", 3, 12)
 
 # ------------------------------------------------------------- the items
 # NetHack 3.6's objects (src/objects.c) the game has: a class, the base
@@ -410,7 +412,6 @@ def creature_images(t, frame):
     out = [indices(over(floor, cut("Characters/Player%d.png" % frame, c, r))) for _, _, c, r in ROLES]
     for _key, _name, sh, c, r, *_ in CREATURES:
         out.append(indices(over(floor, cut("Characters/%s%d.png" % (sh, frame), c, r))))
-    out.append(indices(over(floor, cut("Characters/%s%d.png" % (PLATINO[0], frame), PLATINO[1], PLATINO[2]))))
     assert len(out) <= 64, len(out)
     return out
 
@@ -429,7 +430,7 @@ def creature_table():
         ("A_BITE", A_BITE), ("A_CLAW", A_CLAW), ("A_WEAP", A_WEAP), ("A_STNG", A_STNG), ("A_TUCH", A_TUCH),
         ("A_BUTT", A_BUTT), ("A_HUGS", A_HUGS), ("A_PASV", A_PASV), ("A_KICK", A_KICK),
         ("E_POIS", E_POIS), ("E_PLYS", E_PLYS), ("E_ACID", E_ACID), ("E_SLEE", E_SLEE),
-        ("E_DRLI", E_DRLI), ("E_STUN", E_STUN), ("E_SGLD", E_SGLD), ("E_SITM", E_SITM))]
+        ("E_DRLI", E_DRLI), ("E_STUN", E_STUN), ("E_SGLD", E_SGLD), ("E_SITM", E_SITM), ("E_SAMU", E_SAMU))]
     out.append("BYTE ARRAY m_lvl(%d) = [%s]" % (n, col(c[5] for c in CREATURES)))
     out.append("BYTE ARRAY m_spd(%d) = [%s]" % (n, col(c[6] for c in CREATURES)))
     out.append("; armour class plus ten, so a byte holds it")
@@ -503,7 +504,6 @@ def act(font):
     lines.append("; banks 2 and 3: the creatures, a picture four tiles, frame 0 and frame 1")
     for i, (key, _, _, _) in enumerate(ROLES):
         lines.append("CONST C_%s = %d" % (key, i * 4))
-    lines.append("CONST C_PLATINO = %d" % ((len(ROLES) + len(CREATURES)) * 4))
     lines += creature_table()
     lines += item_table()
     lines += names_table()
@@ -892,6 +892,117 @@ ORACLES = [
      "drowned in it.\""],
 ]
 
+# ---------------------------------------------------------------- the music
+# The game's own tunes, written here, a step a token: a note (A4, C#5, Bb3),
+# . to hold, - for silence; the three voices a lead, a bass and a harmony.
+# MMUSIC.DAT holds a table of each tune's offset, then its events: frames
+# to wait, then a byte for each voice -- 0 unchanged, 127 silent, else the
+# note plus one, MIDI less 24 -- and 255 to loop or 254 to end.
+MUSIC_FILE = "MMUSIC"
+TUNES = [
+    ("TITLE", 10, True, [
+        "D4 . F4 A4 D5 . C5 A4 Bb4 . A4 G4 A4 . . . G4 . Bb4 D5 C5 . A4 F4 E4 F4 G4 E4 D4 . . .",
+        "D3 . . . D3 . . . G2 . . . F2 . . . G2 . . . A2 . . . A2 . A2 . D3 . . .",
+        "A3 . . . F4 . . . D4 . . . C4 . . . Bb3 . . . E4 . . . C#4 . . . A3 . . ."]),
+    ("HALLS", 12, True, [
+        "A4 . C5 B4 A4 . E4 . F4 . G4 A4 G4 . E4 . A4 . C5 D5 E5 . D5 C5 B4 A4 G#4 B4 A4 . . .",
+        "A2 . E3 . A2 . E3 . D3 . A2 . E3 . B2 . F2 . C3 . C3 . G2 . E2 . E3 . A2 . E3 .",
+        "- . . . C4 . . . - . . . B3 . . . - . . . G4 . . . - . . . C4 . . ."]),
+    ("CAVERNS", 16, True, [
+        "E4 . . F4 E4 . . . G4 . F4 . E4 . . . B4 . A4 . G4 . F4 . E4 . . . - . . .",
+        "E2 . . . . . . . C3 . . . E2 . . . D3 . . . B2 . . . E2 . . . E2 . . .",
+        "B3 . . . . . . . G3 . . . B3 . . . F3 . . . D3 . . . G3 . . . - . . ."]),
+    ("DEPTHS", 10, True, [
+        "G4 . . Ab4 G4 . Eb4 . F4 . . G4 F4 . D4 . Eb4 . G4 . C5 . B4 . C5 . . . G4 . . .",
+        "C2 C3 C2 C3 C2 C3 C2 C3 Bb1 Bb2 Bb1 Bb2 Bb1 Bb2 Bb1 Bb2 Ab1 Ab2 Ab1 Ab2 G1 G2 G1 G2 C2 C3 C2 C3 C2 C3 C2 C3",
+        "- . . . . . . . - . . . . . . . Eb4 . . . D4 . . . Eb4 . . . - . . ."]),
+    ("MINES", 8, True, [
+        "G4 B4 D5 . C5 B4 A4 . G4 A4 B4 G4 F4 . D4 . G4 B4 D5 . E5 D5 C5 . B4 A4 F4 A4 G4 . . .",
+        "G2 . D3 . G2 . D3 . G2 . D3 . F2 . C3 . C3 . G2 . C3 . G2 . D3 . D3 . G2 . D3 .",
+        "- . B3 . - . D4 . - . B3 . - . A3 . - . E4 . - . E4 . - . C4 . - . B3 ."]),
+    ("TOWN", 10, True, [
+        "F4 . A4 C5 . A4 Bb4 . G4 E4 . C4 F4 . A4 C5 . F5 E5 . C5 F4 . .",
+        "F2 . . C3 . . C3 . . C2 . . F2 . . A2 . . C3 . . F2 . .",
+        "A3 . . - . . G3 . . - . . C4 . . - . . Bb3 . . A3 . ."]),
+    ("SOKOBAN", 9, True, [
+        "C5 - E5 - G4 - E5 - D5 - F5 - A4 - F5 - E5 - G5 - C5 - G5 - F5 E5 D5 C5 B4 - G4 -",
+        "C3 . . . G2 . . . D3 . . . A2 . . . E3 . . . C3 . . . F2 . . . G2 . . .",
+        "- . . . . . . . - . . . . . . . - . . . . . . . - . . . . . . ."]),
+    ("DELPHI", 14, True, [
+        "D4 F4 A4 C5 B4 A4 F4 E4 D4 G4 B4 D5 C5 A4 G4 E4",
+        "D2 . . . . . . . G2 . . . . . . .",
+        "A3 . . . . . . . B3 . . . . . . ."]),
+    ("DEATH", 14, False, [
+        "E4 D4 C4 B3 A3 . . . -",
+        "A2 . . . A1 . . . -",
+        "C4 . . . E3 . . . -"]),
+    ("VICTORY", 8, False, [
+        "C4 E4 G4 C5 . E5 G5 . C6 . . . . . . . -",
+        "C3 . . . G2 . . . C3 . . . . . . . -",
+        "E4 . . . B4 . . . E5 . . . . . . . -"]),
+]
+NOTE_NAMES = {"C": 0, "D": 2, "E": 4, "F": 5, "G": 7, "A": 9, "B": 11}
+
+
+def note_value(tok):
+    """A note name as the game's number: MIDI less 24, plus one."""
+    s = NOTE_NAMES[tok[0]]
+    rest = tok[1:]
+    while rest and rest[0] in "#b":
+        s += 1 if rest[0] == "#" else -1
+        rest = rest[1:]
+    midi = 12 * (int(rest) + 1) + s
+    v = midi - 24
+    assert 0 <= v < 84, tok
+    return v + 1
+
+
+def note_increments():
+    """C7 to B7 as the sound hardware's phase increments, 0.4993 Hz a step;
+    the game shifts them down an octave at a time."""
+    return [round(440.0 * 2 ** ((96 + s - 69) / 12) / 0.4993) for s in range(12)]
+
+
+def tune_bytes(tempo, loop, voices):
+    steps = [v.split() for v in voices]
+    n = len(steps[0])
+    assert all(len(s) == n for s in steps), [len(s) for s in steps]
+    events = []
+    for i in range(n):
+        row = []
+        for s in steps:
+            tok = s[i]
+            row.append(0 if tok == "." else 127 if tok == "-" else note_value(tok))
+        if i and not any(row) and events[-1][0] + tempo <= 253:
+            events[-1][0] += tempo
+        else:
+            events.append([tempo] + row)
+    out = bytearray()
+    for e in events:
+        out += bytes(e)
+    out.append(255 if loop else 254)
+    return bytes(out)
+
+
+def music_bytes():
+    head = bytearray()
+    body = bytearray()
+    at = 2 * len(TUNES)
+    for _key, tempo, loop, voices in TUNES:
+        head += bytes([at & 255, at >> 8])
+        t = tune_bytes(tempo, loop, voices)
+        body += t
+        at += len(t)
+    return bytes(head + body)
+
+
+def music_table():
+    out = ["; the tunes in %s.DAT: TU_ numbers, and C7 to B7 as phase increments" % MUSIC_FILE]
+    out += ["CONST TU_%s = %d" % (t[0], i) for i, t in enumerate(TUNES)]
+    out.append("CARD ARRAY nbase(12) = [%s]" % " ".join(str(v) for v in note_increments()))
+    out.append('BYTE ARRAY music_file = "%s"' % (MUSIC_FILE.ljust(8) + "DAT"))
+    return out
+
 # the pages: the ? page of keys, then the Oracle's; a line a row of the window
 HELP_FILE = "MPAGES"
 PAGE_LINES = 23
@@ -989,6 +1100,7 @@ def names_table():
     out.append("CONST N_ORACLE = %d" % (len(ORACLES) - 1))
     out.append('BYTE ARRAY help_file = "%s"' % (HELP_FILE.ljust(8) + "DAT"))
     out += special_table()
+    out += music_table()
     return out
 
 
@@ -1000,6 +1112,7 @@ def outputs():
     files[os.path.join(OUT_DIR, NAMES_FILE + ".DAT")] = names_bytes()
     files[os.path.join(OUT_DIR, HELP_FILE + ".DAT")] = help_bytes()
     files[os.path.join(OUT_DIR, LEVELS_FILE + ".DAT")] = levels_bytes()
+    files[os.path.join(OUT_DIR, MUSIC_FILE + ".DAT")] = music_bytes()
     return files
 
 
