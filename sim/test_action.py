@@ -1747,6 +1747,25 @@ def test_galaga():
           "galaga: the band's colours from the row above it, the arcade's from the vertical blank",
           "lines %s, %d commits" % (sorted(lines), len(log)))
 
+    # a volley into the formation: each hit scored and exploded, and when
+    # the explosions -- overlapping, and one at the right edge, where a span
+    # reaches x 255 -- are over, not a pixel of them left behind and none of
+    # the characters beside them marked
+    s0 = g.uword("score10")
+    on0 = sum(g.byte("sl_on", i) for i in range(g.c("NSLOT")))
+    for col in (0, 3, 4, 5, 9, 2):
+        g.pokew("fx", g.byte("col_x", col))
+        g.tap(G.SPACE)
+        g.m.run_frame(10)
+    g.until(lambda: g.byte("booms") == 0, 120)
+    g.at_rest()
+    bad = g.bitmap_diff()
+    on1 = sum(g.byte("sl_on", i) for i in range(g.c("NSLOT")))
+    got = (g.uword("score10") - s0) * 10
+    check(not bad and on1 < on0 and got == 50 * (on0 - on1) and g.byte("booms") == 0,
+          "galaga: shots at the formation score 50 a bee and leave no explosion behind",
+          "%d characters shot for %d points; %d pixels differ: %s" % (on0 - on1, got, len(bad), bad[:4]))
+
     costs, (work, p) = g.frame_work(64)
     check(max(costs) < G.FRAME, "galaga: every frame's work inside its frame",
           "busiest %d clocks of %d\n%s" % (max(costs), G.FRAME, p.report(top=6)))

@@ -62,7 +62,8 @@ CONST SP_SHOT = 4                    ; two
 ; --------------------------------------------------------------- the game
 CARD loops                           ; frames of play the loop has run, for the gate
 BYTE level_bd                        ; the backdrop showing, 0-3
-CARD score, hiscore
+INT fx                               ; the fighter's top-left on the field
+CONST FIGHTER_Y = 224
 BYTE quit
 
 ; ------------------------------------------------------------ data file
@@ -111,10 +112,15 @@ RETURN
 ; FmDraw sets two rows up and a column left of the character's top-left
 ; -- or, with dd_erase, the same pixels written 0. PIX_X's high byte is
 ; written once, where no run can carry into it, so a run costs 28 clocks
-; and a pixel 11; the few characters whose eighteen columns cross x 256
-; take the slow way, which carries it run by run.
+; and a pixel 11. **The port's X is one ten-bit counter**: a pixel
+; written at x 255 leaves it at 256, high byte and all, so the next run's
+; low byte alone would land 256 further on -- which a 320-wide row wraps
+; to 64 pixels left of where it was meant. So the fast way is taken only
+; when no pixel of the list can reach x 255, dd_lim being 255 less the
+; list's widest reach; the rest take the slow way, which writes both
+; bytes run by run.
 CARD dd_ptr, dd_x
-BYTE dd_y, dd_erase
+BYTE dd_y, dd_erase, dd_fx, dd_lim, rs_row, rs_fx
 
 PROC DrawDelta()
   ASM
@@ -123,9 +129,13 @@ PROC DrawDelta()
         CLR  R0
         ST   [v_PIX_Y_H],R0
         LD   R1,[v_dd_y]
+        LD   R0,[v_dd_erase]
+        CMP  R0,#2
+        BEQ  .rest
         LD   R3,[v_dd_x]
-        CMP  R3,#239
-        BCS  .slow                   ; x + 17 could carry
+        LD   R0,[v_dd_lim]
+        CMP  R3,R0
+        BCS  .slow                   ; a run could reach x 255
         LD   R0,[v_dd_x+1]
         ST   [v_PIX_X_H],R0
         LD   R0,[v_dd_erase]
@@ -178,6 +188,57 @@ PROC DrawDelta()
         SUB  R2,#1
         BNE  .spix
         BRA  .slow
+; putting back: every pixel of the list gets what is under it -- black
+; above the band, the backdrop's copy in it, a nibble of RAM a pixel
+.rest:  LD   R0,[Y+]
+        BEQ  .done
+        ADD  R0,R1
+        ST   [v_PIX_Y_L],R0
+        ST   [v_rs_row],R0
+        LD   R0,[Y+]
+        LD   R2,[v_dd_fx]
+        ADD  R0,R2
+        ST   [v_rs_fx],R0            ; the field's x
+        ADD  R0,#c_FX
+        ST   [v_PIX_X_L],R0
+        MOV  R0,#0                   ; not CLR, which is SUB and sets the carry
+        ADC  R0,#0
+        ST   [v_PIX_X_H],R0
+        LD   R2,[Y+]
+        ADDW Y,R2                    ; its colours are not wanted
+        LD   R0,[v_rs_row]
+        CMP  R0,#c_BAND_Y
+        BCS  .rband
+        CLR  R0
+.rz:    ST   [X],R0
+        SUB  R2,#1
+        BNE  .rz
+        BRA  .rest
+.rband: SUB  R0,#c_BAND_Y
+        MOV  R3,#112
+        MUL  R0,R3                   ; X: the band row's first byte in the copy
+        ADDW X,#c_BD_RAM
+        LD   R0,[v_rs_fx]
+        MOV  R3,R0
+        SHR  R3
+        ADDW X,R3
+        AND  R0,#1                   ; R0 1 on a pixel in a byte's low nibble
+.rb:    LD   R3,[X]
+        TST  R0
+        BNE  .rlo
+        SWAP R3
+        AND  R3,#$0F
+        ST   [v_PIX_DATA],R3
+        MOV  R0,#1
+        BRA  .rnx
+.rlo:   AND  R3,#$0F
+        ST   [v_PIX_DATA],R3
+        INCW X
+        CLR  R0
+.rnx:   SUB  R2,#1
+        BNE  .rb
+        LDW  X,#v_PIX_DATA
+        BRA  .rest
 .done:
   ENDASM
 RETURN
@@ -194,6 +255,20 @@ PROC FmDraw(BYTE fr, BYTE mv, BYTE x, BYTE y, BYTE erase)
   dd_x = dd_x + FX - 1
   dd_y = y - 2
   dd_erase = erase
+  dd_lim = 255 - 17                  ; a character's list reaches x + 17
+  DrawDelta()
+RETURN
+
+; ArtDraw(k, x, y, mode): bitmap art k with its box's top-left at the
+; field's (x, y) -- mode 0 draws it, 2 puts back what was under it
+PROC ArtDraw(BYTE k, BYTE x, BYTE y, BYTE mode)
+  dd_ptr = art_delta + art_off(k)
+  dd_x = x
+  dd_x = dd_x + FX - 1
+  dd_fx = x - 1
+  dd_y = y - 2
+  dd_erase = mode
+  dd_lim = 255 - 32                  ; an explosion's reaches x + 32
   DrawDelta()
 RETURN
 
@@ -427,6 +502,27 @@ PROC Positions()
   FOR i = 0 TO 5 DO row_y(i) = row_y0(i) + row_off(i) OD
 RETURN
 
+; the explosions in the bitmap, below
+CONST NBOOM = 4
+BYTE ARRAY bm_on(NBOOM), bm_art(NBOOM), bm_n(NBOOM), bm_f(NBOOM), bm_t(NBOOM), bm_x(NBOOM), bm_y(NBOOM)
+BYTE booms                           ; how many are on, so the stars and the formation need ask only then
+
+; NearBoom(x, y): whether a character's box at the field's (x, y) meets an
+; explosion's 32 x 32
+FUNC BYTE NearBoom(BYTE x, BYTE y)
+  BYTE i
+  INT dx, dy
+  FOR i = 0 TO NBOOM - 1 DO
+    IF bm_on(i) THEN
+      dx = x
+      dx = dx - bm_x(i)
+      dy = y
+      dy = dy - bm_y(i)
+      IF dx > -16 AND dx < 32 AND dy > -16 AND dy < 32 THEN RETURN (1) FI
+    FI
+  OD
+RETURN (0)
+
 ; FmStep(part): every slot drawn in a column of that number mod 4 caught
 ; up with where its column and row are, a pixel a list at a time, and
 ; flapped to the wing frame everyone shows. The breathing steps every
@@ -440,29 +536,42 @@ PROC FmStep(BYTE part)
       tx = col_x(sl_col(i))
       ty = row_y(sl_row(i))
       fr = sl_fr(i)
-      WHILE sl_x(i) != tx DO
-        IF sl_x(i) < tx THEN
-          sl_x(i) += 1
-          FmDraw(fr, 1, sl_x(i), sl_y(i), 0)
-        ELSE
-          sl_x(i) -= 1
-          FmDraw(fr, 2, sl_x(i), sl_y(i), 0)
-        FI
-      OD
-      WHILE sl_y(i) != ty DO
-        IF sl_y(i) < ty THEN
-          sl_y(i) += 1
-          FmDraw(fr, 3, sl_x(i), sl_y(i), 0)
-        ELSE
-          sl_y(i) -= 1
-          FmDraw(fr, 4, sl_x(i), sl_y(i), 0)
-        FI
-      OD
       want = sl_kind(i)
       IF want != FM_CAPTURED6 THEN want += flap FI
-      IF want != fr THEN
-        FmDraw(fr, 5, sl_x(i), sl_y(i), 0)
-        sl_fr(i) = want
+      IF booms AND NearBoom(sl_x(i), sl_y(i)) THEN
+        ; an explosion may have drawn over it, so its picture is not the
+        ; one its lists assume: erased where it was and drawn whole where
+        ; it goes, which is right whatever the explosion did
+        IF tx != sl_x(i) OR ty != sl_y(i) OR want != fr THEN
+          FmDraw(fr, 0, sl_x(i), sl_y(i), 1)
+          sl_x(i) = tx
+          sl_y(i) = ty
+          sl_fr(i) = want
+          FmDraw(want, 0, tx, ty, 0)
+        FI
+      ELSE
+        WHILE sl_x(i) != tx DO
+          IF sl_x(i) < tx THEN
+            sl_x(i) += 1
+            FmDraw(fr, 1, sl_x(i), sl_y(i), 0)
+          ELSE
+            sl_x(i) -= 1
+            FmDraw(fr, 2, sl_x(i), sl_y(i), 0)
+          FI
+        OD
+        WHILE sl_y(i) != ty DO
+          IF sl_y(i) < ty THEN
+            sl_y(i) += 1
+            FmDraw(fr, 3, sl_x(i), sl_y(i), 0)
+          ELSE
+            sl_y(i) -= 1
+            FmDraw(fr, 4, sl_x(i), sl_y(i), 0)
+          FI
+        OD
+        IF want != fr THEN
+          FmDraw(fr, 5, sl_x(i), sl_y(i), 0)
+          sl_fr(i) = want
+        FI
       FI
     FI
   OD
@@ -511,23 +620,42 @@ FUNC BYTE Owns(BYTE i, BYTE x, BYTE y)
   IF bit & ($8000 >> dx) THEN RETURN (1) FI
 RETURN (0)
 
-FUNC BYTE Covered(BYTE x, BYTE y)
-  BYTE r, c, i
-  IF y < row_y(0) THEN RETURN (0) FI
-  IF y >= row_y(5) + 17 THEN RETURN (0) FI
-  IF x < col_x(0) THEN RETURN (0) FI
+; SlotAt(x, y): the slot whose character at rest owns that pixel, 255
+; none. The column and row are found from where the formation is going,
+; and a character may be drawn a few pixels behind that -- a quarter of
+; the columns step each frame, and one an explosion covers waits -- so
+; the rows are taken eight pixels wide either way and the columns either
+; side are asked too; Owns answers from where each is drawn.
+CONST LAG = 8
+FUNC BYTE SlotAt(BYTE x, BYTE y)
+  BYTE r, c, i, k, k1
+  INT xi, yi, e
+  xi = x + LAG                       ; the margin added to this side: a byte less 8 would wrap
+  yi = y + LAG
+  e = row_y(0)
+  IF yi < e THEN RETURN (255) FI
+  e = row_y(5)
+  IF y >= e + 16 + LAG THEN RETURN (255) FI
+  e = col_x(0)
+  IF xi < e THEN RETURN (255) FI
   c = 0
-  WHILE c < 10 AND x >= col_x(c) + 17 DO c += 1 OD
-  IF c == 10 THEN RETURN (0) FI
+  WHILE c < 9 AND x >= col_x(c) + 16 DO c += 1 OD
   FOR r = 0 TO 5 DO
-    IF y >= row_y(r) AND y < row_y(r) + 17 THEN
-      IF Owns(slot_at(r * 10 + c), x, y) THEN RETURN (1) FI
-      IF c > 0 THEN
-        IF Owns(slot_at(r * 10 + c - 1), x, y) THEN RETURN (1) FI
-      FI
+    e = row_y(r)
+    IF yi >= e AND y < e + 16 + LAG THEN
+      IF c > 0 THEN k = c - 1 ELSE k = 0 FI
+      IF c < 9 THEN k1 = c + 1 ELSE k1 = 9 FI
+      WHILE k <= k1 DO
+        i = slot_at(r * 10 + k)
+        IF Owns(i, x, y) THEN RETURN (i) FI
+        k += 1
+      OD
     FI
   OD
-RETURN (0)
+RETURN (255)
+
+FUNC BYTE Covered(BYTE x, BYTE y)
+RETURN (SlotAt(x, y) != 255)
 
 BYTE ARRAY st_cols(7) = [C_WHITE C_RED C_YELLOW C_CYAN C_BEAM C_BLUE C_ORANGE]
 
@@ -566,7 +694,7 @@ PROC StarsDraw()
   st_bank += 1
   phase = (st_bank >> 5) & 1
   top = row_y(0)
-  bot = row_y(5) + 17
+  bot = row_y(5) + 16 + LAG
   FOR i = 0 TO NSTAR - 1 DO
     y = st_y(i) + st_speed
     IF y >= 240 THEN
@@ -579,8 +707,9 @@ PROC StarsDraw()
       IF y >= BAND_Y THEN
         show = BandPixel(x, y) == 0      ; behind the horizon
       ELSE
-        show = y < top OR y >= bot OR Covered(x, y) == 0
+        show = y + LAG < top OR y >= bot OR Covered(x, y) == 0
       FI
+      IF show AND booms THEN show = InBoom(x, y) == 0 FI
       IF show THEN
         px = x
         PIX_X = px + FX
@@ -710,27 +839,194 @@ PROC LoadBackdrop(BYTE k)
   PalSplit(k)
 RETURN
 
+; ------------------------------------------------------------ explosions
+; An explosion is the arcade's double-size frames drawn into the bitmap,
+; a frame every four; going on to the next puts back what was under the
+; last, and draws again any character at rest it went over.
+
+FUNC BYTE Clamp(INT v, BYTE hi)
+  IF v < 0 THEN RETURN (0) FI
+  IF v > hi THEN RETURN (hi) FI
+RETURN (v)
+
+; Boom(first, n, cx, cy): n frames from art first, centred on the field's (cx, cy)
+PROC Boom(BYTE first, BYTE n, INT cx, INT cy)
+  BYTE i
+  FOR i = 0 TO NBOOM - 1 DO
+    IF bm_on(i) == 0 THEN
+      bm_on(i) = 1
+      bm_art(i) = first
+      bm_n(i) = n
+      bm_f(i) = 0
+      bm_t(i) = 0
+      bm_x(i) = Clamp(cx - 16, FW - 32)
+      bm_y(i) = Clamp(cy - 16, 240 - 32)
+      ArtDraw(first, bm_x(i), bm_y(i), 0)
+      booms += 1
+      RETURN
+    FI
+  OD
+RETURN
+
+; FmRedraw(x, y): every character at rest whose box meets the 32 x 32 at
+; (x, y) drawn again
+PROC FmRedraw(BYTE x, BYTE y)
+  BYTE i
+  INT dx, dy
+  FOR i = 0 TO NSLOT - 1 DO
+    IF sl_on(i) THEN
+      dx = sl_x(i)
+      dx = dx - x
+      dy = sl_y(i)
+      dy = dy - y
+      IF dx > -16 AND dx < 32 AND dy > -16 AND dy < 32 THEN
+        FmDraw(sl_fr(i), 0, sl_x(i), sl_y(i), 0)
+      FI
+    FI
+  OD
+RETURN
+
+PROC Booms()
+  BYTE i, k
+  FOR i = 0 TO NBOOM - 1 DO
+    IF bm_on(i) THEN
+      bm_t(i) += 1
+      IF bm_t(i) == 4 THEN
+        bm_t(i) = 0
+        k = bm_art(i) + bm_f(i)
+        ArtDraw(k, bm_x(i), bm_y(i), 2)
+        FmRedraw(bm_x(i), bm_y(i))
+        bm_f(i) += 1
+        IF bm_f(i) == bm_n(i) THEN
+          bm_on(i) = 0
+          booms -= 1
+        ELSE
+          ArtDraw(k + 1, bm_x(i), bm_y(i), 0)
+        FI
+      FI
+    FI
+  OD
+RETURN
+
+; InBoom(x, y): whether an explosion's box holds that pixel
+FUNC BYTE InBoom(BYTE x, BYTE y)
+  BYTE i
+  FOR i = 0 TO NBOOM - 1 DO
+    IF bm_on(i) THEN
+      IF x >= bm_x(i) AND x < bm_x(i) + 32 AND y >= bm_y(i) AND y < bm_y(i) + 32 THEN RETURN (1) FI
+    FI
+  OD
+RETURN (0)
+
+; ---------------------------------------------------------------- scoring
+; the arcade's scores are all tens, so the score is kept in tens
+CARD score10, hi10
+BYTE score_shown
+
+; points in tens for a character at rest: bee 50, butterfly 80, boss 150
+FUNC BYTE RestPoints(BYTE kind)
+  IF kind == FM_ZAKO6 THEN RETURN (5) FI
+  IF kind == FM_GOEI6 THEN RETURN (8) FI
+RETURN (15)
+
+PROC AddScore(CARD tens)
+  score10 += tens
+  IF score10 > hi10 THEN hi10 = score10 FI
+  score_shown = 0
+RETURN
+
+PROC ShowScore()
+  IF score_shown == 0 THEN
+    Number(0, 20, score10, 5, C_WHITE)
+    Text(40, 20, "0", C_WHITE)
+    Number(0, 66, hi10, 5, C_WHITE)
+    Text(40, 66, "0", C_WHITE)
+    score_shown = 1
+  FI
+RETURN
+
+; ShootSlot(i): a character at rest hit. A boss takes two: the first turns
+; it blue.
+PROC ShootSlot(BYTE i)
+  BYTE fr
+  fr = sl_fr(i)
+  FmDraw(fr, 0, sl_x(i), sl_y(i), 1)
+  IF sl_kind(i) == FM_BOSS6 THEN
+    sl_kind(i) = FM_BOSS_HIT6
+    sl_fr(i) = FM_BOSS_HIT6 + flap
+    FmDraw(sl_fr(i), 0, sl_x(i), sl_y(i), 0)
+    RETURN
+  FI
+  sl_on(i) = 0
+  AddScore(RestPoints(sl_kind(i)))
+  Boom(A_EBOOM0, N_EBOOM, sl_x(i) + 8, sl_y(i) + 8)
+RETURN
+
+; ------------------------------------------------------------- the shots
+; Two at most, as the arcade's, six pixels a frame; each tests the column
+; of pixels its head has passed through since the last frame
+CONST NSHOT = 2
+BYTE ARRAY sh_on(NSHOT)
+INT ARRAY sh_x(NSHOT), sh_y(NSHOT)   ; the field's top-left of its 8 x 8 box; the shot is columns 2-4
+
+PROC Fire()
+  BYTE i
+  FOR i = 0 TO NSHOT - 1 DO
+    IF sh_on(i) == 0 THEN
+      sh_on(i) = 1
+      sh_x(i) = fx + 4
+      sh_y(i) = FIGHTER_Y - 6
+      RETURN
+    FI
+  OD
+RETURN
+
+PROC Shots()
+  BYTE i, k, j
+  INT y
+  CARD pat
+  pat = SPR_BASE + (P_SHOT << 7)
+  FOR i = 0 TO NSHOT - 1 DO
+    IF sh_on(i) THEN
+      y = sh_y(i) - 6
+      sh_y(i) = y
+      IF y < 0 THEN
+        sh_on(i) = 0
+        SpriteHide(SP_SHOT + i)
+      ELSE
+        FOR k = 0 TO 5 DO
+          j = SlotAt(sh_x(i) + 3, y + k)
+          IF j != 255 THEN
+            ShootSlot(j)
+            sh_on(i) = 0
+            SpriteHide(SP_SHOT + i)
+            EXIT
+          FI
+        OD
+        IF sh_on(i) THEN SetSprite(SP_SHOT + i, (sh_x(i) + FX) << 1, y << 1, pat, 1, 0) FI
+      FI
+    FI
+  OD
+RETURN
+
 ; ----------------------------------------------------------- the fighter
-INT fx                               ; its top-left on the field
-CONST FIGHTER_Y = 224
-BYTE ARRAY shot_on(2)
-INT ARRAY shot_x(2), shot_y(2)
 
 PROC Fighter()
   IF KeyHeld(KEY_LEFT) OR KeyHeld(KEY_Z) THEN fx -= 2 FI
   IF KeyHeld(KEY_RIGHT) OR KeyHeld(KEY_X) THEN fx += 2 FI
   IF fx < 1 THEN fx = 1 FI
   IF fx > 191 + 16 THEN fx = 191 + 16 FI
+  IF KeyHit(KEY_SPACE) THEN Fire() FI
   ShowChar(SP_FIGHTER, F_FIGHTER + 6, 0, 0, fx + FX, FIGHTER_Y)
 RETURN
 
 ; ------------------------------------------------------------ the screen
 PROC Hud()
   Text(4, 8, "1UP", C_RED)
-  Number(0, 20, score, 6, C_WHITE)
   Text(4, 44, "HIGH", C_RED)
   Text(4, 54, "SCORE", C_RED)
-  Number(0, 66, hiscore, 6, C_WHITE)
+  score_shown = 0
+  ShowScore()
 RETURN
 
 PROC Frame1()
@@ -768,8 +1064,11 @@ PROC Play()
       Positions()
     FI
     FmStep(t & 3)
+    Booms()
     StarsDraw()
     Fighter()
+    Shots()
+    ShowScore()
   OD
 RETURN
 
@@ -790,7 +1089,7 @@ PROC Main()
   FOR i = 0 TO 31 DO SpriteHide(i) OD
   SpritesOn(15)
   IrqOn()
-  hiscore = 20000
+  hi10 = 2000
   Play()
   SpritesOff()
   Reset()

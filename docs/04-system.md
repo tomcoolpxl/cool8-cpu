@@ -1288,6 +1288,16 @@ Write `PIX_X`, write `PIX_Y`, write `PIX_DATA`, and the pixel appears in
 the surface `VID_BASE` and `VID_STRIDE` describe. X then advances on its
 own, so a horizontal span is one store per pixel.
 
+**X is one eleven-bit counter, and the advance carries into its high
+byte** (`pix_x <= pix_x + 1` in `cool8_pixport.v`; a store to `PIX_X_L`
+replaces bits 7:0 only). So a pixel written at x 255 leaves X at 256, and
+software that writes only `PIX_X_L` for its next span -- having set the
+high byte once, for a run of spans it believed stayed below 256 -- draws
+that span 256 further on, which a 320-wide mode 4 row shows 64 pixels to
+the left. GALAGA's first bitmap drawer did exactly that and scattered an
+explosion's pixels over a character beside it; its fast path is now
+taken only when no span can reach x 255 (D113).
+
 **`PIX_DATA_Y` is the same store advancing Y instead** ([D91]), so a
 vertical run is also one store per pixel. The store address picks the
 direction and there is deliberately no mode register: a Bresenham inner

@@ -476,6 +476,59 @@ def pack_band(rows):
     return out
 
 
+# ------------------------------------------------------------- bitmap art
+# The other pictures drawn into the bitmap: each is one list from nothing,
+# its top-left the box's, in fm_delta's format -- so putting back what
+# was under exactly the pixels it wrote clears it. Every colour in them
+# is one of the first SAFE, which is what lets them cross the backdrop.
+# The explosions are the arcade's double-size sprites, 32 x 32, found on
+# the sheet as the shapes along its top: the fighter's four from x 147,
+# an enemy's five from x 300; a box is centred on its shape.
+PLAYER_BOOM = [(147, 175, 3, 30), (180, 208, 3, 32), (213, 244, 1, 32), (248, 276, 3, 32)]
+ENEMY_BOOM = [(300, 306, 12, 19), (333, 344, 10, 22), (365, 380, 9, 24), (394, 420, 3, 30), (426, 456, 1, 32)]
+BOMB = (313, 140, 3, 8)                 # the enemy's shot: white, a red body
+SHOT = (313, 122)                       # the fighter's: a blue head, a white eye, a red trail
+
+
+def box_image(s, x0, y0, w, h):
+    return tuple(tuple(0 if not (0 <= x0 + x < s.w and 0 <= y0 + y < s.h) or s.at(x0 + x, y0 + y) is None
+                       else index_of(s.at(x0 + x, y0 + y)) for x in range(w)) for y in range(h))
+
+
+def centred(s, shape, size=32):
+    a, b, y0, y1 = shape
+    return box_image(s, (a + b + 1) // 2 - size // 2, (y0 + y1 + 1) // 2 - size // 2, size, size)
+
+
+def draw_list(img):
+    w, h = len(img[0]), len(img)
+    out = []
+    for y in range(h):
+        x = 0
+        while x < w:
+            if img[y][x]:
+                a = x
+                while x < w and img[y][x]:
+                    x += 1
+                out += [y + 2, a + 1, x - a] + list(img[y][a:x])
+            else:
+                x += 1
+    return out + [0]
+
+
+def bitmap_art(s):
+    """[(name, picture)] and the lists' blob and offsets."""
+    arts = [("PBOOM%d" % i, centred(s, b)) for i, b in enumerate(PLAYER_BOOM)]
+    arts += [("EBOOM%d" % i, centred(s, b)) for i, b in enumerate(ENEMY_BOOM)]
+    arts.append(("BOMB", box_image(s, *BOMB)))
+    blob, offs = [], []
+    for name, img in arts:
+        assert all(v < SAFE for r in img for v in r), "%s uses a colour the backdrop takes" % name
+        offs.append(len(blob))
+        blob += draw_list(img)
+    return arts, blob, offs
+
+
 # ------------------------------------------------------------------ build
 class Dat:
     def __init__(self):
@@ -491,7 +544,10 @@ def build():
     s, t = Sheet("sprites"), Sheet("text")
     pats = Patterns()
     common = sprite_set(s, COMMON, pats)
+    shot = pats.find(box_image(s, SHOT[0] - 2, SHOT[1], 8, 8))
+    assert shot[1] == 0
     ncommon = len(pats.pats)
+    arts, ablob, aoffs = bitmap_art(s)
     imgs, fblob, foffs = formation(s)
     dat = Dat()
     blob = []
@@ -502,6 +558,7 @@ def build():
     for k, (_, rows) in enumerate(bds):
         dat.add("BD%d" % k, pack_band(rows))
     return dict(pats=pats, common=common, ncommon=ncommon, fimgs=imgs, fblob=fblob, foffs=foffs, bds=bds,
+                shot=shot[0], arts=arts, ablob=ablob, aoffs=aoffs,
                 font=font(t), dat=dat, sheet=s)
 
 
@@ -577,6 +634,18 @@ def act(o):
         fm += mask(img)
     w("; where each frame is, two bytes a row, bit 15 the left pixel")
     arr(w, "BYTE ARRAY fm_mask(%d)" % len(fm), fm, fmt="$%02X")
+    w("")
+    w("; the fighter's shot: one sprite, its 3 x 8 in columns 2-4")
+    w("CONST P_SHOT = %d" % o["shot"])
+    w("")
+    w("; the other pictures the bitmap holds, each one list in fm_delta's format")
+    w("; from its box's top-left: art_off(k), k being")
+    for k, (name, img) in enumerate(o["arts"]):
+        w("CONST A_%s = %d" % (name, k))
+    w("CONST N_EBOOM = %d" % len(ENEMY_BOOM))
+    w("CONST N_PBOOM = %d" % len(PLAYER_BOOM))
+    arr(w, "CARD ARRAY art_off(%d)" % len(o["aoffs"]), o["aoffs"])
+    arr(w, "BYTE ARRAY art_delta(%d)" % len(o["ablob"]), o["ablob"], per=24)
     w("")
     w("; the font, 8 rows of 1 bpp, in this order: %s" % GLYPHS)
     g = []
