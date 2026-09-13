@@ -1689,6 +1689,55 @@ def test_mscoolman():
     print()
 
 
+def test_galaga():
+    """GALAGA, on the machine, with its data file on drive 11 of a flash of
+    its own: mode 4 and the sprites on bank 15, the formation drawn into the
+    bitmap by its lists of changing pixels and exactly where the program
+    says -- every pixel of the field, at rest, through the breathing and
+    the flaps -- and every frame's work inside its frame. Skips, loudly,
+    without the art."""
+    import subprocess
+    import ioregs
+    import galaga as G
+    print("  GALAGA")
+    if G.sources() is None:
+        print("    SKIPPED: the art is not here -- tools/mkgalaga.py makes "
+              "assets/galaga/galaga_art.act and GALAGA.DAT from the sheets")
+        print()
+        return
+    r = subprocess.run([sys.executable, os.path.join(H.ROOT, "tools", "mkgalaga.py"), "--check"],
+                       capture_output=True, text=True)
+    check(r.returncode == 0, "galaga: the art file and the data file are what the generator writes",
+          (r.stdout + r.stderr).strip()[-200:])
+    g = G.Game(tag="galaga")
+    same_bytes("galaga", g.prg)
+    print("    %d bytes of PRG" % (len(g.prg) - 2))
+    reg = lambda n: g.m.bus.read(ioregs.addr_of(n))   # noqa: E731
+    g.m.run_frame(30)
+    check(reg("VID_MODE") & 0x0F == 4 and reg("SPR_CTRL") & 0xF1 == 0xF1,
+          "galaga: mode 4, the sprite engine on bank 15", "MODE %02X SPR_CTRL %02X" % (reg("VID_MODE"), reg("SPR_CTRL")))
+    on = sum(g.byte("sl_on", i) for i in range(g.c("NSLOT")))
+    check(on == 40, "galaga: forty characters in the formation", str(on))
+
+    # the bitmap is the program's state, pixel for pixel, at rest in the
+    # loop, across a whole breath out and in and the flaps with it
+    bad = []
+    for _ in range(9):
+        g.m.run_frame(29)
+        g.at_rest()
+        bad = g.bitmap_diff()
+        if bad:
+            break
+    check(not bad and g.byte("br_cnt") != 0, "galaga: the formation breathes and flaps without a pixel left behind",
+          "%d pixels differ: %s, breath at %02X" % (len(bad), bad[:4], g.byte("br_cnt")))
+
+    costs, (work, p) = g.frame_work(64)
+    check(max(costs) < G.FRAME, "galaga: every frame's work inside its frame",
+          "busiest %d clocks of %d\n%s" % (max(costs), G.FRAME, p.report(top=6)))
+    print("    work per frame over 64 frames: mean %d, busiest %d clocks" % (sum(costs) // len(costs), max(costs)))
+    print()
+
+
 def test_arkanoid():
     """Arkanoid, on the machine, with its two data files on drive 11 of a
     flash of its own: the title's logo, round 1 as the arcade draws it,
@@ -4588,7 +4637,7 @@ def main():
     only = [a for a in sys.argv[1:] if not a.startswith("--")]    # e.g. `cobra`: just those
     for t in (test_every_encoding, test_features, test_sieve, test_primes, test_library, test_calls,
               test_hardware, test_line, test_rainbow, test_cobra, test_cobra2, test_ports, test_keys,
-              test_keytest, test_loader, test_mscoolman, test_arkanoid, test_blockade, test_cooltris, test_coolsw, test_mott,
+              test_keytest, test_loader, test_mscoolman, test_galaga, test_arkanoid, test_blockade, test_cooltris, test_coolsw, test_mott,
               test_slides, test_refusals):
         if not only or any(o in t.__name__ for o in only):
             t()

@@ -1,0 +1,4 @@
+# GALAGA's data file, which tools/mkdemos.py puts on drive 11 beside the
+# program: the sprite patterns it streams from the flash into VRAM
+# itself. One path a line, relative to the repository root.
+assets/galaga/GALAGA.DAT

@@ -6992,3 +6992,63 @@ Together 2,105 bytes: MOTT 61,000 to 58,895, 1,265 free.
 says of the machine's own flash writes; the gate runs it on the machine
 model, where a write lands at once and the image is written back when
 the emulator exits.
+
+## D113 -- GALAGA: the formation drawn into a bitmap, and what flies in sprites
+
+**The problem is the formation.** Arcade Galaga holds forty characters at
+rest in rows of ten, sixteen pixels apart, and moves them as a body: a
+sway of a pixel every fourth frame to 32 either side while the waves come
+in (`f_2A90` in the disassembly), then a breathing out and in about the
+top centre -- the outer columns and the bottom row a pixel every fourth
+frame, the middle columns one step in eight, the top row never
+(`f_1DE6`, `d_1E64_bitmap_tables`). Its rows are twelve pixels apart for
+sixteen-pixel characters.
+
+**Sprites cannot hold it.** Over a doubled mode a sixteen-pixel character
+is four of the thirty-two descriptors, and eight a scanline is two
+characters abreast (04-system.md section 5.6). Forty is 160 descriptors,
+and a row of ten is twenty sprites on one line.
+
+**Tiles cannot move it.** Mode 2 would need a tile for every way two
+characters share a cell: every pixel offset in x against every other,
+and in y, because rows twelve apart overlap in the tile rows -- a count in
+the thousands where four pattern banks hold 1,024.
+
+**So GALAGA runs in mode 4 and draws the formation into the bitmap.** A
+character at rest is one of nine frames, and moving it a pixel -- right,
+left, down, up -- or flapping its wings is a list of the pixels that
+change, generated and replayed against the sheet by `tools/mkgalaga.py`,
+and written through the pixel port: 8,348 bytes of lists, 28 clocks a
+run and 11 a pixel in `DrawDelta`. Everything that flies is sprites, all
+from bank 15, whose sixteen are the arcade's colour PROM -- fifteen
+colours and black, one bank exactly -- and so is the bitmap's bank 0.
+
+**Measured**, on the machine, forty characters breathing and flapping
+with 48 stars (`python sim/galaga.py profile`): the first cut, every
+character caught up in one frame and each star asking all 44 slots
+whether it was covered, spent **139,654 clocks** in its busiest frame --
+all of it -- 93 % in the covering test. Answering that from the row and
+column, and erasing every star before the formation draws so only a draw
+asks, left the formation itself at 120k in the frames a breathing step
+and a flap met. Packing the port into X, keeping PIX_X's high byte out
+of the run, unpacked colours and a zero end marker the load tests
+(16 clocks a pixel to 11, about 48 a run to 28), and the columns taking
+the four frames between steps a quarter each: **mean 45,425, busiest
+72,286 clocks, 52 % of a frame**. The gate holds the bitmap to the
+program's state pixel for pixel through a whole breath.
+
+**What it costs.** A column is up to three frames behind its neighbour in
+a step -- a pixel, for a twentieth of a second. The sprites that remain
+are 32: the fighter's four (eight when doubled), the rest for what flies,
+so at most seven characters are in the air at once and a wave of eight
+waits for a slot. VRAM is the bitmap's 38,400 bytes and 27,136 of sprite
+patterns from `$9600`: the fighters, bees, butterflies and bosses in all
+their rotations are 152 patterns, 19,456 bytes -- upright frames being
+symmetric about a column, not about the quadrants' edge, they are two
+stored halves drawn a pixel apart -- and the stage's other enemies take
+turns in the rest.
+
+**Rejected**: sprites multiplexed by a raster interrupt, which raises the
+32 but not the eight a line that a row of ten breaks; mode 2 with the
+formation moved only in whole tiles, which is not Galaga's motion; and
+mode 5's double buffer, whose 192 lines cannot hold a portrait game.

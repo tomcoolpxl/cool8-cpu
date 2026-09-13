@@ -1,0 +1,5 @@
+# GALAGA compiles behind its art, which tools/mkgalaga.py rips from the
+# arcade sheets in assets/galaga/; the sprite patterns themselves are in
+# assets/galaga/GALAGA.DAT, which the game reads from drive 11. One path a
+# line, relative to the repository root.
+assets/galaga/galaga_art.act

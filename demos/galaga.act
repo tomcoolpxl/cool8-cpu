@@ -1,0 +1,667 @@
+; GALAGA -- the arcade Galaga (Namco, 1981) on COOL8, in CoolAction!
+;
+; The picture is the original's: the fighters, the bees, the butterflies,
+; the bosses and the font are the arcade's own pixels, ripped from the
+; sheets in assets/galaga/ by tools/mkgalaga.py, in the arcade's own
+; fifteen colours. The sprite patterns are GALAGA.DAT, which this
+; program finds on drive 11 and streams into VRAM; what the CPU reads as
+; it plays is assets/galaga/galaga_art.act, compiled in front of this
+; file (demos/galaga.parts names it).
+;
+; **Mode 4, a bitmap, because of the formation.** Forty characters in
+; rows of ten cannot be sprites -- a sixteen-pixel character over a
+; doubled mode is four of the thirty-two, and eight a line is two of them
+; -- and the formation sways and breathes a pixel at a time in both
+; axes, twelve pixels a row apart, which a tile map could only do with a
+; tile for every way two characters overlap a cell. So a character at
+; rest is drawn into the bitmap, and moving it a pixel writes only the
+; pixels that change (fm_delta). Everything that flies is sprites.
+;
+; **The arcade's coordinates are kept.** The board positions a sprite by
+; a nine-bit Y whose top is 40 above the screen's and an X 17 left of it
+; (MAME's galaga_v.cpp: sx - 40, and 256 - sy + 1 on the other axis), on
+; a 224 x 288 portrait screen whose playfield is rows 16-271. Here the
+; field is 224 wide in the middle of the 320 and 240 tall, so a
+; coordinate is mapped: X + 31 across, and down the screen rows 16-151
+; one for one -- the formation, which never goes lower -- and the 120
+; rows below them into 88, so the fighter's row lands on the bottom.
+;
+; Keys: the cursor keys or Z and X move the fighter, space fires, P
+; pauses, Esc gives up the game.
+
+; --------------------------------------------------------------- layout
+CONST SPR_BASE = $9600               ; the sprite patterns, above the 38,400-byte bitmap
+CONST DRIVE = 11                     ; the drive the demos disc keeps GALAGA.DAT on
+CONST FX = 48                        ; the field's left edge on the screen
+CONST FW = 224
+
+; keys, as KeyHeld wants them: $80 + the $E0-prefixed code
+CONST KEY_LEFT = $EB
+CONST KEY_RIGHT = $F4
+CONST KEY_Z = $1A
+CONST KEY_X = $22
+CONST KEY_SPACE = $29
+CONST KEY_ESC = $76
+CONST KEY_P = $4D
+
+; colours: the PROM's entry k is index k + 1 (tools/mkgalaga.py)
+CONST C_WHITE = 1
+CONST C_RED = 2
+CONST C_YELLOW = 3
+CONST C_CYAN = 7
+CONST C_BLUE = 12
+
+; sprite descriptors: a lower number is drawn over a higher one
+CONST SP_FIGHTER = 0                 ; four
+CONST SP_SHOT = 4                    ; two
+
+; --------------------------------------------------------------- the game
+CARD loops                           ; frames of play the loop has run, for the gate
+CARD score, hiscore
+BYTE quit
+
+; ------------------------------------------------------------ data file
+BYTE ARRAY dat_name = "GALAGA  DAT"
+CARD dat_lo
+BYTE dat_hi
+CARD st_n
+
+FUNC BYTE OpenData()
+  IF DiskFind(DRIVE, dat_name) == 0 THEN RETURN (0) FI
+  dat_lo = disk_page << 8
+  dat_hi = disk_page >> 8
+  dat_hi += $10 + DRIVE * 7
+RETURN (1)
+
+; Stream(off, hi, vaddr, n): n bytes of the data file from hi:off into
+; VRAM at vaddr, at the flash's own rate
+PROC Stream(CARD off, BYTE hi, CARD vaddr, CARD n)
+  CARD a
+  BYTE h
+  a = dat_lo + off
+  h = dat_hi + hi
+  IF a < off THEN h += 1 FI
+  FlashOpen(a, h)
+  VRAM_ADDR = vaddr
+  VRAM_STEP = 1
+  st_n = n
+  ASM
+    LDW  X,[v_st_n]
+    MOV  R0,XL
+    MOV  R1,XH
+    OR   R0,R1
+    BEQ  .d
+.l: LD   R0,[v_FLS_DATA]
+    ST   [v_VRAM_DATA],R0
+    DECW X
+    BNE  .l
+.d:
+  ENDASM
+  FlashClose()
+RETURN
+
+; ------------------------------------------------------------ the bitmap
+; DrawDelta: one of fm_delta's lists, a run being y + 2, x + 1, n and n
+; colours, and 0 the end, drawn from the screen's (dd_x, dd_y) -- which
+; FmDraw sets two rows up and a column left of the character's top-left
+; -- or, with dd_erase, the same pixels written 0. PIX_X's high byte is
+; written once, where no run can carry into it, so a run costs 28 clocks
+; and a pixel 11; the few characters whose eighteen columns cross x 256
+; take the slow way, which carries it run by run.
+CARD dd_ptr, dd_x
+BYTE dd_y, dd_erase
+
+PROC DrawDelta()
+  ASM
+        LDW  Y,[v_dd_ptr]
+        LDW  X,#v_PIX_DATA           ; the port in X: a pixel's store is two clocks
+        CLR  R0
+        ST   [v_PIX_Y_H],R0
+        LD   R1,[v_dd_y]
+        LD   R3,[v_dd_x]
+        CMP  R3,#239
+        BCS  .slow                   ; x + 17 could carry
+        LD   R0,[v_dd_x+1]
+        ST   [v_PIX_X_H],R0
+        LD   R0,[v_dd_erase]
+        BNE  .erase
+.run:   LD   R0,[Y+]
+        BEQ  .done
+        ADD  R0,R1
+        ST   [v_PIX_Y_L],R0
+        LD   R0,[Y+]
+        ADD  R0,R3
+        ST   [v_PIX_X_L],R0
+        LD   R2,[Y+]
+.pix:   LD   R0,[Y+]
+        ST   [X],R0
+        SUB  R2,#1
+        BNE  .pix
+        BRA  .run
+.erase: LD   R0,[Y+]
+        BEQ  .done
+        ADD  R0,R1
+        ST   [v_PIX_Y_L],R0
+        LD   R0,[Y+]
+        ADD  R0,R3
+        ST   [v_PIX_X_L],R0
+        LD   R2,[Y+]
+        CLR  R0
+.epix:  ST   [X],R0
+        INCW Y
+        SUB  R2,#1
+        BNE  .epix
+        BRA  .erase
+.slow:  LD   R0,[Y+]
+        BEQ  .done
+        ADD  R0,R1
+        ST   [v_PIX_Y_L],R0
+        LD   R0,[Y+]
+        ADD  R0,R3
+        ST   [v_PIX_X_L],R0
+        LD   R0,[v_dd_x+1]
+        ADC  R0,#0
+        ST   [v_PIX_X_H],R0
+        LD   R2,[Y+]
+.spix:  LD   R0,[v_dd_erase]
+        BEQ  .sdraw
+        INCW Y
+        CLR  R0
+        BRA  .sput
+.sdraw: LD   R0,[Y+]
+.sput:  ST   [X],R0
+        SUB  R2,#1
+        BNE  .spix
+        BRA  .slow
+.done:
+  ENDASM
+RETURN
+
+; FmDraw(frame, move, x, y, erase): a formation frame's list with its
+; top-left at the field's (x, y) -- move 0 draws or erases it, 1-4 bring
+; it there from a pixel left, right, up or down, 5 flaps it
+PROC FmDraw(BYTE fr, BYTE mv, BYTE x, BYTE y, BYTE erase)
+  CARD i
+  i = fr
+  i = (i << 2) + (i << 1) + mv
+  dd_ptr = fm_delta + fm_off(i)
+  dd_x = x
+  dd_x = dd_x + FX - 1
+  dd_y = y - 2
+  dd_erase = erase
+  DrawDelta()
+RETURN
+
+; Glyph(ch) -- a character's place in glyphs
+FUNC BYTE Glyph(BYTE c)
+  IF c >= '0' AND c <= '9' THEN RETURN (c - '0') FI
+  IF c >= 'A' AND c <= 'Z' THEN RETURN (c - 'A' + 10) FI
+  IF c == '-' THEN RETURN (36) FI
+  IF c == '%' THEN RETURN (37) FI
+  IF c == '.' THEN RETURN (38) FI
+  IF c == '!' THEN RETURN (39) FI
+  IF c == '@' THEN RETURN (40) FI
+  IF c == '#' THEN RETURN (41) FI
+RETURN (42)
+
+; Text(x, y, s, colour): a string in the font, on the screen's pixels
+PROC Text(CARD x, BYTE y, BYTE POINTER s, BYTE c)
+  BYTE i, n, r, b, k
+  CARD g
+  n = *s
+  FOR i = 1 TO n DO
+    s += 1
+    g = Glyph(*s)
+    g = g * 8
+    FOR r = 0 TO 7 DO
+      PIX_X = x
+      PIX_Y = y + r
+      b = glyphs(g + r)
+      FOR k = 0 TO 7 DO
+        IF b & $80 THEN PIX_DATA = c ELSE PIX_DATA = 0 FI
+        b = b << 1
+      OD
+    OD
+    x += 8
+  OD
+RETURN
+
+; Number(x, y, v, digits, colour): right-aligned, the leading zeros blank
+BYTE ARRAY numbuf(8)
+PROC Number(CARD x, BYTE y, CARD v, BYTE digits, BYTE c)
+  BYTE i
+  numbuf(0) = digits
+  FOR i = 0 TO digits - 1 DO numbuf(digits - i) = ' ' OD
+  i = digits
+  DO
+    numbuf(i) = '0' + v % 10
+    v = v / 10
+    i -= 1
+  UNTIL v == 0 OR i == 0 OD
+  Text(x, y, numbuf, c)
+RETURN
+
+; ------------------------------------------------------------- sprites
+; ShowChar(sp, frame, h, v, x, y): a sprite frame as the four sprites
+; from descriptor sp, its 16 x 16 box's top-left at the screen's (x, y)
+; logical, mirrored left-right by h and top-bottom by v
+PROC ShowChar(BYTE sp, BYTE fr, BYTE fh, BYTE fv, INT x, INT y)
+  BYTE q, p, f, ox, oy
+  CARD i, pat
+  i = fr
+  i = i << 2
+  FOR q = 0 TO 3 DO
+    p = spr_qp(i)
+    IF p == 255 OR y < -16 OR y > 239 THEN
+      SpriteHide(sp + q)
+    ELSE
+      f = spr_qf(i)
+      ox = spr_qx(i)
+      oy = spr_qy(i)
+      IF fh THEN
+        ox = 8 - ox
+        f = f ^ $40
+      FI
+      IF fv THEN
+        oy = 8 - oy
+        f = f ^ $80
+      FI
+      pat = p
+      pat = SPR_BASE + (pat << 7)
+      SetSprite(sp + q, (x + ox) << 1, (y + oy) << 1, pat, 1, f)
+    FI
+    i += 1
+  OD
+RETURN
+
+PROC HideChar(BYTE sp)
+  BYTE q
+  FOR q = 0 TO 3 DO SpriteHide(sp + q) OD
+RETURN
+
+; Heading(h, fr0): a heading in 24ths of a turn clockwise from up as the
+; frame and mirrors for a character whose first frame is fr0 -- the
+; sheet's seven go from facing left (0) to facing up (6), and the other
+; three quarters are those mirrored
+BYTE hd_fr, hd_h, hd_v
+PROC Heading(BYTE h, BYTE fr0)
+  h = h % 24
+  hd_h = 0
+  hd_v = 0
+  IF h >= 18 THEN
+    hd_fr = h - 18
+  ELSEIF h <= 6 THEN
+    hd_fr = 6 - h
+    hd_h = 1
+  ELSEIF h >= 12 THEN
+    hd_fr = h - 12
+    hd_fr = 6 - hd_fr
+    hd_v = 1
+  ELSE
+    hd_fr = h - 6
+    hd_h = 1
+    hd_v = 1
+  FI
+  hd_fr += fr0
+RETURN
+
+; --------------------------------------------------------- the formation
+; Ten columns and six rows of arcade coordinates -- db_fmtn_hpos_orig in
+; the disassembly: the columns' X, and the rows' Y as the board stores
+; them, which is $160 less twice the byte (c_12C3) -- here as the field's
+; top-left of each: X - 17 - 8 across... the X is the sprite's left edge
+; already, so X - 17; the rows' tops are Y - 40 - 16 on the field.
+BYTE ARRAY col_x0(10) = [32 48 64 80 96 112 128 144 160 176]
+BYTE ARRAY row_y0(6) = [4 20 36 48 60 72]
+BYTE ARRAY col_x(10)
+BYTE ARRAY row_y(6)
+INT sway                             ; the columns' offset while the waves come in
+BYTE sway_dir
+
+; the breathing: f_1DE6 and d_1E64_bitmap_tables. Every fourth frame a
+; counter steps, out 32 times and back 32; every eighth step a table of
+; sixteen bitmaps is copied in -- five columns left, five right, six rows
+; -- and each step rotates each bitmap right, moving its coordinate a
+; pixel (outwards, or down) when the bit that falls out is set. The
+; outer columns and the bottom row move every step, the middle columns
+; one in eight, the top row never.
+BYTE ARRAY br_tab(64) = [
+  $FF $77 $55 $14 $10 $10 $14 $55 $77 $FF $00 $10 $14 $55 $77 $FF
+  $FF $77 $55 $51 $10 $10 $51 $55 $77 $FF $00 $10 $51 $55 $77 $FF
+  $FF $77 $57 $15 $10 $10 $15 $57 $77 $FF $00 $10 $15 $57 $77 $FF
+  $FF $F7 $D5 $91 $10 $10 $91 $D5 $F7 $FF $00 $10 $91 $D5 $F7 $FF]
+BYTE ARRAY br_work(16)
+BYTE br_cnt, breathing
+BYTE ARRAY col_off(10)
+BYTE ARRAY row_off(6)
+
+PROC Breathe()
+  BYTE prev, c, i, b, sgn, t
+  prev = br_cnt
+  IF prev & $80 THEN br_cnt -= 1 ELSE br_cnt += 1 FI
+  IF prev == $1F THEN br_cnt = br_cnt | $80 FI
+  IF prev == $81 THEN br_cnt = br_cnt & $7F FI
+  c = br_cnt
+  IF prev & 7 == 0 THEN
+    t = (c & $18) << 1
+    FOR i = 0 TO 15 DO br_work(i) = br_tab(t + i) OD
+  FI
+  FOR i = 0 TO 15 DO
+    b = br_work(i)
+    br_work(i) = (b >> 1) | ((b & 1) << 7)
+    IF b & 1 THEN
+      ; expanding: the left five out to the left, the rest out and down
+      sgn = 1
+      IF i < 5 THEN sgn = 0 FI
+      IF prev & $80 THEN sgn = 1 - sgn FI
+      IF i < 10 THEN
+        IF sgn THEN col_off(i) += 1 ELSE col_off(i) -= 1 FI
+      ELSE
+        IF sgn THEN row_off(i - 10) += 1 ELSE row_off(i - 10) -= 1 FI
+      FI
+    FI
+  OD
+RETURN
+
+; f_2A90: while the waves come in, every fourth frame the columns step a
+; pixel, turning at 32 either side of the centre
+PROC Sway()
+  IF sway_dir THEN sway -= 1 ELSE sway += 1 FI
+  IF sway == 32 THEN sway_dir = 1 FI
+  IF sway == -32 THEN sway_dir = 0 FI
+RETURN
+
+; the slots: row 0 is the captured fighters' four, row 1 the bosses',
+; rows 2-3 the butterflies' eight, rows 4-5 the bees' ten
+CONST NSLOT = 44
+BYTE ARRAY sl_row(NSLOT), sl_col(NSLOT), sl_kind(NSLOT)
+BYTE ARRAY sl_on(NSLOT)              ; drawn in the bitmap
+BYTE ARRAY sl_fr(NSLOT)              ; the frame drawn: a formation frame
+BYTE ARRAY sl_x(NSLOT), sl_y(NSLOT)  ; where it is drawn, the field's top-left
+BYTE flap                            ; 0 or 1: the wing frame everyone shows
+
+PROC SlotsInit()
+  BYTE i, c, r
+  i = 0
+  FOR c = 3 TO 6 DO
+    sl_row(i) = 0
+    sl_col(i) = c
+    sl_kind(i) = FM_CAPTURED6
+    sl_row(i + 4) = 1
+    sl_col(i + 4) = c
+    sl_kind(i + 4) = FM_BOSS6
+    i += 1
+  OD
+  i = 8
+  FOR r = 2 TO 3 DO
+    FOR c = 1 TO 8 DO
+      sl_row(i) = r
+      sl_col(i) = c
+      sl_kind(i) = FM_GOEI6
+      i += 1
+    OD
+  OD
+  FOR r = 4 TO 5 DO
+    FOR c = 0 TO 9 DO
+      sl_row(i) = r
+      sl_col(i) = c
+      sl_kind(i) = FM_ZAKO6
+      i += 1
+    OD
+  OD
+  FOR i = 0 TO 59 DO slot_at(i) = 255 OD
+  FOR i = 0 TO NSLOT - 1 DO
+    sl_on(i) = 0
+    slot_at(sl_row(i) * 10 + sl_col(i)) = i
+  OD
+RETURN
+
+PROC Positions()
+  BYTE i
+  FOR i = 0 TO 9 DO col_x(i) = col_x0(i) + sway + col_off(i) OD
+  FOR i = 0 TO 5 DO row_y(i) = row_y0(i) + row_off(i) OD
+RETURN
+
+; FmStep(part): every slot drawn in a column of that number mod 4 caught
+; up with where its column and row are, a pixel a list at a time, and
+; flapped to the wing frame everyone shows. The breathing steps every
+; fourth frame, so the four halves of the columns take the four frames
+; between: a column is at most three frames behind its neighbour, and a
+; step is never one frame's whole work.
+PROC FmStep(BYTE part)
+  BYTE i, tx, ty, fr, want
+  FOR i = 0 TO NSLOT - 1 DO
+    IF sl_on(i) AND (sl_col(i) & 3) == part THEN
+      tx = col_x(sl_col(i))
+      ty = row_y(sl_row(i))
+      fr = sl_fr(i)
+      WHILE sl_x(i) != tx DO
+        IF sl_x(i) < tx THEN
+          sl_x(i) += 1
+          FmDraw(fr, 1, sl_x(i), sl_y(i), 0)
+        ELSE
+          sl_x(i) -= 1
+          FmDraw(fr, 2, sl_x(i), sl_y(i), 0)
+        FI
+      OD
+      WHILE sl_y(i) != ty DO
+        IF sl_y(i) < ty THEN
+          sl_y(i) += 1
+          FmDraw(fr, 3, sl_x(i), sl_y(i), 0)
+        ELSE
+          sl_y(i) -= 1
+          FmDraw(fr, 4, sl_x(i), sl_y(i), 0)
+        FI
+      OD
+      want = sl_kind(i)
+      IF want != FM_CAPTURED6 THEN want += flap FI
+      IF want != fr THEN
+        FmDraw(fr, 5, sl_x(i), sl_y(i), 0)
+        sl_fr(i) = want
+      FI
+    FI
+  OD
+RETURN
+
+PROC SlotShow(BYTE i)
+  sl_fr(i) = sl_kind(i)
+  sl_x(i) = col_x(sl_col(i))
+  sl_y(i) = row_y(sl_row(i))
+  FmDraw(sl_fr(i), 0, sl_x(i), sl_y(i), 0)
+  sl_on(i) = 1
+RETURN
+
+PROC SlotHide(BYTE i)
+  IF sl_on(i) THEN
+    FmDraw(sl_fr(i), 0, sl_x(i), sl_y(i), 1)
+    sl_on(i) = 0
+  FI
+RETURN
+
+; ------------------------------------------------------------- the stars
+; Two banks of stars scrolling down the field, the arcade's 05XX in kind:
+; each has its place and colour, and the banks take turns to show
+CONST NSTAR = 48
+BYTE ARRAY st_x(NSTAR), st_y(NSTAR), st_c(NSTAR), st_on(NSTAR)
+BYTE st_speed, st_bank
+
+; Covered(x, y): whether a character at rest in the formation owns that
+; pixel of the field, so that a star neither draws over it nor erases it
+; -- asked twice a star a frame, so it answers most of them with one
+; compare: the formation's band, then its column, then at most two rows
+BYTE ARRAY slot_at(60)               ; row * 10 + column: the slot, 255 none
+
+FUNC BYTE Owns(BYTE i, BYTE x, BYTE y)
+  BYTE dx, dy
+  CARD m, bit
+  IF i == 255 THEN RETURN (0) FI
+  IF sl_on(i) == 0 THEN RETURN (0) FI
+  dx = x - sl_x(i)
+  dy = y - sl_y(i)
+  IF dx >= 16 OR dy >= 16 THEN RETURN (0) FI
+  m = sl_fr(i)
+  m = (m << 5) + (dy << 1)
+  bit = fm_mask(m)
+  bit = (bit << 8) | fm_mask(m + 1)
+  IF bit & ($8000 >> dx) THEN RETURN (1) FI
+RETURN (0)
+
+FUNC BYTE Covered(BYTE x, BYTE y)
+  BYTE r, c, i
+  IF y < row_y(0) THEN RETURN (0) FI
+  IF y >= row_y(5) + 17 THEN RETURN (0) FI
+  IF x < col_x(0) THEN RETURN (0) FI
+  c = 0
+  WHILE c < 10 AND x >= col_x(c) + 17 DO c += 1 OD
+  IF c == 10 THEN RETURN (0) FI
+  FOR r = 0 TO 5 DO
+    IF y >= row_y(r) AND y < row_y(r) + 17 THEN
+      IF Owns(slot_at(r * 10 + c), x, y) THEN RETURN (1) FI
+      IF c > 0 THEN
+        IF Owns(slot_at(r * 10 + c - 1), x, y) THEN RETURN (1) FI
+      FI
+    FI
+  OD
+RETURN (0)
+
+BYTE ARRAY st_cols(7) = [C_WHITE C_RED C_YELLOW C_CYAN C_BLUE 10 13]
+
+PROC StarsInit()
+  BYTE i
+  FOR i = 0 TO NSTAR - 1 DO
+    st_x(i) = Rnd(FW)
+    st_y(i) = Rnd(240)
+    st_c(i) = st_cols(Rnd(7))
+    st_on(i) = 0
+  OD
+  st_speed = 1
+RETURN
+
+; The stars are all erased before the formation draws and all drawn after
+; it, so an erase never needs asking whether a character has moved onto
+; its pixel since -- none has -- and only a draw asks Covered, and only
+; inside the formation's band.
+PROC StarsErase()
+  BYTE i
+  CARD px
+  FOR i = 0 TO NSTAR - 1 DO
+    IF st_on(i) THEN
+      px = st_x(i)                   ; a byte plus a constant is a byte: widen first
+      PIX_X = px + FX
+      PIX_Y = st_y(i)
+      PIX_DATA = 0
+      st_on(i) = 0
+    FI
+  OD
+RETURN
+
+PROC StarsDraw()
+  BYTE i, x, y, top, bot, phase
+  CARD px
+  st_bank += 1
+  phase = (st_bank >> 5) & 1
+  top = row_y(0)
+  bot = row_y(5) + 17
+  FOR i = 0 TO NSTAR - 1 DO
+    y = st_y(i) + st_speed
+    IF y >= 240 THEN
+      y -= 240
+      st_x(i) = Rnd(FW)
+    FI
+    st_y(i) = y
+    IF (i & 1) == phase THEN
+      x = st_x(i)
+      IF y < top OR y >= bot OR Covered(x, y) == 0 THEN
+        px = x
+        PIX_X = px + FX
+        PIX_Y = y
+        PIX_DATA = st_c(i)
+        st_on(i) = 1
+      FI
+    FI
+  OD
+RETURN
+
+; ----------------------------------------------------------- the fighter
+INT fx                               ; its top-left on the field
+CONST FIGHTER_Y = 224
+BYTE ARRAY shot_on(2)
+INT ARRAY shot_x(2), shot_y(2)
+
+PROC Fighter()
+  IF KeyHeld(KEY_LEFT) OR KeyHeld(KEY_Z) THEN fx -= 2 FI
+  IF KeyHeld(KEY_RIGHT) OR KeyHeld(KEY_X) THEN fx += 2 FI
+  IF fx < 1 THEN fx = 1 FI
+  IF fx > 191 + 16 THEN fx = 191 + 16 FI
+  ShowChar(SP_FIGHTER, F_FIGHTER + 6, 0, 0, fx + FX, FIGHTER_Y)
+RETURN
+
+; ------------------------------------------------------------ the screen
+PROC Hud()
+  Text(4, 8, "1UP", C_RED)
+  Number(0, 20, score, 6, C_WHITE)
+  Text(4, 44, "HIGH", C_RED)
+  Text(4, 54, "SCORE", C_RED)
+  Number(0, 66, hiscore, 6, C_WHITE)
+RETURN
+
+PROC Frame1()
+  WaitVBlank()
+  KeyPoll()
+  loops += 1
+RETURN
+
+PROC Play()
+  BYTE i, t
+  Clg(0)
+  Hud()
+  SlotsInit()
+  StarsInit()
+  br_cnt = 0
+  FOR i = 0 TO 9 DO col_off(i) = 0 OD
+  FOR i = 0 TO 5 DO row_off(i) = 0 OD
+  Positions()
+  FOR i = 0 TO NSLOT - 1 DO
+    IF i >= 4 THEN SlotShow(i) FI
+  OD
+  fx = 104
+  t = 0
+  DO
+    Frame1()
+    IF KeyHit(KEY_ESC) THEN EXIT FI
+    t += 1
+    StarsErase()
+    ; the breathing steps every fourth frame, as f_1DE6 does, and the
+    ; wings flap with every eighth step
+    IF t & 3 == 0 THEN
+      Breathe()
+      IF br_cnt & 7 == 0 THEN flap = 1 - flap FI
+      Positions()
+    FI
+    FmStep(t & 3)
+    StarsDraw()
+    Fighter()
+  OD
+RETURN
+
+PROC Main()
+  BYTE i
+  Graphics(4)
+  Cursor(0)
+  VID_BORDER = 0
+  SpritesOff()
+  IF OpenData() == 0 THEN
+    Graphics(0)
+    PrintE("GALAGA.DAT is not on drive 11")
+    RETURN
+  FI
+  Stream(D_SPR, DH_SPR, SPR_BASE, N_SPR)
+  SetPalette(gal_pal, 0, 16)
+  SetPalette(gal_pal, 240, 16)
+  FOR i = 0 TO 31 DO SpriteHide(i) OD
+  SpritesOn(15)
+  hiscore = 20000
+  Play()
+  SpritesOff()
+  Reset()
+RETURN
