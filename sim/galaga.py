@@ -192,7 +192,7 @@ class Game:
         """The field's pixels that are not what the program's own state says
         should be there -- each character at rest drawn where its slot says
         it is drawn, each star it says is lit, and the band's backdrop as
-        its copy in RAM holds it -- as (x, y, have, want); an empty list is
+        its copy in VRAM holds it -- as (x, y, have, want); an empty list is
         a bitmap no list left a pixel behind in. VRAM and the arrays are read
         once each: the client's reads are a round trip apiece."""
         import mkgalaga as A
@@ -202,7 +202,7 @@ class Game:
         fx, fw = self.c("FX"), self.c("FW")
         want = [[0] * fw for _ in range(240)]
         by, bh = self.c("BAND_Y"), self.c("BAND_H")
-        bram = self.m.bus.mem[self.c("BD_RAM"):self.c("BD_RAM") + bh * 112]
+        bram = self.m.video.vram[self.c("BD_VRAM"):self.c("BD_VRAM") + bh * 112]
         for y in range(bh):
             row = want[by + y]
             for x in range(224):
@@ -280,17 +280,20 @@ def sound_check():
     g.until(lambda: g.byte("snd_on", 0x0B), 60)
     want = S.render(0x0B, chain=False)
     seen = []
-    for f in range(len(want[0]) + 4):
+    for f in range(len(want[0]) + 8):
         g.m.run_frame(1)
         snd = g.m.sound()
         seen.append([(snd[8 * v] | (snd[8 * v + 1] << 8), snd[8 * v + 4] & 15, snd[8 * v + 5] & 0x40) for v in range(3)])
-    # the machine is a frame or two behind the stream's start: align on the first note
+    # where sampling starts against the stream's first frame depends on when
+    # the poll above saw the sound begin: align on the notes, either way
     rows = [[(0 if hz is None else min(65535, round(S.target_increment(hz))), 0 if hz is None else vol)
              for (_, hz, vol) in (want[v][f] for v in range(3))] for f in range(len(want[0]))]
     best = None
-    for lag in range(0, 4):
+    for lag in range(-3, 4):
         bad = []
         for f, row in enumerate(rows):
+            if not 0 <= f + lag < len(seen):
+                continue
             got = seen[f + lag]
             for v in range(3):
                 inc, vol = row[v]
@@ -464,6 +467,14 @@ def main():
             g.at_rest()
             d = g.bitmap_diff()
             print("after %4d frames: %d pixels differ %s" % (g.m.frames, len(d), d[:6]))
+    elif what == "intro":
+        # the work of the frames under PLAYER 1, from the space bar
+        h = Game(tag="gal_intro")
+        h.m.run_frame(20)
+        h.tap(SPACE)
+        costs, (work, p) = h.frame_work(60)
+        print("intro frames, thousands of clocks:", " ".join("%d" % (c // 1000) for c in costs))
+        print(p.report(top=8))
     elif what == "profile":
         costs, (work, p) = g.frame_work(240)
         print("work per frame over %d frames: mean %d, max %d clocks (%.0f%% of a frame)"

@@ -8,31 +8,33 @@ CONST DH_SPR = 0
 CONST N_SPR = 19584
 CONST D_BD0 = 19584
 CONST DH_BD0 = 0
-CONST N_BD0 = 8064
-CONST D_BD1 = 27648
+CONST N_BD0 = 7168
+CONST D_BD1 = 26752
 CONST DH_BD1 = 0
-CONST N_BD1 = 8064
-CONST D_BD2 = 35712
+CONST N_BD1 = 7168
+CONST D_BD2 = 33920
 CONST DH_BD2 = 0
-CONST N_BD2 = 8064
-CONST D_BD3 = 43776
+CONST N_BD2 = 7168
+CONST D_BD3 = 41088
 CONST DH_BD3 = 0
-CONST N_BD3 = 8064
+CONST N_BD3 = 7168
 
 ; the colour PROM, black first: the sprite bank and the bitmap's bank 0
 CARD ARRAY gal_pal(16) = [
   $000 $DDD $F00 $FF0 $0FD $0BD $06D $F90 $FB0 $F0D $BBD $D40 $0F0 $90D $00D $099
 ]
 
-; the levels' backdrops: a band of 72 rows from row 168, in GALAGA.DAT's
+; the levels' backdrops: a band of 64 rows from row 176, in GALAGA.DAT's
 ; BD blocks, and its palette -- the first 8 the arcade's, the rest the band's
-CONST BAND_Y = 168
-CONST BAND_H = 72
+; the band's copy is kept in VRAM right above the sprite patterns
+CONST BD_VRAM = $E280
+CONST BAND_Y = 176
+CONST BAND_H = 64
 CONST SAFE = 8
 ; for each level its own eight, as PAL_DATA takes them -- the high byte first
 BYTE ARRAY bd_pal(64) = [
   $00 $05 $00 $19 $00 $3C $01 $6E $02 $BF $05 $DF $0A $EF $0D $FF
-  $00 $58 $0A $C2 $02 $23 $03 $45 $04 $82 $0F $FF $03 $AE $00 $00
+  $00 $58 $0A $C2 $04 $82 $03 $45 $02 $23 $0F $FF $03 $AE $00 $00
   $0B $85 $08 $44 $0A $75 $09 $54 $0A $65 $00 $00 $00 $00 $00 $00
   $05 $06 $05 $5A $0F $44 $0F $A5 $0F $E4 $0F $FF $00 $00 $00 $00
 ]

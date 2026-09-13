@@ -7053,8 +7053,8 @@ formation moved only in whole tiles, which is not Galaga's motion; and
 mode 5's double buffer, whose 192 lines cannot hold a portrait game.
 
 **The backdrops: a raster split, and the palette ordered for it.** Each
-of the four levels has a horizon along the bottom of the field, 224 x 72
-from row 168, cut from published pixel art (assets/galaga/README.md). In
+of the four levels has a horizon along the bottom of the field, 224 x 64
+from row 176, cut from published pixel art (assets/galaga/README.md). In
 one bank of sixteen there is no room for the arcade's fifteen and a
 picture's own, so the bank is split in time rather than in index: the
 palette is ordered so its first eight are the only colours anything the
@@ -7065,9 +7065,13 @@ last eight. The vector's handler writes them on the row above the band
 and the arcade's back at the vertical blank, sixteen stores each; the
 compare matches the line counter's low byte, so it also fires 256 lines
 higher and that first match is let go. The machine's palette log holds
-it to raw line 334 and line 480 exactly. The band's pixels are kept in
-RAM at `$D000` as the bitmap holds them, for the stars to stay behind
-and for what draws over the band to put back. The band rises out of the sky
+it to the raw line above the band and line 480 exactly. The band's
+pixels are kept, as the bitmap holds them, in VRAM right above the
+sprite patterns (`BD_VRAM`, `$E280`), for the stars to stay behind and
+for what draws over the band to put back through the VRAM port. They
+were in RAM at first, 72 rows at `$DF80`; at 44,832 bytes of PRG with
+the dives, the capture and the music still to come, the 8 KB was the
+program's, and 64 rows are exactly what VRAM has left. The band rises out of the sky
 through its first sixteen rows dithered into black on a 4 x 4 Bayer
 matrix -- a change to the art's pixels the owner allowed. **Rejected**:
 the same fade done by the split, stepping the eight through a quarter, a

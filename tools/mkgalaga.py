@@ -397,14 +397,14 @@ GLYPHS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ-%.!@# "
 # on a 4 x 4 Bayer matrix, a sixteenth more of each row kept than the row
 # above, so the horizon rises out of the sky rather than starting on a
 # line.
-BAND_Y, BAND_H, FADE = 168, 72, 16
+BAND_Y, BAND_H, FADE = 176, 64, 16
 BAYER = [[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]]
 BACKDROPS = [
     # file, reduction, and the band's top-left in the reduced picture
-    ("chikyuu_16_edge_0.png", 1, 16, 146),
-    ("green_nebula_arne16_-_512x512_0.png", 1, 70, 150),
-    ("rocky-far-mountains_0.png", 5, 16, 32),
-    ("planet-only-alt2-alpha.png", 2, -16, 22),
+    ("chikyuu_16_edge_0.png", 1, 16, 154),
+    ("green_nebula_arne16_-_512x512_0.png", 1, 70, 158),
+    ("rocky-far-mountains_0.png", 5, 16, 40),
+    ("planet-only-alt2-alpha.png", 2, -16, 26),
 ]
 
 
@@ -734,6 +734,10 @@ def act(o):
     w("")
     w("; the levels' backdrops: a band of %d rows from row %d, in GALAGA.DAT's" % (BAND_H, BAND_Y))
     w("; BD blocks, and its palette -- the first %d the arcade's, the rest the band's" % SAFE)
+    spr_end = 0x9600 + len(o["pats"].pats) * 128
+    assert spr_end + BAND_H * 112 <= 0x10000, "the band's copy does not fit VRAM above the sprites"
+    w("; the band's copy is kept in VRAM right above the sprite patterns")
+    w("CONST BD_VRAM = $%04X" % spr_end)
     w("CONST BAND_Y = %d" % BAND_Y)
     w("CONST BAND_H = %d" % BAND_H)
     w("CONST SAFE = %d" % SAFE)
