@@ -1871,12 +1871,76 @@ ten on 5-8, half on 9-12 -- and anywhere else the hero sees the eight
 cells round. Walking into a shut door opens it (NetHack's autoopen), and
 a door is never entered or left diagonally; an empty doorway is no bar.
 
+**The creatures are NetHack's, in DawnLike's pictures.** 45 monsters
+from the newt to the vampire lord, the six forms of the two pets, four
+of the people later milestones need -- shopkeeper, Oracle, watchman,
+priest -- and the Wizard of Yendor: 58, and with the three heroes and
+Platino, 62 of the 64 pictures a creature bank holds. A monster's level,
+speed, armour class, frequency, difficulty and up to three attacks are
+NetHack 3.6's own, read out of `src/monst.c`, so the ladder of danger is
+the one players know; which DawnLike cell is which creature is named by
+tommyettinger's [DawnLikeAtlas](https://github.com/tommyettinger/DawnLikeAtlas)
+(`image_names.tsv`), which is also how the first milestone's heroes were
+found to be the wrong race's -- they are the human valkyrie, wizard and,
+for the Rogue, bandit now.
+
+**The rules are NetHack's where the game has the thing they govern:**
+
+- **A level's monsters**: one in three rooms, never the room the hero
+  comes down into; and a monster arriving out of sight one turn in
+  seventy. The kind is NetHack's choice by difficulty -- no harder than
+  half of depth and hero's level together, no easier than a sixth of the
+  depth -- weighted by frequency; jackals, rats and ants come in small
+  groups and hill orcs and killer bees in large ones, halved while the
+  hero is below level 3.
+- **A blow**: the hero hits when 1 + the role's bonus + the target's
+  armour class + the hero's level + the weapon's enchantment beats a d20,
+  for the weapon's die, its enchantment and strength's bonus (Valkyrie a
+  long sword +1 and +2 for strength, Wizard a quarterstaff +1, Rogue a
+  short sword and +2 to hit for dexterity); a monster hits when 10 + the
+  hero's armour class + its level beats a d20 plus the attack's place,
+  for its dice. Monster against monster is its level and the defender's
+  armour class.
+- **Speed** is movement points: each turn a monster adds its speed and
+  acts once for every twelve, the hero's.
+- **Experience** is monst.c's creature worth -- the square of the level,
+  more for armour, speed and special attacks, fifty past level eight --
+  on NetHack's ladder, 20, 40, 80 ... to level 12 at 20,000; a level is a
+  d8 and a d2 of hit points, the Valkyrie one more, and power.
+- **Mending** is a hit point every 42/(level+2)+1 turns below level ten.
+- **The pet** -- the Valkyrie's and Wizard's a kitten, the Rogue's a
+  little dog -- fights hostiles beside it that are not two levels above
+  it, stays near the hero, comes down the stairs if it is beside the
+  hero, changes places when the hero walks into it, and grows as
+  NetHack's `grow_up()` has it: hit points on each kill, a level at eight
+  a level, a housecat or dog at level 4 and a large cat or dog at 6. A
+  monster the pet bites bites back.
+- **The Wizard's force bolt**: `Z` and a direction, five power, 2d12 to
+  the first monster in the line within eight cells.
+
+**Where it is not NetHack, and why.** A monster sees the hero when the
+hero sees it, which is the view the game already computes, rather than a
+line of sight of its own. None is generated asleep. Special attacks are
+the ones these creatures have, cut down: poison is an extra d6 one time
+in eight, without NetHack's strength loss or instant death; a
+homunculus's bite sleeps the hero for up to ten turns; a wraith's or a
+vampire's touch drains a level one time in three; the floating eye's
+passive gaze freezes the hero for d(level+1, 10) turns, not NetHack's
+d(level+1, 70), which on a machine without saves would end most games
+that strike one; the acid blob splashes and the yellow mold stings. A
+leprechaun steals nothing until there is gold. The message area is two
+lines with `--More--` when a turn has more to say.
+
+**The grave**: when the hit points run out, "You die...", then DawnLike's
+gravestone and who died, what killed them, on which level, at which
+experience level and after how many turns.
+
 **The plan**, decided with the owner before any code:
 
 | milestone | what it brings |
 |---|---|
 | **1 — done** | the themes from drive 9; the title with the three heroes and the credits; Rogue's level; seeing and remembering; doors; stairs; persistence |
-| 2 | monsters and combat, the three roles -- Valkyrie, Wizard, Rogue -- experience, and a pet that follows and fights |
+| **2 — done** | monsters and combat by NetHack's numbers, the three roles, experience, the pet, the force bolt, the grave |
 | 3 | items: inventory, wielding and wearing, gold; potions, scrolls, wands and rings under random names each game, blessed, uncursed or cursed |
 | 4 | shops and their keeper; altars and prayer; fountains; traps and secret doors; Elbereth in the dust |
 | 5 | the special levels: the Oracle, a small Sokoban up from below it, and a cave branch after the Gnomish Mines with a town |
@@ -1887,34 +1951,47 @@ saving (a game is one sitting, as the first roguelikes were).
 
 Keys: the cursor keys, the keypad or `h j k l y u b n` move, and two
 cursor keys held together go diagonally; a key held repeats after ten
-frames, every third after that; `>` and `<` take the stairs, and Enter
-the stairs the hero stands on; `s`, `.` or keypad 5 waits; Esc leaves
-for the title, and on the title restarts the machine.
+frames, every third after that; moving into a monster attacks it and
+into the pet changes places; `>` and `<` take the stairs, and Enter the
+stairs the hero stands on; `s`, `.` or keypad 5 waits; `Z` casts;
+Ctrl+R draws the screen again; Esc asks whether to quit, and on the
+title restarts the machine.
 
-**Measured**, milestone 1: 13,742 bytes of PRG, the art table included;
-three theme files of 32,768 bytes on drive 9, and the loader of 3,545 on
-drive 11.
+**Measured**: milestone 1, 13,742 bytes of PRG, the art table included;
+milestone 2, **26,289**. Three theme files of 32,768 bytes on drive 9,
+and the loader of 3,545 on drive 11.
 
 **The gate** (`sim/test_action.py`, on `sim/yendor.py`): the art table
 and theme files what the sheets make; the compiled bytes the same as
-`tools/cool8asm.py`'s; YTHEME0.DAT in the pattern banks byte for byte;
-the title naming DawnLike, DragonDePlatino, DawnBringer and the
-licence, and the palette's banks; the hero chosen; the first level --
-one stair up under the hero, one down, every floor and corridor
-reachable, seven to nine rooms each walled but for its doors; every
-cell in the window the picture its byte says, in view or remembered; a
-lit room seen whole; a wall refusing a step without taking a turn; a
-shut door opened by walking into it, stood in, and not left
-diagonally; the walk to the stairs down with the window following and
-what was left behind dimmed; level 2 made under the stairs and level 1
-back exactly as it was left; the way out refused without the Amulet;
-the caverns' theme at depth 5 and the depths' at 9, each streamed from
-the drive; no stairs down on level 12; Esc to the title with the halls'
-theme back; the stack; and from the demos disc, YENDOR.PRG and its
-themes on drive 9, only the loader on 11, and `SYS "YENDOR.BIN"` from
-BASIC finding its program and its theme there. `python sim/yendor.py
-walk` (or `title`, `stairs`, `deep`) plays it and writes the frames as
-PNG.
+`tools/cool8asm.py`'s; the creature table monst.c's numbers and names;
+YTHEME0.DAT in the pattern banks byte for byte; the title naming
+DawnLike, DragonDePlatino, DawnBringer and the licence, and the palette's
+banks; the hero chosen. The dungeon, with its monsters cleared: level 1's
+monsters all of difficulty 1 and the kitten beside the Valkyrie; one
+stair up under the hero, one down, every floor and corridor reachable,
+seven to nine rooms each walled but for its doors; every cell in the
+window the picture its byte says -- terrain in view or remembered, the
+hero, a monster in view; a lit room seen whole; a wall refusing a step
+without taking a turn; a shut door opened by walking into it, stood in,
+and not left diagonally; the walk to the stairs down with the window
+following and what was left behind dimmed; level 2 made under the
+stairs and level 1 back exactly as it was left, its monsters too; the
+way out refused without the Amulet; the caverns' theme at depth 5 and
+the depths' at 9; every monster a deep level makes of NetHack's
+difficulty for it; no stairs down on level 12; Esc asking and y leaving
+for the title. The creatures: moving into a newt attacks it and its
+kill is worth monst.c's experience; a sewer rat's bite taking hit
+points; twenty points making level 2 with its hit points; the pet
+killing a newt beside it and growing; changing places with the pet; the
+pet coming down the stairs; a floating eye's gaze freezing the hero for
+turns and then letting go; mending; the status lines; the grave naming
+the soldier ant and the level, and Enter back to the title; the Wizard's
+force bolt taking five power and 2d12 from the jackal in its line; the
+stack; and from the demos disc, YENDOR.PRG and its themes on drive 9,
+only the loader on 11, and `SYS "YENDOR.BIN"` from BASIC finding its
+program and its theme there. `python sim/yendor.py walk` (or `title`,
+`stairs`, `deep`, `fight`, `scene`, `tour`) plays it and writes the
+frames as PNG.
 
 ### `SLIDES` — the old test pictures, as fully as mode 6 can show them
 

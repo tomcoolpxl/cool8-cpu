@@ -2947,15 +2947,21 @@ def test_coolsw():
 
 
 def test_yendor():
-    """YENDOR, on the machine, as far as its first milestone goes: the
-    theme files streamed from its drive into the pattern banks, the title
-    with its credits, Rogue's level -- every room reachable, both stairs
-    -- every cell on the screen the picture its byte says, a lit room
-    seen whole and what is left behind dimmed, doors opened by walking
-    into them and never passed on the diagonal, the stairs down and back
-    to the same level, a new theme at depths 5 and 9, no way down from
-    12, and the loader from the demos disc. Skips, loudly, without the
-    art."""
+    """YENDOR, on the machine, as far as its second milestone goes. The
+    dungeon: the theme files streamed from its drive into the pattern
+    banks, the title with its credits, Rogue's level -- every room
+    reachable, both stairs -- every cell on the screen the picture its byte
+    says, a lit room seen whole and what is left behind dimmed, doors
+    opened by walking into them and never passed on the diagonal, the
+    stairs down and back to the same level, a new theme at depths 5 and 9,
+    no way down from 12, and the loader from the demos disc. The
+    creatures: NetHack's numbers in the table, the monsters a level makes
+    all of its difficulty, the pet beside the hero, blows struck and
+    taken with their messages, a kill's experience and a level's hit
+    points, the pet's fights and growth, the pet down the stairs and the
+    change of places, the force bolt, the floating eye's gaze, mending,
+    the monsters kept with their level, the grave. Skips, loudly, without
+    the art."""
     import subprocess
     import ioregs
     import mkyendor as MY
@@ -2975,6 +2981,15 @@ def test_yendor():
     reg = lambda n: g.m.bus.read(ioregs.addr_of(n))   # noqa: E731
     dat = [open(p, "rb").read() for p in Y.DATS]
     patterns = lambda: bytes(g.m.video.vram[0x1000:0x9000])   # noqa: E731
+    c = g.c
+
+    # the creatures' table is NetHack's numbers, as the generator wrote them
+    n = len(MY.CREATURES)
+    table = all(g.byte("m_lvl", i) == cr[5] and g.byte("m_spd", i) == cr[6] and g.byte("m_ac", i) == cr[7] + 10
+                and g.byte("m_diff", i) == cr[9] and g.byte("m_flag", i) == cr[10] for i, cr in enumerate(MY.CREATURES))
+    names = bytes(g.m.bus.mem[g.addr("m_names"):g.addr("m_names") + sum(len(cr[1]) + 1 for cr in MY.CREATURES)])
+    check(table and c("N_MON") == n and names == "".join(chr(len(cr[1])) + cr[1] for cr in MY.CREATURES).encode(),
+          "yendor: %d creatures with monst.c's level, speed, armour class, difficulty and flags, and their names" % n, "")
 
     # the title: the theme from the drive, the words, the credits
     g.m.run_frame(60)
@@ -2986,7 +3001,7 @@ def test_yendor():
           and any("DawnBringer" in w and "CC-BY 4.0" in w for w in words),
           "yendor: the title names DawnLike, DragonDePlatino, DawnBringer and the licence", words[25])
     pal = MY.palette()
-    check(g.m.palette()[:16 * len(pal)] == [c for b in pal for c in b],
+    check(g.m.palette()[:16 * len(pal)] == [cc for b in pal for cc in b],
           "yendor: DawnBringer's sixteen in bank 0, dimmed in bank 1, and the inks", "")
     g.tap(Y.DOWN)
     g.m.run_frame(2)
@@ -2995,7 +3010,7 @@ def test_yendor():
     g.m.run_frame(2)
     check(down == 1 and g.byte("role") == 0, "yendor: up and down choose the hero", "%d then %d" % (down, g.byte("role")))
 
-    # the first level: Rogue's grid, all of it joined, both stairs
+    # ------------------------------------------------------------ the dungeon
     g.start(0)
     g.m.run_frame(10)
     lv = g.level()
@@ -3003,6 +3018,16 @@ def test_yendor():
     ups = [i for i, k in enumerate(kinds) if k == Y.K_UP]
     downs = [i for i, k in enumerate(kinds) if k == Y.K_DOWN]
     hx, hy = g.hero()
+    hi = (1 + 1) // 2
+    made = [(t, cc) for _i, t, _x, _y, _hp, st in g.monsters() if not st & Y.S_PET
+            for cc in [MY.CREATURES[t]]]
+    pet = g.pet()
+    check(all(cc[9] <= hi and not cc[10] & MY.NOGEN for _t, cc in made) and pet and pet[1] == c("M_KITTEN")
+          and max(abs(pet[2] - hx), abs(pet[3] - hy)) == 1,
+          "yendor: level 1's monsters all of difficulty 1, and the Valkyrie's kitten beside her",
+          "%s, pet %s" % ([cc[1] for _t, cc in made], pet))
+    g.clear_monsters(keep_pet=False)
+    g.sturdy()
     passable = {Y.K_FLOOR, Y.K_CORR, Y.K_DOORC, Y.K_DOORO, Y.K_DOORWAY, Y.K_UP, Y.K_DOWN}
     reach, todo = {(hx, hy)}, [(hx, hy)]
     while todo:
@@ -3024,7 +3049,7 @@ def test_yendor():
           "yendor: seven to nine rooms, each walled all round but for its doors", "%d rooms" % len(rooms))
     check(not g.wrong_pics(), "yendor: every cell in the window is the picture its byte says",
           str(g.wrong_pics()[:4]))
-    here = [r for r in rooms if r[0] <= hx <= r[2] and r[1] <= hy <= r[3]][0]
+    here = [rm for rm in rooms if rm[0] <= hx <= rm[2] and rm[1] <= hy <= rm[3]][0]
     lit = lv[(here[1] + 1) * Y.LW + here[0] + 1] & Y.F_LIT
     whole = all(lv[y * Y.LW + x] & Y.F_VIS for y in range(here[1], here[3] + 1) for x in range(here[0], here[2] + 1))
     check((whole if lit else True) and g.cell_pic(hx, hy)[0] == g.byte("role") * 4,
@@ -3038,24 +3063,21 @@ def test_yendor():
         g.tap(Y.KP[wall])
     check(g.hero() == (hx, hy) and g.uword("turns") == t0, "yendor: walking into a wall goes nowhere and takes no turn",
           "%s turns %d" % (g.hero(), g.uword("turns") - t0))
-    # a floor beside the hero made a shut door: walked into, it opens and
-    # the hero stays; walked into again, the hero stands in it; a step off
-    # it on the diagonal is refused. The door stays, as part of the level
     key, (dx, dy) = next((k, s) for k, s in Y.STEP.items()
                          if not (s[0] and s[1]) and g.kind(hx + s[0], hy + s[1]) == Y.K_FLOOR)
     at = (hy + dy) * Y.LW + hx + dx
     g.poke("lv", (g.byte("lv", at) & 224) | Y.K_DOORC, at)
     g.tap(Y.KP[key])
-    opened = g.kind(hx + dx, hy + dy) == Y.K_DOORO and g.hero() == (hx, hy) and "door opens" in g.text(0, 0, 40)
+    opened = g.kind(hx + dx, hy + dy) == Y.K_DOORO and g.hero() == (hx, hy) and "door opens" in g.messages()
     g.tap(Y.KP[key])
     inside = g.hero() == (hx + dx, hy + dy)
     diag = next((k for k, s in Y.STEP.items() if s[0] and s[1]
                  and g.kind(hx + dx + s[0], hy + dy + s[1]) in (Y.K_FLOOR, Y.K_UP, Y.K_DOWN)), None)
     g.tap(Y.KP[diag])
-    refused = g.hero() == (hx + dx, hy + dy) and "diagonally" in g.text(0, 0, 40)
+    refused = g.hero() == (hx + dx, hy + dy) and "diagonally" in g.messages()
     check(opened and inside and refused,
           "yendor: walking into a shut door opens it, the next step stands in it, and a door is not left diagonally",
-          "opened %s, in %s, refused %s: %r" % (opened, inside, refused, g.text(0, 0, 40)))
+          "opened %s, in %s, refused %s: %r" % (opened, inside, refused, g.messages()))
 
     # to the stairs down: the way is walked, what is left behind dims
     g.walk_to((downs[0] % Y.LW, downs[0] // Y.LW))
@@ -3065,28 +3087,33 @@ def test_yendor():
           "yendor: walked to the stairs down, the window following, what was left behind remembered and dimmed",
           "hero %s, %d remembered, wrong pictures %s" % (g.hero(), len(dim), g.wrong_pics()[:3]))
 
-    # down and back: the same level, as it was left
+    # down and back: the same level and the same monsters, as they were left
     before = [v & 127 for v in g.level()]
+    mons1 = g.monsters()
     g.shifted(Y.DOT)
     g.m.run_frame(10)
     l2 = g.level()
     on_up = (l2[g.byte("py") * Y.LW + g.byte("px")] & 31) == Y.K_UP
-    check(g.byte("depth") == 2 and on_up and not g.wrong_pics() and "descend" in g.text(0, 0, 40),
-          "yendor: > on the stairs down makes level 2 and puts the hero on its stairs up", g.text(0, 0, 40))
+    check(g.byte("depth") == 2 and on_up and not g.wrong_pics(),
+          "yendor: > on the stairs down makes level 2 and puts the hero on its stairs up", g.messages())
     g.shifted(Y.COMMA)
     g.m.run_frame(10)
     after = [v & 127 for v in g.level()]
-    check(g.byte("depth") == 1 and after == before and g.hero() == (downs[0] % Y.LW, downs[0] // Y.LW),
-          "yendor: < goes back up to level 1 exactly as it was left, onto its stairs down",
-          "%d cells differ" % sum(1 for a, b in zip(after, before) if a != b))
+    check(g.byte("depth") == 1 and after == before and g.hero() == (downs[0] % Y.LW, downs[0] // Y.LW)
+          and g.monsters() == mons1,
+          "yendor: < goes back up to level 1 exactly as it was left, its monsters too, onto its stairs down",
+          "%d cells differ; monsters %s then %s" % (sum(1 for a, b in zip(after, before) if a != b), mons1, g.monsters()))
+    g.clear_monsters(keep_pet=False)
     g.walk_to((ups[0] % Y.LW, ups[0] // Y.LW))
     g.tap(Y.ENTER)
     g.m.run_frame(4)
-    check(g.byte("depth") == 1 and "no Amulet" in g.text(0, 0, 40),
-          "yendor: the stairs up from level 1 are the way out, and not without the Amulet", g.text(0, 0, 40))
+    check(g.byte("depth") == 1 and "no Amulet" in g.messages(),
+          "yendor: the stairs up from level 1 are the way out, and not without the Amulet", g.messages())
 
-    # the themes change with depth, and the last level has no way down
-    shots = []
+    # the themes change with depth, the monsters deepen with it, and the
+    # last level has no way down
+    shots, deep = [], []
+    g.poke("ulev", 6)
     for d, t in ((5, 1), (9, 2), (12, 2)):
         g.poke("depth", d - 1)
         g.poke("px", g.byte("dnx"))
@@ -3096,17 +3123,201 @@ def test_yendor():
                    g.byte("dny") * Y.LW + g.byte("dnx"))
         g.shifted(Y.DOT)
         g.m.run_frame(20)
+        g.sturdy()
         shots.append((g.byte("depth"), g.byte("theme"), patterns() == dat[t], not g.wrong_pics()))
+        lo, hi = d // 6, (d + 6) // 2
+        deep += [(d, MY.CREATURES[t2][1]) for _i, t2, _x, _y, _hp, st in g.monsters()
+                 if not st & Y.S_PET and not lo <= MY.CREATURES[t2][9] <= hi]
     kinds = [v & 31 for v in g.level()]
     check(shots[0] == (5, 1, True, True) and shots[1] == (9, 2, True, True),
           "yendor: depth 5 brings the caverns' theme and depth 9 the depths', each streamed from the drive", str(shots))
+    check(not deep, "yendor: every monster a deep level makes is of NetHack's difficulty for it", str(deep))
     check(shots[2][0] == 12 and Y.K_DOWN not in kinds and Y.K_UP in kinds,
           "yendor: level 12 has stairs up and none down", str(shots[2]))
     g.tap(Y.ESC)
+    g.m.run_frame(2)
+    asked = "Really quit" in g.messages()
+    g.tap(Y.KEY_Y)
     back = g.until(lambda: g.byte("phase") == 0 and g.byte("theme") == 0, 200)
     g.m.run_frame(4)                   # the stream is eight frames; the theme is set at its end
-    check(back is not None and patterns() == dat[0],
-          "yendor: Esc leaves for the title, and the halls' theme comes back for it", "phase %d" % g.byte("phase"))
+    check(asked and back is not None and patterns() == dat[0],
+          "yendor: Esc asks, y leaves for the title, and the halls' theme comes back for it", "phase %d" % g.byte("phase"))
+
+    # ---------------------------------------------------------- the creatures
+    def beside(x, y, free=True):
+        """An orthogonal floor cell next to (x, y): its key and (dx, dy)."""
+        return next((k, s) for k, s in Y.STEP.items() if not (s[0] and s[1])
+                    and g.kind(x + s[0], y + s[1]) == Y.K_FLOOR
+                    and (not free or not g.byte("mat", (y + s[1]) * Y.LW + x + s[0])))
+
+    def until_msg(words, keys, cap=40):
+        """Keys pressed -- or with none, frames run -- and a --More--
+        answered, until the messages say so."""
+        for _ in range(cap):
+            if any(w in g.messages() for w in words):
+                return True
+            if g.text(32, 1, 8) == "--More--":
+                g.tap(Y.SPACE)
+            elif keys:
+                g.tap(keys)
+            else:
+                g.m.run_frame(3)
+        return any(w in g.messages() for w in words)
+
+    g.start(0)
+    g.m.run_frame(10)
+    g.clear_monsters(keep_pet=False)
+    g.sturdy()
+    hx, hy = g.hero()
+    key, (dx, dy) = beside(hx, hy)
+
+    # a blow struck and a kill's experience
+    xp0 = g.uword("uxp")
+    g.put_monster(c("M_NEWT"), hx + dx, hy + dy, hp=1)
+    missed = False
+    for _ in range(40):
+        if not g.byte("mat", (hy + dy) * Y.LW + hx + dx):
+            break
+        if g.text(32, 1, 8) == "--More--":
+            g.tap(Y.SPACE)
+        g.tap(Y.KP[key])
+        missed = missed or "You miss the newt." in g.messages()
+    check(not g.byte("mat", (hy + dy) * Y.LW + hx + dx) and g.uword("uxp") == xp0 + g.uword("m_xp", c("M_NEWT"))
+          and not g.wrong_pics(),
+          "yendor: moving into a monster attacks it, and its kill is worth monst.c's experience",
+          "xp %d -> %d: %s" % (xp0, g.uword("uxp"), g.messages()))
+
+    # a monster's blows, and the message for each
+    hp0 = g.byte("uhp")
+    g.put_monster(c("M_SEWERRAT"), hx + dx, hy + dy, hp=200)
+    bit = until_msg(["The sewer rat bites!"], Y.KEY_S, 60)
+    check(bit and g.byte("uhp") < hp0, "yendor: a monster beside the hero bites, and the hit points go down",
+          "%d -> %d: %s" % (hp0, g.byte("uhp"), g.messages()))
+    g.clear_monsters(keep_pet=False)
+
+    # a level: twenty experience points, NetHack's d8 and d2 and the Valkyrie's one
+    g.poke("uxp", 19)
+    g.poke("uxp", 0, 1)
+    g.poke("uhpmax", 16)
+    g.poke("uhp", 16)
+    max0 = g.byte("uhpmax")
+    g.put_monster(c("M_NEWT"), hx + dx, hy + dy, hp=1)
+    up = until_msg(["Welcome to experience level 2."], Y.KP[key], 40)
+    check(up and g.byte("ulev") == 2 and 3 <= g.byte("uhpmax") - max0 <= 11,
+          "yendor: twenty points make experience level 2, with its hit points", "+%d: %s" % (g.byte("uhpmax") - max0, g.messages()))
+    g.clear_monsters(keep_pet=False)
+
+    # the pet: it fights what is beside it, and grows on its kills
+    g.poke("uhp", 250)
+    pk, (pdx, pdy) = beside(hx, hy)
+    kitten = g.put_monster(c("M_KITTEN"), hx + pdx, hy + pdy, hp=10, state=Y.S_LIVE | Y.S_PET)
+    g.poke("mlev", 3, kitten)
+    fk, (fdx, fdy) = beside(hx + pdx, hy + pdy)
+    g.put_monster(c("M_NEWT"), hx + pdx + fdx, hy + pdy + fdy, hp=1)
+    killed = until_msg(["is killed"], Y.KEY_S, 60)
+    check(killed and g.byte("mhpmax", kitten) > 10,
+          "yendor: the pet fights a monster beside it, kills it, and grows", "%s, max %d" % (g.messages(), g.byte("mhpmax", kitten)))
+
+    # changing places with the pet, set down beside the hero for it
+    g.clear_monsters(keep_pet=True)
+    px0 = g.hero()
+    sk, (sdx, sdy) = beside(px0[0], px0[1])
+    g.poke("mat", 0, g.byte("my", kitten) * Y.LW + g.byte("mx", kitten))
+    kx, ky = px0[0] + sdx, px0[1] + sdy
+    g.poke("mx", kx, kitten)
+    g.poke("my", ky, kitten)
+    g.poke("mat", kitten + 1, ky * Y.LW + kx)
+    g.redraw()
+    g.tap(Y.KP[sk])
+    # the kitten has its own turn after the change, and may take a step from where it was put
+    kd = max(abs(g.byte("mx", kitten) - px0[0]), abs(g.byte("my", kitten) - px0[1]))
+    check(g.hero() == (kx, ky) and kd <= 1 and "You swap places with your kitten." in g.messages(),
+          "yendor: moving into the pet changes places with it", "%s, kitten %d from the old place" % (g.messages(), kd))
+
+    # the pet comes down the stairs when it is beside the hero
+    g.clear_monsters(keep_pet=True)
+    sx, sy = g.byte("dnx"), g.byte("dny")
+    g.poke("px", sx)
+    g.poke("py", sy)
+    pk, (pdx, pdy) = beside(sx, sy)
+    g.poke("mat", 0, g.byte("my", kitten) * Y.LW + g.byte("mx", kitten))
+    g.poke("mx", sx + pdx, kitten)
+    g.poke("my", sy + pdy, kitten)
+    g.poke("mat", kitten + 1, (sy + pdy) * Y.LW + sx + pdx)
+    g.redraw()
+    g.shifted(Y.DOT)
+    g.m.run_frame(20)
+    pet = g.pet()
+    check(g.byte("depth") == 2 and pet and pet[1] == c("M_KITTEN") and max(abs(pet[2] - g.byte("px")), abs(pet[3] - g.byte("py"))) == 1,
+          "yendor: the pet beside the hero on the stairs comes down with it", str(pet))
+
+    # the floating eye: struck, its gaze freezes the hero while the turns go by
+    g.clear_monsters(keep_pet=False)
+    g.sturdy()
+    hx, hy = g.hero()
+    key, (dx, dy) = beside(hx, hy)
+    g.put_monster(c("M_FLOATINGEYE"), hx + dx, hy + dy, hp=250)
+    t0 = g.uword("turns")
+    frozen = until_msg(["frozen"], Y.KP[key], 60)
+    thawed = until_msg(["You can move again."], None, 120) if frozen else False
+    check(frozen and thawed and g.uword("turns") - t0 > 2,
+          "yendor: striking a floating eye freezes the hero for turns, and then it can move again",
+          "%d turns: %s" % (g.uword("turns") - t0, g.messages()))
+    g.clear_monsters(keep_pet=False)
+
+    # mending: a hit point every fifteen turns at level 1
+    g.poke("ulev", 1)
+    g.poke("uhpmax", 16)
+    g.poke("uhp", 5)
+    for _ in range(31):
+        g.tap(Y.KEY_S)
+    check(g.byte("uhp") >= 6, "yendor: hit points mend with the turns", "%d" % g.byte("uhp"))
+    words = g.text(0, 28, 40) + g.text(0, 29, 40)
+    check("Dlvl:2" in words and "HP:" in words and "Pw:" in words and "AC:6" in words and "Xp:" in words,
+          "yendor: the status lines as NetHack's -- level, experience, time, hit points, power, armour", words)
+
+    # the grave
+    g.poke("uhp", 1)
+    hx, hy = g.hero()
+    key, (dx, dy) = beside(hx, hy)
+    g.put_monster(c("M_SOLDIERANT"), hx + dx, hy + dy, hp=200)
+    for _ in range(80):
+        if g.byte("phase") == 2:
+            break
+        if g.text(32, 1, 8) == "--More--":
+            g.tap(Y.SPACE)
+        else:
+            g.tap(Y.KEY_S)
+    g.m.run_frame(10)
+    grave = [g.text(0, r, 40) for r in range(30)]
+    check(g.byte("phase") == 2 and any("REST IN PEACE" in w for w in grave) and any("killed by a soldier ant" in w for w in grave)
+          and any("on dungeon level 2" in w for w in grave),
+          "yendor: death is the grave: killed by a soldier ant, on dungeon level 2", " / ".join(w.strip() for w in grave if w.strip()))
+    g.tap(Y.ENTER)
+    check(g.until(lambda: g.byte("phase") == 0, 200) is not None, "yendor: and Enter goes back to the title", "")
+
+    # the Wizard's force bolt
+    g.start(1)
+    g.m.run_frame(10)
+    g.clear_monsters(keep_pet=False)
+    g.sturdy()
+    hx, hy = g.hero()
+    line = next(((k, s) for k, s in Y.STEP.items() if not (s[0] and s[1])
+                 and all(g.kind(hx + s[0] * j, hy + s[1] * j) == Y.K_FLOOR for j in (1, 2))), None)
+    if line is None:
+        check(False, "yendor: room for the force bolt's test", "no two floor cells in a line from the stairs")
+    else:
+        k2, (lx, ly) = line
+        tgt = g.put_monster(c("M_JACKAL"), hx + 2 * lx, hy + 2 * ly, hp=250)
+        pw0 = g.byte("upw")
+        g.tap(Y.KEY_Z)
+        g.m.run_frame(2)
+        g.tap(Y.KP[k2])
+        g.m.run_frame(4)
+        check(g.byte("upw") == pw0 - 5 and "The force bolt hits the jackal." in g.messages()
+              and 250 - 24 <= g.byte("mhp", tgt) <= 250 - 2,
+              "yendor: Z casts the Wizard's force bolt: five power, two d12 to the first monster in the line",
+              "Pw %d -> %d, hp %d: %s" % (pw0, g.byte("upw"), g.byte("mhp", tgt), g.messages()))
     check(0x100 < g.m.cpu.sp <= 0x200, "yendor: the stack is where it should be", "SP $%04X" % g.m.cpu.sp)
     del g
 

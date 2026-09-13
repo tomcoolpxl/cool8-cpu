@@ -3,9 +3,10 @@
 ; The Amulet of Yendor lies twelve levels down. Fetch it, and climb back
 ; to the sun. The game is Rogue's and NetHack's -- rooms on a three by
 ; three grid joined by corridors, a map remembered as it is seen, levels
-; that stay as they were left -- drawn in DawnLike's tiles, by
-; DragonDePlatino on DawnBringer's palette (CC-BY 4.0), which
-; tools/mkyendor.py cuts from assets/dawnlike/ into assets/yendor/.
+; that stay as they were left, monsters by NetHack's own numbers and a pet
+; at your side -- drawn in DawnLike's tiles, by DragonDePlatino on
+; DawnBringer's palette (CC-BY 4.0), which tools/mkyendor.py cuts from
+; assets/dawnlike/ into assets/yendor/.
 ;
 ; **A cell of the dungeon is 16 x 16, four tiles**, so the screen shows
 ; twenty cells by thirteen of a level forty by twenty-four, and follows
@@ -19,15 +20,24 @@
 ; the hero leaves it, and no tile is drawn twice for it.
 ;
 ; **Levels persist.** The current one is in memory; the others are parked
-; in VRAM above the pattern banks, a slot each, and come back as they were.
+; in VRAM above the pattern banks, a slot each, monsters and all, and come
+; back as they were.
 ;
-; This is the first milestone: the dungeon, walking, the doors, the
-; stairs, what is seen and remembered. docs/14-demos.md has the plan.
+; **The fighting is NetHack's**: a blow lands when 1 + the hero's bonus +
+; the target's armour class + the hero's level + the weapon's enchantment
+; beats a twenty-sided die, and a monster's when 10 + the hero's armour
+; class + its level does; its attacks, its speed, how often it appears and
+; how deep are monst.c's. Experience is NetHack's doubling ladder.
+;
+; Milestones 1 and 2: the dungeon, walking, doors, stairs, what is seen
+; and remembered; the monsters, the fighting, the three heroes, their
+; levels, the pet. docs/14-demos.md has the rest of the plan.
 ;
 ; Keys: the cursor keys, the keypad or h j k l y u b n move -- two cursor
-; keys held together go diagonally; walking into a door opens it; > and <
-; take the stairs, and Enter takes the stairs you stand on; s or . waits;
-; Esc leaves for the title, and on the title restarts the machine.
+; keys held together go diagonally -- and moving into a monster attacks
+; it, into the pet changes places; walking into a door opens it; > and <
+; take the stairs, and Enter the stairs you stand on; s or . waits; Z casts
+; the Wizard's force bolt; Ctrl+R draws the screen again; Esc asks to quit.
 
 CONST YDRIVE = 9                     ; YENDOR's drive: its program and its themes
 CONST PAT_BASE = $1000               ; the four pattern banks, $1000-$8FFF of VRAM
@@ -42,6 +52,7 @@ CONST VW = 20
 CONST VH = 13
 CONST VTOP = 2                       ; the tile row the window starts on
 CONST MAXDEPTH = 12
+CONST MAXMON = 20                    ; monsters on a level at once, the pet among them
 
 ; a cell's byte: what is there in the low five bits, and three flags
 CONST K_ROCK = 0
@@ -56,6 +67,11 @@ CONST K_DOWN = 8
 CONST F_LIT = 32                     ; a floor lit, so its room is seen whole
 CONST F_SEEN = 64                    ; seen once, and remembered
 CONST F_VIS = 128                    ; in view now
+
+; a monster's state bits
+CONST S_LIVE = 1
+CONST S_PET = 2
+CONST S_ANGRY = 4                    ; bitten by the pet: it bites back
 
 ; the palette banks: tools/mkyendor.py's
 CONST B_VIEW = 0
@@ -89,11 +105,14 @@ CONST KEY_Y = $35
 CONST KEY_U = $3C
 CONST KEY_B = $32
 CONST KEY_N = $31
+CONST KEY_R = $2D
 CONST KEY_S = $1B
+CONST KEY_Z = $1A
 CONST KEY_DOT = $49
 CONST KEY_COMMA = $41
 CONST KEY_LSHIFT = $12
 CONST KEY_RSHIFT = $59
+CONST KEY_CTRL = $14
 CONST KEY_SPACE = $29
 CONST KEY_ENTER = $5A
 CONST KEY_ESC = $76
@@ -102,6 +121,20 @@ CONST KEY_ESC = $76
 BYTE ARRAY dir_dx(9) = [0 0 1 1 1 0 255 255 255]
 BYTE ARRAY dir_dy(9) = [0 255 255 0 1 1 1 0 255]
 
+; the heroes: Valkyrie, Wizard, Rogue -- NetHack's starting hit points and
+; power (the role's and a human's), armour class with their gear, the
+; to-hit and damage bonuses of their strength and dexterity, the weapon's
+; sides and enchantment (long sword +1, quarterstaff +1, short sword), and
+; the pet each brings
+BYTE ARRAY r_hp(3) = [16 12 12]
+BYTE ARRAY r_pw(3) = [1 7 2]
+BYTE ARRAY r_ac(3) = [6 9 7]
+BYTE ARRAY r_abon(3) = [1 0 2]
+BYTE ARRAY r_dbon(3) = [2 0 0]
+BYTE ARRAY r_dice(3) = [8 6 6]
+BYTE ARRAY r_ench(3) = [1 1 0]
+BYTE ARRAY r_pet(3) = [M_KITTEN M_KITTEN M_LITTLEDOG]
+
 BYTE ARRAY lv(960)
 BYTE ARRAY rx1(9), ry1(9), rx2(9), ry2(9), rgone(9)
 BYTE upx, upy, dnx, dny
@@ -109,15 +142,28 @@ BYTE ARRAY made(13)                  ; levels already made, by depth
 CARD ARRAY vis(160)                  ; the cells in view, to fade when they leave it
 BYTE nvis
 
+; the monsters of the level: parallel arrays, parked with it
+BYTE ARRAY mtype(20), mx(20), my(20), mhp(20), mhpmax(20), mlev(20), mstat(20), mmove(20)
+BYTE ARRAY mat(960)                  ; the monster on a cell, plus one; rebuilt, not parked
+
 BYTE depth, theme, role
 BYTE px, py                          ; the hero
+BYTE ulev, uhp, uhpmax, upw, upwmax, upara
+INT uac
+CARD uxp
+BYTE dead, killer                    ; and what did it
 BYTE vx, vy                          ; the window's corner on the level
 CARD turns
 BYTE anim, animt                     ; the creatures' frame, and the frames to the next
-BYTE esc, phase                      ; 0 the title, 1 play
+BYTE esc, phase                      ; 0 the title, 1 play, 2 the grave
 BYTE rep_c, rep_t
 CARD st_n
 CARD loops                           ; frames of play, for the gate
+
+; the message lines: a line built in mb, then printed on the next of the
+; two rows, with --More-- when both are full
+BYTE ARRAY mb(41)
+BYTE mbl, msgrow
 
 ; ------------------------------------------------------------- the screen
 PROC Tile(BYTE col, BYTE row, BYTE t, BYTE attr)
@@ -192,7 +238,7 @@ PROC ClearRow(BYTE row)
   OD
 RETURN
 
-; a number right-aligned in n places
+; a number right-aligned in n places, blank to its left
 PROC Num(BYTE col, BYTE row, CARD v, BYTE n, BYTE bank)
   BYTE i
   CARD a
@@ -212,11 +258,6 @@ PROC Num(BYTE col, BYTE row, CARD v, BYTE n, BYTE bank)
   OD
 RETURN
 
-PROC Msg(BYTE POINTER s)
-  ClearRow(0)
-  Text(0, 0, s, B_WHITE)
-RETURN
-
 PROC ClearScreen()
   BYTE r
   FOR r = 0 TO 29 DO ClearRow(r) OD
@@ -234,6 +275,97 @@ PROC Tick()
   IF KeyHit(KEY_ESC) THEN esc = 1 FI
   IF animt THEN animt -= 1 FI
 RETURN
+
+; ------------------------------------------------------------- messages
+PROC MsgClear()
+  ClearRow(0)
+  ClearRow(1)
+  msgrow = 0
+  mbl = 0
+RETURN
+
+PROC MsgC(BYTE ch)
+  IF mbl < 40 THEN
+    mb(mbl) = ch
+    mbl += 1
+  FI
+RETURN
+
+PROC MsgS(BYTE POINTER s)
+  BYTE n
+  n = *s
+  WHILE n > 0 DO
+    s += 1
+    MsgC(*s)
+    n -= 1
+  OD
+RETURN
+
+PROC MsgN(CARD v)
+  BYTE ARRAY dg(5)
+  BYTE n
+  n = 0
+  DO
+    dg(n) = v % 10
+    v = v / 10
+    n += 1
+  UNTIL v == 0 OD
+  WHILE n > 0 DO
+    n -= 1
+    MsgC('0' + dg(n))
+  OD
+RETURN
+
+; both rows used: --More--, and a key before the next
+PROC More()
+  BYTE k
+  Text(32, 1, "--More--", B_YELLOW)
+  k = KeyHit(KEY_SPACE)
+  k = KeyHit(KEY_ENTER)
+  esc = 0
+  DO
+    Tick()
+  UNTIL KeyHit(KEY_SPACE) OR KeyHit(KEY_ENTER) OR esc OD
+  esc = 0
+  ClearRow(0)
+  ClearRow(1)
+  msgrow = 0
+RETURN
+
+; the line built so far onto the next row
+PROC MsgEnd()
+  BYTE i
+  CARD a
+  IF msgrow >= 2 THEN More() FI
+  ClearRow(msgrow)
+  a = msgrow
+  VRAM_ADDR = a << 7
+  VRAM_STEP = 1
+  FOR i = 1 TO mbl DO
+    VRAM_DATA = mb(i - 1) - FONT_FIRST
+    VRAM_DATA = B_WHITE
+  OD
+  msgrow += 1
+  mbl = 0
+RETURN
+
+PROC Msg(BYTE POINTER s)
+  mbl = 0
+  MsgS(s)
+  MsgEnd()
+RETURN
+
+; ------------------------------------------------------------ the dice
+; NetHack's rnd(n): one to n
+FUNC BYTE Roll(BYTE n)
+  IF n == 0 THEN RETURN (0) FI
+RETURN (Rnd(n) + 1)
+
+FUNC BYTE Dice(BYTE n, BYTE s)
+  BYTE t, i
+  t = 0
+  FOR i = 1 TO n DO t += Roll(s) OD
+RETURN (t)
 
 ; ------------------------------------------------------------ the themes
 FUNC BYTE ThemeOf(BYTE d)
@@ -285,6 +417,21 @@ FUNC BYTE WallLike(BYTE x, BYTE y)
   k = Kind(x, y)
   IF k == K_WALL OR k == K_DOORC OR k == K_DOORO OR k == K_DOORWAY THEN RETURN (1) FI
 RETURN (0)
+
+; what a foot can stand on; a shut door is not that
+FUNC BYTE Open(BYTE k)
+  IF k == K_ROCK OR k == K_WALL OR k == K_DOORC THEN RETURN (0) FI
+RETURN (1)
+
+; a door is never entered or left on the diagonal, as NetHack has it;
+; an empty doorway is no bar
+FUNC BYTE Diagonal(BYTE x, BYTE y, BYTE nx, BYTE ny)
+  BYTE a, b
+  IF x == nx OR y == ny THEN RETURN (1) FI
+  a = Kind(x, y)
+  b = Kind(nx, ny)
+  IF a == K_DOORO OR a == K_DOORC OR b == K_DOORO OR b == K_DOORC THEN RETURN (0) FI
+RETURN (1)
 
 ; a door where a corridor meets a room's wall: half of them an empty
 ; doorway, a third shut, the rest standing open
@@ -396,13 +543,26 @@ PROC Join(BYTE a, BYTE b)
   IF b == a + 1 THEN JoinAcross(a, b) ELSE JoinDown(a, b) FI
 RETURN
 
-; a stair somewhere inside a room that is a room
-PROC Stair(BYTE r, BYTE k)
-  BYTE x, y
-  DO
+; a cell somewhere inside a room that is a room, on its floor
+FUNC CARD RoomSpot(BYTE r)
+  BYTE x, y, tries
+  CARD s
+  FOR tries = 1 TO 40 DO
     x = rx1(r) + 1 + Rnd(rx2(r) - rx1(r) - 1)
     y = ry1(r) + 1 + Rnd(ry2(r) - ry1(r) - 1)
-  UNTIL Kind(x, y) == K_FLOOR OD
+    IF Kind(x, y) == K_FLOOR AND mat(Idx(x, y)) == 0 THEN
+      s = x                          ; a shift keeps its left side's width: widen first
+      RETURN ((s << 8) | y)
+    FI
+  OD
+RETURN ($FFFF)
+
+PROC Stair(BYTE r, BYTE k)
+  BYTE x, y
+  CARD s
+  s = RoomSpot(r)
+  x = s >> 8
+  y = s
   SetKind(x, y, k)
   IF k == K_UP THEN
     upx = x
@@ -413,13 +573,147 @@ PROC Stair(BYTE r, BYTE k)
   FI
 RETURN
 
+; ----------------------------------------------------------- the monsters
+FUNC BYTE POINTER MonName(BYTE t)
+  BYTE POINTER p
+  BYTE k
+  p = m_names
+  k = 0
+  WHILE k < t DO
+    p = p + *p + 1
+    k += 1
+  OD
+RETURN (p)
+
+PROC Place(BYTE i)
+  mat(Idx(mx(i), my(i))) = i + 1
+RETURN
+
+PROC Unplace(BYTE i)
+  mat(Idx(mx(i), my(i))) = 0
+RETURN
+
+FUNC BYTE MonAt(BYTE x, BYTE y)
+  IF x >= LW OR y >= LH THEN RETURN (0) FI
+RETURN (mat(Idx(x, y)))
+
+; a new monster of type t at (x, y): NetHack's hit points, a level's
+; worth of eight-sided dice, or up to four at level 0; 255 if the level
+; is full
+FUNC BYTE NewMon(BYTE t, BYTE x, BYTE y)
+  BYTE i, l
+  FOR i = 0 TO MAXMON - 1 DO
+    IF mstat(i) == 0 THEN
+      mtype(i) = t
+      l = m_lvl(t)
+      mlev(i) = l
+      IF l == 0 THEN mhp(i) = Roll(4) ELSE mhp(i) = Dice(l, 8) FI
+      mhpmax(i) = mhp(i)
+      mstat(i) = S_LIVE
+      mmove(i) = Rnd(12)
+      mx(i) = x
+      my(i) = y
+      Place(i)
+      RETURN (i)
+    FI
+  OD
+RETURN (255)
+
+; which kind of monster: NetHack's choice by difficulty -- no harder than
+; half the depth and the hero's level together, no easier than a sixth
+; of the depth -- each as likely as its frequency says
+FUNC BYTE PickType()
+  BYTE t, lo, hi
+  CARD total, r
+  hi = (depth + ulev) / 2
+  IF hi < 1 THEN hi = 1 FI
+  lo = depth / 6
+  total = 0
+  FOR t = 0 TO N_MON - 1 DO
+    IF m_flag(t) & MF_NOGEN == 0 AND m_diff(t) >= lo AND m_diff(t) <= hi THEN total += m_freq(t) FI
+  OD
+  IF total == 0 THEN RETURN (M_NEWT) FI
+  r = Rnd(total)
+  FOR t = 0 TO N_MON - 1 DO
+    IF m_flag(t) & MF_NOGEN == 0 AND m_diff(t) >= lo AND m_diff(t) <= hi THEN
+      IF r < m_freq(t) THEN RETURN (t) FI
+      r -= m_freq(t)
+    FI
+  OD
+RETURN (M_NEWT)
+
+; a free open cell next to (x, y), as dir 1-8, or 0
+FUNC BYTE FreeNear(BYTE x, BYTE y)
+  BYTE d, k, nx, ny
+  k = Rnd(8)
+  FOR d = 1 TO 8 DO
+    k = (k % 8) + 1
+    nx = x + dir_dx(k)
+    ny = y + dir_dy(k)
+    IF nx < LW AND ny < LH THEN
+      IF Open(Kind(nx, ny)) AND MonAt(nx, ny) == 0 AND (nx <> px OR ny <> py) THEN RETURN (k) FI
+    FI
+  OD
+RETURN (0)
+
+; a monster, and its fellows round it if it comes in a group -- smaller
+; groups while the hero is new, as NetHack does
+PROC Spawn(BYTE x, BYTE y)
+  BYTE t, i, n, d
+  t = PickType()
+  i = NewMon(t, x, y)
+  IF i == 255 THEN RETURN FI
+  n = 0
+  IF m_flag(t) & MF_SGROUP THEN n = Rnd(3) FI
+  IF m_flag(t) & MF_LGROUP THEN n = Rnd(6) FI
+  IF ulev < 3 THEN n = n / 2 FI
+  WHILE n > 0 DO
+    n -= 1
+    d = FreeNear(x, y)
+    IF d THEN i = NewMon(t, x + dir_dx(d), y + dir_dy(d)) FI
+  OD
+RETURN
+
+; a monster arriving out of sight, one turn in seventy
+PROC SpawnSomewhere()
+  BYTE r, tries, x, y
+  CARD s
+  FOR tries = 1 TO 20 DO
+    r = Rnd(9)
+    IF rgone(r) == 0 THEN
+      s = RoomSpot(r)
+      IF s <> $FFFF THEN
+        x = s >> 8
+        y = s
+        IF lv(Idx(x, y)) & F_VIS == 0 AND (x <> px OR y <> py) THEN
+          Spawn(x, y)
+          RETURN
+        FI
+      FI
+    FI
+  OD
+RETURN
+
+FUNC BYTE FindPet()
+  BYTE i
+  FOR i = 0 TO MAXMON - 1 DO
+    IF mstat(i) & S_PET THEN RETURN (i) FI
+  OD
+RETURN (255)
+
 ; Rogue's level: nine cells of a three by three grid, most of them a room
 ; and a few only a turn in a corridor; every cell joined to the rest by a
-; walk from one to a neighbour not yet joined, then a few loops more
+; walk from one to a neighbour not yet joined, then a few loops more;
+; then its monsters, one in three rooms, never in the room of the stairs
+; the hero comes down
 PROC MakeLevel()
   BYTE g, x0, y0, w, h, x, y, gone, lit, a, b, d, n, u, k
-  CARD i
-  FOR i = 0 TO NCELL - 1 DO lv(i) = 0 OD
+  CARD i, s
+  FOR i = 0 TO NCELL - 1 DO
+    lv(i) = 0
+    mat(i) = 0
+  OD
+  FOR g = 0 TO MAXMON - 1 DO mstat(g) = 0 OD
   lit = 9
   IF depth > 4 THEN lit = 7 FI
   IF depth > 8 THEN lit = 5 FI
@@ -489,6 +783,12 @@ PROC MakeLevel()
     UNTIL rgone(d) == 0 AND d <> u OD
     Stair(d, K_DOWN)
   FI
+  FOR g = 0 TO 8 DO
+    IF rgone(g) == 0 AND g <> u AND Rnd(3) == 0 THEN
+      s = RoomSpot(g)
+      IF s <> $FFFF THEN Spawn(s >> 8, s) FI
+    FI
+  OD
 RETURN
 
 ; the level parked in its VRAM slot, or brought back from it
@@ -520,10 +820,19 @@ PROC SaveLevel()
   VWrite(s + 987, ry2, 9)
   VWrite(s + 996, rgone, 9)
   VWrite(s + 1005, &upx, 4)
+  VWrite(s + 1009, mtype, MAXMON)
+  VWrite(s + 1029, mx, MAXMON)
+  VWrite(s + 1049, my, MAXMON)
+  VWrite(s + 1069, mhp, MAXMON)
+  VWrite(s + 1089, mhpmax, MAXMON)
+  VWrite(s + 1109, mlev, MAXMON)
+  VWrite(s + 1129, mstat, MAXMON)
+  VWrite(s + 1149, mmove, MAXMON)
 RETURN
 
 PROC LoadLevel()
-  CARD s
+  CARD s, i
+  BYTE m
   s = Slot(depth)
   VRead(s, lv, NCELL)
   VRead(s + 960, rx1, 9)
@@ -532,11 +841,24 @@ PROC LoadLevel()
   VRead(s + 987, ry2, 9)
   VRead(s + 996, rgone, 9)
   VRead(s + 1005, &upx, 4)
+  VRead(s + 1009, mtype, MAXMON)
+  VRead(s + 1029, mx, MAXMON)
+  VRead(s + 1049, my, MAXMON)
+  VRead(s + 1069, mhp, MAXMON)
+  VRead(s + 1089, mhpmax, MAXMON)
+  VRead(s + 1109, mlev, MAXMON)
+  VRead(s + 1129, mstat, MAXMON)
+  VRead(s + 1149, mmove, MAXMON)
+  FOR i = 0 TO NCELL - 1 DO mat(i) = 0 OD
+  FOR m = 0 TO MAXMON - 1 DO
+    IF mstat(m) THEN Place(m) FI
+  OD
 RETURN
 
 ; --------------------------------------------------------------- the view
 PROC DrawCell(BYTE x, BYTE y)
   BYTE c, k, t, a, col, row, m
+  CARD i
   IF x < vx OR x >= vx + VW OR y < vy OR y >= vy + VH THEN RETURN FI
   col = (x - vx) << 1
   row = VTOP + ((y - vy) << 1)
@@ -544,13 +866,22 @@ PROC DrawCell(BYTE x, BYTE y)
     Pic(col, row, role << 2, (2 + anim) << 4)
     RETURN
   FI
-  c = lv(Idx(x, y))
+  i = Idx(x, y)
+  c = lv(i)
   IF c & F_SEEN == 0 THEN
     Blank(col, row)
     RETURN
   FI
-  a = B_VIEW
-  IF c & F_VIS == 0 THEN a = B_DIM FI
+  IF c & F_VIS THEN
+    m = mat(i)
+    IF m THEN
+      Pic(col, row, (3 + mtype(m - 1)) << 2, (2 + anim) << 4)
+      RETURN
+    FI
+    a = B_VIEW
+  ELSE
+    a = B_DIM
+  FI
   k = c & 31
   IF k == K_WALL THEN
     m = (WallLike(x, y - 1) << 3) | (WallLike(x, y + 1) << 2) | (WallLike(x - 1, y) << 1) | WallLike(x + 1, y)
@@ -671,6 +1002,18 @@ PROC See()
   OD
 RETURN
 
+; the creatures' other frame: the hero and every monster in view
+PROC Animate()
+  BYTE i
+  anim = anim ^ 1
+  DrawCell(px, py)
+  FOR i = 0 TO MAXMON - 1 DO
+    IF mstat(i) THEN
+      IF lv(Idx(mx(i), my(i))) & F_VIS THEN DrawCell(mx(i), my(i)) FI
+    FI
+  OD
+RETURN
+
 ; ---------------------------------------------------------------- status
 PROC RoleName(BYTE col, BYTE row, BYTE r, BYTE bank)
   IF r == 0 THEN
@@ -682,17 +1025,519 @@ PROC RoleName(BYTE col, BYTE row, BYTE r, BYTE bank)
   FI
 RETURN
 
+; the line built in mb printed at a column in one ink; the column after it
+FUNC BYTE Put(BYTE col, BYTE row, BYTE bank)
+  BYTE i
+  CARD a
+  a = row
+  VRAM_ADDR = (a << 7) + (col << 1)
+  VRAM_STEP = 1
+  FOR i = 1 TO mbl DO
+    VRAM_DATA = mb(i - 1) - FONT_FIRST
+    VRAM_DATA = bank
+  OD
+  col += mbl
+  mbl = 0
+RETURN (col)
+
+; NetHack's two status lines: who, where, experience and time; hit
+; points -- in yellow below half and red below a third -- power and
+; armour class
 PROC Status()
+  BYTE bank, c, save
+  INT a
+  save = mbl
+  ClearRow(28)
+  ClearRow(29)
   RoleName(0, 28, role, B_WHITE)
-  Text(22, 28, "Dlvl:", B_WHITE)
-  Num(27, 28, depth, 2, B_YELLOW)
-  Text(31, 28, "T:", B_WHITE)
-  Num(33, 28, turns, 6, B_WHITE)
+  mbl = 0
+  MsgS("Dlvl:")
+  MsgN(depth)
+  MsgS("  Xp:")
+  MsgN(ulev)
+  MsgC('/')
+  MsgN(uxp)
+  MsgS("  T:")
+  MsgN(turns)
+  c = Put(10, 28, B_WHITE)
+  bank = B_GREEN
+  IF uhp < uhpmax / 2 THEN bank = B_YELLOW FI
+  IF uhp < uhpmax / 3 OR uhp < 6 THEN bank = B_RED FI
+  MsgS("HP:")
+  c = Put(0, 29, B_GREY)
+  MsgN(uhp)
+  c = Put(c, 29, bank)
+  MsgC('(')
+  MsgN(uhpmax)
+  MsgS(")  Pw:")
+  MsgN(upw)
+  MsgC('(')
+  MsgN(upwmax)
+  MsgS(")  AC:")
+  a = uac
+  IF a < 0 THEN
+    MsgC('-')
+    a = -a
+  FI
+  MsgN(a)
+  c = Put(c, 29, B_WHITE)
+  mbl = save
+RETURN
+
+; ------------------------------------------------------- the reckoning
+FUNC CARD NeedXP(BYTE l)
+  CARD v
+  IF l < 10 THEN
+    v = 10
+    RETURN (v << l)
+  FI
+  v = 10000
+RETURN (v << (l - 10))
+
+; NetHack's hit points for a level: a d8 for the role and a d2 for being
+; human, and the Valkyrie's constitution one more; the Wizard's power
+; grows faster than the others'
+PROC LevelUp()
+  BYTE g
+  ulev += 1
+  g = Roll(8) + Roll(2)
+  IF role == 0 THEN g += 1 FI
+  IF uhpmax > 250 - g THEN g = 0 FI  ; a byte of hit points: room for twelve levels, not for more
+  uhpmax += g
+  uhp += g
+  IF role == 1 THEN g = Roll(3) + 1 ELSE g = Roll(2) FI
+  upwmax += g
+  upw += g
+  mbl = 0
+  MsgS("Welcome to experience level ")
+  MsgN(ulev)
+  MsgC('.')
+  MsgEnd()
+RETURN
+
+PROC GainXP(CARD x)
+  uxp += x
+  WHILE ulev < 12 AND uxp >= NeedXP(ulev) DO LevelUp() OD
+RETURN
+
+PROC LoseLevel()
+  BYTE g
+  IF ulev <= 1 THEN RETURN FI
+  mbl = 0
+  MsgS("Goodbye level ")
+  MsgN(ulev)
+  MsgC('.')
+  MsgEnd()
+  ulev -= 1
+  uxp = NeedXP(ulev - 1)
+  IF ulev == 1 THEN uxp = 0 FI
+  g = Roll(8)
+  IF uhpmax > g + 1 THEN uhpmax -= g FI
+  IF uhp > uhpmax THEN uhp = uhpmax FI
+RETURN
+
+PROC HurtHero(BYTE d, BYTE t)
+  IF d >= uhp THEN
+    uhp = 0
+    dead = 1
+    killer = t
+  ELSE
+    uhp -= d
+  FI
+RETURN
+
+; "The jackal", "the jackal", or "It" and "it" for one out of sight
+PROC MsgMon(BYTE i, BYTE cap)
+  IF lv(Idx(mx(i), my(i))) & F_VIS THEN
+    IF cap THEN MsgS("The ") ELSE MsgS("the ") FI
+    MsgS(MonName(mtype(i)))
+  ELSEIF cap THEN
+    MsgS("It")
+  ELSE
+    MsgS("it")
+  FI
+RETURN
+
+PROC Remove(BYTE i)
+  Unplace(i)
+  mstat(i) = 0
+  DrawCell(mx(i), my(i))
+RETURN
+
+; a monster's kill makes its pet grow as NetHack's grow_up() does: its
+; hit points by up to the victim's level and one, a level whenever they
+; pass eight a level, and a kitten or a little dog a new form at level
+; four, a housecat or a dog at six
+PROC PetGrow(BYTE p, BYTE vl)
+  BYTE g, t
+  g = Roll(vl + 1)
+  IF mhpmax(p) < 250 THEN
+    mhpmax(p) += g
+    mhp(p) += g
+  FI
+  IF mhpmax(p) >= (mlev(p) + 1) * 8 AND mlev(p) < 12 THEN mlev(p) += 1 FI
+  t = mtype(p)
+  IF ((t == M_KITTEN OR t == M_LITTLEDOG) AND mlev(p) >= 4) OR ((t == M_HOUSECAT OR t == M_DOG) AND mlev(p) >= 6) THEN
+    mbl = 0
+    MsgS("Your ")
+    MsgS(MonName(t))
+    MsgS(" grows up into a ")
+    mtype(p) = t + 1
+    MsgS(MonName(t + 1))
+    MsgC('.')
+    MsgEnd()
+    DrawCell(mx(p), my(p))
+  FI
+RETURN
+
+; damage dealt to a monster by the hero; 1 if it died of it
+FUNC BYTE HurtMon(BYTE i, BYTE d)
+  BYTE t
+  IF d < mhp(i) THEN
+    mhp(i) -= d
+    RETURN (0)
+  FI
+  t = mtype(i)
+  mbl = 0
+  MsgS("You kill ")
+  MsgMon(i, 0)
+  MsgC('!')
+  MsgEnd()
+  Remove(i)
+  GainXP(m_xp(t))
+RETURN (1)
+
+; what a monster does back when it is struck: the floating eye's gaze, the
+; acid blob's acid, the yellow mold's sting
+PROC Passive(BYTE i)
+  BYTE t, fx, n, s
+  CARD o
+  t = mtype(i)
+  o = t
+  o = o * 9
+  IF m_att(o) >> 4 <> A_PASV THEN RETURN FI
+  fx = m_att(o) & 15
+  s = m_att(o + 2)
+  IF fx == E_PLYS THEN
+    IF upara == 0 THEN
+      Msg("You are frozen by its gaze!")
+      upara = Dice(mlev(i) + 1, 10)
+    FI
+  ELSEIF fx == E_ACID THEN
+    IF Rnd(2) == 0 THEN
+      Msg("You are splashed by acid!")
+      HurtHero(Dice(mlev(i) + 1, s), t)
+    FI
+  ELSEIF fx == E_STUN THEN
+    Msg("You are stung!")
+    HurtHero(Dice(mlev(i) + 1, s), t)
+  FI
+RETURN
+
+; the hero strikes: NetHack's find_roll_to_hit(), then the weapon's die,
+; its enchantment and strength's bonus
+PROC HeroAttack(BYTE i)
+  INT tmp
+  BYTE d, t
+  t = mtype(i)
+  tmp = m_ac(t)
+  tmp = tmp - 10 + 1 + r_abon(role) + ulev + r_ench(role)
+  mbl = 0
+  IF tmp > Roll(20) THEN
+    d = Roll(r_dice(role)) + r_ench(role) + r_dbon(role)
+    MsgS("You hit ")
+    MsgMon(i, 0)
+    MsgC('.')
+    MsgEnd()
+    IF HurtMon(i, d) == 0 THEN Passive(i) FI
+  ELSE
+    MsgS("You miss ")
+    MsgMon(i, 0)
+    MsgC('.')
+    MsgEnd()
+  FI
+RETURN
+
+PROC Verb(BYTE kind)
+  IF kind == A_BITE THEN
+    MsgS(" bites!")
+  ELSEIF kind == A_STNG THEN
+    MsgS(" stings!")
+  ELSEIF kind == A_TUCH THEN
+    MsgS(" touches you!")
+  ELSEIF kind == A_BUTT THEN
+    MsgS(" butts!")
+  ELSEIF kind == A_HUGS THEN
+    MsgS(" squeezes you!")
+  ELSEIF kind == A_KICK THEN
+    MsgS(" kicks!")
+  ELSE
+    MsgS(" hits!")
+  FI
+RETURN
+
+; a monster strikes the hero: NetHack's mattacku(), each attack in turn
+PROC MonAttack(BYTE i)
+  BYTE t, a, kind, fx, n, s, d
+  INT tmp
+  CARD o
+  t = mtype(i)
+  FOR a = 0 TO 2 DO
+    o = t
+    o = o * 9 + a * 3
+    kind = m_att(o) >> 4
+    IF kind <> 0 AND kind <> A_PASV AND dead == 0 THEN
+      fx = m_att(o) & 15
+      n = m_att(o + 1)
+      s = m_att(o + 2)
+      tmp = uac + 10 + mlev(i)
+      mbl = 0
+      MsgMon(i, 1)
+      IF tmp > Roll(20 + a) THEN
+        Verb(kind)
+        MsgEnd()
+        d = Dice(n, s)
+        IF fx == E_POIS AND Rnd(8) == 0 THEN
+          Msg("It was poisoned!")
+          d += Roll(6)
+        ELSEIF fx == E_SLEE AND Rnd(3) == 0 AND upara == 0 THEN
+          Msg("You are put to sleep!")
+          upara = Roll(10)
+        ELSEIF fx == E_DRLI AND Rnd(3) == 0 THEN
+          LoseLevel()
+        FI
+        HurtHero(d, t)
+      ELSE
+        MsgS(" misses!")
+        MsgEnd()
+      FI
+    FI
+  OD
+RETURN
+
+; one monster strikes another -- the pet and what it fights: NetHack's
+; mattackm(), the defender's armour class and the attacker's level
+; against a twenty-sided die
+PROC MonHitsMon(BYTE ag, BYTE df)
+  BYTE a, kind, n, s, d, t, seen
+  INT tmp
+  CARD o
+  t = mtype(ag)
+  seen = lv(Idx(mx(ag), my(ag))) & F_VIS
+  IF mstat(ag) & S_PET == 0 THEN mstat(ag) = mstat(ag) | S_ANGRY FI
+  IF mstat(df) & S_PET == 0 THEN mstat(df) = mstat(df) | S_ANGRY FI
+  FOR a = 0 TO 2 DO
+    o = t
+    o = o * 9 + a * 3
+    kind = m_att(o) >> 4
+    IF kind <> 0 AND kind <> A_PASV AND mstat(df) AND mstat(ag) THEN
+      tmp = m_ac(mtype(df))
+      tmp = tmp - 10 + mlev(ag)
+      n = m_att(o + 1)
+      s = m_att(o + 2)
+      mbl = 0
+      IF tmp > Roll(20 + a) THEN
+        d = Dice(n, s)
+        IF seen THEN
+          MsgMon(ag, 1)
+          MsgS(" hits ")
+          MsgMon(df, 0)
+          MsgC('.')
+          MsgEnd()
+        FI
+        IF d >= mhp(df) THEN
+          IF seen THEN
+            MsgMon(df, 1)
+            MsgS(" is killed!")
+            MsgEnd()
+          FI
+          Remove(df)
+          IF mstat(ag) & S_PET THEN PetGrow(ag, mlev(df)) FI
+        ELSE
+          mhp(df) -= d
+        FI
+      ELSEIF seen THEN
+        MsgMon(ag, 1)
+        MsgS(" misses ")
+        MsgMon(df, 0)
+        MsgC('.')
+        MsgEnd()
+      FI
+    FI
+  OD
+RETURN
+
+; ------------------------------------------------------- monsters moving
+FUNC BYTE Dist(BYTE ax, BYTE ay, BYTE bx, BYTE by)
+  BYTE dx, dy
+  IF ax > bx THEN dx = ax - bx ELSE dx = bx - ax FI
+  IF ay > by THEN dy = ay - by ELSE dy = by - ay FI
+  IF dx > dy THEN RETURN (dx) FI
+RETURN (dy)
+
+; a monster's step towards (tx, ty): of the eight cells, the free one
+; nearest, if it is nearer than where it stands; a shut door opened by a
+; monster with hands, which is its move
+PROC StepToward(BYTE i, BYTE tx, BYTE ty)
+  BYTE d, k, nx, ny, best, bx, by, kind, x, y
+  INT dx, dy, bd, dd
+  x = mx(i)
+  y = my(i)
+  dx = x
+  dx = dx - tx
+  dy = y
+  dy = dy - ty
+  bd = dx * dx + dy * dy
+  best = 0
+  k = Rnd(8)
+  FOR d = 1 TO 8 DO
+    k = (k % 8) + 1
+    nx = x + dir_dx(k)
+    ny = y + dir_dy(k)
+    IF nx < LW AND ny < LH THEN
+      kind = Kind(nx, ny)
+      IF (Open(kind) OR kind == K_DOORC) AND MonAt(nx, ny) == 0 AND (nx <> px OR ny <> py) AND Diagonal(x, y, nx, ny) THEN
+        dx = nx
+        dx = dx - tx
+        dy = ny
+        dy = dy - ty
+        dd = dx * dx + dy * dy
+        IF dd < bd THEN
+          bd = dd
+          best = k
+          bx = nx
+          by = ny
+        FI
+      FI
+    FI
+  OD
+  IF best == 0 THEN RETURN FI
+  IF Kind(bx, by) == K_DOORC THEN
+    IF m_flag(mtype(i)) & MF_NOHANDS THEN RETURN FI
+    SetKind(bx, by, K_DOORO)
+    DrawCell(bx, by)
+    RETURN
+  FI
+  Unplace(i)
+  mx(i) = bx
+  my(i) = by
+  Place(i)
+  DrawCell(x, y)
+  DrawCell(bx, by)
+RETURN
+
+; the pet: at a hostile beside it that it is not afraid of -- nothing two
+; levels above it -- else back to the hero, and about the hero when near
+PROC PetAct(BYTE i)
+  BYTE j
+  FOR j = 0 TO MAXMON - 1 DO
+    IF mstat(j) AND j <> i THEN
+      IF Dist(mx(i), my(i), mx(j), my(j)) == 1 AND mlev(j) < mlev(i) + 2 THEN
+        IF m_flag(mtype(j)) & MF_PEACE == 0 AND Diagonal(mx(i), my(i), mx(j), my(j)) THEN
+          MonHitsMon(i, j)
+          RETURN
+        FI
+      FI
+    FI
+  OD
+  IF Dist(mx(i), my(i), px, py) > 2 OR Rnd(3) == 0 THEN
+    IF Dist(mx(i), my(i), px, py) <= 2 THEN
+      StepToward(i, mx(i) + Rnd(3) - 1, my(i) + Rnd(3) - 1)
+    ELSE
+      StepToward(i, px, py)
+    FI
+  FI
+RETURN
+
+; a hostile: at the hero if beside it, at the pet if the pet has bitten
+; it, towards the hero if it sees it -- anything the hero sees, sees the
+; hero -- and otherwise wandering
+PROC MonAct(BYTE i)
+  BYTE t, p
+  t = mtype(i)
+  IF mstat(i) & S_PET THEN
+    PetAct(i)
+    RETURN
+  FI
+  IF m_spd(t) == 0 OR m_flag(t) & MF_PEACE THEN RETURN FI
+  IF Dist(mx(i), my(i), px, py) == 1 AND Diagonal(mx(i), my(i), px, py) THEN
+    MonAttack(i)
+    RETURN
+  FI
+  IF mstat(i) & S_ANGRY THEN
+    p = FindPet()
+    IF p <> 255 THEN
+      IF Dist(mx(i), my(i), mx(p), my(p)) == 1 AND Diagonal(mx(i), my(i), mx(p), my(p)) THEN
+        MonHitsMon(i, p)
+        RETURN
+      FI
+    FI
+  FI
+  IF lv(Idx(mx(i), my(i))) & F_VIS THEN
+    StepToward(i, px, py)
+  ELSEIF Rnd(2) == 0 THEN
+    StepToward(i, mx(i) + Rnd(5) - 2, my(i) + Rnd(5) - 2)
+  FI
+RETURN
+
+; the rest of the turn: every monster's speed added to its movement, and a
+; move for every twelve -- the hero's speed -- it has; the regenerating
+; ones mend; now and then a new one arrives
+PROC MonTurns()
+  BYTE i, t
+  FOR i = 0 TO MAXMON - 1 DO
+    IF mstat(i) AND dead == 0 THEN
+      t = mtype(i)
+      IF m_flag(t) & MF_REGEN AND mhp(i) < mhpmax(i) THEN mhp(i) += 1 FI
+      mmove(i) += m_spd(t)
+      WHILE mmove(i) >= 12 AND mstat(i) AND dead == 0 DO
+        mmove(i) -= 12
+        MonAct(i)
+      OD
+    FI
+  OD
+  IF Rnd(70) == 0 THEN SpawnSomewhere() FI
+RETURN
+
+; NetHack's slow mending below level ten: a hit point every so many turns,
+; fewer as the hero rises; power by its own clock, the Wizard's quicker
+PROC Mend()
+  BYTE n
+  IF uhp < uhpmax THEN
+    n = 3
+    IF ulev < 10 THEN n = 42 / (ulev + 2) + 1 FI
+    IF turns % n == 0 THEN uhp += 1 FI
+  FI
+  IF upw < upwmax THEN
+    n = (38 - ulev) * 4 / 6
+    IF role == 1 THEN n = (38 - ulev) * 3 / 6 FI
+    IF turns % n == 0 THEN upw += 1 FI
+  FI
+RETURN
+
+; a turn has passed: the hero mends, the monsters move, and while the
+; hero is frozen they go on moving
+PROC EndTurn()
+  BYTE f
+  turns += 1
+  Mend()
+  MonTurns()
+  Status()
+  WHILE upara AND dead == 0 DO
+    upara -= 1
+    turns += 1
+    MonTurns()
+    Status()
+    FOR f = 1 TO 6 DO Tick() OD
+    IF upara == 0 THEN Msg("You can move again.") FI
+  OD
 RETURN
 
 ; ------------------------------------------------------------ the dungeon
+BYTE ARRAY carry(4)                  ; the pet on the stairs: type, hit points, most, level
+
 PROC EnterLevel(BYTE down)
-  BYTE t, r
+  BYTE t, r, i, d
   t = ThemeOf(depth)
   IF t <> theme THEN
     FOR r = VTOP TO VTOP + 25 DO ClearRow(r) OD
@@ -715,6 +1560,31 @@ PROC EnterLevel(BYTE down)
     px = dnx
     py = dny
   FI
+  i = MonAt(px, py)                  ; something on the stairs moves aside
+  IF i THEN
+    d = FreeNear(px, py)
+    Unplace(i - 1)
+    IF d THEN
+      mx(i - 1) = px + dir_dx(d)
+      my(i - 1) = py + dir_dy(d)
+      Place(i - 1)
+    ELSE
+      mstat(i - 1) = 0
+    FI
+  FI
+  IF carry(0) <> 255 THEN
+    d = FreeNear(px, py)
+    IF d THEN
+      i = NewMon(carry(0), px + dir_dx(d), py + dir_dy(d))
+      IF i <> 255 THEN
+        mhp(i) = carry(1)
+        mhpmax(i) = carry(2)
+        mlev(i) = carry(3)
+        mstat(i) = S_LIVE | S_PET
+      FI
+    FI
+    carry(0) = 255
+  FI
   vx = 255
   t = Aim()
   See()
@@ -722,15 +1592,30 @@ PROC EnterLevel(BYTE down)
   Status()
 RETURN
 
+; the pet comes along if it is beside the hero, as in NetHack
+PROC TakePet()
+  BYTE p
+  carry(0) = 255
+  p = FindPet()
+  IF p == 255 THEN RETURN FI
+  IF Dist(mx(p), my(p), px, py) > 1 THEN RETURN FI
+  carry(0) = mtype(p)
+  carry(1) = mhp(p)
+  carry(2) = mhpmax(p)
+  carry(3) = mlev(p)
+  Unplace(p)
+  mstat(p) = 0
+RETURN
+
 PROC Descend()
   IF Kind(px, py) <> K_DOWN THEN
     Msg("You can't go down here.")
     RETURN
   FI
+  TakePet()
   SaveLevel()
   depth += 1
   EnterLevel(1)
-  Msg("You descend the stairs.")
 RETURN
 
 PROC Ascend()
@@ -742,41 +1627,58 @@ PROC Ascend()
     Msg("The way out. You have no Amulet yet.")
     RETURN
   FI
+  TakePet()
   SaveLevel()
   depth -= 1
   EnterLevel(0)
-  Msg("You climb the stairs.")
 RETURN
 
-; a step: into a shut door opens it, and a door is never entered or left
-; on the diagonal, as NetHack has it; a doorway with no door is no bar
+; a step: into a monster is an attack, into the pet a change of places,
+; into a shut door opens it; a door is never passed diagonally
 PROC Stride(BYTE d)
-  BYTE nx, ny, k, here, ox, oy
+  BYTE nx, ny, k, ox, oy, m, swap
+  swap = 0
   nx = px + dir_dx(d)
   ny = py + dir_dy(d)
   IF nx >= LW OR ny >= LH THEN RETURN FI
   k = Kind(nx, ny)
-  here = Kind(px, py)
-  IF dir_dx(d) AND dir_dy(d) THEN
-    IF k == K_DOORC OR k == K_DOORO OR here == K_DOORO THEN
-      Msg("You can't move diagonally through a door.")
+  IF Diagonal(px, py, nx, ny) == 0 THEN
+    Msg("You can't move diagonally through a door.")
+    RETURN
+  FI
+  m = MonAt(nx, ny)
+  IF m THEN
+    m -= 1
+    IF mstat(m) & S_PET == 0 THEN
+      HeroAttack(m)
+      EndTurn()
       RETURN
     FI
+    swap = 1                         ; not m itself: the pet's slot may be 0
   FI
   IF k == K_DOORC THEN
     SetKind(nx, ny, K_DOORO)
     Msg("The door opens.")
-    turns += 1
     DrawCell(nx, ny)
-    Status()
+    EndTurn()
     RETURN
   FI
-  IF k == K_ROCK OR k == K_WALL THEN RETURN FI
+  IF Open(k) == 0 THEN RETURN FI
   ox = px
   oy = py
   px = nx
   py = ny
-  turns += 1
+  IF swap THEN
+    Unplace(m)
+    mx(m) = ox
+    my(m) = oy
+    Place(m)
+    mbl = 0
+    MsgS("You swap places with your ")
+    MsgS(MonName(mtype(m)))
+    MsgC('.')
+    MsgEnd()
+  FI
   IF Aim() THEN
     See()
     DrawView()
@@ -785,7 +1687,7 @@ PROC Stride(BYTE d)
     DrawCell(ox, oy)
     DrawCell(px, py)
   FI
-  Status()
+  EndTurn()
 RETURN
 
 ; ------------------------------------------------------------- the keys
@@ -846,7 +1748,141 @@ FUNC BYTE Shifted()
   IF KeyHeld(KEY_LSHIFT) OR KeyHeld(KEY_RSHIFT) THEN RETURN (1) FI
 RETURN (0)
 
+; a direction asked for: a movement key, or 0 for Esc
+FUNC BYTE AskDir()
+  BYTE d
+  esc = 0
+  rep_c = 255
+  DO
+    Tick()
+    d = Tapped()
+    IF d THEN
+      rep_c = Held()                 ; the key still down is the answer, not a step
+      rep_t = 0
+      RETURN (d)
+    FI
+  UNTIL esc OD
+  esc = 0
+RETURN (0)
+
+; ---------------------------------------------------------------- magic
+; the Wizard's force bolt, NetHack's: five power, two twelve-sided dice
+; to the first monster along the direction within eight cells
+PROC Cast()
+  BYTE d, x, y, n, m
+  IF role <> 1 THEN
+    Msg("You don't know any spells.")
+    RETURN
+  FI
+  IF upw < 5 THEN
+    Msg("You don't have enough energy.")
+    RETURN
+  FI
+  Msg("In what direction?")
+  d = AskDir()
+  IF d == 0 THEN RETURN FI
+  upw -= 5
+  x = px
+  y = py
+  FOR n = 1 TO 8 DO
+    x += dir_dx(d)
+    y += dir_dy(d)
+    IF Open(Kind(x, y)) == 0 THEN EXIT FI
+    m = MonAt(x, y)
+    IF m THEN
+      mbl = 0
+      MsgS("The force bolt hits ")
+      MsgMon(m - 1, 0)
+      MsgC('.')
+      MsgEnd()
+      m = HurtMon(m - 1, Dice(2, 12))
+      EndTurn()
+      RETURN
+    FI
+  OD
+  Msg("The force bolt fizzles.")
+  EndTurn()
+RETURN
+
+; ---------------------------------------------------------------- death
+PROC Centre(BYTE row, BYTE bank)
+  BYTE i, col
+  CARD a
+  col = (40 - mbl) / 2
+  a = row
+  VRAM_ADDR = (a << 7) + (col << 1)
+  VRAM_STEP = 1
+  FOR i = 1 TO mbl DO
+    VRAM_DATA = mb(i - 1) - FONT_FIRST
+    VRAM_DATA = bank
+  OD
+  mbl = 0
+RETURN
+
+; the grave: who, what did it, where, and how long it took
+PROC Die()
+  BYTE ch, k
+  BYTE POINTER n, q
+  Msg("You die...")
+  More()
+  phase = 2
+  ClearScreen()
+  Pic(19, 5, T_GRAVE, B_VIEW)
+  mbl = 0
+  MsgS("REST IN PEACE")
+  Centre(9, B_WHITE)
+  IF role == 0 THEN
+    MsgS("Valkyrie")
+  ELSEIF role == 1 THEN
+    MsgS("Wizard")
+  ELSE
+    MsgS("Rogue")
+  FI
+  Centre(11, B_YELLOW)
+  MsgS("killed by ")
+  n = MonName(killer)
+  q = n + 1
+  ch = *q
+  IF killer == M_ORACLE OR killer == M_WIZARDOFYENDOR THEN
+    MsgS("the ")
+  ELSEIF ch == 'a' OR ch == 'e' OR ch == 'i' OR ch == 'o' OR ch == 'u' THEN
+    MsgS("an ")
+  ELSE
+    MsgS("a ")
+  FI
+  MsgS(n)
+  Centre(13, B_WHITE)
+  MsgS("on dungeon level ")
+  MsgN(depth)
+  Centre(14, B_WHITE)
+  MsgS("at experience level ")
+  MsgN(ulev)
+  Centre(16, B_GREY)
+  MsgS("after ")
+  MsgN(turns)
+  MsgS(" turns")
+  Centre(17, B_GREY)
+  Text(9, 24, "Enter: back to the title", B_GREY)
+  k = KeyHit(KEY_ENTER)
+  DO
+    Tick()
+  UNTIL KeyHit(KEY_ENTER) OR KeyHit(KEY_SPACE) OR esc OD
+  esc = 0
+RETURN
+
 ; ------------------------------------------------------------- the play
+FUNC BYTE Quit()
+  Msg("Really quit? [yn]")
+  esc = 0
+  DO
+    Tick()
+    IF KeyHit(KEY_Y) THEN RETURN (1) FI
+    IF KeyHit(KEY_N) THEN EXIT FI
+  UNTIL esc OD
+  esc = 0
+  MsgClear()
+RETURN (0)
+
 PROC Play()
   BYTE d, i
   ClearScreen()
@@ -857,30 +1893,73 @@ PROC Play()
   anim = 0
   animt = 24
   esc = 0
+  dead = 0
   phase = 1
+  ulev = 1
+  uxp = 0
+  uhp = r_hp(role)
+  uhpmax = uhp
+  upw = r_pw(role)
+  upwmax = upw
+  uac = r_ac(role)
+  upara = 0
+  carry(0) = 255
+  msgrow = 0
+  mbl = 0
   EnterLevel(1)
+  d = FreeNear(px, py)
+  IF d THEN
+    i = NewMon(r_pet(role), px + dir_dx(d), py + dir_dy(d))
+    IF i <> 255 THEN mstat(i) = S_LIVE | S_PET FI
+    DrawCell(px + dir_dx(d), py + dir_dy(d))
+  FI
   Msg("Welcome to the Dungeons of Yendor!")
-  Text(0, 29, "arrows, keypad or hjklyubn   > < stairs", B_GREY)
   DO
     Tick()
     loops += 1
-    IF esc THEN EXIT FI
+    IF dead THEN
+      Die()
+      RETURN
+    FI
+    IF esc THEN
+      esc = 0
+      IF Quit() THEN RETURN FI
+    FI
     IF animt == 0 THEN
       animt = 24
-      anim = anim ^ 1
-      DrawCell(px, py)
+      Animate()
     FI
     d = Walk()
-    IF d THEN Stride(d) FI
-    IF KeyHit(KEY_DOT) THEN
-      IF Shifted() THEN Descend() ELSE turns += 1 FI
+    IF d THEN
+      MsgClear()
+      Stride(d)
     FI
-    IF KeyHit(KEY_COMMA) AND Shifted() THEN Ascend() FI
+    IF KeyHit(KEY_DOT) THEN
+      MsgClear()
+      IF Shifted() THEN
+        Descend()
+      ELSE
+        EndTurn()
+      FI
+    FI
+    IF KeyHit(KEY_COMMA) AND Shifted() THEN
+      MsgClear()
+      Ascend()
+    FI
     IF KeyHit(KEY_S) OR KeyHit(KP5) THEN
-      turns += 1
+      MsgClear()
+      EndTurn()
+    FI
+    IF KeyHit(KEY_Z) THEN
+      MsgClear()
+      Cast()
+    FI
+    IF KeyHit(KEY_R) AND KeyHeld(KEY_CTRL) THEN
+      DrawView()
       Status()
     FI
     IF KeyHit(KEY_ENTER) THEN
+      MsgClear()
       IF Kind(px, py) == K_DOWN THEN
         Descend()
       ELSEIF Kind(px, py) == K_UP THEN
