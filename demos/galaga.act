@@ -62,6 +62,7 @@ CONST SP_SHOT = 4                    ; two
 ; --------------------------------------------------------------- the game
 CARD loops                           ; frames of play the loop has run, for the gate
 BYTE level_bd                        ; the backdrop showing, 0-3
+BYTE tx_y                            ; a text in the field the stars keep out of: its row, 0 none
 INT fx                               ; the fighter's top-left on the field
 CONST FIGHTER_Y = 224
 BYTE quit
@@ -732,6 +733,9 @@ PROC StarsDraw()
         show = y + LAG < top OR y >= bot OR Covered(x, y) == 0
       FI
       IF show AND booms THEN show = InBoom(x, y) == 0 FI
+      IF show AND tx_y THEN
+        IF y >= tx_y AND y < tx_y + 8 THEN show = 0 FI
+      FI
       IF show THEN
         px = x
         PIX_X = px + FX
@@ -811,6 +815,18 @@ PROC Irq()
 RETURN
 
 PROC IrqOn()
+  BYTE i, j
+  CARD v
+  ; both halves the arcade's until a backdrop is loaded: the title has none
+  j = 0
+  FOR i = SAFE TO 15 DO
+    v = gal_pal(i)
+    isr_top(j) = v >> 8
+    isr_top(j + 1) = v
+    isr_band(j) = v >> 8
+    isr_band(j + 1) = v
+    j += 2
+  OD
   TakeKeys()                         ; its DI, once, before this
   ASM
         DI
@@ -1609,12 +1625,111 @@ PROC Fighter()
 RETURN
 
 ; ------------------------------------------------------------ the screen
+BYTE lives                           ; fighters in hand, the one in play not counted
+CARD stage_frames                    ; frames since the stage's first, for the gate
+BYTE ARRAY txtbuf(24)
+
 PROC Hud()
   Text(4, 8, "1UP", C_RED)
   Text(4, 44, "HIGH", C_RED)
   Text(4, 54, "SCORE", C_RED)
   score_shown = 0
   ShowScore()
+RETURN
+
+; Fill(x, y, w, h): a rectangle of the screen to black
+PROC Fill(CARD x, BYTE y, BYTE w, BYTE h)
+  BYTE r, k
+  FOR r = 0 TO h - 1 DO
+    PIX_X = x
+    PIX_Y = y + r
+    FOR k = 1 TO w DO PIX_DATA = 0 OD
+  OD
+RETURN
+
+; Panel: the right-hand panel -- the fighters in hand, three to a row,
+; and the stage's badges as the arcade adds them up: 50s, 30s, 20s, 10s,
+; 5s and 1s, a row of them from the right
+BYTE ARRAY bdg_val(6) = [50 30 20 10 5 1]
+BYTE ARRAY bdg_art(6) = [A_B50 A_B30 A_B20 A_B10 A_B5 A_B1]
+BYTE ARRAY bdg_w(6) = [15 15 15 13 7 7]
+
+; PanelArt(k, x, y): bitmap art k with its box's top-left at the screen's
+; (x, y) -- the panel is past the field, where its x no longer fits a byte
+PROC PanelArt(BYTE k, CARD x, BYTE y)
+  dd_ptr = art_delta + art_off(k)
+  dd_x = x - 1
+  dd_y = y - 2
+  dd_erase = 0
+  dd_lim = 255 - 32
+  DrawDelta()
+RETURN
+
+PROC Panel()
+  BYTE i, n, k, y
+  CARD x
+  Fill(272, 0, 48, 160)
+  y = 8
+  x = 275
+  FOR i = 1 TO lives DO
+    IF i <= 6 THEN
+      PanelArt(A_LIFE, x, y)
+      x += 15
+      IF x > 305 THEN
+        x = 275
+        y += 16
+      FI
+    FI
+  OD
+  n = stage
+  x = 319
+  y = 48
+  FOR k = 0 TO 5 DO
+    WHILE n >= bdg_val(k) DO
+      n -= bdg_val(k)
+      IF x < 273 + bdg_w(k) THEN
+        x = 319
+        y += 18
+      FI
+      x = x - bdg_w(k) - 1
+      PanelArt(bdg_art(k), x, y)
+    OD
+  OD
+RETURN
+
+; FieldText(s, n, c): "STAGE 12" and the like -- n left off when 0 --
+; centred in the field at row 120
+PROC FieldText(BYTE POINTER s, CARD n, BYTE c)
+  BYTE i, len, d
+  CARD v
+  len = *s
+  FOR i = 1 TO len DO
+    s += 1
+    txtbuf(i) = *s
+  OD
+  IF n THEN
+    len += 1
+    txtbuf(len) = ' '
+    v = n
+    d = 1
+    IF v >= 10 THEN d = 2 FI
+    IF v >= 100 THEN d = 3 FI
+    FOR i = 1 TO d DO
+      txtbuf(len + d + 1 - i) = '0' + v % 10
+      v = v / 10
+    OD
+    len += d
+  FI
+  txtbuf(0) = len
+  tx_y = 120
+  Text(FX + 112 - (len << 2), tx_y, txtbuf, c)
+RETURN
+
+PROC FieldTextOff()
+  IF tx_y THEN
+    Fill(FX, tx_y, FW, 8)
+    tx_y = 0
+  FI
 RETURN
 
 PROC Frame1()
@@ -1640,24 +1755,73 @@ PROC StageStart()
   br_cnt = 0
   flap = 0
   frm = 0
+  stage_frames = 0
   flying = 0
   flying_nbr = 0
-  wv_p = st_woff(stage - 1)
+  wv_p = st_woff((stage - 1) % STAGES)
   launching = 1
   Positions()
+RETURN
+
+; StageDone: nothing left of the stage -- the launcher finished, nothing
+; in the formation, in the air or exploding
+FUNC BYTE StageDone()
+  BYTE i
+  IF launching OR booms THEN RETURN (0) FI
+  FOR i = 0 TO NSLOT - 1 DO
+    IF sl_on(i) THEN RETURN (0) FI
+  OD
+  FOR i = 0 TO NFLY - 1 DO
+    IF fl_state(i) THEN RETURN (0) FI
+  OD
+RETURN (1)
+
+; a frame of the stars and the fighter, with nothing else to do
+PROC Idle()
+  Frame1()
+  StarsErase()
+  StarsDraw()
+  Fighter()
+  Shots()
+RETURN
+
+; StageIntro: the stage's backdrop if the level has turned, its badges,
+; "STAGE n" for two seconds
+PROC StageIntro()
+  BYTE i, lv
+  lv = ((stage - 1) / 4) % 4
+  IF lv != level_bd THEN
+    level_bd = lv
+    LoadBackdrop(level_bd)
+  FI
+  Panel()
+  IF st_kind((stage - 1) % STAGES) THEN
+    FieldText("CHALLENGING STAGE", 0, C_CYAN)
+  ELSE
+    FieldText("STAGE", stage, C_CYAN)
+  FI
+  FOR i = 1 TO 120 DO Idle() OD
+  FieldTextOff()
 RETURN
 
 PROC Play()
   Clg(0)
   Hud()
-  LoadBackdrop(level_bd)
+  level_bd = 0
+  LoadBackdrop(0)
   StarsInit()
   fx = 104
   stage = 1
+  lives = 2
+  score10 = 0
+  score_shown = 0
+  ShowScore()
+  StageIntro()
   StageStart()
   DO
     Frame1()
     IF KeyHit(KEY_ESC) THEN EXIT FI
+    stage_frames += 1
     StarsErase()
     FlyFrame()
     FmStep(frm & 3)
@@ -1666,7 +1830,47 @@ PROC Play()
     Fighter()
     Shots()
     ShowScore()
+    IF StageDone() THEN
+      stage += 1
+      StageIntro()
+      StageStart()
+    FI
   OD
+RETURN
+
+; Title: the arcade's attract words and its score table, the backdrops'
+; credits their licences ask for, and the space bar to start
+PROC Title()
+  BYTE t
+  Clg(0)
+  SpritesOff()
+  Hud()
+  Text(FX + 88, 24, "GALAGA", C_CYAN)
+  Text(FX + 56, 48, "-- SCORE --", C_CYAN)
+  Text(FX + 8, 72, "BEE", C_YELLOW)
+  Text(FX + 104, 72, "50   100", C_CYAN)
+  Text(FX + 8, 92, "BUTTERFLY", C_RED)
+  Text(FX + 104, 92, "80   160", C_CYAN)
+  Text(FX + 8, 112, "BOSS", C_GREEN)
+  Text(FX + 104, 112, "150  400", C_CYAN)
+  Text(FX + 72, 132, "IN FORMATION", C_WHITE)
+  Text(FX + 72, 142, "AND DIVING", C_WHITE)
+  Text(FX + 48, 156, "PUSH SPACE KEY", C_WHITE)
+  Text(0, 184, "@ 1981 NAMCO LTD.", C_WHITE)
+  Text(0, 200, "BACKDROPS ARTHCARVALHO OGA-BY", C_BLUE)
+  Text(0, 210, "EMCEE FLESHER CC-BY. PLANET G. FISET", C_BLUE)
+  Text(0, 220, "NASA-JPL-CALTECH-SWRI-MSSS. ZWONKY CC0", C_BLUE)
+  Text(0, 230, "QUANTISET CC0. D. COOK CC-BY", C_BLUE)
+  DO
+    WaitVBlank()
+    KeyPoll()
+    IF KeyHit(KEY_SPACE) THEN EXIT FI
+    IF KeyHit(KEY_ESC) THEN
+      quit = 1
+      EXIT
+    FI
+  OD
+  SpritesOn(15)
 RETURN
 
 PROC Main()
@@ -1687,7 +1891,11 @@ PROC Main()
   SpritesOn(15)
   IrqOn()
   hi10 = 2000
-  Play()
+  DO
+    Title()
+    IF quit THEN EXIT FI
+    Play()
+  OD
   SpritesOff()
   Reset()
 RETURN

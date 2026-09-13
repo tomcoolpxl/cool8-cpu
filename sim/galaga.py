@@ -101,6 +101,21 @@ class Game:
     def tap(self, codes):
         self.hold(codes, 2)
 
+    def start(self):
+        """From the title, space, and on through STAGE 1 to the stage's first
+        frame."""
+        self.m.run_frame(20)
+        self.tap(SPACE)
+        t = self.until(lambda: self.byte("launching") == 1 and 0 < self.uword("stage_frames") < 4, 600)
+        assert t is not None, "stage 1 never started"
+
+    def goto_stage(self, n):
+        """Straight on to stage n's intro, from the first frames of stage 1
+        (before anything has launched): stage 1 made done."""
+        self.poke("launching", 0)
+        self.poke("stage", n - 1)
+        self.until(lambda: self.byte("stage") == n and self.byte("launching") == 1, 600)
+
     def until(self, pred, cap=600):
         for t in range(cap):
             if pred():
@@ -222,15 +237,14 @@ class Game:
     def flights(self, frames):
         """Every moving flyer's arcade sprite position after each of so many
         frames of play, from the stage's start: {obj: [(frame, x, y9)]}, the
-        frame counted as the program's `frm` counts it, and the frame each
-        object was launched on."""
+        frame counted from the stage's first (`stage_frames`), and the frame
+        each object was launched on."""
         n = self.c("NFLY")
         tracks, launched, seen = {}, {}, set()
         for f in range(frames):
             self.m.run_frame(1)
             self.at_rest()
-            frm = self.byte("frm") if f < 250 else None
-            loops = self.uword("loops")
+            loops = self.uword("stage_frames")
             on, obj, x8 = (self.array(k, n) for k in ("fl_on", "fl_obj", "fl_x8"))
             y9 = self.m.bus.mem[self.addr("fl_y9"):self.addr("fl_y9") + 2 * n]
             st = self.array("fl_state", n)
@@ -308,6 +322,8 @@ def main():
     g = Game(tag="gal_" + what)
     print("PRG %d bytes, %04X-%04X" % (len(g.prg) - 2, g.org, g.end))
     g.m.run_frame(30)
+    print(g.png("gal_title"))
+    g.start()
     print(g.png("gal_start"), "loops", g.uword("loops"))
     if what == "play":
         for i in range(4):
@@ -316,8 +332,10 @@ def main():
     elif what == "levels":
         for k in range(4):
             h = Game(tag="gal_levels%d" % k)
-            h.poke("level_bd", k)
-            h.m.run_frame(90)
+            h.start()
+            if k:
+                h.goto_stage(1 + 4 * k)
+            h.m.run_frame(400)
             print(h.png("gal_level%d" % k))
     elif what == "shoot":
         # under each column in turn, a shot at it, until eight have hit
@@ -391,7 +409,8 @@ def main():
             d = g.bitmap_diff()
             print("  booms %d frame %d: %d differ, e.g. %s" % (g.byte("booms"), g.byte("bm_f"), len(d), d[:4]))
     elif what == "flights":
-        g = Game(tag="gal_flights")    # from the first frame: the stage starts with the first loop
+        g = Game(tag="gal_flights")
+        g.start()
         same, bad = compare_flights(g, 1, 1500)
         print("stage 1's %d objects all home by frame %d" % (sum(g.byte("sl_on", i) for i in range(g.c("NSLOT"))),
                                                            g.uword("loops")))

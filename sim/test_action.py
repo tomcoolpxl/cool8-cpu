@@ -1718,10 +1718,14 @@ def test_galaga():
     # stage 1 from its first frame: each object held to the reference
     # machine launched on the frame the game launched it -- those a full set
     # of flyers kept waiting included -- and all forty home
+    g.m.run_frame(20)
+    title = g.byte("launching") == 0 and reg("VID_MODE") & 0x0F == 4
+    g.start()
     same, bad = G.compare_flights(g, 1, 1500)
     on = sum(g.byte("sl_on", i) for i in range(g.c("NSLOT")))
-    check(reg("VID_MODE") & 0x0F == 4 and reg("SPR_CTRL") & 0xF1 == 0xF1,
-          "galaga: mode 4, the sprite engine on bank 15", "MODE %02X SPR_CTRL %02X" % (reg("VID_MODE"), reg("SPR_CTRL")))
+    check(title and reg("VID_MODE") & 0x0F == 4 and reg("SPR_CTRL") & 0xF1 == 0xF1,
+          "galaga: the title in mode 4, space, and play with the sprite engine on bank 15",
+          "MODE %02X SPR_CTRL %02X" % (reg("VID_MODE"), reg("SPR_CTRL")))
     check(same == 40 and not bad and on == 40,
           "galaga: stage 1's forty fly in on the arcade's paths, frame for frame, and all come home",
           "%d matched, %d home; %s" % (same, on, bad[:2]))
@@ -1764,10 +1768,10 @@ def test_galaga():
     # the arcade's back at the vertical blank, and nothing else; and the
     # work of the frames the waves fly in
     g = G.Game(tag="galaga2")
+    g.start()
     by = g.c("BAND_Y")
     band = [(g.byte("bd_pal", 2 * i) << 8) | g.byte("bd_pal", 2 * i + 1) for i in range(8)]
     top = [g.uword("gal_pal", i) for i in range(g.c("SAFE"), 16)]
-    g.until(lambda: g.uword("loops") > 0, 60)       # past loading the backdrop
     log = g.split(3)
     lines = {}
     for ln, e, v in log:

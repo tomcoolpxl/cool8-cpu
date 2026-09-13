@@ -487,6 +487,11 @@ def pack_band(rows):
 PLAYER_BOOM = [(147, 175, 3, 30), (180, 208, 3, 32), (213, 244, 1, 32), (248, 276, 3, 32)]
 ENEMY_BOOM = [(300, 306, 12, 19), (333, 344, 10, 22), (365, 380, 9, 24), (394, 420, 3, 30), (426, 456, 1, 32)]
 BOMB = (313, 140, 3, 8)                 # the enemy's shot: white, a red body
+# the panel's pictures, which stay above the band: a fighter in hand, and
+# the stage badges for 1, 5, 10, 20, 30 and 50 stages
+PANEL = [("LIFE", (290, 173, 13, 14)), ("B1", (307, 176, 7, 12)), ("B5", (317, 174, 7, 14)),
+         ("B10", (328, 174, 13, 14)), ("B20", (345, 172, 15, 16)), ("B30", (363, 172, 15, 16)),
+         ("B50", (381, 172, 15, 16))]
 SHOT = (313, 122)                       # the fighter's: a blue head, a white eye, a red trail
 
 
@@ -521,9 +526,11 @@ def bitmap_art(s):
     arts = [("PBOOM%d" % i, centred(s, b)) for i, b in enumerate(PLAYER_BOOM)]
     arts += [("EBOOM%d" % i, centred(s, b)) for i, b in enumerate(ENEMY_BOOM)]
     arts.append(("BOMB", box_image(s, *BOMB)))
+    low = len(arts)
+    arts += [(name, box_image(s, *box)) for name, box in PANEL]
     blob, offs = [], []
-    for name, img in arts:
-        assert all(v < SAFE for r in img for v in r), "%s uses a colour the backdrop takes" % name
+    for k, (name, img) in enumerate(arts):
+        assert k >= low or all(v < SAFE for r in img for v in r), "%s uses a colour the backdrop takes" % name
         offs.append(len(blob))
         blob += draw_list(img)
     return arts, blob, offs
