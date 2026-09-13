@@ -13,7 +13,7 @@
 
 use super::ast::*;
 use super::token::Span;
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 #[derive(Debug, Clone)]
 enum Loc {
@@ -81,6 +81,84 @@ pub struct Codegen {
     loops: Vec<String>,
     runtime: BTreeSet<&'static str>,
     cur_routine: Option<RoutineDecl>,
+}
+
+/// The names a statement refers to that may be routines: calls, `&name`,
+/// and every identifier in an `ASM` block's text.
+fn refs_stmt(s: &Stmt, out: &mut Vec<String>) {
+    match &s.kind {
+        StmtKind::Assign { target, value, .. } => {
+            refs_expr(target, out);
+            refs_expr(value, out);
+        }
+        StmtKind::Call { name, args } => {
+            out.push(name.clone());
+            for a in args {
+                refs_expr(a, out);
+            }
+        }
+        StmtKind::If { cond, then_branch, else_ifs, else_branch } => {
+            refs_expr(cond, out);
+            then_branch.iter().for_each(|x| refs_stmt(x, out));
+            for (c, b) in else_ifs {
+                refs_expr(c, out);
+                b.iter().for_each(|x| refs_stmt(x, out));
+            }
+            if let Some(b) = else_branch {
+                b.iter().for_each(|x| refs_stmt(x, out));
+            }
+        }
+        StmtKind::While { cond, body } => {
+            refs_expr(cond, out);
+            body.iter().for_each(|x| refs_stmt(x, out));
+        }
+        StmtKind::DoLoop { body, until_cond } => {
+            body.iter().for_each(|x| refs_stmt(x, out));
+            if let Some(c) = until_cond {
+                refs_expr(c, out);
+            }
+        }
+        StmtKind::For { start, to, step, body, .. } => {
+            refs_expr(start, out);
+            refs_expr(to, out);
+            if let Some(e) = step {
+                refs_expr(e, out);
+            }
+            body.iter().for_each(|x| refs_stmt(x, out));
+        }
+        StmtKind::Return(Some(e)) => refs_expr(e, out),
+        StmtKind::Assert { cond, .. } => refs_expr(cond, out),
+        StmtKind::Asm(text) => {
+            let mut word = String::new();
+            for ch in text.chars().chain(std::iter::once(' ')) {
+                if ch.is_ascii_alphanumeric() || ch == '_' {
+                    word.push(ch);
+                } else if !word.is_empty() {
+                    out.push(std::mem::take(&mut word));
+                }
+            }
+        }
+        StmtKind::Return(None) | StmtKind::Exit | StmtKind::Break => {}
+    }
+}
+
+fn refs_expr(e: &Expr, out: &mut Vec<String>) {
+    match &e.kind {
+        ExprKind::Call { name, args } => {
+            out.push(name.clone());
+            for a in args {
+                refs_expr(a, out);
+            }
+        }
+        ExprKind::AddrOf(name) | ExprKind::Variable(name) => out.push(name.clone()),
+        ExprKind::FieldAccess { base, .. } => refs_expr(base, out),
+        ExprKind::Deref(x) | ExprKind::Unary { expr: x, .. } => refs_expr(x, out),
+        ExprKind::Binary { left, right, .. } => {
+            refs_expr(left, out);
+            refs_expr(right, out);
+        }
+        ExprKind::Number(_) | ExprKind::Str(_) | ExprKind::CharLit(_) => {}
+    }
 }
 
 fn err(span: &Span, msg: &str) -> String {
@@ -559,9 +637,21 @@ impl Codegen {
         self.emit("RET");
         self.raw("");
 
+        // Only the routines the entry reaches are kept. Every routine is
+        // still generated, so a mistake in one nobody calls is still an
+        // error; what an unreached one emitted -- its lines, its strings,
+        // the runtime helpers it asked for -- is taken back out. A program
+        // compiled behind the library carries only the library it uses.
+        let live = self.reachable(program, &entry);
         for item in &program.items {
             if let Item::Routine(r) = item {
+                let (lines, strings, runtime) = (self.lines.len(), self.strings.len(), self.runtime.clone());
                 self.gen_routine(r)?;
+                if !live.contains(&r.name) {
+                    self.lines.truncate(lines);
+                    self.strings.truncate(strings);
+                    self.runtime = runtime;
+                }
             }
         }
 
@@ -589,6 +679,40 @@ impl Codegen {
             self.emit_bytes(bytes);
         }
         Ok(self.text())
+    }
+
+    /// The routines reachable from the entry: through a call, a call in
+    /// an expression, `&name`, or the name written in an `ASM` block --
+    /// any identifier there that is a routine counts, since the block is
+    /// text the compiler does not read.
+    fn reachable(&self, program: &Program, entry: &str) -> HashSet<String> {
+        let bodies: HashMap<&str, &RoutineDecl> = program
+            .items
+            .iter()
+            .filter_map(|i| match i {
+                Item::Routine(r) => Some((r.name.as_str(), r)),
+                _ => None,
+            })
+            .collect();
+        let mut live = HashSet::new();
+        let mut todo = vec![entry.to_string()];
+        while let Some(name) = todo.pop() {
+            if !live.insert(name.clone()) {
+                continue;
+            }
+            if let Some(r) = bodies.get(name.as_str()) {
+                let mut found = Vec::new();
+                for s in &r.body {
+                    refs_stmt(s, &mut found);
+                }
+                for f in found {
+                    if bodies.contains_key(f.as_str()) && !live.contains(&f) {
+                        todo.push(f);
+                    }
+                }
+            }
+        }
+        live
     }
 
     fn emit_bytes(&mut self, bytes: &[u8]) {

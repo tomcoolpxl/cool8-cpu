@@ -29,15 +29,24 @@
 ; class + its level does; its attacks, its speed, how often it appears and
 ; how deep are monst.c's. Experience is NetHack's doubling ladder.
 ;
-; Milestones 1 and 2: the dungeon, walking, doors, stairs, what is seen
-; and remembered; the monsters, the fighting, the three heroes, their
-; levels, the pet. docs/14-demos.md has the rest of the plan.
+; **The things are NetHack's too**: its weapons, armour, potions, scrolls,
+; wands, rings and amulets by objects.c's numbers, blessed, uncursed or
+; cursed as mksobj() makes them, and the potions, scrolls, wands and rings
+; under appearances each game shuffles -- a pink potion, a scroll labeled
+; ZELGO MER -- until they are used or identified.
+;
+; Milestones 1 to 3: the dungeon, walking, doors, stairs, what is seen and
+; remembered; the monsters, the fighting, the three heroes, their levels,
+; the pet; the things and what they do. docs/14-demos.md has the plan.
 ;
 ; Keys: the cursor keys, the keypad or h j k l y u b n move -- two cursor
 ; keys held together go diagonally -- and moving into a monster attacks
 ; it, into the pet changes places; walking into a door opens it; > and <
-; take the stairs, and Enter the stairs you stand on; s or . waits; Z casts
-; the Wizard's force bolt; Ctrl+R draws the screen again; Esc asks to quit.
+; take the stairs, and Enter the stairs you stand on; s or . waits. As in
+; NetHack: i the pack, , picks up, d drops, w wields, W wears, T takes
+; off, P puts on, R removes, q drinks, r reads, z zaps, t throws, f fires
+; daggers, : looks here, \ lists what is known, Z casts the Wizard's force
+; bolt. Ctrl+R draws the screen again; Esc asks to quit.
 
 CONST YDRIVE = 9                     ; YENDOR's drive: its program and its themes
 CONST PAT_BASE = $1000               ; the four pattern banks, $1000-$8FFF of VRAM
@@ -72,6 +81,14 @@ CONST F_VIS = 128                    ; in view now
 CONST S_LIVE = 1
 CONST S_PET = 2
 CONST S_ANGRY = 4                    ; bitten by the pet: it bites back
+
+; the objects
+CONST MAXOBJ = 32                    ; things on a level's floor
+CONST MAXINV = 18                    ; the pack, a to r
+CONST OF_BLESS = 1
+CONST OF_CURSE = 2
+CONST OF_BKNOWN = 4                  ; its blessing known
+CONST OF_EKNOWN = 8                  ; its enchantment or charges known
 
 ; the palette banks: tools/mkyendor.py's
 CONST B_VIEW = 0
@@ -116,26 +133,37 @@ CONST KEY_CTRL = $14
 CONST KEY_SPACE = $29
 CONST KEY_ENTER = $5A
 CONST KEY_ESC = $76
+CONST KEY_A = $1C
+CONST KEY_D = $23
+CONST KEY_F = $2B
+CONST KEY_I = $43
+CONST KEY_P = $4D
+CONST KEY_Q = $15
+CONST KEY_T = $2C
+CONST KEY_W = $1D
+CONST KEY_SEMI = $4C
+CONST KEY_BSLASH = $5D
 
 ; the eight directions, 1 north and on clockwise
 BYTE ARRAY dir_dx(9) = [0 0 1 1 1 0 255 255 255]
 BYTE ARRAY dir_dy(9) = [0 255 255 0 1 1 1 0 255]
+; the pack's letters, a to r, as the keys that type them
+BYTE ARRAY letter_sc(18) = [$1C $32 $21 $23 $24 $2B $34 $33 $43 $3B $42 $4B $3A $31 $44 $4D $15 $2D]
 
 ; the heroes: Valkyrie, Wizard, Rogue -- NetHack's starting hit points and
-; power (the role's and a human's), armour class with their gear, the
-; to-hit and damage bonuses of their strength and dexterity, the weapon's
-; sides and enchantment (long sword +1, quarterstaff +1, short sword), and
-; the pet each brings
+; power (the role's and a human's), the to-hit and damage bonuses of their
+; strength and dexterity, and the pet each brings; their things are
+; InitHero's
 BYTE ARRAY r_hp(3) = [16 12 12]
 BYTE ARRAY r_pw(3) = [1 7 2]
-BYTE ARRAY r_ac(3) = [6 9 7]
 BYTE ARRAY r_abon(3) = [1 0 2]
 BYTE ARRAY r_dbon(3) = [2 0 0]
-BYTE ARRAY r_dice(3) = [8 6 6]
-BYTE ARRAY r_ench(3) = [1 1 0]
 BYTE ARRAY r_pet(3) = [M_KITTEN M_KITTEN M_LITTLEDOG]
 
-BYTE ARRAY lv(960)
+; the three cell maps live below the program, in the loader's low RAM
+; ($0800-$13FF, D109): not in the PRG, and garbage until MakeLevel or
+; LoadLevel clears them
+BYTE ARRAY lv(960) = $0800
 BYTE ARRAY rx1(9), ry1(9), rx2(9), ry2(9), rgone(9)
 BYTE upx, upy, dnx, dny
 BYTE ARRAY made(13)                  ; levels already made, by depth
@@ -144,7 +172,21 @@ BYTE nvis
 
 ; the monsters of the level: parallel arrays, parked with it
 BYTE ARRAY mtype(20), mx(20), my(20), mhp(20), mhpmax(20), mlev(20), mstat(20), mmove(20)
-BYTE ARRAY mat(960)                  ; the monster on a cell, plus one; rebuilt, not parked
+BYTE ARRAY mat(960) = $0BC0          ; the monster on a cell, plus one; rebuilt, not parked
+BYTE ARRAY msl(20)                   ; a monster's turns of sleep, parked with it
+
+; the things on the floor, parked with the level: kind (255 none), place,
+; quantity, flags, and enchantment or charges
+BYTE ARRAY ot(32), ox(32), oy(32), oq(32), of(32), oe(32)
+BYTE ARRAY oat(960) = $0F80          ; the top thing on a cell, plus one; rebuilt
+; the hero's pack, and what of it is in use
+BYTE ARRAY it(18), iq(18), ifl(18), ie(18)
+BYTE ARRAY worn(7)                   ; the letter worn in each armour slot, 255 none
+BYTE uwep, uleft, uright, uamul
+BYTE ARRAY known(48), ap(48)         ; each kind identified, and its appearance this game
+CARD ugold
+BYTE nf, ne                          ; a new thing's flags and enchantment
+BYTE wantport                        ; the ring of teleportation's pull, taken after the turn
 
 BYTE depth, theme, role
 BYTE px, py                          ; the hero
@@ -162,7 +204,7 @@ CARD loops                           ; frames of play, for the gate
 
 ; the message lines: a line built in mb, then printed on the next of the
 ; two rows, with --More-- when both are full
-BYTE ARRAY mb(41)
+BYTE ARRAY mb(81)
 BYTE mbl, msgrow
 
 ; ------------------------------------------------------------- the screen
@@ -285,7 +327,7 @@ PROC MsgClear()
 RETURN
 
 PROC MsgC(BYTE ch)
-  IF mbl < 40 THEN
+  IF mbl < 80 THEN
     mb(mbl) = ch
     mbl += 1
   FI
@@ -332,20 +374,41 @@ PROC More()
   msgrow = 0
 RETURN
 
-; the line built so far onto the next row
+; the line built so far onto the next row, broken at a space onto the
+; one after if it is longer than forty
 PROC MsgEnd()
-  BYTE i
+  BYTE i, n, cut, start
   CARD a
-  IF msgrow >= 2 THEN More() FI
-  ClearRow(msgrow)
-  a = msgrow
-  VRAM_ADDR = a << 7
-  VRAM_STEP = 1
-  FOR i = 1 TO mbl DO
-    VRAM_DATA = mb(i - 1) - FONT_FIRST
-    VRAM_DATA = B_WHITE
+  start = 0
+  WHILE start < mbl DO
+    n = mbl - start
+    cut = n
+    IF n > 40 THEN
+      cut = 40
+      i = 40
+      WHILE i > 20 DO
+        IF mb(start + i) == ' ' THEN
+          cut = i
+          EXIT
+        FI
+        i -= 1
+      OD
+    FI
+    IF msgrow >= 2 THEN More() FI
+    ClearRow(msgrow)
+    a = msgrow
+    VRAM_ADDR = a << 7
+    VRAM_STEP = 1
+    FOR i = 1 TO cut DO
+      VRAM_DATA = mb(start + i - 1) - FONT_FIRST
+      VRAM_DATA = B_WHITE
+    OD
+    msgrow += 1
+    start += cut
+    IF start < mbl THEN
+      IF mb(start) == ' ' THEN start += 1 FI
+    FI
   OD
-  msgrow += 1
   mbl = 0
 RETURN
 
@@ -573,17 +636,231 @@ PROC Stair(BYTE r, BYTE k)
   FI
 RETURN
 
-; ----------------------------------------------------------- the monsters
-FUNC BYTE POINTER MonName(BYTE t)
-  BYTE POINTER p
-  BYTE k
-  p = m_names
-  k = 0
-  WHILE k < t DO
-    p = p + *p + 1
-    k += 1
+; ------------------------------------------------------------- the objects
+; an enchantment or a charge count is a byte; enchantments go below zero
+FUNC INT Signed(BYTE v)
+  INT e
+  e = v
+  IF e > 127 THEN e = e - 256 FI
+RETURN (e)
+
+; the top thing on a cell is the highest-numbered one there
+PROC TopObj(BYTE x, BYTE y)
+  BYTE i, top
+  top = 0
+  FOR i = 0 TO MAXOBJ - 1 DO
+    IF ot(i) <> 255 AND ox(i) == x AND oy(i) == y THEN top = i + 1 FI
   OD
-RETURN (p)
+  oat(Idx(x, y)) = top
+RETURN
+
+; a thing onto the floor, on top of what is there; 255 if the level has
+; no room for more
+FUNC BYTE PutObj(BYTE t, BYTE q, BYTE f, BYTE e, BYTE x, BYTE y)
+  BYTE i
+  FOR i = 0 TO MAXOBJ - 1 DO
+    IF ot(i) == 255 THEN
+      ot(i) = t
+      oq(i) = q
+      of(i) = f
+      oe(i) = e
+      ox(i) = x
+      oy(i) = y
+      oat(Idx(x, y)) = i + 1
+      RETURN (i)
+    FI
+  OD
+RETURN (255)
+
+PROC TakeObj(BYTE i)
+  ot(i) = 255
+  TopObj(ox(i), oy(i))
+RETURN
+
+; a kind of a class, as often as objects.c's probabilities say
+FUNC BYTE PickKind(BYTE cls)
+  BYTE t
+  CARD total, r
+  total = 0
+  FOR t = 0 TO N_OBJ - 1 DO
+    IF o_class(t) == cls THEN total += o_prob(t) FI
+  OD
+  r = Rnd(total)
+  FOR t = 0 TO N_OBJ - 1 DO
+    IF o_class(t) == cls THEN
+      IF r < o_prob(t) THEN RETURN (t) FI
+      r -= o_prob(t)
+    FI
+  OD
+RETURN (0)
+
+; NetHack's mkobj() odds among the classes the game has -- weapons 10,
+; armour 10, potions 16, scrolls 16, wands 4, rings 3, amulets 1
+FUNC BYTE MkKind()
+  BYTE r
+  r = Rnd(60)
+  IF r < 10 THEN RETURN (PickKind(C_WEAPON)) FI
+  IF r < 20 THEN RETURN (PickKind(C_ARMOR)) FI
+  IF r < 36 THEN RETURN (PickKind(C_POTION)) FI
+  IF r < 52 THEN RETURN (PickKind(C_SCROLL)) FI
+  IF r < 56 THEN RETURN (PickKind(C_WAND)) FI
+  IF r < 59 THEN RETURN (PickKind(C_RING)) FI
+RETURN (O_LIFESAVING)
+
+; mksobj()'s blessings, curses, enchantments and charges for a new thing
+; of kind t, into nf and ne: a weapon or armour one in eleven enchanted
+; and half of those blessed, else one in ten cursed and enchanted down; a
+; potion, scroll or amulet one in four blessed or cursed; a wand 4-8
+; charges, 11-15 if it needs no direction; a ring of protection or
+; increase damage +1 to +3, one in four of them cursed and negative
+PROC Bless(BYTE t)
+  BYTE c
+  c = o_class(t)
+  nf = 0
+  ne = 0
+  IF c == C_WEAPON OR c == C_ARMOR THEN
+    IF Rnd(11) == 0 THEN
+      ne = Roll(3)
+      IF Rnd(2) THEN nf = OF_BLESS FI
+    ELSEIF Rnd(10) == 0 THEN
+      nf = OF_CURSE
+      ne = 256 - Roll(3)
+    FI
+  ELSEIF c == C_POTION OR c == C_SCROLL OR c == C_AMULET THEN
+    IF Rnd(4) == 0 THEN
+      IF Rnd(2) THEN nf = OF_BLESS ELSE nf = OF_CURSE FI
+    FI
+  ELSEIF c == C_WAND THEN
+    IF o_slot(t) == D_NODIR THEN ne = 11 + Rnd(5) ELSE ne = 4 + Rnd(5) FI
+  ELSEIF c == C_RING THEN
+    IF t == O_RPROTECTION OR t == O_RDAMAGE THEN
+      ne = Roll(3)
+      IF Rnd(4) == 0 THEN
+        nf = OF_CURSE
+        ne = 256 - ne
+      FI
+    ELSEIF t == O_RTELEPORT AND Rnd(3) == 0 THEN
+      nf = OF_CURSE
+    FI
+  FI
+RETURN
+
+PROC MkObj(BYTE x, BYTE y)
+  BYTE t, i
+  t = MkKind()
+  Bless(t)
+  i = PutObj(t, 1, nf, ne, x, y)
+RETURN
+
+; NetHack's mkgold(): a d(depth+2) times a d30 pile, kept to a byte
+PROC MkGold(BYTE x, BYTE y)
+  BYTE i
+  CARD q
+  q = Roll(depth + 2)
+  q = q * Roll(30)
+  IF q > 250 THEN q = 250 FI
+  i = PutObj(O_GOLD, q, 0, 0, x, y)
+RETURN
+
+FUNC BYTE Wearing(BYTE t)
+  IF uleft <> 255 THEN
+    IF it(uleft) == t THEN RETURN (1) FI
+  FI
+  IF uright <> 255 THEN
+    IF it(uright) == t THEN RETURN (1) FI
+  FI
+RETURN (0)
+
+; what the rings of a kind worn add up to
+FUNC INT RingEnch(BYTE t)
+  INT e
+  e = 0
+  IF uleft <> 255 THEN
+    IF it(uleft) == t THEN e = e + Signed(ie(uleft)) FI
+  FI
+  IF uright <> 255 THEN
+    IF it(uright) == t THEN e = e + Signed(ie(uright)) FI
+  FI
+RETURN (e)
+
+; NetHack's armour class: ten, less each piece worn and its enchantment,
+; less the rings of protection
+PROC CalcAC()
+  BYTE s, k
+  INT a
+  a = 10
+  FOR s = 1 TO 6 DO
+    k = worn(s)
+    IF k <> 255 THEN a = a - o_arg(it(k)) - Signed(ie(k)) FI
+  OD
+  uac = a - RingEnch(O_RPROTECTION)
+RETURN
+
+; q of the pack's letter k gone; when none is left, it is no longer worn
+PROC InvDel(BYTE k, BYTE q)
+  BYTE s
+  IF iq(k) > q THEN
+    iq(k) -= q
+    RETURN
+  FI
+  it(k) = 255
+  IF uwep == k THEN uwep = 255 FI
+  IF uleft == k THEN uleft = 255 FI
+  IF uright == k THEN uright = 255 FI
+  IF uamul == k THEN uamul = 255 FI
+  FOR s = 1 TO 6 DO
+    IF worn(s) == k THEN worn(s) = 255 FI
+  OD
+  CalcAC()
+RETURN
+
+; a thing into the pack: daggers, potions and scrolls onto a stack of
+; their own like, else the first free letter; 255 if the pack is full
+FUNC BYTE InvAdd(BYTE t, BYTE q, BYTE f, BYTE e)
+  BYTE k, c
+  c = o_class(t)
+  IF t == O_DAGGER OR c == C_POTION OR c == C_SCROLL THEN
+    FOR k = 0 TO MAXINV - 1 DO
+      IF it(k) == t AND ifl(k) == f AND ie(k) == e AND uwep <> k AND iq(k) < 240 THEN
+        iq(k) += q
+        RETURN (k)
+      FI
+    OD
+  FI
+  FOR k = 0 TO MAXINV - 1 DO
+    IF it(k) == 255 THEN
+      it(k) = t
+      iq(k) = q
+      ifl(k) = f
+      ie(k) = e
+      RETURN (k)
+    FI
+  OD
+RETURN (255)
+
+; ----------------------------------------------------------- the monsters
+; a name from YNAMES.DAT, into nbuf: record k, NAME_REC bytes each, from
+; the page Title found the file on. One buffer, so a name is used before
+; the next is asked for
+CARD names_page
+BYTE ARRAY nbuf(NAME_REC)
+
+FUNC BYTE POINTER NameRec(CARD k)
+  CARD lo, at
+  BYTE hi
+  lo = names_page & 255
+  lo = lo << 8
+  at = lo + k * NAME_REC
+  hi = $10 + YDRIVE * 7 + (names_page >> 8)
+  IF at < lo THEN hi += 1 FI
+  FlashOpen(at, hi)
+  nbuf(0) = FlashByte()
+  FlashRead(nbuf + 1, nbuf(0))
+  FlashClose()
+RETURN (nbuf)
+
+FUNC BYTE POINTER MonName(BYTE t)
+RETURN (NameRec(NAME_MON + t))
 
 PROC Place(BYTE i)
   mat(Idx(mx(i), my(i))) = i + 1
@@ -611,6 +888,7 @@ FUNC BYTE NewMon(BYTE t, BYTE x, BYTE y)
       mhpmax(i) = mhp(i)
       mstat(i) = S_LIVE
       mmove(i) = Rnd(12)
+      msl(i) = 0
       mx(i) = x
       my(i) = y
       Place(i)
@@ -712,8 +990,10 @@ PROC MakeLevel()
   FOR i = 0 TO NCELL - 1 DO
     lv(i) = 0
     mat(i) = 0
+    oat(i) = 0
   OD
   FOR g = 0 TO MAXMON - 1 DO mstat(g) = 0 OD
+  FOR g = 0 TO MAXOBJ - 1 DO ot(g) = 255 OD
   lit = 9
   IF depth > 4 THEN lit = 7 FI
   IF depth > 8 THEN lit = 5 FI
@@ -789,6 +1069,22 @@ PROC MakeLevel()
       IF s <> $FFFF THEN Spawn(s >> 8, s) FI
     FI
   OD
+  ; NetHack's room filling: gold one room in three, and a thing one room
+  ; in three with a one in five chance of another after each
+  FOR g = 0 TO 8 DO
+    IF rgone(g) == 0 THEN
+      IF Rnd(3) == 0 THEN
+        s = RoomSpot(g)
+        IF s <> $FFFF THEN MkGold(s >> 8, s) FI
+      FI
+      IF Rnd(3) == 0 THEN
+        DO
+          s = RoomSpot(g)
+          IF s <> $FFFF THEN MkObj(s >> 8, s) FI
+        UNTIL Rnd(5) <> 0 OD
+      FI
+    FI
+  OD
 RETURN
 
 ; the level parked in its VRAM slot, or brought back from it
@@ -828,6 +1124,13 @@ PROC SaveLevel()
   VWrite(s + 1109, mlev, MAXMON)
   VWrite(s + 1129, mstat, MAXMON)
   VWrite(s + 1149, mmove, MAXMON)
+  VWrite(s + 1169, ot, MAXOBJ)
+  VWrite(s + 1201, ox, MAXOBJ)
+  VWrite(s + 1233, oy, MAXOBJ)
+  VWrite(s + 1265, oq, MAXOBJ)
+  VWrite(s + 1297, of, MAXOBJ)
+  VWrite(s + 1329, oe, MAXOBJ)
+  VWrite(s + 1361, msl, MAXMON)
 RETURN
 
 PROC LoadLevel()
@@ -849,9 +1152,22 @@ PROC LoadLevel()
   VRead(s + 1109, mlev, MAXMON)
   VRead(s + 1129, mstat, MAXMON)
   VRead(s + 1149, mmove, MAXMON)
-  FOR i = 0 TO NCELL - 1 DO mat(i) = 0 OD
+  VRead(s + 1169, ot, MAXOBJ)
+  VRead(s + 1201, ox, MAXOBJ)
+  VRead(s + 1233, oy, MAXOBJ)
+  VRead(s + 1265, oq, MAXOBJ)
+  VRead(s + 1297, of, MAXOBJ)
+  VRead(s + 1329, oe, MAXOBJ)
+  VRead(s + 1361, msl, MAXMON)
+  FOR i = 0 TO NCELL - 1 DO
+    mat(i) = 0
+    oat(i) = 0
+  OD
   FOR m = 0 TO MAXMON - 1 DO
     IF mstat(m) THEN Place(m) FI
+  OD
+  FOR m = 0 TO MAXOBJ - 1 DO
+    IF ot(m) <> 255 THEN oat(Idx(ox(m), oy(m))) = m + 1 FI
   OD
 RETURN
 
@@ -881,6 +1197,12 @@ PROC DrawCell(BYTE x, BYTE y)
     a = B_VIEW
   ELSE
     a = B_DIM
+  FI
+  m = oat(i)
+  IF m THEN
+    t = ot(m - 1)
+    Pic(col, row, (o_pic(t) + ap(t)) << 2, 16 | a)
+    RETURN
   FI
   k = c & 31
   IF k == K_WALL THEN
@@ -1080,6 +1402,8 @@ PROC Status()
     a = -a
   FI
   MsgN(a)
+  MsgS("  $:")
+  MsgN(ugold)
   c = Put(c, 29, B_WHITE)
   mbl = save
 RETURN
@@ -1136,14 +1460,49 @@ PROC LoseLevel()
   IF uhp > uhpmax THEN uhp = uhpmax FI
 RETURN
 
+PROC MonTeleport(BYTE i)
+  BYTE r, x, y
+  CARD s
+  r = Rnd(9)
+  IF rgone(r) THEN RETURN FI
+  s = RoomSpot(r)
+  IF s == $FFFF THEN RETURN FI
+  x = mx(i)
+  y = my(i)
+  Unplace(i)
+  mx(i) = s >> 8
+  my(i) = s
+  Place(i)
+  DrawCell(x, y)
+  DrawCell(mx(i), my(i))
+RETURN
+
+; the hero hurt by a monster of type t; the amulet of life saving takes
+; the death, as NetHack's does, and crumbles
 PROC HurtHero(BYTE d, BYTE t)
-  IF d >= uhp THEN
-    uhp = 0
-    dead = 1
-    killer = t
-  ELSE
+  IF d < uhp THEN
     uhp -= d
+    RETURN
   FI
+  IF uamul <> 255 THEN
+    IF it(uamul) == O_LIFESAVING THEN
+      Msg("But wait... Your medallion begins to glow!")
+      Msg("You feel much better!")
+      Msg("The medallion crumbles to dust!")
+      known(O_LIFESAVING) = 1
+      InvDel(uamul, 1)
+      uhp = uhpmax
+      RETURN
+    FI
+  FI
+  uhp = 0
+  dead = 1
+  killer = t
+RETURN
+
+; the hero hurt by its own doing, which does not kill
+PROC HurtSelf(BYTE d)
+  IF d >= uhp THEN uhp = 1 ELSE uhp -= d FI
 RETURN
 
 ; "The jackal", "the jackal", or "It" and "it" for one out of sight
@@ -1193,6 +1552,7 @@ RETURN
 ; damage dealt to a monster by the hero; 1 if it died of it
 FUNC BYTE HurtMon(BYTE i, BYTE d)
   BYTE t
+  msl(i) = 0
   IF d < mhp(i) THEN
     mhp(i) -= d
     RETURN (0)
@@ -1204,6 +1564,10 @@ FUNC BYTE HurtMon(BYTE i, BYTE d)
   MsgC('!')
   MsgEnd()
   Remove(i)
+  IF Rnd(6) == 0 THEN
+    MkObj(mx(i), my(i))
+    DrawCell(mx(i), my(i))
+  FI
   GainXP(m_xp(t))
 RETURN (1)
 
@@ -1219,7 +1583,9 @@ PROC Passive(BYTE i)
   fx = m_att(o) & 15
   s = m_att(o + 2)
   IF fx == E_PLYS THEN
-    IF upara == 0 THEN
+    IF Wearing(O_RFREEACTION) THEN
+      Msg("You momentarily stiffen.")
+    ELSEIF upara == 0 THEN
       Msg("You are frozen by its gaze!")
       upara = Dice(mlev(i) + 1, 10)
     FI
@@ -1237,14 +1603,22 @@ RETURN
 ; the hero strikes: NetHack's find_roll_to_hit(), then the weapon's die,
 ; its enchantment and strength's bonus
 PROC HeroAttack(BYTE i)
-  INT tmp
-  BYTE d, t
+  INT tmp, en, d
+  BYTE t, sides
   t = mtype(i)
+  sides = 2                          ; bare hands
+  en = 0
+  IF uwep <> 255 THEN
+    sides = o_arg(it(uwep))
+    en = Signed(ie(uwep))
+  FI
   tmp = m_ac(t)
-  tmp = tmp - 10 + 1 + r_abon(role) + ulev + r_ench(role)
+  tmp = tmp - 10 + 1 + r_abon(role) + ulev + en
+  IF msl(i) THEN tmp += 2 FI         ; a sleeping monster is easier to hit
   mbl = 0
   IF tmp > Roll(20) THEN
-    d = Roll(r_dice(role)) + r_ench(role) + r_dbon(role)
+    d = Roll(sides) + en + r_dbon(role) + RingEnch(O_RDAMAGE)
+    IF d < 1 THEN d = 1 FI
     MsgS("You hit ")
     MsgMon(i, 0)
     MsgC('.')
@@ -1298,13 +1672,23 @@ PROC MonAttack(BYTE i)
         MsgEnd()
         d = Dice(n, s)
         IF fx == E_POIS AND Rnd(8) == 0 THEN
-          Msg("It was poisoned!")
-          d += Roll(6)
-        ELSEIF fx == E_SLEE AND Rnd(3) == 0 AND upara == 0 THEN
+          IF Wearing(O_RPOISONRES) THEN
+            Msg("The poison doesn't seem to affect you.")
+          ELSE
+            Msg("It was poisoned!")
+            d += Roll(6)
+          FI
+        ELSEIF fx == E_SLEE AND Rnd(3) == 0 AND upara == 0 AND Wearing(O_RFREEACTION) == 0 THEN
           Msg("You are put to sleep!")
           upara = Roll(10)
         ELSEIF fx == E_DRLI AND Rnd(3) == 0 THEN
           LoseLevel()
+        ELSEIF fx == E_SGLD AND ugold > 0 THEN
+          ugold = ugold / 2
+          Msg("Your purse feels lighter.")
+          MonTeleport(i)
+          HurtHero(d, t)
+          RETURN
         FI
         HurtHero(d, t)
       ELSE
@@ -1345,6 +1729,7 @@ PROC MonHitsMon(BYTE ag, BYTE df)
           MsgC('.')
           MsgEnd()
         FI
+        msl(df) = 0
         IF d >= mhp(df) THEN
           IF seen THEN
             MsgMon(df, 1)
@@ -1352,6 +1737,10 @@ PROC MonHitsMon(BYTE ag, BYTE df)
             MsgEnd()
           FI
           Remove(df)
+          IF Rnd(6) == 0 THEN
+            MkObj(mx(df), my(df))
+            DrawCell(mx(df), my(df))
+          FI
           IF mstat(ag) & S_PET THEN PetGrow(ag, mlev(df)) FI
         ELSE
           mhp(df) -= d
@@ -1454,6 +1843,10 @@ RETURN
 ; hero -- and otherwise wandering
 PROC MonAct(BYTE i)
   BYTE t, p
+  IF msl(i) THEN
+    msl(i) -= 1
+    RETURN
+  FI
   t = mtype(i)
   IF mstat(i) & S_PET THEN
     PetAct(i)
@@ -1513,6 +1906,8 @@ PROC Mend()
     IF role == 1 THEN n = (38 - ulev) * 3 / 6 FI
     IF turns % n == 0 THEN upw += 1 FI
   FI
+  IF Wearing(O_RREGEN) AND uhp < uhpmax THEN uhp += 1 FI
+  IF Wearing(O_RTELEPORT) AND Rnd(85) == 0 THEN wantport = 1 FI
 RETURN
 
 ; a turn has passed: the hero mends, the monsters move, and while the
@@ -1538,6 +1933,7 @@ BYTE ARRAY carry(4)                  ; the pet on the stairs: type, hit points, 
 
 PROC EnterLevel(BYTE down)
   BYTE t, r, i, d
+  CARD s
   t = ThemeOf(depth)
   IF t <> theme THEN
     FOR r = VTOP TO VTOP + 25 DO ClearRow(r) OD
@@ -1553,12 +1949,23 @@ PROC EnterLevel(BYTE down)
     made(depth) = 1
   FI
   nvis = 0
-  IF down THEN
+  IF down == 1 THEN
     px = upx
     py = upy
-  ELSE
+  ELSEIF down == 0 THEN
     px = dnx
     py = dny
+  ELSE
+    DO
+      r = Rnd(9)
+    UNTIL rgone(r) == 0 OD
+    px = upx
+    py = upy
+    s = RoomSpot(r)
+    IF s <> $FFFF THEN
+      px = s >> 8
+      py = s
+    FI
   FI
   i = MonAt(px, py)                  ; something on the stairs moves aside
   IF i THEN
@@ -1633,6 +2040,215 @@ PROC Ascend()
   EnterLevel(0)
 RETURN
 
+; ------------------------------------------------------- names of things
+FUNC BYTE POINTER ObjName(BYTE t)
+RETURN (NameRec(NAME_OBJ + t))
+
+PROC Know(BYTE t)
+  known(t) = 1
+RETURN
+
+; words put in front of what mb holds from `at`
+PROC MsgIns(BYTE at, BYTE POINTER s)
+  BYTE n, i
+  BYTE POINTER q
+  n = *s
+  IF mbl + n > 80 THEN RETURN FI
+  i = mbl
+  WHILE i > at DO
+    i -= 1
+    mb(i + n) = mb(i)
+  OD
+  q = s + 1
+  FOR i = 1 TO n DO
+    mb(at + i - 1) = *q
+    q += 1
+  OD
+  mbl += n
+RETURN
+
+; a thing's name as NetHack's doname() gives it, onto mb: the count, or
+; "a" or "an"; its blessing and enchantment if they are known; and the
+; name of its kind if that is known, else its appearance this game
+PROC Name(BYTE t, BYTE q, BYTE f, BYTE e, BYTE art)
+  BYTE at, c, ch
+  INT en
+  at = mbl
+  c = o_class(t)
+  IF c == C_GOLD THEN
+    MsgN(q)
+    MsgS(" gold piece")
+    IF q <> 1 THEN MsgC('s') FI
+    RETURN
+  FI
+  IF q > 1 THEN
+    MsgN(q)
+    MsgC(' ')
+  FI
+  IF f & OF_BKNOWN THEN               ; NetHack's implicit_uncursed: not said of a kind that is known
+    IF f & OF_BLESS THEN
+      MsgS("blessed ")
+    ELSEIF f & OF_CURSE THEN
+      MsgS("cursed ")
+    ELSEIF known(t) == 0 THEN
+      MsgS("uncursed ")
+    FI
+  FI
+  IF f & OF_EKNOWN AND (c == C_WEAPON OR c == C_ARMOR OR t == O_RPROTECTION OR t == O_RDAMAGE) THEN
+    en = Signed(e)
+    IF en < 0 THEN
+      MsgC('-')
+      en = -en
+    ELSE
+      MsgC('+')
+    FI
+    MsgN(en)
+    MsgC(' ')
+  FI
+  IF c == C_WEAPON OR c == C_ARMOR THEN
+    MsgS(ObjName(t))
+    IF q > 1 THEN MsgC('s') FI
+  ELSEIF c == C_POTION THEN
+    IF known(t) THEN
+      MsgS("potion")
+      IF q > 1 THEN MsgC('s') FI
+      MsgS(" of ")
+      IF t == O_WATER AND f & OF_BKNOWN THEN
+        IF f & OF_BLESS THEN
+          MsgS("holy ")
+        ELSEIF f & OF_CURSE THEN
+          MsgS("unholy ")
+        FI
+      FI
+      MsgS(ObjName(t))
+    ELSE
+      MsgS(NameRec(NAME_POTION + ap(t)))
+      MsgS(" potion")
+      IF q > 1 THEN MsgC('s') FI
+    FI
+  ELSEIF c == C_SCROLL THEN
+    MsgS("scroll")
+    IF q > 1 THEN MsgC('s') FI
+    IF known(t) THEN
+      MsgS(" of ")
+      MsgS(ObjName(t))
+    ELSE
+      MsgS(" labeled ")
+      MsgS(NameRec(NAME_SCROLL + ap(t)))
+    FI
+  ELSEIF c == C_WAND THEN
+    IF known(t) THEN
+      MsgS("wand of ")
+      MsgS(ObjName(t))
+    ELSE
+      MsgS(NameRec(NAME_WAND + ap(t)))
+      MsgS(" wand")
+    FI
+    IF f & OF_EKNOWN THEN
+      MsgS(" (0:")
+      MsgN(e)
+      MsgC(')')
+    FI
+  ELSEIF c == C_RING THEN
+    IF known(t) THEN
+      MsgS("ring of ")
+      MsgS(ObjName(t))
+    ELSE
+      MsgS(NameRec(NAME_RING + ap(t)))
+      MsgS(" ring")
+    FI
+  ELSEIF t == O_LIFESAVING THEN
+    IF known(t) THEN MsgS("amulet of life saving") ELSE MsgS("spherical amulet") FI
+  ELSE
+    IF t == O_FAKEYENDOR AND known(t) THEN
+      MsgS("plastic imitation Amulet")
+    ELSE
+      MsgS("Amulet of Yendor")
+    FI
+    IF art AND q == 1 THEN MsgIns(at, "the ") FI
+    RETURN
+  FI
+  IF art AND q == 1 THEN
+    ch = mb(at)
+    IF ch == 'a' OR ch == 'e' OR ch == 'i' OR ch == 'o' OR ch == 'u' THEN
+      MsgIns(at, "an ")
+    ELSE
+      MsgIns(at, "a ")
+    FI
+  FI
+RETURN
+
+FUNC BYTE IsWorn(BYTE k)
+  BYTE s
+  IF uleft == k OR uright == k OR uamul == k THEN RETURN (1) FI
+  FOR s = 1 TO 6 DO
+    IF worn(s) == k THEN RETURN (1) FI
+  OD
+RETURN (0)
+
+; a pack letter's name, and what is being done with it
+PROC InvName(BYTE k)
+  Name(it(k), iq(k), ifl(k), ie(k), 1)
+  IF uwep == k THEN MsgS(" (wielded)") FI
+  IF uleft == k THEN
+    MsgS(" (left hand)")
+  ELSEIF uright == k THEN
+    MsgS(" (right hand)")
+  ELSEIF IsWorn(k) THEN
+    MsgS(" (worn)")
+  FI
+RETURN
+
+; the hero set down somewhere on the level, at random
+PROC Teleport()
+  BYTE r
+  CARD s
+  DO
+    r = Rnd(9)
+  UNTIL rgone(r) == 0 OD
+  s = RoomSpot(r)
+  IF s == $FFFF THEN RETURN FI
+  px = s >> 8
+  py = s
+  vx = 255
+  r = Aim()
+  See()
+  DrawView()
+RETURN
+
+; what is here: gold is taken up as it is walked over, as NetHack's
+; autopickup does, and the rest is said
+PROC LookHere()
+  BYTE i, n, k
+  CARD c
+  c = Idx(px, py)
+  i = oat(c)
+  WHILE i DO
+    IF ot(i - 1) <> O_GOLD THEN EXIT FI
+    ugold += oq(i - 1)
+    mbl = 0
+    MsgN(oq(i - 1))
+    MsgS(" gold pieces.")
+    MsgEnd()
+    TakeObj(i - 1)
+    i = oat(c)
+  OD
+  n = 0
+  FOR k = 0 TO MAXOBJ - 1 DO
+    IF ot(k) <> 255 AND ox(k) == px AND oy(k) == py THEN n += 1 FI
+  OD
+  IF n == 1 THEN
+    k = oat(c) - 1
+    mbl = 0
+    MsgS("You see here ")
+    Name(ot(k), oq(k), of(k), oe(k), 1)
+    MsgC('.')
+    MsgEnd()
+  ELSEIF n > 1 THEN
+    Msg("There are several objects here.")
+  FI
+RETURN
+
 ; a step: into a monster is an attack, into the pet a change of places,
 ; into a shut door opens it; a door is never passed diagonally
 PROC Stride(BYTE d)
@@ -1687,6 +2303,7 @@ PROC Stride(BYTE d)
     DrawCell(ox, oy)
     DrawCell(px, py)
   FI
+  LookHere()
   EndTurn()
 RETURN
 
@@ -1756,6 +2373,8 @@ FUNC BYTE AskDir()
   DO
     Tick()
     d = Tapped()
+    IF KeyHit(KEY_DOT) AND Shifted() THEN d = 9 FI
+    IF KeyHit(KEY_COMMA) AND Shifted() THEN d = 10 FI
     IF d THEN
       rep_c = Held()                 ; the key still down is the answer, not a step
       rep_t = 0
@@ -1764,6 +2383,883 @@ FUNC BYTE AskDir()
   UNTIL esc OD
   esc = 0
 RETURN (0)
+
+; ------------------------------------------------------------- the pack
+FUNC BYTE Passes(BYTE k, BYTE mask, BYTE mode)
+  IF it(k) == 255 THEN RETURN (0) FI
+  IF mask & (1 << o_class(it(k))) == 0 THEN RETURN (0) FI
+  IF mode == 1 AND IsWorn(k) THEN RETURN (0) FI
+  IF mode == 2 AND IsWorn(k) == 0 THEN RETURN (0) FI
+RETURN (1)
+
+PROC ClassName(BYTE c)
+  IF c == C_WEAPON THEN
+    MsgS("Weapons")
+  ELSEIF c == C_ARMOR THEN
+    MsgS("Armor")
+  ELSEIF c == C_POTION THEN
+    MsgS("Potions")
+  ELSEIF c == C_SCROLL THEN
+    MsgS("Scrolls")
+  ELSEIF c == C_WAND THEN
+    MsgS("Wands")
+  ELSEIF c == C_RING THEN
+    MsgS("Rings")
+  ELSE
+    MsgS("Amulets")
+  FI
+RETURN
+
+; the pack over the map, a heading a class as NetHack lists it: only the
+; classes in `mask`, a bit a class, and with mode 1 only what is not worn
+; and with 2 only what is. A letter answers, 255 for none; the map comes
+; back after
+FUNC BYTE Menu(BYTE POINTER prompt, BYTE mask, BYTE mode)
+  BYTE row, c, k, n, any, pick, col
+  MsgClear()
+  FOR row = VTOP TO VTOP + 25 DO ClearRow(row) OD
+  Text(0, 0, prompt, B_YELLOW)
+  row = VTOP
+  n = 0
+  FOR c = 0 TO 6 DO
+    any = 0
+    FOR k = 0 TO MAXINV - 1 DO
+      IF Passes(k, mask, mode) AND row < VTOP + 26 THEN
+        IF o_class(it(k)) == c THEN
+          IF any == 0 THEN
+            mbl = 0
+            ClassName(c)
+            col = Put(0, row, B_YELLOW)
+            row += 1
+            any = 1
+          FI
+          mbl = 0
+          MsgC('a' + k)
+          MsgS(" - ")
+          InvName(k)
+          IF mbl > 39 THEN mbl = 39 FI
+          col = Put(1, row, B_WHITE)
+          row += 1
+          n += 1
+        FI
+      FI
+    OD
+  OD
+  pick = 255
+  IF n == 0 THEN
+    Text(0, VTOP, "You don't have anything for that.", B_WHITE)
+  FI
+  FOR k = 0 TO MAXINV - 1 DO
+    c = KeyHit(letter_sc(k))
+  OD
+  c = KeyHit(KEY_SPACE)
+  c = KeyHit(KEY_ENTER)
+  esc = 0
+  DO
+    Tick()
+    FOR k = 0 TO MAXINV - 1 DO
+      IF KeyHit(letter_sc(k)) THEN
+        IF Passes(k, mask, mode) THEN pick = k FI
+      FI
+    OD
+  UNTIL pick <> 255 OR esc OR KeyHit(KEY_SPACE) OR KeyHit(KEY_ENTER) OD
+  esc = 0
+  rep_c = Held()                     ; the letter still down is not a step
+  rep_t = 0
+  FOR row = VTOP TO VTOP + 25 DO ClearRow(row) OD
+  MsgClear()
+  DrawView()
+RETURN (pick)
+
+FUNC BYTE POINTER ApName(BYTE t)
+  BYTE c
+  c = o_class(t)
+  IF c == C_POTION THEN RETURN (NameRec(NAME_POTION + ap(t))) FI
+  IF c == C_SCROLL THEN RETURN (NameRec(NAME_SCROLL + ap(t))) FI
+  IF c == C_WAND THEN RETURN (NameRec(NAME_WAND + ap(t))) FI
+RETURN (NameRec(NAME_RING + ap(t)))
+
+; NetHack's \: the kinds identified, and what they looked like
+PROC Discoveries()
+  BYTE t, row, d
+  MsgClear()
+  FOR row = VTOP TO VTOP + 25 DO ClearRow(row) OD
+  Text(0, 0, "Discoveries", B_YELLOW)
+  row = VTOP
+  FOR t = O_HEALING TO O_RTELEPORT DO
+    IF known(t) AND row < VTOP + 26 THEN
+      mbl = 0
+      Name(t, 1, 0, 0, 0)
+      MsgS(" (")
+      MsgS(ApName(t))
+      MsgC(')')
+      d = Put(1, row, B_WHITE)
+      row += 1
+    FI
+  OD
+  IF row == VTOP THEN Text(1, VTOP, "You haven't discovered anything yet.", B_WHITE) FI
+  d = KeyHit(KEY_SPACE)
+  esc = 0
+  DO
+    Tick()
+  UNTIL KeyHit(KEY_SPACE) OR KeyHit(KEY_ENTER) OR esc OD
+  esc = 0
+  FOR row = VTOP TO VTOP + 25 DO ClearRow(row) OD
+  DrawView()
+RETURN
+
+; ------------------------------------------------------ using things
+; the room the hero is in lit, or darkened; in a corridor, the cells round
+PROC LightRoom(BYTE on)
+  BYTE r, x, y
+  CARD i
+  r = RoomAt(px, py)
+  IF r == 255 THEN
+    FOR y = py - 2 TO py + 2 DO
+      FOR x = px - 2 TO px + 2 DO
+        IF x < LW AND y < LH THEN
+          i = Idx(x, y)
+          IF lv(i) & 31 <> K_ROCK THEN lv(i) = lv(i) | F_SEEN FI
+        FI
+      OD
+    OD
+  ELSE
+    FOR y = ry1(r) + 1 TO ry2(r) - 1 DO
+      FOR x = rx1(r) + 1 TO rx2(r) - 1 DO
+        i = Idx(x, y)
+        IF on THEN lv(i) = lv(i) | F_LIT ELSE lv(i) = lv(i) & (255 ^ F_LIT) FI
+      OD
+    OD
+  FI
+  See()
+  DrawView()
+  IF on THEN Msg("A lit field surrounds you!") ELSE Msg("Darkness surrounds you.") FI
+RETURN
+
+PROC PickUp()
+  BYTE i, k
+  i = oat(Idx(px, py))
+  IF i == 0 THEN
+    Msg("There is nothing here to pick up.")
+    RETURN
+  FI
+  i -= 1
+  IF ot(i) == O_GOLD THEN
+    ugold += oq(i)
+    mbl = 0
+    MsgN(oq(i))
+    MsgS(" gold pieces.")
+    MsgEnd()
+  ELSE
+    k = InvAdd(ot(i), oq(i), of(i), oe(i))
+    IF k == 255 THEN
+      Msg("You have too many things to carry more.")
+      RETURN
+    FI
+    mbl = 0
+    MsgC('a' + k)
+    MsgS(" - ")
+    InvName(k)
+    MsgC('.')
+    MsgEnd()
+  FI
+  TakeObj(i)
+  EndTurn()
+RETURN
+
+PROC Welded(BYTE k)
+  ifl(k) = ifl(k) | OF_BKNOWN
+  mbl = 0
+  MsgS("Your ")
+  Name(it(k), 1, 0, 0, 0)
+  MsgS(" is welded to your hand!")
+  MsgEnd()
+RETURN
+
+PROC Drop()
+  BYTE k
+  k = Menu("What do you want to drop?", $7F, 0)
+  IF k == 255 THEN RETURN FI
+  IF IsWorn(k) THEN
+    Msg("You cannot drop something you are wearing.")
+    RETURN
+  FI
+  IF uwep == k AND ifl(k) & OF_CURSE THEN
+    Welded(k)
+    RETURN
+  FI
+  IF PutObj(it(k), iq(k), ifl(k), ie(k), px, py) == 255 THEN
+    Msg("There is no room to drop anything here.")
+    RETURN
+  FI
+  mbl = 0
+  MsgS("You drop ")
+  Name(it(k), iq(k), ifl(k), ie(k), 1)
+  MsgC('.')
+  MsgEnd()
+  InvDel(k, iq(k))
+  EndTurn()
+RETURN
+
+; a cursed weapon welds itself to the hand, and cannot be put away
+PROC Wield()
+  BYTE k
+  IF uwep <> 255 THEN
+    IF ifl(uwep) & OF_CURSE THEN
+      Welded(uwep)
+      RETURN
+    FI
+  FI
+  k = Menu("What do you want to wield?", 1, 1)
+  IF k == 255 THEN RETURN FI
+  uwep = k
+  mbl = 0
+  MsgC('a' + k)
+  MsgS(" - ")
+  InvName(k)
+  MsgC('.')
+  MsgEnd()
+  IF ifl(k) & OF_CURSE THEN
+    ifl(k) = ifl(k) | OF_BKNOWN
+    Msg("It welds itself to your hand!")
+  FI
+  EndTurn()
+RETURN
+
+; armour: a slot at a time, the cloak over the body armour, its
+; enchantment learnt by wearing it and its curse by trying to take it off
+PROC Wear()
+  BYTE k, s
+  k = Menu("What do you want to wear?", 2, 1)
+  IF k == 255 THEN RETURN FI
+  s = o_slot(it(k))
+  IF worn(s) <> 255 THEN
+    Msg("You are already wearing one of those.")
+    RETURN
+  FI
+  IF s == SLOT_BODY AND worn(SLOT_CLOAK) <> 255 THEN
+    Msg("You are wearing a cloak over it.")
+    RETURN
+  FI
+  IF uwep == k THEN uwep = 255 FI
+  worn(s) = k
+  ifl(k) = ifl(k) | OF_EKNOWN
+  CalcAC()
+  mbl = 0
+  MsgS("You are now wearing ")
+  Name(it(k), 1, ifl(k), ie(k), 1)
+  MsgC('.')
+  MsgEnd()
+  EndTurn()
+RETURN
+
+PROC TakeOff()
+  BYTE k, s
+  k = Menu("What do you want to take off?", 2, 2)
+  IF k == 255 THEN RETURN FI
+  s = o_slot(it(k))
+  IF s == SLOT_BODY AND worn(SLOT_CLOAK) <> 255 THEN
+    Msg("You are wearing a cloak over it.")
+    RETURN
+  FI
+  IF ifl(k) & OF_CURSE THEN
+    ifl(k) = ifl(k) | OF_BKNOWN
+    Msg("You can't. It is cursed.")
+    RETURN
+  FI
+  worn(s) = 255
+  CalcAC()
+  mbl = 0
+  MsgS("You were wearing ")
+  Name(it(k), 1, ifl(k), ie(k), 1)
+  MsgC('.')
+  MsgEnd()
+  EndTurn()
+RETURN
+
+; a ring on the left hand if it is free, else the right; an amulet round
+; the neck. A ring of protection shows itself in the armour class
+PROC PutOn()
+  BYTE k, t
+  k = Menu("What do you want to put on?", 96, 1)
+  IF k == 255 THEN RETURN FI
+  t = it(k)
+  IF uwep == k THEN uwep = 255 FI
+  IF o_class(t) == C_AMULET THEN
+    IF uamul <> 255 THEN
+      Msg("You are already wearing an amulet.")
+      RETURN
+    FI
+    uamul = k
+  ELSEIF uleft == 255 THEN
+    uleft = k
+  ELSEIF uright == 255 THEN
+    uright = k
+  ELSE
+    Msg("You are already wearing two rings.")
+    RETURN
+  FI
+  IF t == O_RPROTECTION THEN
+    Know(t)
+    ifl(k) = ifl(k) | OF_EKNOWN
+  FI
+  CalcAC()
+  mbl = 0
+  MsgC('a' + k)
+  MsgS(" - ")
+  InvName(k)
+  MsgC('.')
+  MsgEnd()
+  EndTurn()
+RETURN
+
+PROC TakeRing()
+  BYTE k
+  k = Menu("What do you want to remove?", 96, 2)
+  IF k == 255 THEN RETURN FI
+  IF ifl(k) & OF_CURSE THEN
+    ifl(k) = ifl(k) | OF_BKNOWN
+    Msg("It won't come off!")
+    RETURN
+  FI
+  IF uleft == k THEN uleft = 255 FI
+  IF uright == k THEN uright = 255 FI
+  IF uamul == k THEN uamul = 255 FI
+  CalcAC()
+  mbl = 0
+  MsgS("You were wearing ")
+  Name(it(k), 1, ifl(k), ie(k), 1)
+  MsgC('.')
+  MsgEnd()
+  EndTurn()
+RETURN
+
+; NetHack's healup(): hit points, and the most raised by `more` if they
+; would run over it
+PROC Heal(BYTE h, BYTE more)
+  CARD v
+  v = uhp
+  v = v + h
+  IF v > uhpmax THEN
+    IF uhpmax < 240 THEN uhpmax += more FI
+    v = uhpmax
+  FI
+  uhp = v
+RETURN
+
+; blessed 1, cursed -1, else 0
+FUNC INT Sign(BYTE f)
+  IF f & OF_BLESS THEN RETURN (1) FI
+  IF f & OF_CURSE THEN RETURN (-1) FI
+RETURN (0)
+
+; a potion, as NetHack's peffects() has it, cut to these eight; one whose
+; drinking says what it was becomes known
+PROC Quaff()
+  BYTE k, t, f, h
+  INT s
+  k = Menu("What do you want to drink?", 4, 0)
+  IF k == 255 THEN RETURN FI
+  t = it(k)
+  f = ifl(k)
+  s = Sign(f)
+  InvDel(k, 1)
+  IF t == O_HEALING THEN
+    Know(t)
+    Msg("You feel better.")
+    h = 1
+    IF s < 0 THEN h = 0 FI
+    Heal(Dice(6 + 2 * s, 4), h)
+  ELSEIF t == O_EXTRAHEALING THEN
+    Know(t)
+    Msg("You feel much better.")
+    h = 2
+    IF s > 0 THEN h = 5 FI
+    IF s < 0 THEN h = 0 FI
+    Heal(Dice(6 + 2 * s, 8), h)
+  ELSEIF t == O_GAINLEVEL THEN
+    Know(t)
+    IF s < 0 THEN
+      IF depth > 1 THEN
+        Msg("You rise up, through the ceiling!")
+        SaveLevel()
+        depth -= 1
+        EnterLevel(2)
+      ELSE
+        Msg("You have an uneasy feeling.")
+      FI
+    ELSEIF ulev < 12 THEN
+      Msg("You feel more experienced.")
+      uxp = NeedXP(ulev)
+      LevelUp()
+    FI
+  ELSEIF t == O_GAINENERGY THEN
+    Know(t)
+    h = Dice(2 + s, 6)
+    IF s < 0 THEN
+      Msg("You feel lackluster.")
+      IF upwmax > h THEN upwmax -= h ELSE upwmax = 0 FI
+      IF upw > upwmax THEN upw = upwmax FI
+    ELSE
+      Msg("Magical energies course through your body.")
+      IF upwmax < 240 THEN upwmax += h FI
+      upw = upwmax
+    FI
+  ELSEIF t == O_SLEEPING THEN
+    Know(t)
+    IF Wearing(O_RFREEACTION) THEN
+      Msg("You yawn.")
+    ELSE
+      Msg("You suddenly fall asleep.")
+      upara = Roll(10 - 4 * s)
+    FI
+  ELSEIF t == O_SICKNESS THEN
+    Know(t)
+    Msg("Yecch! This stuff tastes like poison.")
+    IF Wearing(O_RPOISONRES) THEN
+      Msg("(But in fact it was mildly stale fruit juice.)")
+    ELSE
+      HurtSelf(Roll(10 - 5 * s))
+    FI
+  ELSEIF t == O_FRUITJUICE THEN
+    Msg("This tastes like slime mold juice.")
+  ELSE
+    Know(t)
+    IF s > 0 THEN
+      Msg("You feel full of awe.")
+    ELSEIF s < 0 THEN
+      Msg("This burns!")
+      HurtSelf(Roll(6))
+    ELSE
+      Msg("This tastes like water.")
+    FI
+  FI
+  EndTurn()
+RETURN
+
+PROC IdentifyOne(BYTE k)
+  known(it(k)) = 1
+  ifl(k) = ifl(k) | OF_BKNOWN | OF_EKNOWN
+RETURN
+
+; a random piece of armour worn, or 255
+FUNC BYTE RandomWorn()
+  BYTE s, n
+  s = Rnd(6)
+  FOR n = 1 TO 6 DO
+    s = (s % 6) + 1
+    IF worn(s) <> 255 THEN RETURN (worn(s)) FI
+  OD
+RETURN (255)
+
+; a scroll, as NetHack's seffects() has it, cut to these eight
+PROC Read()
+  BYTE k, t, f, j, ev
+  INT s
+  CARD c
+  k = Menu("What do you want to read?", 8, 0)
+  IF k == 255 THEN RETURN FI
+  t = it(k)
+  f = ifl(k)
+  s = Sign(f)
+  InvDel(k, 1)
+  IF t == O_IDENTIFY THEN
+    Know(t)
+    IF s > 0 AND Rnd(5) == 0 THEN
+      FOR j = 0 TO MAXINV - 1 DO
+        IF it(j) <> 255 THEN IdentifyOne(j) FI
+      OD
+      Msg("You identify everything you carry.")
+    ELSE
+      j = Menu("This is an identify scroll. Identify what?", $7F, 0)
+      IF j <> 255 THEN
+        IdentifyOne(j)
+        mbl = 0
+        MsgC('a' + j)
+        MsgS(" - ")
+        InvName(j)
+        MsgC('.')
+        MsgEnd()
+      FI
+    FI
+  ELSEIF t == O_ENCHANTWEAPON THEN
+    IF uwep == 255 THEN
+      Msg("Your hands twitch.")
+    ELSE
+      Know(t)
+      ev = 0
+      mbl = 0
+      MsgS("Your ")
+      Name(it(uwep), 1, 0, 0, 0)
+      IF s < 0 THEN
+        MsgS(" glows black for a moment.")
+        ie(uwep) = ie(uwep) - 1
+      ELSEIF Signed(ie(uwep)) > 5 AND Rnd(3) THEN
+        MsgS(" violently glows blue, then evaporates.")
+        ev = 1
+      ELSE
+        MsgS(" glows blue for a moment.")
+        ie(uwep) = ie(uwep) + 1
+        IF s > 0 THEN ie(uwep) = ie(uwep) + Rnd(2) FI
+        ifl(uwep) = ifl(uwep) & (255 ^ OF_CURSE)
+      FI
+      MsgEnd()
+      IF ev THEN InvDel(uwep, iq(uwep)) FI
+    FI
+  ELSEIF t == O_ENCHANTARMOR THEN
+    j = RandomWorn()
+    IF j == 255 THEN
+      Msg("Your skin glows then fades.")
+    ELSE
+      Know(t)
+      ev = 0
+      mbl = 0
+      MsgS("Your ")
+      Name(it(j), 1, 0, 0, 0)
+      IF s < 0 THEN
+        MsgS(" glows black for a moment.")
+        ie(j) = ie(j) - 1
+      ELSEIF Signed(ie(j)) > 3 AND Rnd(3) THEN
+        MsgS(" violently glows silver, then evaporates.")
+        ev = 1
+      ELSE
+        MsgS(" glows silver for a moment.")
+        ie(j) = ie(j) + 1
+        IF s > 0 THEN ie(j) = ie(j) + Rnd(2) FI
+        ifl(j) = ifl(j) & (255 ^ OF_CURSE)
+      FI
+      MsgEnd()
+      IF ev THEN InvDel(j, 1) FI
+      CalcAC()
+    FI
+  ELSEIF t == O_REMOVECURSE THEN
+    IF s < 0 THEN
+      Msg("You feel like you need some help.")
+    ELSE
+      Msg("You feel like someone is helping you.")
+      FOR j = 0 TO MAXINV - 1 DO
+        IF it(j) <> 255 THEN
+          IF s > 0 OR IsWorn(j) OR uwep == j THEN ifl(j) = ifl(j) & (255 ^ OF_CURSE) FI
+        FI
+      OD
+    FI
+  ELSEIF t == O_TELEPORT THEN
+    Know(t)
+    IF s < 0 AND depth < MAXDEPTH THEN
+      Msg("You feel very disoriented for a moment.")
+      TakePet()
+      SaveLevel()
+      depth += 1
+      EnterLevel(2)
+    ELSE
+      Teleport()
+      Msg("You feel disoriented for a moment.")
+    FI
+  ELSEIF t == O_MAGICMAPPING THEN
+    IF s < 0 THEN
+      Msg("Unfortunately, you can't grasp the details.")
+    ELSE
+      Know(t)
+      FOR c = 0 TO NCELL - 1 DO
+        IF lv(c) & 31 <> K_ROCK THEN lv(c) = lv(c) | F_SEEN FI
+      OD
+      DrawView()
+      Msg("A map coalesces in your mind!")
+    FI
+  ELSEIF t == O_LIGHT THEN
+    Know(t)
+    IF s < 0 THEN LightRoom(0) ELSE LightRoom(1) FI
+  ELSE
+    Know(t)
+    Msg("The scroll erupts in a tower of flame!")
+    FOR j = 0 TO MAXMON - 1 DO
+      IF mstat(j) THEN
+        IF mstat(j) & S_PET == 0 AND Dist(mx(j), my(j), px, py) <= 1 THEN
+          mbl = 0
+          MsgMon(j, 1)
+          MsgS(" is burnt!")
+          MsgEnd()
+          ev = HurtMon(j, Dice(3 + s, 4))
+        FI
+      FI
+    OD
+    IF s <= 0 THEN
+      Msg("The flames burn you.")
+      HurtSelf(Roll(4))
+    FI
+  FI
+  EndTurn()
+RETURN
+
+; a wand, as NetHack's zap.c has it for these six: light and create
+; monster need no direction; striking hits the first monster along it,
+; magic missile and sleep every one in eight cells; digging bores through
+; rock and walls, or down through the floor to the level below
+PROC Zap()
+  BYTE k, t, d, n, x, y, m, kind, r
+  k = Menu("What do you want to zap?", 16, 0)
+  IF k == 255 THEN RETURN FI
+  t = it(k)
+  IF ie(k) == 0 THEN
+    Msg("Nothing happens.")
+    EndTurn()
+    RETURN
+  FI
+  ie(k) = ie(k) - 1
+  d = 0
+  IF o_slot(t) <> D_NODIR THEN
+    Msg("In what direction?")
+    d = AskDir()
+    IF d == 0 THEN RETURN FI
+  FI
+  IF t == O_WLIGHT THEN
+    Know(t)
+    LightRoom(1)
+  ELSEIF t == O_WCREATE THEN
+    n = FreeNear(px, py)
+    IF n THEN
+      Know(t)
+      Spawn(px + dir_dx(n), py + dir_dy(n))
+      See()
+    FI
+  ELSEIF d > 8 THEN
+    IF t <> O_WDIGGING THEN
+      Msg("The bugs on the floor stop moving!")
+    ELSEIF d == 10 THEN
+      Know(t)
+      Msg("You loosen a rock from the ceiling. It falls on your head!")
+      HurtSelf(Roll(6))
+    ELSEIF depth >= MAXDEPTH THEN
+      Msg("The floor here is too hard to dig in.")
+    ELSE
+      Know(t)
+      Msg("You dig a hole through the floor. You fall through...")
+      TakePet()
+      SaveLevel()
+      depth += 1
+      EnterLevel(2)
+    FI
+  ELSE
+    x = px
+    y = py
+    FOR n = 1 TO 8 DO
+      x += dir_dx(d)
+      y += dir_dy(d)
+      IF x >= LW OR y >= LH THEN EXIT FI
+      IF t == O_WDIGGING THEN
+        kind = Kind(x, y)
+        IF kind == K_WALL OR kind == K_ROCK THEN
+          SetKind(x, y, K_CORR)
+        ELSEIF kind == K_DOORC OR kind == K_DOORO THEN
+          SetKind(x, y, K_DOORWAY)
+        FI
+        lv(Idx(x, y)) = lv(Idx(x, y)) | F_SEEN
+      ELSE
+        IF Open(Kind(x, y)) == 0 THEN EXIT FI
+        m = MonAt(x, y)
+        IF m THEN
+          m -= 1
+          Know(t)
+          mbl = 0
+          IF t == O_WSTRIKING THEN
+            MsgS("The wand hits ")
+          ELSEIF t == O_WMISSILE THEN
+            MsgS("The magic missile hits ")
+          ELSE
+            MsgS("The sleep ray hits ")
+          FI
+          MsgMon(m, 0)
+          MsgC('.')
+          MsgEnd()
+          IF t == O_WSLEEP THEN
+            msl(m) = Dice(2, 25)
+          ELSEIF t == O_WSTRIKING THEN
+            r = HurtMon(m, Dice(2, 12))
+            EXIT
+          ELSE
+            r = HurtMon(m, Dice(2, 6))
+          FI
+        FI
+      FI
+    OD
+    IF t == O_WDIGGING THEN
+      Know(t)
+      See()
+      DrawView()
+      Msg("You dig through the rock.")
+    FI
+  FI
+  EndTurn()
+RETURN
+
+; a thrown thing's flight: along d for up to eight cells, drawn as it
+; goes, into the first monster -- NetHack's to-hit, and a dagger's +2 --
+; and down where it stops
+PROC Fly(BYTE k, BYTE d)
+  BYTE t, f, e, x, y, n, m, lx, ly, sides, r
+  INT tmp, dmg
+  t = it(k)
+  f = ifl(k)
+  e = ie(k)
+  InvDel(k, 1)
+  x = px
+  y = py
+  lx = px
+  ly = py
+  FOR n = 1 TO 8 DO
+    x += dir_dx(d)
+    y += dir_dy(d)
+    IF x >= LW OR y >= LH THEN EXIT FI
+    IF Open(Kind(x, y)) == 0 OR Diagonal(lx, ly, x, y) == 0 THEN EXIT FI
+    lx = x
+    ly = y
+    IF x >= vx AND x < vx + VW AND y >= vy AND y < vy + VH THEN
+      Pic((x - vx) << 1, VTOP + ((y - vy) << 1), (o_pic(t) + ap(t)) << 2, 16)
+      Tick()
+      Tick()
+      DrawCell(x, y)
+    FI
+    m = MonAt(x, y)
+    IF m THEN
+      m -= 1
+      sides = 2
+      IF o_class(t) == C_WEAPON THEN sides = o_arg(t) FI
+      tmp = m_ac(mtype(m))
+      tmp = tmp - 10 + 1 + r_abon(role) + ulev + Signed(e)
+      IF t == O_DAGGER THEN tmp += 2 FI
+      mbl = 0
+      MsgS("The ")
+      Name(t, 1, 0, 0, 0)
+      IF tmp > Roll(20) THEN
+        MsgS(" hits ")
+        MsgMon(m, 0)
+        MsgC('.')
+        MsgEnd()
+        dmg = Roll(sides) + Signed(e) + RingEnch(O_RDAMAGE)
+        IF dmg < 1 THEN dmg = 1 FI
+        r = HurtMon(m, dmg)
+      ELSE
+        MsgS(" misses ")
+        MsgMon(m, 0)
+        MsgC('.')
+        MsgEnd()
+      FI
+      EXIT
+    FI
+  OD
+  IF PutObj(t, 1, f, e, lx, ly) <> 255 THEN DrawCell(lx, ly) FI
+RETURN
+
+PROC Throw()
+  BYTE k, d
+  k = Menu("What do you want to throw?", $7F, 1)
+  IF k == 255 THEN RETURN FI
+  IF uwep == k AND ifl(k) & OF_CURSE THEN
+    Welded(k)
+    RETURN
+  FI
+  Msg("In what direction?")
+  d = AskDir()
+  IF d == 0 OR d > 8 THEN RETURN FI
+  Fly(k, d)
+  EndTurn()
+RETURN
+
+FUNC BYTE FindDagger()
+  BYTE k
+  FOR k = 0 TO MAXINV - 1 DO
+    IF it(k) == O_DAGGER AND uwep <> k THEN RETURN (k) FI
+  OD
+RETURN (255)
+
+; f: the daggers not in hand, as NetHack's fire command with a quiver of
+; them; the Rogue throws up to three at once, its multishot
+PROC Fire()
+  BYTE k, d, n, shots
+  IF FindDagger() == 255 THEN
+    Msg("You have no daggers to fire.")
+    RETURN
+  FI
+  Msg("In what direction?")
+  d = AskDir()
+  IF d == 0 OR d > 8 THEN RETURN FI
+  shots = 1
+  IF role == 2 THEN shots = 1 + Rnd(3) FI
+  FOR n = 1 TO shots DO
+    k = FindDagger()
+    IF k <> 255 THEN Fly(k, d) FI
+  OD
+  EndTurn()
+RETURN
+
+; ------------------------------------------------------ a hero's things
+PROC Shuffle(BYTE first, BYTE n)
+  BYTE i, j, v
+  FOR i = 0 TO n - 1 DO ap(first + i) = i OD
+  i = n
+  WHILE i > 1 DO
+    i -= 1
+    j = Rnd(i + 1)
+    v = ap(first + i)
+    ap(first + i) = ap(first + j)
+    ap(first + j) = v
+  OD
+RETURN
+
+; a starting thing: into the pack, its kind, blessing and enchantment
+; known, as NetHack's starting inventory is
+FUNC BYTE Give(BYTE t, BYTE q, BYTE f, BYTE e)
+  known(t) = 1
+RETURN (InvAdd(t, q, f | OF_BKNOWN | OF_EKNOWN, e))
+
+; the appearances shuffled, and each hero's things from NetHack's
+; u_init.c: the Valkyrie a +1 long sword, a dagger and a +3 small shield;
+; the Wizard a blessed +1 quarterstaff, a cloak, a wand, two rings, two
+; potions and two scrolls; the Rogue a short sword, a stack of daggers,
+; +1 leather armour and a potion of sickness
+PROC InitHero()
+  BYTE i, k
+  FOR i = 0 TO N_OBJ - 1 DO
+    known(i) = 0
+    ap(i) = 0
+    IF o_class(i) <= C_ARMOR OR i == O_GOLD THEN known(i) = 1 FI
+  OD
+  Shuffle(O_HEALING, 7)
+  ap(O_WATER) = 7
+  Shuffle(O_IDENTIFY, 8)
+  Shuffle(O_WLIGHT, 6)
+  Shuffle(O_RPROTECTION, 6)
+  FOR i = 0 TO MAXINV - 1 DO it(i) = 255 OD
+  FOR i = 0 TO 6 DO worn(i) = 255 OD
+  uwep = 255
+  uleft = 255
+  uright = 255
+  uamul = 255
+  ugold = 0
+  IF role == 0 THEN
+    uwep = Give(O_LONGSWORD, 1, 0, 1)
+    k = Give(O_DAGGER, 1, 0, 0)
+    worn(SLOT_SHIELD) = Give(O_SMALLSHIELD, 1, 0, 3)
+  ELSEIF role == 1 THEN
+    uwep = Give(O_QUARTERSTAFF, 1, OF_BLESS, 1)
+    worn(SLOT_CLOAK) = Give(O_CLOAK, 1, 0, 0)
+    k = Give(O_WSTRIKING + Rnd(4), 1, 0, 4 + Rnd(5))
+    k = O_RPROTECTION + Rnd(5)
+    i = Give(k, 1, 0, Roll(3))
+    i = O_RPROTECTION + (k - O_RPROTECTION + 1 + Rnd(4)) % 5   ; a second ring, of another kind
+    i = Give(i, 1, 0, Roll(3))
+    FOR i = 1 TO 2 DO
+      k = Give(PickKind(C_POTION), 1, 0, 0)
+      k = Give(PickKind(C_SCROLL), 1, 0, 0)
+    OD
+  ELSE
+    uwep = Give(O_SHORTSWORD, 1, 0, 0)
+    k = Give(O_DAGGER, 6 + Rnd(10), 0, 0)
+    worn(SLOT_BODY) = Give(O_LEATHERARMOR, 1, 0, 1)
+    k = Give(O_SICKNESS, 1, 0, 0)
+  FI
+  CalcAC()
+RETURN
 
 ; ---------------------------------------------------------------- magic
 ; the Wizard's force bolt, NetHack's: five power, two twelve-sided dice
@@ -1862,6 +3358,10 @@ PROC Die()
   MsgN(turns)
   MsgS(" turns")
   Centre(17, B_GREY)
+  MsgS("with ")
+  MsgN(ugold)
+  MsgS(" pieces of gold")
+  Centre(18, B_GREY)
   Text(9, 24, "Enter: back to the title", B_GREY)
   k = KeyHit(KEY_ENTER)
   DO
@@ -1901,11 +3401,12 @@ PROC Play()
   uhpmax = uhp
   upw = r_pw(role)
   upwmax = upw
-  uac = r_ac(role)
   upara = 0
   carry(0) = 255
   msgrow = 0
   mbl = 0
+  wantport = 0
+  InitHero()
   EnterLevel(1)
   d = FreeNear(px, py)
   IF d THEN
@@ -1942,9 +3443,9 @@ PROC Play()
         EndTurn()
       FI
     FI
-    IF KeyHit(KEY_COMMA) AND Shifted() THEN
+    IF KeyHit(KEY_COMMA) THEN
       MsgClear()
-      Ascend()
+      IF Shifted() THEN Ascend() ELSE PickUp() FI
     FI
     IF KeyHit(KEY_S) OR KeyHit(KP5) THEN
       MsgClear()
@@ -1952,11 +3453,54 @@ PROC Play()
     FI
     IF KeyHit(KEY_Z) THEN
       MsgClear()
-      Cast()
+      IF Shifted() THEN Cast() ELSE Zap() FI
     FI
-    IF KeyHit(KEY_R) AND KeyHeld(KEY_CTRL) THEN
-      DrawView()
-      Status()
+    IF KeyHit(KEY_R) THEN
+      IF KeyHeld(KEY_CTRL) THEN
+        DrawView()
+        Status()
+      ELSE
+        MsgClear()
+        IF Shifted() THEN TakeRing() ELSE Read() FI
+      FI
+    FI
+    IF KeyHit(KEY_I) THEN
+      d = Menu("Inventory", $7F, 0)
+    FI
+    IF KeyHit(KEY_D) THEN
+      MsgClear()
+      Drop()
+    FI
+    IF KeyHit(KEY_W) THEN
+      MsgClear()
+      IF Shifted() THEN Wear() ELSE Wield() FI
+    FI
+    IF KeyHit(KEY_T) THEN
+      MsgClear()
+      IF Shifted() THEN TakeOff() ELSE Throw() FI
+    FI
+    IF KeyHit(KEY_P) AND Shifted() THEN
+      MsgClear()
+      PutOn()
+    FI
+    IF KeyHit(KEY_Q) THEN
+      MsgClear()
+      Quaff()
+    FI
+    IF KeyHit(KEY_F) THEN
+      MsgClear()
+      Fire()
+    FI
+    IF KeyHit(KEY_SEMI) AND Shifted() THEN
+      MsgClear()
+      LookHere()
+    FI
+    IF KeyHit(KEY_BSLASH) THEN Discoveries() FI
+    IF wantport AND dead == 0 THEN
+      wantport = 0
+      MsgClear()
+      Msg("You feel a wrenching sensation.")
+      Teleport()
     FI
     IF KeyHit(KEY_ENTER) THEN
       MsgClear()
@@ -1986,14 +3530,15 @@ PROC Title()
   phase = 0
   esc = 0
   ClearScreen()
-  IF theme <> 0 THEN
-    IF LoadTheme(0) == 0 THEN
-      Text(3, 14, "YTHEME0.DAT is not on drive 9.", B_RED)
-      DO
-        Tick()
-      UNTIL esc OD
-      RETURN
-    FI
+  go = 1
+  IF theme <> 0 THEN go = LoadTheme(0) FI
+  IF DiskFind(YDRIVE, names_file) THEN names_page = disk_page ELSE go = 0 FI
+  IF go == 0 THEN
+    Text(1, 14, "YENDOR's files are not all on drive 9.", B_RED)
+    DO
+      Tick()
+    UNTIL esc OD
+    RETURN
   FI
   Text(17, 3, "YENDOR", B_YELLOW)
   Text(1, 5, "The Amulet of Yendor lies twelve levels", B_GREY)

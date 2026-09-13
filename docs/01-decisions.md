@@ -6783,3 +6783,68 @@ its stairs now, its monsters and objects when they come.
 once and needed no theme files, and which the owner turned down for
 DawnLike's detail; NetHack's own tiles, copyleft and in more than a
 bank's colours; making room on drive 11 by moving other programs off it.
+
+## D109 -- Room for YENDOR: dead routines dropped, low RAM for the payload, names on the disc
+
+**At the end of its milestone 3 YENDOR's PRG was 45,525 bytes from
+`$1400`, leaving 14,635 below `$FF00`, and milestones 4 to 6 were
+estimated at more.** Measured with `tools/cool8asm.py --pressure`:
+33,804 bytes in routines, 2,880 in the level's three cell maps, 1,323
+in the names of the creatures, kinds and appearances, and about 2 KB
+in library routines the game never calls. Offered the ways to make
+room, the owner chose three, and they are taken in this order:
+
+**1. The compiler drops routines nothing reaches.** `generate()` walks
+from the entry through calls, `@Name`s and the identifiers in `ASM`
+blocks, and a routine the walk does not reach is generated -- so it is
+still checked -- and then truncated from the output with its strings.
+Every program on the disc lost 1.7 to 3.0 KB
+([15-action.md §4a](15-action.md) has the table); YENDOR 2,113. Globals
+are kept: dropping unused tables is a further step, not taken.
+`test_library` now compiles the library behind a program that names its
+routines in an `ASM` block, and checks a program that names none
+carries none.
+
+**2. A payload's low RAM: `$0800`-`$13FF` belongs to the program the
+loader runs.** The loader stub was 3,543 bytes at `$0200` and D102 put
+the payload at `$1400` above it; with its dead routines gone the stub is
+1,049 bytes and ends at `$0618`. The stub has to stay alive under the
+program -- its `RETI` is where the vectors point and its `Reset()` is
+where `Main` returns -- so the payload does not get `$0200` up; it gets
+`H.PAYLOAD_LOW = $0800` up to `H.PAYLOAD_ORG`, 3,072 bytes, which
+nothing loads into and which holds BASIC's leftovers until the program
+writes it. A program uses it by binding an array to an address,
+`BYTE ARRAY lv(960) = $0800`, which has no storage in the image.
+`tools/mkdemos.py` now refuses a stub that reaches `$0800` rather than
+`$1400`, and `test_loader` checks the same. **This changes the loader's
+contract, not the machine's memory map**: BASIC's map is untouched, and
+`PAYLOAD_ORG` stays `$1400`, so every PRG on the disc is where it was.
+YENDOR binds its three cell maps there (2,880 bytes), clears them in
+`MakeLevel` and `LoadLevel` before reading them, and its driver and gate
+compile it at `$1400`, where the loader runs it, instead of at `$0200`,
+where the maps would be under the program.
+
+**3. Names on the disc.** `tools/mkyendor.py` writes `YNAMES.DAT`, 134
+records of 24 bytes -- a length byte and the letters, the longest name
+23 -- in the order creatures, kinds, then each shuffled class's
+appearances, with a `NAME_` constant for where each group starts. The
+game finds the file's page once on the title, and `NameRec(k)` opens the
+flash at page * 256 + k * 24 and reads the one name into a buffer: no
+table in the PRG, and a name is a few dozen clocks of SPI when a message
+is built. One buffer, so a name is used before the next is asked for,
+which every caller did already. Saved 1,198 bytes net. The messages'
+own strings, 4,175 bytes, stay in the source as literals: moving them
+would turn every message into a number, and the headroom does not need
+it yet. The special levels' maps will be files the same way when
+milestone 5 brings them.
+
+**Measured after all three: YENDOR's PRG is 39,334 bytes, its last byte
+at `$ADA5`, with 20,826 free below `$FF00`.**
+
+**Rejected**: moving the payload's origin down to the stub's end, which
+would change every PRG's address and the loader's check for a saving the
+bound arrays get without it; overwriting the stub, which a stray
+interrupt or a returning `Main` would jump into; fixed-width records
+with an offset table instead, which puts back in the PRG a part of what
+the file took out.
+

@@ -22,12 +22,17 @@ import harness as H          # noqa: E402
 SOURCE = "demos/yendor.act"
 ART = os.path.join(H.ROOT, "assets", "yendor")
 DATS = [os.path.join(ART, "YTHEME%d.DAT" % i) for i in range(3)]
+NAMES = os.path.join(ART, "YNAMES.DAT")
 # make codes: the cursor keys are E0-prefixed
 LEFT, RIGHT, DOWN, UP = [0xE0, 0x6B], [0xE0, 0x74], [0xE0, 0x72], [0xE0, 0x75]
 KP = {1: [0x69], 2: [0x72], 3: [0x7A], 4: [0x6B], 5: [0x73], 6: [0x74], 7: [0x6C], 8: [0x75], 9: [0x7D]}
 ENTER, SPACE, ESC, DOT, COMMA, LSHIFT = [0x5A], [0x29], [0x76], [0x49], [0x41], [0x12]
 CTRL, KEY_R, KEY_Z, KEY_S, KEY_Y, KEY_N = [0x14], [0x2D], [0x1A], [0x1B], [0x35], [0x31]
 S_LIVE, S_PET, S_ANGRY = 1, 2, 4
+# the pack's letters a to r, as the keys that type them; the command keys
+LETTERS = [0x1C, 0x32, 0x21, 0x23, 0x24, 0x2B, 0x34, 0x33, 0x43, 0x3B, 0x42, 0x4B, 0x3A, 0x31, 0x44, 0x4D, 0x15, 0x2D]
+KEY_I, KEY_D, KEY_W, KEY_T, KEY_P, KEY_Q, KEY_F, KEY_BSLASH = [0x43], [0x23], [0x1D], [0x2C], [0x4D], [0x15], [0x2B], [0x5D]
+OF_BLESS, OF_CURSE, OF_BKNOWN, OF_EKNOWN = 1, 2, 4, 8
 LW, LH = 40, 24
 K_ROCK, K_WALL, K_FLOOR, K_CORR, K_DOORC, K_DOORO, K_DOORWAY, K_UP, K_DOWN = range(9)
 F_LIT, F_SEEN, F_VIS = 32, 64, 128
@@ -37,7 +42,7 @@ STEP = {8: (0, -1), 9: (1, -1), 6: (1, 0), 3: (1, 1), 2: (0, 1), 1: (-1, 1), 4: 
 
 def sources():
     """The files that compile the game, or None without the art."""
-    if not os.path.exists(os.path.join(ART, "yendor_art.act")) or not all(os.path.exists(p) for p in DATS):
+    if not os.path.exists(os.path.join(ART, "yendor_art.act")) or not all(os.path.exists(p) for p in DATS + [NAMES]):
         return None
     return H.act_sources(SOURCE)
 
@@ -49,7 +54,7 @@ def flash_image(name="yendor"):
     disk.make_image(img)
     im = disk.Image(img)
     vol = disk.Volume(im, disk.YENDOR_VOL)
-    for p in DATS:
+    for p in DATS + [NAMES]:
         vol.add(p, os.path.basename(p))
     im.save()
     return img
@@ -60,7 +65,9 @@ class Game:
         src = sources()
         if src is None:
             raise SystemExit("YENDOR: the art is not here -- python tools/mkyendor.py")
-        prg, syms = H.try_build_act(src, tag)
+        # where the loader runs it: the cell maps are bound below
+        # PAYLOAD_ORG, where a program at $0200 would be
+        prg, syms = H.try_build_act(src, tag, org=H.PAYLOAD_ORG)
         if prg is None:
             raise SystemExit("compile failed:\n" + syms)
         self.prg, self.syms = prg, syms
@@ -75,6 +82,10 @@ class Game:
 
     def byte(self, n, i=0):
         return self.m.bus.mem[self.addr(n) + i]
+
+    def word(self, n, i=0):
+        v = self.uword(n, i)
+        return v - 65536 if v >= 32768 else v
 
     def uword(self, n, i=0):
         a = self.addr(n) + 2 * i
@@ -128,6 +139,10 @@ class Game:
         if m and v & F_VIS:
             return (3 + self.byte("mtype", m - 1)) * 4, (2 + self.byte("anim")) << 4
         bank = 0 if v & F_VIS else 1
+        o = self.byte("oat", y * LW + x)
+        if o:
+            t = self.byte("ot", o - 1)
+            return (self.byte("o_pic", t) + self.byte("ap", t)) * 4, 16 | bank
         k = v & 31
 
         def wall(ax, ay):
@@ -196,6 +211,56 @@ class Game:
 
     def messages(self):
         return self.text(0, 0, 40).rstrip() + " | " + self.text(0, 1, 40).rstrip()
+
+    # ------------------------------------------------------ the things
+    def pack(self):
+        """The pack: (letter, kind, quantity, flags, enchantment)."""
+        return [(k, self.byte("it", k), self.byte("iq", k), self.byte("ifl", k), self.byte("ie", k))
+                for k in range(18) if self.byte("it", k) != 255]
+
+    def give(self, t, q=1, f=0, e=0):
+        """A thing poked into the first free letter of the pack."""
+        k = next(k for k in range(18) if self.byte("it", k) == 255)
+        for n, v in (("it", t), ("iq", q), ("ifl", f), ("ie", e)):
+            self.poke(n, v, k)
+        return k
+
+    def objs(self):
+        """The things on the floor: (slot, kind, x, y, quantity, flags, enchantment)."""
+        return [(i, self.byte("ot", i), self.byte("ox", i), self.byte("oy", i), self.byte("oq", i),
+                 self.byte("of", i), self.byte("oe", i)) for i in range(32) if self.byte("ot", i) != 255]
+
+    def put_obj(self, t, x, y, q=1, f=0, e=0):
+        i = next(i for i in range(32) if self.byte("ot", i) == 255)
+        for n, v in (("ot", t), ("ox", x), ("oy", y), ("oq", q), ("of", f), ("oe", e)):
+            self.poke(n, v, i)
+        self.poke("oat", i + 1, y * LW + x)
+        self.redraw()
+        return i
+
+    def clear_objs(self):
+        for i in range(32):
+            self.poke("ot", 255, i)
+        for c in range(LW * LH):
+            self.poke("oat", 0, c)
+        self.redraw()
+
+    def command(self, key, letter=None, shift=False, direction=None):
+        """A command key, the letter it asks for, and a direction if it
+        asks for one; a --More-- in between is answered."""
+        (self.shifted if shift else self.tap)(key)
+        self.m.run_frame(4)
+        if letter is not None:
+            self.tap([LETTERS[letter]])
+            self.m.run_frame(6)
+        if direction is not None:
+            self.tap(direction if isinstance(direction, list) else KP[direction])
+            self.m.run_frame(6)
+        for _ in range(8):
+            if self.text(32, 1, 8) != "--More--":
+                break
+            self.tap(SPACE)
+            self.m.run_frame(3)
 
     # -------------------------------------------------------- the keys
     def tap(self, codes, frames=2):
@@ -329,6 +394,36 @@ def main():
             g.tap(KP[key])
             print("   ", g.messages())
         print(g.png("yd_fight"), "xp", g.uword("uxp"), "hp", g.byte("uhp"))
+    if what == "items":
+        # things laid round the hero, one picked up, and the pack
+        g.clear_monsters()
+        g.clear_objs()
+        hx, hy = g.hero()
+        kinds = ["LONGSWORD", "HEALING", "IDENTIFY", "WSTRIKING", "RPROTECTION", "GOLD", "PLATEMAIL", "YENDOR",
+                 "SLEEPING", "LIFESAVING"]
+        spots = [(hx + dx, hy + dy) for dy in (-2, -1, 0, 1, 2) for dx in (-3, -2, -1, 1, 2, 3)
+                 if 0 <= hx + dx < LW and 0 <= hy + dy < LH and g.kind(hx + dx, hy + dy) == K_FLOOR
+                 and not g.byte("mat", (hy + dy) * LW + hx + dx)]
+        for k, (x, y) in zip(kinds, spots):
+            g.put_obj(g.c("O_" + k), x, y, q=42 if k == "GOLD" else 1)
+            i = y * LW + x
+            g.poke("lv", g.byte("lv", i) | F_SEEN | F_VIS, i)
+        g.redraw()
+        g.put_obj(g.c("O_SLEEPING"), hx, hy)
+        g.command(COMMA)
+        print(g.png("yd_items"), g.messages())
+        g.command(KEY_I)
+        print(g.png("yd_items_pack"))
+        g.tap(SPACE)
+    if what == "pack":
+        # the pack, the level's things, a potion drunk
+        print(g.png("yd_pack_level"), [(g.byte("ot", i), g.byte("ox", i), g.byte("oy", i)) for i in range(32)
+                                         if g.byte("ot", i) != 255])
+        g.tap([0x43])                      # i
+        g.m.run_frame(10)
+        print(g.png("yd_pack_inv"), [g.text(0, r, 40).rstrip() for r in range(2, 12)])
+        g.tap(SPACE)
+        g.m.run_frame(5)
     if what == "scene":
         # a staged picture: creatures poked round the hero, and a blow struck
         def stage(types):

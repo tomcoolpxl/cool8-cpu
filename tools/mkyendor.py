@@ -21,7 +21,7 @@ The game streams the one for the level into VRAM on the stairs.
 
     bank 0   the font (ASCII 32-126), then the terrain: sixteen wall
              pieces by their neighbours, floor, corridor, the doors, stairs
-    bank 1   the items, each on the floor                (later milestones)
+    bank 1   the things, each on the floor, one picture an appearance
     bank 2   the creatures on the floor, frame 0
     bank 3   the same creatures, frame 1 -- DawnLike animates every one
 
@@ -169,6 +169,102 @@ CREATURES = [
 ]
 # DawnLike's easter egg, which its author asks be hidden in the game
 PLATINO = ("Reptile", 3, 12)
+
+# ------------------------------------------------------------- the items
+# NetHack 3.6's objects (src/objects.c) the game has: a class, the base
+# number -- a weapon's small-monster die, an armour's AC -- the armour
+# slot, a wand's direction, the generation probability within the class,
+# the base cost for the shops, and the DawnLike cell. The classes whose
+# identity is hidden have one picture per *appearance*, and each game
+# shuffles which appearance a kind of item wears, as NetHack does: the
+# appearance's name is NetHack's description, and DawnLike's picture of
+# that name is its picture.
+C_WEAPON, C_ARMOR, C_POTION, C_SCROLL, C_WAND, C_RING, C_AMULET, C_GOLD = range(8)
+SLOT_BODY, SLOT_SHIELD, SLOT_HELM, SLOT_GLOVES, SLOT_BOOTS, SLOT_CLOAK = range(1, 7)
+D_NODIR, D_IMMEDIATE, D_RAY = range(3)
+
+ITEMS = [
+    # key, name, class, arg, slot or direction, prob, cost, (sheet, col, row) -- None for a shuffled class
+    ("DAGGER", "dagger", C_WEAPON, 4, 0, 30, 4, ("ShortWep", 0, 0)),
+    ("SHORTSWORD", "short sword", C_WEAPON, 6, 0, 8, 10, ("MedWep", 0, 0)),
+    ("LONGSWORD", "long sword", C_WEAPON, 8, 0, 50, 15, ("LongWep", 2, 1)),
+    ("QUARTERSTAFF", "quarterstaff", C_WEAPON, 6, 0, 11, 5, ("LongWep", 2, 4)),
+    ("MACE", "mace", C_WEAPON, 6, 0, 40, 5, ("LongWep", 4, 4)),
+    ("AXE", "axe", C_WEAPON, 6, 0, 40, 8, ("MedWep", 0, 1)),
+    ("TWOHANDED", "two-handed sword", C_WEAPON, 12, 0, 22, 50, ("LongWep", 3, 1)),
+    ("LEATHERARMOR", "leather armor", C_ARMOR, 2, SLOT_BODY, 82, 5, ("Armor", 6, 8)),
+    ("RINGMAIL", "ring mail", C_ARMOR, 3, SLOT_BODY, 72, 100, ("Armor", 1, 6)),
+    ("CHAINMAIL", "chain mail", C_ARMOR, 5, SLOT_BODY, 72, 75, ("Armor", 3, 7)),
+    ("PLATEMAIL", "plate mail", C_ARMOR, 7, SLOT_BODY, 44, 600, ("Armor", 6, 6)),
+    ("SMALLSHIELD", "small shield", C_ARMOR, 1, SLOT_SHIELD, 6, 3, ("Shield", 0, 0)),
+    ("ORCISHHELM", "orcish helm", C_ARMOR, 1, SLOT_HELM, 6, 10, ("Hat", 1, 0)),
+    ("GLOVES", "leather gloves", C_ARMOR, 1, SLOT_GLOVES, 16, 8, ("Glove", 1, 0)),
+    ("LOWBOOTS", "low boots", C_ARMOR, 1, SLOT_BOOTS, 25, 8, ("Boot", 2, 0)),
+    ("CLOAK", "leather cloak", C_ARMOR, 1, SLOT_CLOAK, 8, 40, ("Armor", 0, 4)),
+    ("HEALING", "healing", C_POTION, 0, 0, 57, 100, None),
+    ("EXTRAHEALING", "extra healing", C_POTION, 0, 0, 47, 100, None),
+    ("GAINLEVEL", "gain level", C_POTION, 0, 0, 20, 300, None),
+    ("GAINENERGY", "gain energy", C_POTION, 0, 0, 42, 150, None),
+    ("SLEEPING", "sleeping", C_POTION, 0, 0, 42, 100, None),
+    ("SICKNESS", "sickness", C_POTION, 0, 0, 42, 50, None),
+    ("FRUITJUICE", "fruit juice", C_POTION, 0, 0, 42, 50, None),
+    ("WATER", "water", C_POTION, 0, 0, 92, 100, None),
+    ("IDENTIFY", "identify", C_SCROLL, 0, 0, 180, 20, None),
+    ("ENCHANTWEAPON", "enchant weapon", C_SCROLL, 0, 0, 80, 60, None),
+    ("ENCHANTARMOR", "enchant armor", C_SCROLL, 0, 0, 63, 80, None),
+    ("REMOVECURSE", "remove curse", C_SCROLL, 0, 0, 65, 80, None),
+    ("TELEPORT", "teleportation", C_SCROLL, 0, 0, 55, 100, None),
+    ("MAGICMAPPING", "magic mapping", C_SCROLL, 0, 0, 45, 100, None),
+    ("LIGHT", "light", C_SCROLL, 0, 0, 90, 50, None),
+    ("FIRE", "fire", C_SCROLL, 0, 0, 30, 100, None),
+    ("WLIGHT", "light", C_WAND, 0, D_NODIR, 95, 100, None),
+    ("WCREATE", "create monster", C_WAND, 0, D_NODIR, 45, 200, None),
+    ("WSTRIKING", "striking", C_WAND, 0, D_IMMEDIATE, 75, 150, None),
+    ("WDIGGING", "digging", C_WAND, 0, D_RAY, 55, 150, None),
+    ("WMISSILE", "magic missile", C_WAND, 0, D_RAY, 50, 150, None),
+    ("WSLEEP", "sleep", C_WAND, 0, D_RAY, 50, 175, None),
+    ("RPROTECTION", "protection", C_RING, 0, 0, 1, 100, None),
+    ("RREGEN", "regeneration", C_RING, 0, 0, 1, 200, None),
+    ("RFREEACTION", "free action", C_RING, 0, 0, 1, 200, None),
+    ("RPOISONRES", "poison resistance", C_RING, 0, 0, 1, 150, None),
+    ("RDAMAGE", "increase damage", C_RING, 0, 0, 1, 150, None),
+    ("RTELEPORT", "teleportation", C_RING, 0, 0, 1, 200, None),
+    ("LIFESAVING", "life saving", C_AMULET, 0, 0, 75, 150, ("Amulet", 5, 0)),
+    ("YENDOR", "Amulet of Yendor", C_AMULET, 0, 0, 0, 30000, ("Amulet", 1, 2)),
+    ("FAKEYENDOR", "cheap plastic imitation", C_AMULET, 0, 0, 0, 0, ("Amulet", 0, 2)),
+    ("GOLD", "gold piece", C_GOLD, 0, 0, 0, 1, ("Money", 0, 1)),
+]
+# the appearances of the shuffled classes: NetHack's descriptions, and
+# DawnLike's picture of each; water is always clear, and a scroll's
+# picture goes with its label
+APPEARANCES = {
+    C_POTION: [("ruby", 0, 0), ("pink", 1, 0), ("orange", 2, 0), ("emerald", 4, 0), ("sky blue", 7, 0),
+               ("milky", 4, 1), ("bubbly", 6, 1), ("clear", 5, 4)],
+    C_SCROLL: [("ZELGO MER", 0, 0), ("JUYED AWK YACC", 2, 1), ("NR 9", 3, 1), ("PRATYAVAYAH", 4, 1),
+               ("DAIYEN FOOELS", 6, 1), ("VERR YED HORRE", 0, 2), ("KERNOD WEL", 1, 2), ("ELAM EBOW", 2, 2)],
+    C_WAND: [("glass", 0, 0), ("balsa", 1, 0), ("maple", 3, 0), ("oak", 5, 0), ("ebony", 6, 0), ("iron", 1, 2)],
+    C_RING: [("wooden", 0, 0), ("granite", 1, 0), ("black onyx", 0, 1), ("moonstone", 1, 1), ("jade", 3, 1), ("ruby", 0, 2)],
+}
+APPEAR_SHEET = {C_POTION: "Potion", C_SCROLL: "Scroll", C_WAND: "Wand", C_RING: "Ring"}
+
+
+def item_pictures():
+    """Bank 1, in order: every item with a fixed picture, then each shuffled
+    class's appearances; and for each item kind its first picture."""
+    pics, base = [], []
+    for it in ITEMS:
+        if it[7] is not None:
+            base.append(len(pics))
+            pics.append(it[7])
+        else:
+            base.append(None)
+    cls_base = {}
+    for c in (C_POTION, C_SCROLL, C_WAND, C_RING):
+        cls_base[c] = len(pics)
+        pics += [(APPEAR_SHEET[c], col, row) for _, col, row in APPEARANCES[c]]
+    base = [b if b is not None else cls_base[it[2]] for b, it in zip(base, ITEMS)]
+    assert len(pics) <= 64, len(pics)
+    return pics, base
 
 
 def experience(lvl, spd, ac, attacks):
@@ -341,11 +437,6 @@ def creature_table():
     out.append("BYTE ARRAY m_att(%d) = [" % (9 * n))
     out += ["  " + col(att[i:i + 27]) for i in range(0, len(att), 27)]
     out.append("]")
-    names = "".join(chr(len(c[1])) + c[1] for c in CREATURES)
-    out.append("; the names, a length byte and the letters each, in order")
-    out.append("BYTE ARRAY m_names(%d) = [" % len(names))
-    out += ["  " + col(ord(ch) for ch in names[i:i + 24]) for i in range(0, len(names), 24)]
-    out.append("]")
     return out
 
 
@@ -355,7 +446,11 @@ def theme_bytes(t, font):
     bank0 += [0] * (32 * 96 - len(bank0))            # the terrain starts at tile 96
     for _, px in terrain_images(t):
         bank0 += [b for q in quarters(px) for b in q]
-    banks = [bank0, []]
+    floor = cut("Objects/Floor.png", *t["floor"])
+    bank1 = []
+    for sh, c, r in item_pictures()[0]:
+        bank1 += [b for q in quarters(indices(over(floor, cut("Items/%s.png" % sh, c, r)))) for b in q]
+    banks = [bank0, bank1]
     for frame in (0, 1):
         banks.append([b for px in creature_images(t, frame) for q in quarters(px) for b in q])
     out = bytearray()
@@ -397,6 +492,8 @@ def act(font):
         lines.append("CONST C_%s = %d" % (key, i * 4))
     lines.append("CONST C_PLATINO = %d" % ((len(ROLES) + len(CREATURES)) * 4))
     lines += creature_table()
+    lines += item_table()
+    lines += names_table()
     lines.append("CONST N_THEMES = %d" % len(THEMES))
     lines.append("; a theme's file on YENDOR's drive, eleven characters each")
     lines.append('BYTE ARRAY theme_names = "%s"' % "".join(t["file"].ljust(8) + "DAT" for t in THEMES))
@@ -410,11 +507,82 @@ def act(font):
     return "\n".join(lines) + "\n"
 
 
+def byte_rows(name, data, per=24):
+    out = ["BYTE ARRAY %s(%d) = [" % (name, len(data))]
+    out += ["  " + " ".join(str(v) for v in data[i:i + per]) for i in range(0, len(data), per)]
+    out.append("]")
+    return out
+
+
+def item_table():
+    """The items' numbers: a kind is an index into these arrays; its picture
+    is bank 1's o_pic, plus the kind's appearance for a shuffled class."""
+    n = len(ITEMS)
+    _, base = item_pictures()
+    col = lambda k: " ".join(str(v) for v in k)   # noqa: E731
+    out = ["", "; the items: NetHack 3.6's (src/objects.c) the game has",
+           "CONST N_OBJ = %d" % n]
+    out += ["CONST O_%s = %d" % (it[0], i) for i, it in enumerate(ITEMS)]
+    out += ["CONST %s = %d" % kv for kv in (
+        ("C_WEAPON", C_WEAPON), ("C_ARMOR", C_ARMOR), ("C_POTION", C_POTION), ("C_SCROLL", C_SCROLL),
+        ("C_WAND", C_WAND), ("C_RING", C_RING), ("C_AMULET", C_AMULET), ("C_GOLD", C_GOLD),
+        ("SLOT_BODY", SLOT_BODY), ("SLOT_SHIELD", SLOT_SHIELD), ("SLOT_HELM", SLOT_HELM),
+        ("SLOT_GLOVES", SLOT_GLOVES), ("SLOT_BOOTS", SLOT_BOOTS), ("SLOT_CLOAK", SLOT_CLOAK),
+        ("D_NODIR", D_NODIR), ("D_IMMEDIATE", D_IMMEDIATE), ("D_RAY", D_RAY))]
+    out.append("BYTE ARRAY o_class(%d) = [%s]" % (n, col(it[2] for it in ITEMS)))
+    out.append("; a weapon's die, an armour's AC")
+    out.append("BYTE ARRAY o_arg(%d) = [%s]" % (n, col(it[3] for it in ITEMS)))
+    out.append("; an armour's slot, a wand's direction")
+    out.append("BYTE ARRAY o_slot(%d) = [%s]" % (n, col(it[4] for it in ITEMS)))
+    out.append("BYTE ARRAY o_prob(%d) = [%s]" % (n, col(min(255, it[5]) for it in ITEMS)))
+    out.append("CARD ARRAY o_cost(%d) = [%s]" % (n, col(it[6] for it in ITEMS)))
+    out.append("BYTE ARRAY o_pic(%d) = [%s]" % (n, col(base)))
+    return out
+
+
+# the names' file: a record of NAME_REC bytes for each name, a length byte
+# and the letters, so the game finds one by multiplying and keeps no table
+NAMES_FILE = "YNAMES"
+NAME_REC = 24
+
+
+def name_groups():
+    """The names in the file's order, as (constant, first record, words)."""
+    groups = [("NAME_MON", [c[1] for c in CREATURES]), ("NAME_OBJ", [it[1] for it in ITEMS])]
+    groups += [("NAME_" + key, [w for w, _, _ in APPEARANCES[c]])
+               for c, key in ((C_POTION, "POTION"), (C_SCROLL, "SCROLL"), (C_WAND, "WAND"), (C_RING, "RING"))]
+    out, k = [], 0
+    for const, words in groups:
+        out.append((const, k, words))
+        k += len(words)
+    return out
+
+
+def names_bytes():
+    out = bytearray()
+    for _, _, words in name_groups():
+        for w in words:
+            assert len(w) < NAME_REC, w
+            out += (chr(len(w)) + w).encode("ascii").ljust(NAME_REC, b"\0")
+    return bytes(out)
+
+
+def names_table():
+    out = ["", "; the names are in %s.DAT on YENDOR's drive, NAME_REC bytes a name: a" % NAMES_FILE,
+           "; length byte and the letters. The creatures' from NAME_MON by type, the",
+           "; kinds' from NAME_OBJ, each shuffled class's appearances from its own",
+           "CONST NAME_REC = %d" % NAME_REC]
+    out += ["CONST %s = %d" % (const, k) for const, k, _ in name_groups()]
+    out.append('BYTE ARRAY names_file = "%s"' % (NAMES_FILE.ljust(8) + "DAT"))
+    return out
+
+
 def outputs():
     font = font_tiles()
     files = {OUT: act(font).encode("utf-8")}
     for t in THEMES:
         files[os.path.join(OUT_DIR, t["file"] + ".DAT")] = theme_bytes(t, font)
+    files[os.path.join(OUT_DIR, NAMES_FILE + ".DAT")] = names_bytes()
     return files
 
 
@@ -487,14 +655,14 @@ def main():
         if stale:
             print("  stale: %s -- run python tools/mkyendor.py" % ", ".join(os.path.relpath(p, ROOT) for p in stale))
             return 1
-        print("ok -- the art table and the %d theme files are current" % len(THEMES))
+        print("ok -- the art table, the %d theme files and the names are current" % len(THEMES))
         return 0
     os.makedirs(OUT_DIR, exist_ok=True)
     for p, b in files.items():
         with open(p, "wb") as fh:
             fh.write(b)
     preview(files)
-    print("  %d themes, %d bytes each; wrote %s" % (len(THEMES), 32768, ", ".join(
+    print("  %d themes, %d bytes each, and %d names; wrote %s" % (len(THEMES), 32768, len(names_bytes()) // NAME_REC, ", ".join(
         os.path.relpath(p, ROOT) for p in files)))
     return 0
 

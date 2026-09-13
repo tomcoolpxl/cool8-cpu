@@ -128,7 +128,10 @@ Hero POINTER hp                ; a pointer to one
 how every hardware register is reached. `=[value]` is an initial
 value. A global's storage is part of the image, so an initial value is
 what the file holds and an uninitialised global is whatever the loader
-left there. **Declarations may appear anywhere outside a routine**: at
+left there. An array bound to an address, `BYTE ARRAY map(960) =
+$0800`, has no storage in the image at all: that is how a program the
+loader runs keeps working arrays below `$1400`, out of its PRG
+([D109](01-decisions.md#d109--room-for-yendor-dead-routines-dropped-low-ram-for-the-payload-names-on-the-disc)). **Declarations may appear anywhere outside a routine**: at
 the top of the file, or after one -- a declaration cannot be a
 statement, so it ends the routine before it. Action!'s `MODULE` is
 accepted and does the same, and is never required.
@@ -373,6 +376,51 @@ every line of it is still a load or a store of `j` and `p`. That is
 the register allocator, and this pass is what made the measurement
 worth taking again.
 
+**Routines nothing reaches are not emitted.** The library is compiled
+in front of every program, and until YENDOR ran short of memory every
+routine of it went into every PRG -- `Line`'s 495 bytes into a game
+that draws tiles. `generate()` now walks from the entry routine (and
+`_start`'s runtime) through every call, every `@Name` and every name
+an `ASM` block mentions -- a block's text is split into identifiers,
+so `JSR Trap` or `.word Plot` keeps its routine -- and a routine the
+walk never reaches is generated, to check it, and then dropped with its
+strings. **Globals and tables are kept**, used or not: the library's
+keyboard tables are still in PRIMES, which is why it is 291 bytes
+bigger behind the library than alone. Initial values are numbers, so a
+table of routines is filled by statements, `tab(0) = @Name`, which the
+walk follows; what it cannot follow is a routine's address typed as a
+number, and nothing does that.
+Measured on the CoolAction disc, each PRG compiled at `$1400`:
+
+| program | kept everything | reached only | saved |
+|---|---|---|---|
+| ARKANOID | 51,940 | 50,280 | 1,660 |
+| BLOCKADE | 8,986 | 6,630 | 2,356 |
+| COBRA | 8,430 | 5,583 | 2,847 |
+| COBRA2 | 14,330 | 11,647 | 2,683 |
+| COOLSW | 27,070 | 25,021 | 2,049 |
+| COOLTRIS | 17,592 | 15,294 | 2,298 |
+| INTRO | 5,142 | 2,590 | 2,552 |
+| KEYTEST | 4,735 | 2,368 | 2,367 |
+| MANDEL | 12,873 | 10,167 | 2,706 |
+| MAZE | 4,011 | 1,568 | 2,443 |
+| MSCOOLMN | 56,022 | 53,887 | 2,135 |
+| PLASMA | 4,185 | 1,546 | 2,639 |
+| PRIMES | 4,707 | 1,705 | 3,002 |
+| RAINBOW | 4,286 | 1,949 | 2,337 |
+| SLIDES | 5,525 | 3,773 | 1,752 |
+| SYNTH | 7,027 | 4,731 | 2,296 |
+| TRIANGLES | 4,216 | 2,214 | 2,002 |
+| WAVE | 5,407 | 3,347 | 2,060 |
+| YENDOR | 45,525 | 43,412 | 2,113 |
+| the loader stub | 3,543 | 1,049 | 2,494 |
+
+The loader stub's shrinking is what made room below `$1400` for a
+program's own arrays
+([D109](01-decisions.md#d109--room-for-yendor-dead-routines-dropped-low-ram-for-the-payload-names-on-the-disc)).
+`test_library` holds both halves: the eleven routines it names are
+there when a program mentions them, and absent when it does not.
+
 ---
 
 ## 5. Measured
@@ -416,7 +464,9 @@ answer to the UART, and the session machine's `said()` is its check:
 together, compiles to 3,348 bytes with the keyboard tables in it --
 3,338 before `DiskDir` and `DiskEntry`, which cost ten
 ([D103](01-decisions.md)), and the loader stub, which carries the
-library, went from 3,533 to 3,543.
+library, went from 3,533 to 3,543. Since §4a drops the routines a
+program never reaches, a program carries only what it uses: the stub
+is 1,049 bytes, PRIMES carries 291 of the library's.
 
 **`Line` is 97 clocks a pixel** over `sim/test_run.py`'s fifteen-line
 fan (2,735 pixels, profiled by routine), against the interpreter's
@@ -443,7 +493,7 @@ port's. The numbers, the interpreter's beside the compiler's, after
 | COBRA's port, start-up: 2,016 projections and 1,772 table gathers | 50,538,504 | 1,391,498 | **36×** (18.7× before §4a) |
 | COBRA's port, a frame's drawing, the wait excluded (mean of frames 2-10) | 578,058 | 238,810 | 2.4× (2.0× before) |
 | COBRA's port, the PRG | -- | 15,009 bytes | 7 KB of it the four endpoint arrays, `BYTE` where the BASIC has integers |
-| COBRA since D105, a whole frame: the rotation, 28 vertices, 13 faces, the lines erased and drawn | -- | 55,958 | inside one frame, every frame: 60 Hz with 60 % to spare; the PRG 8,430 bytes |
+| COBRA since D105, a whole frame: the rotation, 28 vertices, 13 faces, the lines erased and drawn | -- | 55,958 | inside one frame, every frame: 60 Hz with 60 % to spare; the PRG 8,430 bytes, 5,583 since §4a drops what it never calls |
 | MANDEL, the whole set to the key wait | 2,126,100,169 | 60,530,720 | **35×** (7.1× before §4a) -- the same Q6 iteration and the same Mariani-Silver rectangles; 4 min 14 s of machine time against 7 s |
 | TRIANGLES, MAZE, PLASMA, WAVE, SYNTH, INTRO | | | exact against their originals -- VRAM, palette, text map, voices, registers -- at the point the gate parks them; not timed, because they wait for the frame or the random number, not the CPU |
 

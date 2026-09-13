@@ -79,7 +79,7 @@ def actions():
 
 # **A program too big for the CoolAction disc lives on a drive of its own**
 # (docs/14-demos.md): its PRG and its .disc files go there, and only its
-# loader, which is 3.5 KB and names that drive, goes on drive 11 -- so it
+# loader, which is 1 KB and names that drive, goes on drive 11 -- so it
 # is still on the CoolAction menu. YENDOR's four theme files alone are
 # twice what drive 11 had left.
 HOMES = {"YENDOR": disk.YENDOR_VOL}
@@ -283,9 +283,9 @@ def main():
         volh.add(p, nm + ".PRG")
         stub, _ = H.build_act(H.ACT_LIB + ["sw/loader.act", H.loader_tail(home, nm + ".PRG")],
                               "stub_" + nm.lower())
-        if 0x0200 + len(stub) - 2 > H.PAYLOAD_ORG:
-            sys.exit("the loader stub is %d bytes and reaches the payload at $%04X"
-                     % (len(stub) - 2, H.PAYLOAD_ORG))
+        if 0x0200 + len(stub) - 2 > H.PAYLOAD_LOW:
+            sys.exit("the loader stub is %d bytes and reaches the payload's low RAM at $%04X"
+                     % (len(stub) - 2, H.PAYLOAD_LOW))
         p = os.path.join(H.BUILD, nm + ".BIN")
         with open(p, "wb") as fh:
             fh.write(stub)

@@ -361,6 +361,13 @@ ACT_LIB = ["sw/io.act", "sw/libaction.act"]
 # Where a program the loader puts in charge is compiled to: above the
 # loader stub in BASIC's user area, and free to run to $FEFF (D102).
 PAYLOAD_ORG = 0x1400
+# From here up to PAYLOAD_ORG is the program's too, outside its file:
+# the stub, which must end below it, stays alive under the program --
+# its RETI is where the vectors point and its Reset() where Main
+# returns -- and nothing is loaded here, so an array bound into it
+# (`BYTE ARRAY map(960) = $0800`) costs the PRG nothing and holds
+# whatever was left there until the program writes it (D109).
+PAYLOAD_LOW = 0x0800
 
 
 def loader_tail(drive, name):

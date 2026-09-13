@@ -1172,7 +1172,7 @@ each of 600 vblanks, every vertex where the generator's arithmetic puts
 it, every face's decision from the program's own matrix, the list
 exactly the visible edges and the page exactly the list's lines, pixel
 for pixel, and erasing by redrawing the same as a clear. The PRG is
-8,430 bytes, 2 KB of it sine.
+5,583 bytes, 2 KB of it sine.
 
 ### `COBRA2` — the camera circles, the ship flies, the sky stays put
 
@@ -1219,7 +1219,7 @@ its four units a frame, each star on the screen keeping its direction
 and each speck its place in the world; and what is recycled mostly back
 on the screen the next frame. Faces keep hysteresis on the way out only: at half COBRA's rates, the first cut's,
 two-sided hysteresis left a one-frame gap between two faces trading an
-edge. The PRG is 14,330 bytes.
+edge. The PRG is 11,647 bytes.
 
 ### `KEYTEST` — what the keyboard sends
 
@@ -1780,7 +1780,7 @@ the cells round it; Enter or F flags and unflags; P pauses and hides the
 field; Esc leaves a game for the front, and on the front restarts the
 machine.
 
-**Measured**: 27,070 bytes of PRG, of which 7,488 are the tiles, 1,536
+**Measured**: 25,021 bytes of PRG, of which 7,488 are the tiles, 1,536
 the three palettes and 2,352 the six tunes. On the largest field a frame
 of play costs 4,956 clocks at rest with the music playing, of the
 139,583 a frame has. The busiest thing the game does is the first dig,
@@ -1816,10 +1816,10 @@ plays it and writes the frames as PNG.
 
 ### `YENDOR` — a descent after NetHack, in DawnLike's tiles
 
-`demos/yendor.act`, on its own drive: **YENDOR.PRG and its theme files
-are on drive 9**, and only the loader, `YENDOR.BIN`, is on drive 11 --
-it names drive 9 -- so the game is on the CoolAction menu and drive 11,
-which had 45,568 bytes free, carries 3.5 KB of it
+`demos/yendor.act`, on its own drive: **YENDOR.PRG, its theme files and
+its names are on drive 9**, and only the loader, `YENDOR.BIN`, is on
+drive 11 -- it names drive 9 -- so the game is on the CoolAction menu and
+drive 11, which had 45,568 bytes free, carries 1 KB of it
 ([D108](01-decisions.md)). The Amulet of Yendor lies twelve levels down;
 fetch it and climb back to the sun. The game is Rogue's and NetHack's,
 and **it is being built in milestones**, of which the first is done.
@@ -1931,9 +1931,85 @@ that strike one; the acid blob splashes and the yellow mold stings. A
 leprechaun steals nothing until there is gold. The message area is two
 lines with `--More--` when a turn has more to say.
 
+**The things are NetHack's too.** 48 kinds from NetHack 3.6's
+`src/objects.c`, cut to what 64 pictures and the program's memory hold:
+seven weapons (dagger to two-handed sword, each with its small-monster
+die), nine pieces of armour over six slots (leather armour to plate mail,
+a small shield, an orcish helm, leather gloves, low boots and a leather
+cloak, each with its armour class), eight potions (healing, extra
+healing, gain level, gain energy, sleeping, sickness, fruit juice,
+water), eight scrolls (identify, enchant weapon, enchant armor, remove
+curse, teleportation, magic mapping, light, fire), six wands (light,
+create monster, striking, digging, magic missile, sleep), six rings
+(protection, regeneration, free action, poison resistance, increase
+damage, teleportation), the amulet of life saving, the Amulet of Yendor
+and its cheap plastic imitation, and gold. Their generation
+probabilities and base costs are objects.c's -- the costs waiting for the
+shops -- and a level is filled as NetHack's `makelevel()` fills it: gold
+one room in three, a thing one room in three with a one in five chance
+of another after each, and a thing one kill in six.
+
+**What cannot be seen is not known.** Each game shuffles which
+appearance each potion, scroll, wand and ring wears, among NetHack's own
+descriptions for them -- ruby, pink, orange, emerald, sky blue, milky and
+bubbly potions (water is always clear); scrolls labeled ZELGO MER, JUYED
+AWK YACC, NR 9, PRATYAVAYAH, DAIYEN FOOELS, VERR YED HORRE, KERNOD WEL and
+ELAM EBOW; glass, balsa, maple, oak, ebony and iron wands; wooden,
+granite, black onyx, moonstone, jade and ruby rings -- and DawnLike, which
+was drawn for NetHack, has a picture of each of those names, so the
+picture is the appearance's. A kind becomes known when using it shows
+what it is, or when a scroll of identify says so; a thing is blessed,
+uncursed or cursed as `mksobj()` makes it, and that and its enchantment
+are known when worn, tried or identified. A name is NetHack's `doname()`,
+"a blessed +1 quarterstaff (wielded)", "a scroll labeled ZELGO MER",
+"an iron wand (0:5)", with NetHack's `implicit_uncursed` leaving
+"uncursed" off a kind that is known, which is what keeps a line inside
+forty columns.
+
+**What they do**, as NetHack's `peffects()`, `seffects()` and `zap.c`
+have it for these kinds: healing and extra healing mend and raise the
+most when they run over; gain level raises a level, and cursed lifts the
+hero through the ceiling; sleeping sleeps unless a ring of free action is
+worn; identify names one thing, and blessed sometimes everything;
+enchant weapon and enchant armor add one, and evaporate what is pushed
+past +5 or +3; remove curse uncurses what is in use, or everything if
+blessed; teleportation moves the hero on the level, or down one if
+cursed; magic mapping shows the level; a wand of digging bores through
+walls and rock, or down to the next level; magic missile and sleep reach
+every monster in eight cells, striking the first. A cursed weapon welds
+itself to the hand and cursed armour or rings will not come off; the
+armour class is ten less what is worn and its enchantment and the rings
+of protection. The amulet of life saving takes a death and crumbles; a
+leprechaun's touch halves the purse and takes it elsewhere. Daggers are
+thrown by `f`, the Rogue up to three at once, and come down where they
+stop. Each hero starts with NetHack's `u_init.c` things, identified: the
+Valkyrie a +1 long sword, a dagger and a +3 small shield; the Wizard a
+blessed +1 quarterstaff, a cloak, an attack wand, two different rings,
+two potions and two scrolls; the Rogue a short sword, six to fifteen
+daggers, +1 leather armour and a potion of sickness.
+
+**Memory, measured at the end of milestone 3, and the room made after
+it.** The PRG was 45,525 bytes from `$1400`, its last byte at `$C5D4`,
+leaving 14,635 below `$FF00`; `tools/cool8asm.py --pressure` put 33,804
+of it in routines -- the largest `Read` 1,452, `MakeLevel` 1,274 and
+`Name` 1,050 -- and milestones 4 to 6 were estimated at more than that.
+The owner chose three ways to make room, and all three are in
+([D109](01-decisions.md#d109--room-for-yendor-dead-routines-dropped-low-ram-for-the-payload-names-on-the-disc)): **the compiler drops the routines nothing reaches**, the
+library's `Line`, `Clg` and pixel runs among them, 2,113 bytes; **the
+level's three cell maps**, 2,880 bytes, are bound to `$0800`-`$133F`,
+below the program, in RAM the loader leaves to it and nothing loads
+into; and **the names** of the creatures, the kinds and the
+appearances, 1,323 bytes, are 24-byte records in `YNAMES.DAT` on drive
+9, read from the flash when a message needs one -- 1,198 saved net of
+the routine that reads them. The PRG is now **39,334 bytes**, its last
+byte at `$ADA5`, with **20,826 free** below `$FF00`: 31,770 in routines,
+4,175 in the messages' own strings, the rest tables and working arrays.
+The special levels' maps go on the disc the same way when milestone 5
+makes them.
+
 **The grave**: when the hit points run out, "You die...", then DawnLike's
 gravestone and who died, what killed them, on which level, at which
-experience level and after how many turns.
+experience level, after how many turns and with how much gold.
 
 **The plan**, decided with the owner before any code:
 
@@ -1941,7 +2017,7 @@ experience level and after how many turns.
 |---|---|
 | **1 — done** | the themes from drive 9; the title with the three heroes and the credits; Rogue's level; seeing and remembering; doors; stairs; persistence |
 | **2 — done** | monsters and combat by NetHack's numbers, the three roles, experience, the pet, the force bolt, the grave |
-| 3 | items: inventory, wielding and wearing, gold; potions, scrolls, wands and rings under random names each game, blessed, uncursed or cursed |
+| **3 — done** | the things by NetHack's numbers: the pack, wielding, wearing, gold; potions, scrolls, wands and rings under appearances shuffled each game; blessed, uncursed, cursed; what each does |
 | 4 | shops and their keeper; altars and prayer; fountains; traps and secret doors; Elbereth in the dust |
 | 5 | the special levels: the Oracle, a small Sokoban up from below it, and a cave branch after the Gnomish Mines with a town |
 | 6 | the Amulet on level 12 and the climb back; music by depth and the effects; the Platino sprite hidden, as DawnLike's author asks |
@@ -1953,17 +2029,26 @@ Keys: the cursor keys, the keypad or `h j k l y u b n` move, and two
 cursor keys held together go diagonally; a key held repeats after ten
 frames, every third after that; moving into a monster attacks it and
 into the pet changes places; `>` and `<` take the stairs, and Enter the
-stairs the hero stands on; `s`, `.` or keypad 5 waits; `Z` casts;
-Ctrl+R draws the screen again; Esc asks whether to quit, and on the
-title restarts the machine.
+stairs the hero stands on; `s`, `.` or keypad 5 waits. NetHack's
+letters for the rest: `i` the pack, `,` picks up, `d` drops, `w` wields,
+`W` wears, `T` takes off, `P` puts on, `R` removes, `q` drinks, `r`
+reads, `z` zaps, `t` throws, `f` fires daggers, `:` looks here, `\`
+lists the discoveries, `Z` casts; a thing asked for is chosen by its
+letter from the pack shown over the map, a direction by a movement key,
+and `>` or `<` for down and up. Gold walked over is picked up. Ctrl+R
+draws the screen again; Esc asks whether to quit, and on the title
+restarts the machine.
 
 **Measured**: milestone 1, 13,742 bytes of PRG, the art table included;
-milestone 2, **26,289**. Three theme files of 32,768 bytes on drive 9,
-and the loader of 3,545 on drive 11.
+milestone 2, 26,289; milestone 3, 45,525, and **39,334** after the room
+was made. Three theme files of 32,768 bytes and `YNAMES.DAT`, 3,216, on
+drive 9, and the loader of 1,049 on drive 11.
 
 **The gate** (`sim/test_action.py`, on `sim/yendor.py`): the art table
 and theme files what the sheets make; the compiled bytes the same as
-`tools/cool8asm.py`'s; the creature table monst.c's numbers and names;
+`tools/cool8asm.py`'s; the program at `$1400` with its cell maps at
+`$0800`, outside the PRG; the creature table monst.c's numbers, and the
+creatures' and things' names in `YNAMES.DAT` and not in the PRG;
 YTHEME0.DAT in the pattern banks byte for byte; the title naming
 DawnLike, DragonDePlatino, DawnBringer and the licence, and the palette's
 banks; the hero chosen. The dungeon, with its monsters cleared: level 1's
@@ -1986,7 +2071,19 @@ killing a newt beside it and growing; changing places with the pet; the
 pet coming down the stairs; a floating eye's gaze freezing the hero for
 turns and then letting go; mending; the status lines; the grave naming
 the soldier ant and the level, and Enter back to the title; the Wizard's
-force bolt taking five power and 2d12 from the jackal in its line; the
+force bolt taking five power and 2d12 from the jackal in its line. The
+things: objects.c's class, number, slot, probability and cost for every
+kind; the Wizard's things known and the appearances shuffled; `i`
+listing the pack under its classes; the Valkyrie's things and armour
+class 6; gold walked over into the purse and the status line; `:` and
+`,` and `d`, the floor showing the thing's picture; ring mail worn and
+taken off, cursed boots that will not come off; a cursed axe welded to
+the hand; a ring of protection in the armour class; an unknown potion of
+healing drunk and known; sleeping yawned off with free action; identify,
+enchant weapon, enchant armor and magic mapping read; a wand of sleep
+stopping a gnome lord and a wand with no charges; daggers fired and
+landing; an amulet of life saving taking a death; the discoveries; a
+thing left on a level there on coming back; the
 stack; and from the demos disc, YENDOR.PRG and its themes on drive 9,
 only the loader on 11, and `SYS "YENDOR.BIN"` from BASIC finding its
 program and its theme there. `python sim/yendor.py walk` (or `title`,
@@ -2081,7 +2178,7 @@ entries it does not use. `Raster()` does it every frame, locked to
 for the Mandrill, the Peppers, the parrots and the painted face, where
 one palette showed 256, 254, 254 and 252, and each sits 22 to 48 %
 closer to its original once both are blurred as the eye blurs
-dithering. SLIDES is 5,525 bytes with it.
+dithering. SLIDES is 3,773 bytes with it.
 
 **Finding it cost a compiler bug.** Every version-2 picture was refused
 at first: `LoadRpl` builds its change list's name with `rpl_name(i + 1)
