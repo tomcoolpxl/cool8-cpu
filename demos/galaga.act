@@ -2426,6 +2426,7 @@ RETURN
 ; Two at most, as the arcade's, six pixels a frame; each tests the column
 ; of pixels its head has passed through since the last frame
 CONST NSHOT = 2
+CARD shots, hits                     ; the game's rockets fired and those that hit, for the results
 BYTE ARRAY sh_on(NSHOT), sh_x(NSHOT) ; the arcade's sprite X of the rocket -- the fighter's when it was fired
 CARD ARRAY sh_y(NSHOT)               ; and its Y, six less a frame
 
@@ -2434,6 +2435,7 @@ PROC Fire()
   FOR i = 0 TO NSHOT - 1 DO
     IF sh_on(i) == 0 THEN
       PlaySound(S_SHOT)
+      shots += 1
       sh_on(i) = 1
       sh_x(i) = fx + 17
       sh_y(i) = $129
@@ -2459,6 +2461,7 @@ PROC Shots()
       ELSE
         j = FlyAt(sh_x(i), y9)
         IF j != 255 THEN
+          hits += 1
           ShootFlyer(j)
           sh_on(i) = 0
           SpriteHide(SP_SHOT + i)
@@ -2467,6 +2470,7 @@ PROC Shots()
           FOR k = 0 TO 5 DO
             IF y + k >= 0 THEN j = SlotAt(x, y + k) ELSE j = 255 FI
             IF j != 255 THEN
+              hits += 1
               ShootSlot(j)
               sh_on(i) = 0
               SpriteHide(SP_SHOT + i)
@@ -2858,7 +2862,38 @@ PROC Results()
   FieldTextOff()
 RETURN
 
+; Finale: the arcade's results after GAME OVER -- the field emptied, the
+; rockets fired, the hits and the ratio of the two to a tenth of a percent
+PROC Finale()
+  BYTE i
+  CARD r, q
+  FOR i = SP_FIGHTER TO 31 DO SpriteHide(i) OD
+  FieldTextOff()
+  Fill(FX, 0, FW, 240)
+  Text(FX + 76, 104, "-RESULTS-", C_RED)
+  Text(FX + 24, 128, "SHOTS FIRED", C_YELLOW)
+  Number(FX + 152, 128, shots, 5, C_YELLOW)
+  Text(FX + 24, 152, "NUMBER OF HITS", C_YELLOW)
+  Number(FX + 152, 152, hits, 5, C_YELLOW)
+  Text(FX + 24, 176, "HIT-MISS RATIO", C_WHITE)
+  r = 0
+  IF shots THEN
+    ; hits * 1000 / shots, a digit at a time so that nothing overflows
+    q = hits
+    FOR i = 1 TO 3 DO
+      r = r * 10 + (q * 10) / shots
+      q = (q * 10) % shots
+    OD
+  FI
+  Number(FX + 144, 176, r / 10, 3, C_WHITE)
+  Text(FX + 168, 176, ".", C_WHITE)
+  Number(FX + 176, 176, r % 10, 1, C_WHITE)
+  Text(FX + 192, 176, "%", C_WHITE)
+  FOR r = 1 TO 300 DO Frame1() OD
+RETURN
+
 PROC Play()
+  BYTE i
   Clg(0)
   Hud()
   level_bd = 0
@@ -2869,6 +2904,8 @@ PROC Play()
   lives = 2
   ftr_dead = 0
   ftr_on = 1
+  shots = 0
+  hits = 0
   game_over = 0
   score10 = 0
   ext10 = 2000
@@ -2879,6 +2916,15 @@ PROC Play()
   DO
     Frame1()
     IF KeyHit(KEY_ESC) THEN EXIT FI
+    IF KeyHit(KEY_P) THEN
+      ; paused: the voices silenced, frames waited out until P again
+      FOR i = 0 TO 7 DO Voice(i, 0, 0, 0) OD
+      DO
+        WaitVBlank()
+        KeyPoll()
+        IF KeyHit(KEY_P) THEN EXIT FI
+      OD
+    FI
     stage_frames += 1
     StarsErase()
     FlyFrame()
@@ -2895,7 +2941,10 @@ PROC Play()
       Lives()
       PlaySound(S_EXTEND)
     FI
-    IF game_over THEN EXIT FI
+    IF game_over THEN
+      Finale()
+      EXIT
+    FI
     IF StageDone() AND ftr_dead == 0 THEN
       IF st_kind((stage - 1) % STAGES) THEN
         Results()

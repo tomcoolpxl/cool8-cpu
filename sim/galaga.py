@@ -163,6 +163,15 @@ class Game:
                 return k
         return None
 
+    def drop_on_fighter(self):
+        """A bomb put where the fighter is, on bomb 0 and sprite 31, for the
+        next frame's collision to find."""
+        self.poke("bo_on", 1, 0)
+        self.poke("bo_x", self.word("fx") + 17, 0)
+        self.pokew("bo_y", 0x129, 0)
+        self.poke("bo_sp", 31, 0)
+        self.poke("bo_own", self.byte("bo_own") | 1)
+
     def until(self, pred, cap=600):
         for t in range(cap):
             if pred():
@@ -734,6 +743,17 @@ def main():
     elif what == "sound":
         # the start theme on voices 0-2 against the rendered streams
         print(sound_check())
+    elif what == "results":
+        # the game given up to the last fighter: GAME OVER and the results
+        g.poke("lives", 0)
+        g.pokew("shots", 40)
+        g.pokew("hits", 29)
+        g.until(lambda: g.byte("ftr_on"), 900)
+        g.at_rest()
+        g.drop_on_fighter()
+        g.until(lambda: g.byte("game_over"), 900)
+        g.m.run_frame(30)
+        print(g.png("gal_results"), "game over", g.byte("game_over"))
     elif what == "death":
         g.until(lambda: g.crash() is not None, 200)
         g.until(lambda: g.byte("ftr_dead"), 10)

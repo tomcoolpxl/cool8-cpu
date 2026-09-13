@@ -7165,4 +7165,11 @@ only the lives' rows. PRG 50,791 bytes before, 55,354 after.
 **Not yet**: the capture beam itself and a caught fighter (the boss's hold
 is flown, nothing is drawn or caught), the rescue and the dual fighter,
 the bonus bee's trio and the morph clones (f_1A80, token F2), and the extra
-fighters at 20,000 and 70,000.
+fighters at 20,000 and 70,000 (added the next day, with the dive sound).
+**The bonus bee waits on VRAM, not on code**: its three creatures -- the
+sheet's scorpion, bosconian and galaxian, sprite codes $58, $60 and $50
+in f_1A80 -- want some 25 patterns each, and VRAM is spent: the bitmap to
+$95FF, 154 patterns to $E2FF, the band's copy to $FEFF. No set of
+patterns is free during a combat stage, when every kind of character can
+be in the air; the challenging stages' creatures go over the
+butterfly's only because a challenging stage has no dives.

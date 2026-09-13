@@ -1897,6 +1897,15 @@ def test_galaga():
     # fighter from the panel after READY once nothing flies. While waves
     # come in only their transients can ram it, so the launcher is stopped
     # first and the flyer is an attacker
+    # P holds everything and P again lets it go
+    f0 = g.uword("stage_frames")
+    g.tap([0x4D])
+    g.m.run_frame(30)
+    f1 = g.uword("stage_frames")
+    g.tap([0x4D])
+    g.m.run_frame(10)
+    check(f1 - f0 <= 3 and g.uword("stage_frames") > f1 + 5, "galaga: P pauses the game and P again goes on",
+          "stage frames %d, %d paused, %d after" % (f0, f1, g.uword("stage_frames")))
     lives = g.byte("lives")
     g.poke("launching", 0)
     k = g.until(lambda: g.crash() is not None, 300)
@@ -1909,6 +1918,70 @@ def test_galaga():
     check(k is not None and dead == 1 and not bad and back is not None and g.byte("lives") == lives - 1,
           "galaga: a crash destroys both, the explosion over the backdrop leaves nothing, and a fighter comes back",
           "dead %d, %d pixels differ %s, back %s, lives %d of %d" % (dead, len(bad), bad[:3], back, g.byte("lives"), lives))
+
+    # the last fighter lost: GAME OVER, then the results -- the rockets
+    # fired, the hits, the ratio
+    g.poke("lives", 0)
+    g.pokew("shots", 40)
+    g.pokew("hits", 29)
+    g.until(lambda: g.byte("ftr_on"), 900)
+    g.at_rest()
+    g.drop_on_fighter()
+    over = g.until(lambda: g.byte("game_over"), 900)
+    g.m.run_frame(40)
+    fx0 = g.c("FX")
+    red = sum(g.pixel(x, y) == 2 for x in range(fx0 + 76, fx0 + 148) for y in range(104, 112))
+    white = sum(g.pixel(x, y) == 1 for x in range(fx0 + 144, fx0 + 176) for y in range(176, 184))
+    check(over is not None and red > 40 and white > 20,
+          "galaga: the last fighter lost, GAME OVER and the results on the field",
+          "game over after %s frames, %d red pixels in -RESULTS-, %d white in 72.5" % (over, red, white))
+    del g
+
+    # the path a person takes: the real ROM booting the demos disc, DRIVE
+    # 11 and SYS "GALAGA.BIN" typed, the game finding GALAGA.DAT on the
+    # drive it came from -- the title in mode 4 -- and space starting stage
+    # 1. The disc is `poe demos`' output, first held to this build
+    import cool8rsvm as vm
+    import cool8disk
+    img = os.path.join(H.BUILD, "demos.img")
+    pay, psyms = H.build_act(G.sources(), "galaga_payload", org=H.PAYLOAD_ORG)
+    if not os.path.exists(img):
+        print("    SKIPPED the flash boot: %s is not built (poe demos)" % img)
+    else:
+        vol = cool8disk.Volume(cool8disk.Image(img), 11)
+        on = [vol.get("GALAGA.PRG") == bytes(pay), vol.get("GALAGA.DAT") == open(G.DAT, "rb").read()]
+        if not all(on):
+            check(False, "galaga from flash: the demos disc holds this build and its data file",
+                  "GALAGA.PRG, GALAGA.DAT current: %s -- poe demos" % on)
+        else:
+            code, bsyms = basic_image()
+            m = vm.boot(flash_path=img, render=True)
+            for _ in range(90):
+                m.run_frame()
+            check(m.settle(bsyms["in_raw.rk0"], bsyms["irhead"], bsyms["irtail"], 80_000_000),
+                  "galaga from flash: BASIC booted from the demos disc and went idle")
+            H.key(m, bsyms, 'DRIVE 11\r')
+            H.key(m, bsyms, 'SYS "GALAGA.BIN"')
+            m.key(["\r"])
+            mode = lambda: m.bus.read(ioregs.addr_of("VID_MODE")) & 0x0F   # noqa: E731
+            up = None
+            for i in range(60):
+                m.run_frame(5)
+                if mode() == 4 and m.cpu.pc >= H.PAYLOAD_ORG:
+                    up = (i + 1) * 5
+                    break
+            m.run_frame(30)
+            m.kbd.feed([0x29, 0xF0, 0x29])
+            played = None
+            for i in range(120):
+                m.run_frame(5)
+                if m.bus.mem[psyms["v_launching"]] and m.bus.mem[psyms["v_stage"]] == 1:
+                    played = (i + 1) * 5
+                    break
+            check(up is not None and played is not None,
+                  "galaga from flash: SYS loads it from drive 11, it finds GALAGA.DAT, space starts stage 1",
+                  "title after %s frames, stage 1 after %s; PC $%04X" % (up, played, m.cpu.pc))
+            del m
     print()
 
 

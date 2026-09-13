@@ -54,7 +54,7 @@ but as two programs: the compiled one tumbles, every frame computed
 |---|---|---|
 | **Demos** | 13 | MAZE, RAINBOW, WAVE, PLASMA, INTRO, BOING, TRIANGLES, MANDEL, COBRA, SYNTH, BENCH, MINIBNCH, BAPPLE, TAIPAN, COOLTRS1, COOLTRS2 |
 | **Software** | 14 | HHGG, ZORK1, PLANET, LGOP, PASCAL |
-| **CoolAction** | 11 | RAINBOW, TRIANGLE, MAZE, PLASMA, WAVE, MANDEL, SYNTH, INTRO, PRIMES — the compiled twins, §4 — COBRA, which shares only its ship and its name with the BASIC's, COBRA2, its camera and sky, and MSCOOLMN, ARKANOID, BLOCKADE, COOLTRIS, COOLSW, MOTT, KEYTEST and SLIDES, which have no BASIC |
+| **CoolAction** | 11 | RAINBOW, TRIANGLE, MAZE, PLASMA, WAVE, MANDEL, SYNTH, INTRO, PRIMES — the compiled twins, §4 — COBRA, which shares only its ship and its name with the BASIC's, COBRA2, its camera and sky, and MSCOOLMN, ARKANOID, BLOCKADE, COOLTRIS, COOLSW, GALAGA, MOTT, KEYTEST and SLIDES, which have no BASIC |
 
 **Volume 0 is not the user's, and that is the ROM's decision.**
 `sw/boot.asm` walks volume 0's directory for `BOOT.BIN`; it is the 4 KB
@@ -1045,7 +1045,7 @@ drive 11 as bare `.BIN`s: RAINBOW, TRIANGLES, MAZE, PLASMA, WAVE,
 MANDEL, SYNTH and INTRO, each a `demos/name.act` beside its
 `demos/name.bas`; COBRA, which was the ninth and is now a program of
 its own, and COBRA2, its camera and sky, the next two sections; and
-KEYTEST, MSCOOLMN, ARKANOID, BLOCKADE, COOLTRIS, COOLSW, MOTT and SLIDES, which have no BASIC and follow them. **The picture is the contract, not the code.** A port
+KEYTEST, MSCOOLMN, ARKANOID, BLOCKADE, COOLTRIS, COOLSW, GALAGA, MOTT and SLIDES, which have no BASIC and follow them. **The picture is the contract, not the code.** A port
 may do the work any way the language allows -- and mostly does it the
 BASIC's way, because the BASIC's way was measured -- but
 `sim/test_action.py` runs every pair to the same point and requires
@@ -1813,6 +1813,109 @@ colours; every frame of play and of the first dig fitting in its frame
 on the largest field; the stack. `python sim/coolsw.py play` (or
 `title`, `win`, `boom`, `pause`, with a level of 0, 1 or 2 after it)
 plays it and writes the frames as PNG.
+
+### `GALAGA` — the arcade Galaga, sixteen stages in four levels, in mode 4
+
+`demos/galaga.act`, Namco's 1981 arcade Galaga under the loader of
+[D102](01-decisions.md): stages 1 to 16 as the arcade's rank A plays
+them -- the entry waves on the arcade's own paths, the formation's sway
+and breathing, the dives, the boss's escorts, the bombs, three
+challenging stages with their own creatures and their tally -- in four
+levels of four stages, each level with a backdrop across the field's
+foot and a tune of its own, and after stage 16 round the four again.
+A hobby port for the machine's owner, with no users. **The sprites, the
+font and the sounds are the arcade's**; the backdrops and the levels'
+tunes are not, and are said to be not.
+
+**Where it comes from.** `tools/mkgalaga.py` reads the four sheets in
+`assets/galaga/` -- BlazorGalaga's copies of The Spriters Resource's
+arcade rips: the general sprites, an older cut of them, the rotations,
+the screens' text -- and writes `galaga_art.act` (`demos/galaga.parts`)
+and **GALAGA.DAT**, which the game reads from its own drive
+(`demos/galaga.disc`): the sprite patterns it streams into VRAM, the
+challenging stages' creatures, the four backdrops' bands, and the
+stages' waves and the levels' tunes it loads when it wants them. The
+flights, the attack and the stage tables come from the hackbar/galaga
+disassembly through two reference models, `tools/galaga_paths.py` and
+`tools/galaga_dives.py`; the sounds from `tools/galaga_sound.py`, a model
+of the sound CPU's driver over the sound ROM's own streams. `poe check`
+holds the generated files to all of it. The backdrops are OpenGameArt's,
+cropped and quantised and faded into the black by a dither
+(`assets/galaga/README.md` has each one's author and licence, and the
+title screen names them): the Earth for stages 1-4, a nebula for 5-8, a
+red ridge for 9-12 and a gold planet for 13-16.
+
+**Mode 4, and the formation in the bitmap** ([D113](01-decisions.md)).
+Forty characters in rows of ten are more sprites than a line has, so a
+character at rest is drawn into the 320 x 240 bitmap, and moving it a
+pixel writes only the pixels that change, from lists the generator
+makes for every frame and every move. What flies is sprites: the
+fighter, two rockets, six flyers of four descriptors each, and the
+bombs. Explosions and score pop-ups are pictures drawn into the bitmap
+and put back. The backdrop's band, the bottom 64 rows, has its own
+eight colours by a raster split, and a copy of it in VRAM to put back
+from. The field is the arcade's 224 columns in the middle of the 320,
+its 256 rows pressed into 240 below the formation's lowest reach.
+
+**The motion is the arcade's** ([D114](01-decisions.md)): a port of the
+sub CPU's path interpreter, its 16-bit coordinates, its ten-bit angle
+and its linear turns, flying the ROM's own path bytes; and **so is the
+attack** ([D115](01-decisions.md)): the three sortie timers and their
+reloads by the enemies left and the stage's time, the first character
+at rest sent in id order, every other boss sortie a capture, the
+escorts from under the boss launched a frame apart, a bomb at each of a
+flyer's chances its mask allows aimed where the fighter is, continuous
+bombing when few are left, the arcade's hit windows, the restart's
+counts. Points as the arcade gives them: 50 and 100 a bee, 80 and 160 a
+butterfly, a boss two hits for 150 at rest or 400, 800 or 1,600 by its
+escorts in the air; a fighter more at 20,000, 70,000 and every 70,000.
+The challenging stages (3, 7, 11 and 15) fly bees, butterflies, then the
+arcade's dragonflies and scorpions -- streamed over the butterfly's
+patterns for the stage -- pay 1,000 or 1,500 for a whole wave of eight,
+a hundred a hit after, and 10,000 for all forty. After GAME OVER come the
+arcade's results, as its screens' sheet lays them out: the rockets
+fired, the hits, and the hit-miss ratio to a tenth of a percent.
+
+**What differs, and why.** Six flyers where the arcade has twelve: a
+wave waits for a slot, and stage 1's dives begin at frame 1,327 rather
+than 895. The sprites are 32: six flyers and two bombs spend them, and a
+bomb or a dive with none left is not made -- on stage 16 some forty in a
+minute. **Not there yet**: the capture beam and a caught fighter (the
+capture boss flies its hold and nothing is drawn), the rescue and the
+dual fighter, the bonus bee's transformations (their creatures' patterns
+have no room in VRAM), the name entry, and a second player.
+
+**The sound** is the arcade's effects and jingles, each rendered frame by
+frame from the driver's model and mixed in the driver's order -- tunes
+on voices 0-2, effects on 3-5, the fighter's explosion as noise on 6 --
+and each level's tune is this port's own, in a key and tempo of its
+own, with drums on voice 7 beneath the arcade's sounds.
+
+**The gate** (`sim/test_action.py`, on `sim/galaga.py`) runs it with
+GALAGA.DAT on drive 11 of a flash image of its own: the generated files
+current; the compiled bytes the same as `tools/cool8asm.py`'s; the title
+in mode 4 and the sprites on bank 15; stage 1's forty flying in, each
+held to the reference machine frame by frame, all home; the formation
+breathing and flapping without a pixel of the bitmap other than the
+program's state says; a volley scored, its explosions leaving nothing,
+20,000 bringing a fighter; the start theme's notes frame for frame; the
+level's tune and drums; the raster split's lines; every frame's work
+inside its frame; challenging stage 11's creature, tally and payment;
+**stage 1's attack held to `tools/galaga_dives.py` frame by frame for
+3,000 frames** -- every flyer and every bomb, down to continuous bombing
+-- and stage 16's the same wherever the sprites allow; a crash, the
+explosion over the backdrop put back, and a fighter after READY; P
+pausing and going on; the last fighter lost and the results; then
+the path a person takes -- the real ROM booting the demos disc, `DRIVE
+11` and `SYS "GALAGA.BIN"`, the title up, space, and stage 1. `python
+sim/galaga.py play` (or `levels`, `attack`, `challenge n`, `death`,
+`results`, `profile [stage frames]`) plays it and writes the frames as PNG;
+`flights`, `dives stage frames [x [every]]`, `bitmap`, `shoot`, `split`
+and `sound` are the comparisons the gate makes; `sizes` says where the
+program's bytes are.
+
+Keys: the cursor keys or Z and X move, space fires, P pauses, Esc
+gives the game up.
 
 ### `MOTT` — a descent after NetHack, in DawnLike's tiles
 
