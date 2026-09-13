@@ -26,6 +26,7 @@ NAMES = os.path.join(ART, "MNAMES.DAT")
 HELP = os.path.join(ART, "MPAGES.DAT")
 LEVELS = os.path.join(ART, "MLEVELS.DAT")
 MUSIC = os.path.join(ART, "MMUSIC.DAT")
+SAVE_LEN = 32768                 # MOTT.SAV, erased on a sector: the game's SAVE_LEN
 # make codes: the cursor keys are E0-prefixed
 LEFT, RIGHT, DOWN, UP = [0xE0, 0x6B], [0xE0, 0x74], [0xE0, 0x72], [0xE0, 0x75]
 KP = {1: [0x69], 2: [0x72], 3: [0x7A], 4: [0x6B], 5: [0x73], 6: [0x74], 7: [0x6C], 8: [0x75], 9: [0x7D]}
@@ -71,6 +72,7 @@ def flash_image(name="mott"):
         vol.add(p, os.path.basename(p))
     if H.act_strings(name):
         vol.add(H.act_strings(name), "MOTT.STR")
+    vol.reserve("MOTT.SAV", SAVE_LEN)
     im.save()
     return img
 

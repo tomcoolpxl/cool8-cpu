@@ -1944,8 +1944,8 @@ in eight, without NetHack's strength loss or instant death; a
 homunculus's bite sleeps the hero for up to ten turns; a wraith's or a
 vampire's touch drains a level one time in three; the floating eye's
 passive gaze freezes the hero for d(level+1, 10) turns, not NetHack's
-d(level+1, 70), which on a machine without saves would end most games
-that strike one; the acid blob splashes and the yellow mold stings. A
+d(level+1, 70), which was decided when the game had no saves and would
+end most games that strike one; the acid blob splashes and the yellow mold stings. A
 leprechaun steals nothing until there is gold. The message area is two
 lines with `--More--` when a turn has more to say.
 
@@ -2311,6 +2311,30 @@ what is heard in it 1,347, the corridors that end nowhere and the rooms
 of stairs shut in put right 516, the pet following the hero's steps 313:
 **59,650 bytes**, its last byte at `$FD01`, **510 free** below `$FF00`.
 
+**Saving, as NetHack does it.** `S` asks "Really save?", parks the level
+the hero is on in its slot -- without the shop's reckoning, since the
+hero has not left -- and writes `MOTT.SAV` on drive 9: its eight sectors
+erased, the stamp of the build, the game's whole run of globals from
+`save_from` to `save_end`, and every level made from its VRAM slot,
+"Saving... level 3 of 9" as each goes; then its state, last; then "Be
+seeing you..." and the title. The title reads the file's head and, for a
+save this build wrote and nobody has played on from, offers "C: continue
+your saved game"; `C` reads it all back, clears the state byte -- NetHack
+deletes a save when it is restored -- and enters the level where the hero
+stood with "Hello Valkyrie, welcome back to MOTT!". Each byte is kept
+inverted, so the zeros of a level are never programmed: the machine
+writes one byte a request, which on the board is a flash write cycle
+each, and a save of a dozen levels is some thousands of them. The file,
+its layout and the room made for it are
+[D112](01-decisions.md#d112--motts-saves-a-sector-aligned-file-rewritten-in-place-and-the-room-made-for-it);
+the board's write path is untested, and the gate runs it on the machine
+model.
+
+**Memory with saving.** Saving took 1,350 bytes and the program 840 past
+`$FF00`; the message helpers gave back 1,392, the scratch buffers moved
+to low RAM 182, and the compiler's shorter shapes 531: **58,895 bytes**,
+its last byte at `$FA0E`, **1,265 free** below `$FF00`.
+
 **The grave**: when the hit points run out, "You die...", then DawnLike's
 gravestone and who died, what killed them, on which level, at which
 experience level, after how many turns and with how much gold.
@@ -2325,16 +2349,16 @@ experience level, after how many turns and with how much gold.
 | **4 — done** | shops and their keeper; altars and prayer; fountains; traps and secret doors; Elbereth in the dust; `?` |
 | **5 — done** | the special levels: the Oracle, a small Sokoban up from below it, and a cave branch after the Gnomish Mines with a town |
 | **6 — done** | the Amulet on level 12 and the climb back; music by depth and the effects; the Platino sprite hidden, as DawnLike's author asks |
+| **7 — done** | saving, asked for after 6: `S` saves and ends the game, the title's `C` continues it, and the save is used once played on |
 
-Chosen with the owner and not in it: hunger (so food is not a clock);
-saving (a game is one sitting, as the first roguelikes were).
+Chosen with the owner and not in it: hunger (so food is not a clock).
 
 Keys: the cursor keys, the keypad or `h j k l y u b n` move, and two
 cursor keys held together go diagonally; a key held repeats after ten
 frames, every third after that; moving into a monster attacks it and
 into the pet changes places; `>` and `<` take the stairs, and Enter the
 stairs the hero stands on; `.` rests a turn, `s` or keypad 5 searches
-one. NetHack's letters for the rest: `i` the pack, `,` picks up, `d`
+one; `S` saves the game and ends it, and the title's `C` continues it. NetHack's letters for the rest: `i` the pack, `,` picks up, `d`
 drops, `w` wields, `W` wears, `T` takes off, `P` puts on, `R` removes,
 `q` drinks (from a fountain too), `r` reads, `z` zaps, `t` throws, `f`
 fires daggers, `:` looks here, `\` lists the discoveries, `Z` casts, `p`
@@ -2348,10 +2372,11 @@ restarts the machine.
 **Measured**: milestone 1, 13,742 bytes of PRG, the art table included;
 milestone 2, 26,289; milestone 3, 45,525, and 39,334 after the room
 was made; milestone 4, 49,438; milestone 5, 55,073; milestone 6,
-**59,650**. On drive 9 three theme files of 32,768 bytes, `MNAMES.DAT` of
+59,650; with saving, **58,895**. On drive 9 three theme files of 32,768 bytes, `MNAMES.DAT` of
 12,000 (250 names at 48 bytes), `MPAGES.DAT` of 5,520 (six pages),
-`MLEVELS.DAT` of 4,400 (four levels), `MMUSIC.DAT` of 786 (ten tunes) and
-`MOTT.STR` of 9,647 (316 strings); the loader of 1,044 on drive 11.
+`MLEVELS.DAT` of 4,400 (four levels), `MMUSIC.DAT` of 786 (ten tunes),
+`MOTT.STR` of 9,829 (325 strings) and `MOTT.SAV` of 32,768, erased on a
+sector; the loader of 1,044 on drive 11.
 
 **The gate** (`sim/test_action.py`, on `sim/mott.py`): the art table
 and theme files what the sheets make; the compiled bytes the same as
@@ -2437,7 +2462,12 @@ game's own routines, every cell reached with the secrets found, no
 corridor a dead end, and no room of stairs without a door or corridor to
 be seen; a Wizard's kitten keeping up along three levels walked stairs to
 stairs, never more than six behind and beside the stairs down to come
-along on two of them; and from the demos disc, MOTT.PRG, its themes, names, pages, levels, music and strings on drive 9,
+along on two of them; `S` asking, writing the game and going back to the
+title, which offers it; `MOTT.SAV` on a sector, its state written last, the
+largest save inside it; the program loaded afresh with its low RAM and
+parked levels wiped, and `C` bringing back the level, the hero, the pack,
+the monsters, the things, the parked levels and what is known; the save
+then used, and offered no more; and from the demos disc, MOTT.PRG, its themes, names, pages, levels, music, strings and save file on drive 9,
 only the loader on 11, and `SYS "MOTT.BIN"` from BASIC finding its
 program and its theme there. `python sim/mott.py walk` (or `title`,
 `stairs`, `deep`, `fight`, `scene`, `tour`, `shop`, `branches`) plays it and writes the

@@ -416,6 +416,27 @@ PROC Main()
 RETURN
 """
 
+SHORT = r"""
+BYTE ARRAY got(8)
+BYTE ARRAY tab(4) = [11 22 33 44]
+CARD w
+
+PROC Keep(CARD a, CARD b)
+  w = a + b
+RETURN
+
+PROC Main()
+  Keep(1234, 5)
+  got(0) = w >> 8
+  got(1) = w
+  got(2) = tab(2)
+  got(3) = tab(0)
+  IF tab(1) - 22 == 0 THEN got(4) = 1 FI
+  IF tab(3) - 44 <> 0 THEN got(5) = 9 FI
+  IF tab(3) - 40 <> 0 THEN got(6) = 3 FI
+RETURN
+"""
+
 DISC = """
 BYTE ARRAY a(3)
 PROC Main()
@@ -447,6 +468,17 @@ def test_calls():
           "calls: a routine called from six places pops its parameter itself -- no ADDW SP after its calls", "")
     check("JMP     [X]" not in body("Add") and released["Add"] and "JMP     [X]" not in body("Poked") and released["Poked"],
           "calls: one called once, and one an ASM block names, leave the release to the caller", "")
+
+    prg, syms = H.build_act(SHORT, "act_short")
+    same_bytes("act_short", prg)
+    m = H.session()
+    why = H.run_act(m, prg)
+    got = bytes(m.bus.mem[syms["v_got"]:syms["v_got"] + 8])
+    text = open(os.path.join(H.BUILD, "act_short.asm"), encoding="utf-8").read()
+    check(why == "halt" and got == bytes([4, 215, 33, 11, 1, 0, 3, 0]) and m.cpu.sp == 0x0200
+          and "PUSHW   X" in text and "LD      R0,[v_tab+2]" in text and "LD      R0,[v_tab]" in text and "TST     R0" in text,
+          "shorter shapes: a word constant pushed by LDW X / PUSHW X, an element at a constant index one load, "
+          "a compare with zero a TST -- and every answer the same", "%s %s" % (why, got.hex()))
 
     prg, syms = H.build_act(DISC, "act_disc")
     s = open(H.act_strings("act_disc"), "rb").read()
@@ -4438,6 +4470,77 @@ def test_mott():
           " stairs down to come along", str(st))
     del g
 
+    # ------------------------------------------------------ saving
+    import cool8disk
+    g = Y.Game(tag="mottsave")
+    c = g.c
+    g.start(0)
+    g.m.run_frame(10)
+    g.sturdy()
+    g.stairs(Y.DOT, (g.byte("dnx"), g.byte("dny")))            # level 2 made, and level 1 parked
+    g.word_poke("ugold", 1234)
+    g.give(c("O_HEALING"), q=2)
+    slot = 960 + g.addr("park_end") - g.addr("rx1")
+    run = g.addr("save_end") - g.addr("save_from")
+
+    def state():
+        return dict(lvl=g.byte("lvl"), depth=g.byte("depth"), hero=g.hero(), turns=g.uword("turns"), gold=g.uword("ugold"),
+                    pack=g.pack(), monsters=g.monsters(), objs=g.objs(), cells=[v & 127 for v in g.level()],
+                    made=[g.byte("made", i) for i in range(18)], known=[g.byte("known", i) for i in range(48)],
+                    parked=bytes(g.m.video.vram[0x9000:0x9000 + slot]), role=g.byte("role"), uhp=g.byte("uhp"))
+    before = state()
+    g.shifted(Y.KEY_S)
+    g.m.run_frame(4)
+    asked = g.messages()
+    g.tap(Y.KEY_Y)
+    said = g.play(frames=4, cap=60)
+    back = g.until(lambda: g.byte("phase") == 0, 600)
+    g.m.run_frame(20)
+    offered = "C: continue your saved game" in g.text(0, 22, 40)
+    check("Really save?" in asked and "Be seeing you" in said and back is not None and offered,
+          "mott: S asks, writes the game, says goodbye and goes back to the title, which offers the saved game",
+          "%s / %s / title %r" % (asked, said, g.text(0, 22, 40)))
+    g.m.flash.flush()
+    path = os.path.join(H.BUILD, "mottsave.img")
+    im = cool8disk.Image(path)
+    vol = cool8disk.Volume(im, cool8disk.MOTT_VOL)
+    e = vol.find("MOTT.SAV")
+    at = vol.base + e["page"] * 256
+    head = im.data[at:at + 4]
+    check(e["page"] % 16 == 0 and e["length"] == Y.SAVE_LEN == c("SAVE_LEN") and head[0] == 0xFE
+          and head[1] == (~run & 255) and head[2] == (~(run >> 8) & 255) and 4 + run + 17 * slot <= Y.SAVE_LEN,
+          "mott: MOTT.SAV starts on a sector of drive 9, its state written last, and the most a save can be fits it",
+          "page %d, length %d, head %s, run %d, worst %d" % (e["page"], e["length"], bytes(head).hex(), run, 4 + run + 17 * slot))
+
+    # the machine as if switched off and on: the program loaded afresh, its low RAM and the parked levels gone
+    H.load_act(g.m, g.prg)
+    for a in range(0x0800, 0x1400):
+        g.m.bus.mem[a] = 0
+    for a in range(0x9000, 0x9000 + 17 * 1536):
+        g.m.video.vram[a] = 0
+    g.until(lambda: g.byte("phase") == 0 and "C: continue" in g.text(0, 22, 40), 600)
+    g.m.run_frame(10)
+    g.tap([0x21])                                               # C
+    g.until(lambda: g.byte("phase") == 1, 600)
+    g.m.run_frame(20)
+    welcome = g.messages()
+    after = state()
+    differ = [k for k in before if before[k] != after[k]]
+    check(not differ and "welcome back to MOTT" in welcome,
+          "mott: C on the title restores it: the level and where the hero stood, the pack and gold, the monsters and"
+          " things, the levels parked, what is known", "%s; %s" % (differ, welcome))
+    g.m.flash.flush()
+    used = cool8disk.Image(path).data[at]
+    g.tap(Y.ESC)
+    g.m.run_frame(4)
+    g.tap(Y.KEY_Y)
+    g.until(lambda: g.byte("phase") == 0, 600)
+    g.m.run_frame(20)
+    check(used == 0 and "C: continue" not in g.text(0, 22, 40),
+          "mott: and once played on from, the save is used, as NetHack's is: the title offers it no more",
+          "state $%02X, title %r" % (used, g.text(0, 22, 40)))
+    del g
+
     # the path a person takes: MOTT.BIN on the CoolAction disc, the program on drive 9
     import cool8rsvm as vm
     import cool8disk
@@ -4453,7 +4556,8 @@ def test_mott():
           and home.get("MNAMES.DAT") == names and home.get("MPAGES.DAT") == open(Y.HELP, "rb").read()
           and home.get("MLEVELS.DAT") == open(Y.LEVELS, "rb").read() and home.get("MMUSIC.DAT") == open(Y.MUSIC, "rb").read()
           and home.get("MOTT.STR") == open(H.act_strings("mott_payload"), "rb").read()
-          and v11.find("MOTT.BIN") and not v11.find("MOTT.PRG"),
+          and v11.find("MOTT.BIN") and not v11.find("MOTT.PRG")
+          and home.find("MOTT.SAV") and home.find("MOTT.SAV")["page"] % 16 == 0 and home.find("MOTT.SAV")["length"] == Y.SAVE_LEN,
           "mott: the demos disc has MOTT.PRG and its themes on drive 9, and only MOTT.BIN on drive 11",
           "stale or missing: poe demos")
     code, bsyms = basic_image()

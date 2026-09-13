@@ -199,6 +199,28 @@ class Volume:
             e[12:16] = b'\x00\x00\x00\x00'
             self.img.program(self.base, bytes(e))
 
+    def reserve(self, name, size, align=SECTOR):
+        """A file of `size` erased bytes whose first byte is on an `align`
+        boundary -- a sector, so a program can erase it and write it again
+        in place without touching a neighbour: MOTT's saved game. The gap
+        before it is simply not used; the free pointer is derived from the
+        highest end, as ever."""
+        name = pad_name(name)
+        if self.find(show_name(name)):
+            sys.exit(f"{show_name(name)}: already on drive {self.n}")
+        i = self.free_entry()
+        if i is None:
+            sys.exit(f"drive {self.n}: all {N_ENTRIES} entries used")
+        off = (self.free_offset() + align - 1) // align * align
+        if off + size > DATA_END or size > 0xFFFF:
+            sys.exit(f"drive {self.n}: no room for {size} bytes on a {align}-byte boundary")
+        if any(b != 0xFF for b in self.img.data[self.base + off:self.base + off + size]):
+            sys.exit(f"drive {self.n}: the space for {show_name(name)} is not erased")
+        e = bytearray(name)
+        e.append(ST_FILE)
+        e += bytes((off // 256 & 0xFF, (off // 256) >> 8, size & 0xFF, size >> 8))
+        self.img.program(self.base + i * ENTRY, bytes(e))
+
     def add(self, path, name=None, type_=ST_FILE):
         with open(path, 'rb') as fh:
             blob = fh.read()

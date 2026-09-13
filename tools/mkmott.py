@@ -1029,7 +1029,7 @@ HELP = [
     "\\    what you have discovered",
     "",
     "Ctrl+R  draw the screen again",
-    "Esc     quit        ?  this page",
+    "Esc quit   S save and quit   ? this page",
 ]
 
 

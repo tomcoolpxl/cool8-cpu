@@ -159,6 +159,7 @@ CONST KEY_BSLASH = $5D
 CONST KEY_3 = $26
 CONST KEY_SLASH = $4A
 CONST KEY_E = $24
+CONST KEY_C = $21
 
 ; the eight directions, 1 north and on clockwise
 BYTE ARRAY dir_dx(9) = [0 0 1 1 1 0 255 255 255]
@@ -182,6 +183,11 @@ BYTE ARRAY r_pet(3) = [M_KITTEN M_KITTEN M_LITTLEDOG]
 BYTE ARRAY lv(960) = $0800
 BYTE ARRAY mat(960) = $0BC0          ; the monster on a cell, plus one; rebuilt, not parked
 BYTE ARRAY oat(960) = $0F80          ; the top thing on a cell, plus one; rebuilt
+; and after it, to $13FF, buffers nothing keeps from one command to the
+; next: out of the PRG, and so out of a saved game
+BYTE ARRAY sbuf(81) = $1340          ; a string read from MOTT.STR
+BYTE ARRAY feat(80) = $1391          ; a special level's features, as they are read
+BYTE ARRAY lb(21) = $13E1            ; a line typed
 ; the levels a game has: the dungeon's twelve by depth, the three of the
 ; mines below the level they open from, the two of Sokoban above the one
 ; below the Oracle's; a slot of VRAM each
@@ -191,6 +197,17 @@ CONST L_MINEEND = 15
 CONST L_SOKO1 = 16
 CONST L_SOKO2 = 17
 CONST NLEVEL = 17
+; ---- a saved game, MOTT.SAV on drive 9. What belongs to the disc -- where
+; its files are -- and the save's own working are declared first, and are
+; not saved; everything from save_from to save_end is the game, and is
+CARD names_page, str_page, levels_page, mus_lo
+BYTE mus_hi
+CONST SAVE_LEN = 32768
+CARD sv_lo, fa, fp, fn               ; the file; a flash address, a pointer and a count for FlashPut and FlashGet
+BYTE sv_hi, fh, fv, restoring        ; fv: the pointer is VRAM's port
+BYTE ARRAY svh(4)                    ; the save's head: its state, and the stamp of this build
+BYTE ARRAY save_file = "MOTT    SAV"
+BYTE save_from
 BYTE lvl                             ; the level the hero is on
 BYTE mines_at, oracle_at             ; where the mines open and the Oracle sits, this game
 BYTE uprot                           ; a priest's protection, off the armour class
@@ -380,8 +397,8 @@ RETURN
 ; plays on; a part of the dungeon's twice through when the hero comes into
 ; it, and then the dungeon is quiet. On voice 3 a sound for what just
 ; happened, and now and then, in the quiet, the level's own noises
-CARD mus_lo, moff, mstart
-BYTE mus_hi, mon, mtime, mrep
+CARD moff, mstart
+BYTE mon, mtime, mrep
 BYTE mtune = [255]
 BYTE ARRAY mnote(3), mvol(3)
 BYTE ARRAY mpeak(3) = [11 9 6]
@@ -1275,7 +1292,6 @@ RETURN
 
 ; a name from MNAMES.DAT, into nbuf: record k, NAME_REC bytes each. One
 ; buffer, so a name is used before the next is asked for
-CARD names_page
 BYTE ARRAY nbuf(NAME_REC)
 
 FUNC BYTE POINTER NameRec(CARD k)
@@ -1288,8 +1304,6 @@ RETURN (nbuf)
 ; a #"text" string from MOTT.STR, the compiler's file of them, into sbuf:
 ; its offset from the table at the front, then the string. One buffer, as
 ; for the names
-CARD str_page
-BYTE ARRAY sbuf(81)
 BYTE ARRAY str_file = "MOTT    STR"
 
 FUNC BYTE POINTER Str(CARD n)
@@ -1303,6 +1317,16 @@ FUNC BYTE POINTER Str(CARD n)
   FlashRead(sbuf + 1, sbuf(0))
   FlashClose()
 RETURN (sbuf)
+
+; a message of MOTT.STR's: Msg(Str(n)) and MsgS(Str(n)) as one call each,
+; eight bytes a place they are said rather than thirteen
+PROC MsgD(CARD n)
+  Msg(Str(n))
+RETURN
+
+PROC MsgSD(CARD n)
+  MsgS(Str(n))
+RETURN
 
 FUNC BYTE POINTER MonName(BYTE t)
 RETURN (NameRec(NAME_MON + t))
@@ -1625,7 +1649,7 @@ RETURN (b)
 PROC Owe(CARD p)
   shdebt = shdebt + p
   mbl = 0
-  MsgS(Str(#"You owe "))
+  MsgSD(#"You owe ")
   ShkName()
   MsgC(' ')
   MsgN(p)
@@ -1650,11 +1674,11 @@ PROC Rob()
   b = Bill()
   IF ShkOk() == 0 THEN ClearUnpaid() FI
   IF b == 0 OR ShkOk() == 0 THEN RETURN FI
-  Msg(Str(#"You escaped the shop without paying!"))
+  MsgD(#"You escaped the shop without paying!")
   mbl = 0
-  MsgS(Str(#"You stole "))
+  MsgSD(#"You stole ")
   MsgN(b)
-  MsgS(Str(#" zorkmids worth of merchandise."))
+  MsgSD(#" zorkmids worth of merchandise.")
   MsgEnd()
   ClearUnpaid()
   shrob = shrob + b
@@ -2164,8 +2188,6 @@ RETURN
 ; a special level from MLEVELS.DAT: its cells, rooms and stairs, then its
 ; features -- monsters, peaceful ones, things, gold, traps, the shop, the
 ; temple, monsters at random, and Sokoban's map known from the start
-CARD levels_page
-BYTE ARRAY feat(80)
 
 PROC LoadSpecial(BYTE n)
   BYTE f, c, a, x, y, i
@@ -2233,13 +2255,17 @@ PROC ForgetView()
   nvis = 0
 RETURN
 
-PROC SaveLevel()
+PROC Park()
   CARD s
-  Rob()
   IF nvis THEN ForgetView() FI
   s = Slot(lvl)
   VWrite(s, lv, NCELL)
   VWrite(s + NCELL, rx1, &park_end - rx1)
+RETURN
+
+PROC SaveLevel()
+  Rob()
+  Park()
 RETURN
 
 PROC LoadLevel()
@@ -2540,7 +2566,7 @@ PROC LevelUp()
   upwmax += g
   upw += g
   mbl = 0
-  MsgS(Str(#"Welcome to experience level "))
+  MsgSD(#"Welcome to experience level ")
   MsgN(ulev)
   MsgC('.')
   MsgEnd()
@@ -2555,7 +2581,7 @@ PROC LoseLevel()
   BYTE g
   IF ulev <= 1 THEN RETURN FI
   mbl = 0
-  MsgS(Str(#"Goodbye level "))
+  MsgSD(#"Goodbye level ")
   MsgN(ulev)
   MsgC('.')
   MsgEnd()
@@ -2591,9 +2617,9 @@ PROC HurtHero(BYTE d, BYTE t)
   FI
   IF uamul <> 255 THEN
     IF it(uamul) == O_LIFESAVING THEN
-      Msg(Str(#"But wait... Your medallion begins to glow!"))
-      Msg(Str(#"You feel much better!"))
-      Msg(Str(#"The medallion crumbles to dust!"))
+      MsgD(#"But wait... Your medallion begins to glow!")
+      MsgD(#"You feel much better!")
+      MsgD(#"The medallion crumbles to dust!")
       known(O_LIFESAVING) = 1
       InvDel(uamul, 1)
       uhp = uhpmax
@@ -2617,7 +2643,7 @@ PROC MsgMon(BYTE i, BYTE cap)
     RETURN
   FI
   IF i == tpri AND troom <> 255 AND mtype(i) == M_PRIEST THEN
-    IF cap THEN MsgS(Str(#"The priest of ")) ELSE MsgS(Str(#"the priest of ")) FI
+    IF cap THEN MsgSD(#"The priest of ") ELSE MsgSD(#"the priest of ") FI
     MsgS(NameRec(NAME_GOD + role * 3 + talign))
     RETURN
   FI
@@ -2662,7 +2688,7 @@ PROC PetGrow(BYTE p, BYTE vl)
     mbl = 0
     MsgS("Your ")
     MsgS(MonName(t))
-    MsgS(Str(#" grows up into a "))
+    MsgSD(#" grows up into a ")
     mtype(p) = t + 1
     MsgS(MonName(t + 1))
     MsgC('.')
@@ -2689,7 +2715,7 @@ FUNC BYTE HurtMon(BYTE i, BYTE d)
   IF Peaceful(i) THEN
     urec -= 6
     IF ualign <> 2 THEN
-      Msg(Str(#"You murderer!"))
+      MsgD(#"You murderer!")
       Luck(-2)
     FI
     IF Rnd(2) THEN Luck(-1) FI
@@ -2717,18 +2743,18 @@ PROC Passive(BYTE i)
   s = m_att(o + 2)
   IF fx == E_PLYS THEN
     IF Wearing(O_RFREEACTION) THEN
-      Msg(Str(#"You momentarily stiffen."))
+      MsgD(#"You momentarily stiffen.")
     ELSEIF upara == 0 THEN
-      Msg(Str(#"You are frozen by its gaze!"))
+      MsgD(#"You are frozen by its gaze!")
       upara = Dice(mlev(i) + 1, 10)
     FI
   ELSEIF fx == E_ACID THEN
     IF Rnd(2) == 0 THEN
-      Msg(Str(#"You are splashed by acid!"))
+      MsgD(#"You are splashed by acid!")
       HurtHero(Dice(mlev(i) + 1, s), t)
     FI
   ELSEIF fx == E_STUN THEN
-    Msg(Str(#"You are stung!"))
+    MsgD(#"You are stung!")
     HurtHero(Dice(mlev(i) + 1, s), t)
   FI
 RETURN
@@ -2774,11 +2800,11 @@ PROC Verb(BYTE kind)
   ELSEIF kind == A_STNG THEN
     MsgS(" stings!")
   ELSEIF kind == A_TUCH THEN
-    MsgS(Str(#" touches you!"))
+    MsgSD(#" touches you!")
   ELSEIF kind == A_BUTT THEN
     MsgS(" butts!")
   ELSEIF kind == A_HUGS THEN
-    MsgS(Str(#" squeezes you!"))
+    MsgSD(#" squeezes you!")
   ELSEIF kind == A_KICK THEN
     MsgS(" kicks!")
   ELSE
@@ -2803,7 +2829,7 @@ PROC Steal(BYTE i, BYTE w)
   mbl = 0
   MsgMon(i, 1)
   IF n == 0 THEN
-    MsgS(Str(#" tries to rob you, but there is nothing to steal!"))
+    MsgSD(#" tries to rob you, but there is nothing to steal!")
     MsgEnd()
     mflee(i) = 255
     RETURN
@@ -2812,7 +2838,7 @@ PROC Steal(BYTE i, BYTE w)
   FOR k = 0 TO MAXINV - 1 DO
     IF Stealable(k, w) THEN
       IF n == 0 THEN
-        MsgS(Str(#" stole "))
+        MsgSD(#" stole ")
         InvName(k)
         MsgC('.')
         MsgEnd()
@@ -2835,7 +2861,7 @@ PROC MonAttack(BYTE i)
   IF upray AND ptype == 3 THEN
     mbl = 0
     MsgMon(i, 1)
-    MsgS(Str(#" starts to attack you, but pulls back."))
+    MsgSD(#" starts to attack you, but pulls back.")
     MsgEnd()
     RETURN
   FI
@@ -2858,13 +2884,13 @@ PROC MonAttack(BYTE i)
         d = Dice(n, s)
         IF fx == E_POIS AND Rnd(8) == 0 THEN
           IF Wearing(O_RPOISONRES) THEN
-            Msg(Str(#"The poison doesn't seem to affect you."))
+            MsgD(#"The poison doesn't seem to affect you.")
           ELSE
-            Msg(Str(#"It was poisoned!"))
+            MsgD(#"It was poisoned!")
             d += Roll(6)
           FI
         ELSEIF fx == E_SLEE AND Rnd(3) == 0 AND upara == 0 AND Wearing(O_RFREEACTION) == 0 THEN
-          Msg(Str(#"You are put to sleep!"))
+          MsgD(#"You are put to sleep!")
           upara = Roll(10)
         ELSEIF fx == E_DRLI AND Rnd(3) == 0 THEN
           LoseLevel()
@@ -2876,7 +2902,7 @@ PROC MonAttack(BYTE i)
           RETURN
         ELSEIF fx == E_SGLD AND ugold > 0 THEN
           ugold = ugold / 2
-          Msg(Str(#"Your purse feels lighter."))
+          MsgD(#"Your purse feels lighter.")
           MonTeleport(i)
           HurtHero(d, t)
           RETURN
@@ -2927,7 +2953,7 @@ PROC MonHitsMon(BYTE ag, BYTE df)
         IF d >= mhp(df) THEN
           IF seen THEN
             MsgMon(df, 1)
-            MsgS(Str(#" is killed!"))
+            MsgSD(#" is killed!")
             MsgEnd()
           FI
           Remove(df)
@@ -3265,7 +3291,7 @@ PROC Noises(BYTE ag)
     farn = f
     ntime = turns
     Sfx(SX_NOISES)
-    IF f THEN Msg(Str(#"You hear some noises in the distance.")) ELSE Msg(Str(#"You hear some noises.")) FI
+    IF f THEN MsgD(#"You hear some noises in the distance.") ELSE MsgD(#"You hear some noises.") FI
   FI
 RETURN
 
@@ -3274,7 +3300,7 @@ RETURN
 PROC Hear(CARD s, BYTE sx)
   Sfx(sx)
   mbl = 0
-  MsgS(Str(#"You hear "))
+  MsgSD(#"You hear ")
   MsgS(Str(s))
   MsgEnd()
 RETURN
@@ -3313,13 +3339,13 @@ PROC DoSounds()
       IF i == 2 AND lv(Idx(mx(tpri), my(tpri))) & F_VIS THEN i = Rnd(2) FI
       Sfx(SX_CHANT)
       mbl = 0
-      MsgS(Str(#"You hear "))
+      MsgSD(#"You hear ")
       IF i == 0 THEN
-        MsgS(Str(#"someone praising "))
+        MsgSD(#"someone praising ")
       ELSEIF i == 1 THEN
-        MsgS(Str(#"someone beseeching "))
+        MsgSD(#"someone beseeching ")
       ELSE
-        MsgS(Str(#"an animal carcass being offered in sacrifice."))
+        MsgSD(#"an animal carcass being offered in sacrifice.")
       FI
       IF i < 2 THEN
         GodName(talign)
@@ -3359,7 +3385,7 @@ PROC EndTurn()
     FOR f = 0 TO MAXMON - 1 DO
       IF mstat(f) AND mtype(f) == M_WIZARDOFMOTT AND msl(f) THEN
         msl(f) = 0
-        IF Dist(mx(f), my(f), px, py) > 2 THEN Msg(Str(#"You get the feeling that something is watching you.")) FI
+        IF Dist(mx(f), my(f), px, py) > 2 THEN MsgD(#"You get the feeling that something is watching you.") FI
       FI
     OD
   FI
@@ -3375,7 +3401,7 @@ PROC EndTurn()
     MonTurns()
     Status()
     FOR f = 1 TO 6 DO Tick() OD
-    IF upara == 0 THEN Msg(Str(#"You can move again.")) FI
+    IF upara == 0 THEN MsgD(#"You can move again.") FI
   OD
 RETURN
 
@@ -3391,7 +3417,7 @@ PROC EnterLevel(BYTE down)
   IF t <> theme THEN
     FOR r = VTOP TO VTOP + 25 DO ClearRow(r) OD
     IF LoadTheme(t) == 0 THEN
-      Msg(Str(#"The theme file is not on drive 9."))
+      MsgD(#"The theme file is not on drive 9.")
       RETURN
     FI
   FI
@@ -3424,7 +3450,7 @@ PROC EnterLevel(BYTE down)
   ELSEIF down == 3 THEN
     px = brx
     py = bry
-  ELSE
+  ELSEIF down == 2 THEN
     px = upx
     py = upy
     s = AnySpot()
@@ -3522,7 +3548,7 @@ RETURN
 PROC Descend()
   BYTE l, a
   IF Kind(px, py) <> K_DOWN THEN
-    Msg(Str(#"You can't go down here."))
+    MsgD(#"You can't go down here.")
     RETURN
   FI
   a = 1
@@ -3538,7 +3564,7 @@ RETURN
 PROC Ascend()
   BYTE l, a
   IF Kind(px, py) <> K_UP THEN
-    Msg(Str(#"You can't go up here."))
+    MsgD(#"You can't go up here.")
     RETURN
   FI
   a = 0
@@ -3554,14 +3580,14 @@ PROC Ascend()
       dead = 1
       RETURN
     FI
-    Msg(Str(#"The way out. You have no Amulet yet."))
+    MsgD(#"The way out. You have no Amulet yet.")
     RETURN
   FI
   ; NetHack's mysterious force: carrying the Amulet up the dungeon's stairs,
   ; one time in four, the hero sent down as many as the alignment allows --
   ; a lawful three, a chaotic one -- or about the level
   IF HasAmulet() AND lvl < MAXDEPTH - 3 AND l < lvl AND Rnd(4) == 0 THEN
-    Msg(Str(#"A mysterious force momentarily surrounds you..."))
+    MsgD(#"A mysterious force momentarily surrounds you...")
     l = lvl + Rnd(4 - ualign)
     IF l > MAXDEPTH THEN l = MAXDEPTH FI
     GoLevel(l, 2)
@@ -3607,7 +3633,7 @@ PROC Name(BYTE t, BYTE q, BYTE f, BYTE e, BYTE art)
   c = o_class(t)
   IF c == C_GOLD THEN
     MsgN(q)
-    MsgS(Str(#" gold piece"))
+    MsgSD(#" gold piece")
     IF q <> 1 THEN MsgC('s') FI
     RETURN
   FI
@@ -3688,12 +3714,12 @@ PROC Name(BYTE t, BYTE q, BYTE f, BYTE e, BYTE art)
       MsgS(" ring")
     FI
   ELSEIF t == O_LIFESAVING THEN
-    IF known(t) THEN MsgS(Str(#"amulet of life saving")) ELSE MsgS(Str(#"spherical amulet")) FI
+    IF known(t) THEN MsgSD(#"amulet of life saving") ELSE MsgSD(#"spherical amulet") FI
   ELSE
     IF t == O_FAKEMOTT AND known(t) THEN
-      MsgS(Str(#"plastic imitation Amulet"))
+      MsgSD(#"plastic imitation Amulet")
     ELSE
-      MsgS(Str(#"Amulet of Mott"))
+      MsgSD(#"Amulet of Mott")
     FI
     IF art AND q == 1 THEN MsgIns(at, "the ") FI
     RETURN
@@ -3719,16 +3745,16 @@ RETURN (0)
 ; a pack letter's name, and what is being done with it
 PROC InvName(BYTE k)
   Name(it(k), iq(k), ifl(k), ie(k), 1)
-  IF uwep == k THEN MsgS(Str(#" (wielded)")) FI
+  IF uwep == k THEN MsgSD(#" (wielded)") FI
   IF ifl(k) & OF_UNPAID THEN
     MsgS(" (unpaid, ")
     MsgN(Price(it(k), ifl(k), ie(k), 0) * iq(k))
     MsgS(" zorkmids)")
   FI
   IF uleft == k THEN
-    MsgS(Str(#" (left hand)"))
+    MsgSD(#" (left hand)")
   ELSEIF uright == k THEN
-    MsgS(Str(#" (right hand)"))
+    MsgSD(#" (right hand)")
   ELSEIF IsWorn(k) THEN
     MsgS(" (worn)")
   FI
@@ -3762,7 +3788,7 @@ PROC ShopMove(BYTE ox, BYTE oy)
     IF mstat(shk) & S_HOSTILE THEN
       MsgS("\"So, ")
       RoleWord()
-      MsgS(Str(#", you dare return to "))
+      MsgSD(#", you dare return to ")
       ShopWord()
       MsgS("?!\"")
     ELSE
@@ -3818,21 +3844,21 @@ PROC Sell(BYTE j)
   mbl = 0
   ShkName()
   IF Saleable(ot(j)) == 0 OR offer == 0 THEN
-    MsgS(Str(#" seems uninterested."))
+    MsgSD(#" seems uninterested.")
     MsgEnd()
     RETURN
   FI
   IF shgold == 0 THEN
-    MsgS(Str(#" cannot pay you at present."))
+    MsgSD(#" cannot pay you at present.")
     MsgEnd()
     RETURN
   FI
   IF offer > shgold THEN offer = shgold FI
   MsgS(" offers ")
   MsgN(offer)
-  MsgS(Str(#" gold pieces for your "))
+  MsgSD(#" gold pieces for your ")
   Name(ot(j), oq(j), 0, oe(j), 0)
-  MsgS(Str(#".  Sell it? [yn] (n)"))
+  MsgSD(#".  Sell it? [yn] (n)")
   MsgEnd()
   IF Answer() THEN
     MsgClear()
@@ -3844,7 +3870,7 @@ PROC Sell(BYTE j)
     Name(ot(j), oq(j), 0, oe(j), 1)
     MsgS(" for ")
     MsgN(offer)
-    MsgS(Str(#" gold pieces."))
+    MsgSD(#" gold pieces.")
     MsgEnd()
     Status()
   FI
@@ -3866,11 +3892,11 @@ PROC TempleMove(BYTE ox, BYTE oy)
   IF talign <> ualign OR urec <= -4 THEN
     MsgS("have a")
     IF talign == ualign THEN MsgS(" strange") FI
-    MsgS(Str(#" forbidding feeling..."))
+    MsgSD(#" forbidding feeling...")
   ELSE
     MsgS("experience ")
-    IF urec >= 20 THEN MsgS("a") ELSE MsgS(Str(#"an unusual")) FI
-    MsgS(Str(#" sense of peace."))
+    IF urec >= 20 THEN MsgS("a") ELSE MsgSD(#"an unusual") FI
+    MsgSD(#" sense of peace.")
   FI
   MsgEnd()
 RETURN
@@ -3880,7 +3906,7 @@ PROC Teleport()
   BYTE r, ox, oy
   CARD s
   IF lvl >= L_SOKO1 THEN
-    Msg(Str(#"You feel a wrenching sensation."))
+    MsgD(#"You feel a wrenching sensation.")
     RETURN
   FI
   ox = px
@@ -3909,14 +3935,14 @@ PROC LookHere()
     Sfx(SX_GOLD)
     mbl = 0
     MsgN(oq(i - 1))
-    MsgS(Str(#" gold pieces."))
+    MsgSD(#" gold pieces.")
     MsgEnd()
     TakeObj(i - 1)
     i = oat(c)
   OD
   k = EngrAt(px, py)
   IF k <> 255 THEN
-    Msg(Str(#"Something is written here in the dust."))
+    MsgD(#"Something is written here in the dust.")
     mbl = 0
     MsgS(Str(#"You read: \""))
     c = k * 17
@@ -3931,12 +3957,12 @@ PROC LookHere()
   IF n == 1 THEN
     k = oat(c) - 1
     mbl = 0
-    MsgS(Str(#"You see here "))
+    MsgSD(#"You see here ")
     Name(ot(k), oq(k), of(k), oe(k), 1)
     MsgC('.')
     MsgEnd()
   ELSEIF n > 1 THEN
-    Msg(Str(#"There are several objects here."))
+    MsgD(#"There are several objects here.")
   FI
 RETURN
 
@@ -3960,13 +3986,13 @@ PROC Search()
           IF Rnl(7) == 0 THEN
             SetKind(x, y, K_DOORC)
             Found(x, y)
-            Msg(Str(#"You find a hidden door."))
+            MsgD(#"You find a hidden door.")
           FI
         ELSEIF k == K_SCORR THEN
           IF Rnl(7) == 0 THEN
             SetKind(x, y, K_CORR)
             Found(x, y)
-            Msg(Str(#"You find a hidden passage."))
+            MsgD(#"You find a hidden passage.")
           FI
         ELSE
           i = TrapAt(x, y)
@@ -3994,13 +4020,13 @@ FUNC BYTE HitU(BYTE tlev, BYTE dam, BYTE POINTER what, BYTE kd)
   r = Roll(20)
   mbl = 0
   IF t <= r THEN
-    MsgS(Str(#"You are almost hit by "))
+    MsgSD(#"You are almost hit by ")
     MsgS(what)
     MsgC('.')
     MsgEnd()
     RETURN (0)
   FI
-  MsgS(Str(#"You are hit by "))
+  MsgSD(#"You are hit by ")
   MsgS(what)
   IF dam < 5 THEN MsgC('.') ELSE MsgC('!') FI
   MsgEnd()
@@ -4014,19 +4040,19 @@ PROC Poisoned(BYTE POINTER said, BYTE kd, BYTE kdeath, BYTE fatal, BYTE thrown)
   BYTE i
   Msg(said)
   IF Wearing(O_RPOISONRES) THEN
-    Msg(Str(#"The poison doesn't seem to affect you."))
+    MsgD(#"The poison doesn't seem to affect you.")
     RETURN
   FI
   i = Rnd(fatal + thrown * 20)
   IF i == 0 THEN
-    Msg(Str(#"The poison was deadly..."))
+    MsgD(#"The poison was deadly...")
     HurtHero(255, kdeath)
   ELSEIF i > 5 THEN
     IF thrown THEN HurtHero(Roll(6), kd) ELSE HurtHero(6 + Rnd(10), kd) FI
   ELSEIF thrown THEN
-    Msg(Str(#"You feel very sick!"))
+    MsgD(#"You feel very sick!")
   ELSE
-    Msg(Str(#"You feel weaker!"))
+    MsgD(#"You feel weaker!")
   FI
 RETURN
 
@@ -4047,7 +4073,7 @@ PROC Spring()
   f = tf(i)
   IF f & TF_SEEN AND Rnd(5) == 0 AND lvl < L_SOKO1 THEN
     mbl = 0
-    MsgS(Str(#"You escape "))
+    MsgSD(#"You escape ")
     MsgA(NameRec(NAME_TRAP + k))
     MsgC('.')
     MsgEnd()
@@ -4055,11 +4081,11 @@ PROC Spring()
   FI
   IF k <= TR_ROCK AND f & TF_ONCE AND f & TF_SEEN AND Rnd(15) == 0 THEN
     IF k == TR_ARROW THEN
-      Msg(Str(#"You hear a loud click!"))
+      MsgD(#"You hear a loud click!")
     ELSEIF k == TR_DART THEN
-      Msg(Str(#"You hear a soft click."))
+      MsgD(#"You hear a soft click.")
     ELSE
-      Msg(Str(#"A trap door in the ceiling opens, but nothing falls out!"))
+      MsgD(#"A trap door in the ceiling opens, but nothing falls out!")
     FI
     DelTrap(i)
     RETURN
@@ -4067,73 +4093,73 @@ PROC Spring()
   tf(i) = f | TF_SEEN | TF_ONCE
   Sfx(SX_TRAP)
   IF k == TR_ARROW THEN
-    Msg(Str(#"An arrow shoots out at you!"))
+    MsgD(#"An arrow shoots out at you!")
     n = HitU(8, Roll(6), "an arrow", KD_ARROW)
   ELSEIF k == TR_DART THEN
-    Msg(Str(#"A little dart shoots out at you!"))
+    MsgD(#"A little dart shoots out at you!")
     IF HitU(7, Roll(3), "a little dart", KD_DART) AND Rnd(6) == 0 AND dead == 0 THEN
       Poisoned("The dart was poisoned!", KD_DART, KD_DARTPOIS, 10, 1)
     FI
   ELSEIF k == TR_ROCK THEN
-    Msg(Str(#"A trap door in the ceiling opens and a rock falls on your head!"))
+    MsgD(#"A trap door in the ceiling opens and a rock falls on your head!")
     n = Dice(2, 6)
     IF worn(SLOT_HELM) <> 255 THEN
-      Msg(Str(#"Fortunately, you are wearing a hard helmet."))
+      MsgD(#"Fortunately, you are wearing a hard helmet.")
       n = 2
     FI
     HurtHero(n, KD_ROCK)
   ELSEIF k == TR_SQUEAKY THEN
-    Msg(Str(#"A board beneath you squeaks loudly."))
+    MsgD(#"A board beneath you squeaks loudly.")
     FOR n = 0 TO MAXMON - 1 DO msl(n) = 0 OD
   ELSEIF k == TR_BEAR THEN
-    Msg(Str(#"A bear trap closes on your foot!"))
+    MsgD(#"A bear trap closes on your foot!")
     utrap = 4 + Rnd(4)
     utraptype = TR_BEAR
     HurtHero(Dice(2, 4), KD_BEAR)
   ELSEIF k == TR_SLEEPGAS THEN
-    Msg(Str(#"A cloud of gas puts you to sleep!"))
+    MsgD(#"A cloud of gas puts you to sleep!")
     upara = Roll(25)
   ELSEIF k <= TR_SPIKEDPIT THEN
-    Msg(Str(#"You fall into a pit!"))
+    MsgD(#"You fall into a pit!")
     utrap = 2 + Rnd(6)
     utraptype = TR_PIT
     IF k == TR_PIT THEN
       HurtHero(Roll(6), KD_PIT)
     ELSE
-      Msg(Str(#"You land on a set of sharp iron spikes!"))
+      MsgD(#"You land on a set of sharp iron spikes!")
       IF Rnd(6) == 0 THEN Poisoned("The spikes were poisoned!", KD_SPIKEHP, KD_SPIKEPOIS, 8, 0) FI
       IF dead == 0 THEN HurtHero(Roll(10), KD_SPIKES) FI
     FI
   ELSEIF k == TR_TRAPDOOR THEN
-    Msg(Str(#"A trap door opens up under you!"))
+    MsgD(#"A trap door opens up under you!")
     n = Below()
     IF lvl < MAXDEPTH THEN
       WHILE Rnd(4) == 0 AND n < MAXDEPTH DO n += 1 OD
     FI
     mbl = 0
     IF n > lvl + 1 THEN
-      MsgS(Str(#"You fall down a "))
+      MsgSD(#"You fall down a ")
       IF n > lvl + 3 THEN MsgS("very ") FI
       IF n > lvl + 2 THEN MsgS("deep ") FI
       MsgS("shaft!")
     ELSE
-      MsgS(Str(#"You fall through..."))
+      MsgSD(#"You fall through...")
     FI
     MsgEnd()
     FallTo(n)
   ELSEIF k == TR_HOLE THEN
     IF lvl >= L_SOKO1 THEN
-      Msg(Str(#"Air currents pull you down into a hole!"))
+      MsgD(#"Air currents pull you down into a hole!")
     ELSE
-      Msg(Str(#"There's a gaping hole under you!"))
+      MsgD(#"There's a gaping hole under you!")
     FI
     FallTo(Below())
   ELSEIF k == TR_TELEPORT THEN
     Teleport()
   ELSEIF lvl > MAXDEPTH THEN
-    Msg(Str(#"You shudder for a moment."))
+    MsgD(#"You shudder for a moment.")
   ELSE
-    Msg(Str(#"You are momentarily blinded by a flash of light."))
+    MsgD(#"You are momentarily blinded by a flash of light.")
     DelTrap(i)
     n = Rnd(depth + 2) + 1
     IF n >= depth THEN n += 1 FI
@@ -4142,7 +4168,7 @@ PROC Spring()
       IF depth == MAXDEPTH THEN n -= Roll(3) FI
     FI
     IF n == depth THEN
-      Msg(Str(#"You shudder for a moment."))
+      MsgD(#"You shudder for a moment.")
     ELSE
       FallTo(n)
     FI
@@ -4157,27 +4183,27 @@ FUNC BYTE Push(BYTE b, BYTE d)
   x = ox(b)
   y = oy(b)
   IF d % 2 == 0 AND lvl >= L_SOKO1 THEN
-    Msg(Str(#"The boulder won't roll diagonally on this floor."))
+    MsgD(#"The boulder won't roll diagonally on this floor.")
     RETURN (0)
   FI
   tx = x + dir_dx(d)
   ty = y + dir_dy(d)
   IF tx >= LW OR ty >= LH THEN RETURN (0) FI
   IF Open(Kind(tx, ty)) == 0 OR BoulderAt(tx, ty) <> 255 OR MonAt(tx, ty) OR Diagonal(x, y, tx, ty) == 0 THEN
-    Msg(Str(#"You try to move the boulder, but in vain."))
+    MsgD(#"You try to move the boulder, but in vain.")
     RETURN (0)
   FI
-  IF turns > lastpush + 2 THEN Msg(Str(#"With great effort you move the boulder.")) FI
+  IF turns > lastpush + 2 THEN MsgD(#"With great effort you move the boulder.") FI
   lastpush = turns
   TakeObj(b)
   t = TrapAt(tx, ty)
   k = 255
   IF t <> 255 THEN k = tt(t) FI
   IF k == TR_HOLE OR k == TR_TRAPDOOR THEN
-    Msg(Str(#"The boulder falls into and plugs a hole in the floor!"))
+    MsgD(#"The boulder falls into and plugs a hole in the floor!")
     DelTrap(t)
   ELSEIF k == TR_PIT OR k == TR_SPIKEDPIT THEN
-    Msg(Str(#"The boulder fills a pit."))
+    MsgD(#"The boulder fills a pit.")
     DelTrap(t)
   ELSE
     t = PutObj(O_BOULDER, 1, 0, 0, tx, ty)
@@ -4201,7 +4227,7 @@ PROC Stride(BYTE d)
   IF nx >= LW OR ny >= LH THEN RETURN FI
   k = Kind(nx, ny)
   IF Diagonal(px, py, nx, ny) == 0 THEN
-    Msg(Str(#"You can't move diagonally through a door."))
+    MsgD(#"You can't move diagonally through a door.")
     RETURN
   FI
   m = MonAt(nx, ny)
@@ -4210,7 +4236,7 @@ PROC Stride(BYTE d)
     IF mstat(m) & S_PET == 0 THEN
       IF Peaceful(m) THEN
         mbl = 0
-        MsgS(Str(#"Really attack "))
+        MsgSD(#"Really attack ")
         MsgMon(m, 0)
         MsgS("? [yn] (n)")
         MsgEnd()
@@ -4224,7 +4250,7 @@ PROC Stride(BYTE d)
         IF m == shk AND ShkOk() THEN
           mbl = 0
           ShkName()
-          MsgS(Str(#" gets angry!"))
+          MsgSD(#" gets angry!")
           MsgEnd()
         FI
       FI
@@ -4236,18 +4262,18 @@ PROC Stride(BYTE d)
   FI
   IF utrap THEN                      ; NetHack's trapmove()
     IF utraptype == TR_BEAR THEN
-      Msg(Str(#"You are caught in a bear trap."))
+      MsgD(#"You are caught in a bear trap.")
       IF d % 2 == 0 OR Rnd(5) == 0 THEN utrap -= 1 FI
     ELSE
       utrap -= 1
-      IF utrap THEN Msg(Str(#"You are still in a pit.")) ELSE Msg(Str(#"You crawl to the edge of the pit.")) FI
+      IF utrap THEN MsgD(#"You are still in a pit.") ELSE MsgD(#"You crawl to the edge of the pit.") FI
     FI
     EndTurn()
     RETURN
   FI
   IF lvl >= L_SOKO1 AND d % 2 == 0 THEN
     IF Blocked(nx, py) AND Blocked(px, ny) THEN
-      Msg(Str(#"You cannot pass that way."))
+      MsgD(#"You cannot pass that way.")
       RETURN
     FI
   FI
@@ -4258,7 +4284,7 @@ PROC Stride(BYTE d)
   IF k == K_DOORC THEN
     SetKind(nx, ny, K_DOORO)
     Sfx(SX_DOOR)
-    Msg(Str(#"The door opens."))
+    MsgD(#"The door opens.")
     DrawCell(nx, ny)
     EndTurn()
     RETURN
@@ -4275,7 +4301,7 @@ PROC Stride(BYTE d)
     my(m) = oy
     Place(m)
     mbl = 0
-    MsgS(Str(#"You swap places with your "))
+    MsgSD(#"You swap places with your ")
     MsgS(MonName(mtype(m)))
     MsgC('.')
     MsgEnd()
@@ -4375,7 +4401,6 @@ RETURN (0)
 ; a line typed at the keyboard into lb, a length byte and the letters,
 ; up to `max`: letters by the keyboard's own map, shift for capitals, the
 ; backspace, Enter to end and Esc to give up (0)
-BYTE ARRAY lb(21)
 CONST KEY_BACK = $66
 
 FUNC BYTE GetLine(BYTE POINTER prompt, BYTE max)
@@ -4591,26 +4616,26 @@ PROC LightRoom(BYTE on)
   FI
   See()
   DrawView()
-  IF on THEN Msg(Str(#"A lit field surrounds you!")) ELSE Msg(Str(#"Darkness surrounds you.")) FI
+  IF on THEN MsgD(#"A lit field surrounds you!") ELSE MsgD(#"Darkness surrounds you.") FI
 RETURN
 
 PROC PickUp()
   BYTE i, k, f
   i = oat(Idx(px, py))
   IF i == 0 THEN
-    Msg(Str(#"There is nothing here to pick up."))
+    MsgD(#"There is nothing here to pick up.")
     RETURN
   FI
   i -= 1
   IF ot(i) == O_BOULDER THEN
-    Msg(Str(#"The boulder is too heavy to lift."))
+    MsgD(#"The boulder is too heavy to lift.")
     RETURN
   FI
   IF ot(i) == O_GOLD THEN
     ugold += oq(i)
     mbl = 0
     MsgN(oq(i))
-    MsgS(Str(#" gold pieces."))
+    MsgSD(#" gold pieces.")
     MsgEnd()
   ELSE
     f = of(i) & (255 ^ OF_NOCHG)
@@ -4627,7 +4652,7 @@ PROC PickUp()
         ELSEIF k == 1 THEN
           MsgS("honored")
         ELSEIF k == 2 THEN
-          MsgS(Str(#"most gracious"))
+          MsgSD(#"most gracious")
         ELSE
           MsgS("esteemed")
         FI
@@ -4635,7 +4660,7 @@ PROC PickUp()
       FI
       MsgS("; only ")
       MsgN(Price(ot(i), f, oe(i), 0))
-      IF oq(i) > 1 THEN MsgS(Str(#" zorkmids per ")) ELSE MsgS(Str(#" zorkmids for this ")) FI
+      IF oq(i) > 1 THEN MsgSD(#" zorkmids per ") ELSE MsgSD(#" zorkmids for this ") FI
       Name(ot(i), 1, 0, oe(i), 0)
       MsgS(".\"")
       MsgEnd()
@@ -4646,7 +4671,7 @@ PROC PickUp()
     FI
     k = InvAdd(ot(i), oq(i), f, oe(i))
     IF k == 255 THEN
-      Msg(Str(#"You have too many things to carry more."))
+      MsgD(#"You have too many things to carry more.")
       RETURN
     FI
     mbl = 0
@@ -4665,7 +4690,7 @@ PROC Welded(BYTE k)
   mbl = 0
   MsgS("Your ")
   Name(it(k), 1, 0, 0, 0)
-  MsgS(Str(#" is welded to your hand!"))
+  MsgSD(#" is welded to your hand!")
   MsgEnd()
 RETURN
 
@@ -4674,7 +4699,7 @@ PROC Drop()
   k = Menu(Str(#"What do you want to drop?"), $7F, 0)
   IF k == 255 THEN RETURN FI
   IF IsWorn(k) THEN
-    Msg(Str(#"You cannot drop something you are wearing."))
+    MsgD(#"You cannot drop something you are wearing.")
     RETURN
   FI
   IF uwep == k AND ifl(k) & OF_CURSE THEN
@@ -4683,22 +4708,22 @@ PROC Drop()
   FI
   j = PutObj(it(k), iq(k), ifl(k), ie(k), px, py)
   IF j == 255 THEN
-    Msg(Str(#"There is no room to drop anything here."))
+    MsgD(#"There is no room to drop anything here.")
     RETURN
   FI
   mbl = 0
   IF Kind(px, py) >= K_ALTAR THEN   ; NetHack's doaltarobj(): the curse shown
     IF ifl(k) & OF_BLESS THEN
-      MsgS(Str(#"There is an amber flash as "))
+      MsgSD(#"There is an amber flash as ")
     ELSEIF ifl(k) & OF_CURSE THEN
-      MsgS(Str(#"There is a black flash as "))
+      MsgSD(#"There is a black flash as ")
     FI
     Name(it(k), iq(k), ifl(k), ie(k), 1)
     IF ifl(k) & (OF_BLESS | OF_CURSE) THEN
-      MsgS(Str(#" hits the altar."))
+      MsgSD(#" hits the altar.")
     ELSE
       IF mb(0) >= 'a' THEN mb(0) = mb(0) & $DF FI
-      MsgS(Str(#" lands on the altar."))
+      MsgSD(#" lands on the altar.")
     FI
     of(j) = of(j) | OF_BKNOWN
   ELSE
@@ -4732,7 +4757,7 @@ PROC Wield()
   MsgEnd()
   IF ifl(k) & OF_CURSE THEN
     ifl(k) = ifl(k) | OF_BKNOWN
-    Msg(Str(#"It welds itself to your hand!"))
+    MsgD(#"It welds itself to your hand!")
   FI
   EndTurn()
 RETURN
@@ -4745,11 +4770,11 @@ PROC Wear()
   IF k == 255 THEN RETURN FI
   s = o_slot(it(k))
   IF worn(s) <> 255 THEN
-    Msg(Str(#"You are already wearing one of those."))
+    MsgD(#"You are already wearing one of those.")
     RETURN
   FI
   IF s == SLOT_BODY AND worn(SLOT_CLOAK) <> 255 THEN
-    Msg(Str(#"You are wearing a cloak over it."))
+    MsgD(#"You are wearing a cloak over it.")
     RETURN
   FI
   IF uwep == k THEN uwep = 255 FI
@@ -4757,7 +4782,7 @@ PROC Wear()
   ifl(k) = ifl(k) | OF_EKNOWN
   CalcAC()
   mbl = 0
-  MsgS(Str(#"You are now wearing "))
+  MsgSD(#"You are now wearing ")
   Name(it(k), 1, ifl(k), ie(k), 1)
   MsgC('.')
   MsgEnd()
@@ -4770,18 +4795,18 @@ PROC TakeOff()
   IF k == 255 THEN RETURN FI
   s = o_slot(it(k))
   IF s == SLOT_BODY AND worn(SLOT_CLOAK) <> 255 THEN
-    Msg(Str(#"You are wearing a cloak over it."))
+    MsgD(#"You are wearing a cloak over it.")
     RETURN
   FI
   IF ifl(k) & OF_CURSE THEN
     ifl(k) = ifl(k) | OF_BKNOWN
-    Msg(Str(#"You can't. It is cursed."))
+    MsgD(#"You can't. It is cursed.")
     RETURN
   FI
   worn(s) = 255
   CalcAC()
   mbl = 0
-  MsgS(Str(#"You were wearing "))
+  MsgSD(#"You were wearing ")
   Name(it(k), 1, ifl(k), ie(k), 1)
   MsgC('.')
   MsgEnd()
@@ -4798,7 +4823,7 @@ PROC PutOn()
   IF uwep == k THEN uwep = 255 FI
   IF o_class(t) == C_AMULET THEN
     IF uamul <> 255 THEN
-      Msg(Str(#"You are already wearing an amulet."))
+      MsgD(#"You are already wearing an amulet.")
       RETURN
     FI
     uamul = k
@@ -4807,7 +4832,7 @@ PROC PutOn()
   ELSEIF uright == 255 THEN
     uright = k
   ELSE
-    Msg(Str(#"You are already wearing two rings."))
+    MsgD(#"You are already wearing two rings.")
     RETURN
   FI
   IF t == O_RPROTECTION THEN
@@ -4830,7 +4855,7 @@ PROC TakeRing()
   IF k == 255 THEN RETURN FI
   IF ifl(k) & OF_CURSE THEN
     ifl(k) = ifl(k) | OF_BKNOWN
-    Msg(Str(#"It won't come off!"))
+    MsgD(#"It won't come off!")
     RETURN
   FI
   IF uleft == k THEN uleft = 255 FI
@@ -4838,7 +4863,7 @@ PROC TakeRing()
   IF uamul == k THEN uamul = 255 FI
   CalcAC()
   mbl = 0
-  MsgS(Str(#"You were wearing "))
+  MsgSD(#"You were wearing ")
   Name(it(k), 1, ifl(k), ie(k), 1)
   MsgC('.')
   MsgEnd()
@@ -4889,10 +4914,10 @@ PROC DetectMonsters()
     FI
   OD
   IF n == 0 THEN
-    Msg(Str(#"You feel threatened."))
+    MsgD(#"You feel threatened.")
     RETURN
   FI
-  Msg(Str(#"You sense the presence of monsters."))
+  MsgD(#"You sense the presence of monsters.")
   msgrow = 2
   More()
   DrawView()
@@ -4906,54 +4931,54 @@ PROC DrinkFountain()
   fate = Roll(30)
   Sfx(SX_WATER)
   IF fate < 10 THEN
-    Msg(Str(#"The cool draught refreshes you."))
+    MsgD(#"The cool draught refreshes you.")
   ELSEIF fate == 19 THEN
-    Msg(Str(#"You feel self-knowledgeable..."))
-    Msg(Str(#"The feeling subsides."))
+    MsgD(#"You feel self-knowledgeable...")
+    MsgD(#"The feeling subsides.")
   ELSEIF fate == 20 THEN
-    Msg(Str(#"The water is foul!  You gag and vomit."))
+    MsgD(#"The water is foul!  You gag and vomit.")
   ELSEIF fate == 21 THEN
-    Msg(Str(#"The water is contaminated!"))
+    MsgD(#"The water is contaminated!")
     IF Wearing(O_RPOISONRES) THEN
-      Msg(Str(#"Perhaps it is runoff from the nearby slime mold farm."))
+      MsgD(#"Perhaps it is runoff from the nearby slime mold farm.")
       HurtHero(Roll(4), KD_JUICE)
     ELSE
       HurtHero(Roll(10), KD_WATER)
     FI
   ELSEIF fate == 22 THEN
-    Msg(Str(#"An endless stream of snakes pours forth!"))
+    MsgD(#"An endless stream of snakes pours forth!")
     n = 2 + Rnd(5)
     FOR i = 1 TO n DO fate = SpawnNear(M_SNAKE) OD
   ELSEIF fate == 23 THEN
-    IF SpawnNear(M_WATERDEMON) THEN Msg(Str(#"You unleash a water demon!")) FI
+    IF SpawnNear(M_WATERDEMON) THEN MsgD(#"You unleash a water demon!") FI
   ELSEIF fate == 24 THEN
-    Msg(Str(#"This water's no good!"))
+    MsgD(#"This water's no good!")
     FOR i = 0 TO MAXINV - 1 DO
       IF it(i) <> 255 AND Rnd(5) == 0 THEN ifl(i) = (ifl(i) & (255 ^ OF_BLESS)) | OF_CURSE FI
     OD
   ELSEIF fate == 25 THEN
-    Msg(Str(#"You see an image of someone stalking you."))
-    Msg(Str(#"But it disappears."))
+    MsgD(#"You see an image of someone stalking you.")
+    MsgD(#"But it disappears.")
   ELSEIF fate == 26 THEN
     DetectMonsters()
   ELSEIF fate <= 28 THEN
     IF SpawnNear(M_WATERNYMPH) THEN
-      Msg(Str(#"You attract a water nymph!"))
+      MsgD(#"You attract a water nymph!")
     ELSE
-      Msg(Str(#"A large bubble rises to the surface and pops."))
+      MsgD(#"A large bubble rises to the surface and pops.")
     FI
   ELSEIF fate == 29 THEN
-    Msg(Str(#"This water gives you bad breath!"))
+    MsgD(#"This water gives you bad breath!")
     FOR i = 0 TO MAXMON - 1 DO
       IF mstat(i) THEN mflee(i) = 255 FI
     OD
   ELSEIF fate == 30 THEN
-    Msg(Str(#"Your thirst is quenched."))
+    MsgD(#"Your thirst is quenched.")
   ELSE
-    Msg(Str(#"This tepid water is tasteless."))
+    MsgD(#"This tepid water is tasteless.")
   FI
   IF Rnd(3) == 0 AND Kind(px, py) == K_FOUNTAIN THEN
-    Msg(Str(#"The fountain dries up!"))
+    MsgD(#"The fountain dries up!")
     SetKind(px, py, K_FLOOR)
   FI
 RETURN
@@ -4980,13 +5005,13 @@ PROC Quaff()
   InvDel(k, 1)
   IF t == O_HEALING THEN
     Know(t)
-    Msg(Str(#"You feel better."))
+    MsgD(#"You feel better.")
     h = 1
     IF s < 0 THEN h = 0 FI
     Heal(Dice(6 + 2 * s, 4), h)
   ELSEIF t == O_EXTRAHEALING THEN
     Know(t)
-    Msg(Str(#"You feel much better."))
+    MsgD(#"You feel much better.")
     h = 2
     IF s > 0 THEN h = 5 FI
     IF s < 0 THEN h = 0 FI
@@ -4995,13 +5020,13 @@ PROC Quaff()
     Know(t)
     IF s < 0 THEN
       IF Above() THEN
-        Msg(Str(#"You rise up, through the ceiling!"))
+        MsgD(#"You rise up, through the ceiling!")
         GoLevel(Above(), 2)
       ELSE
-        Msg(Str(#"You have an uneasy feeling."))
+        MsgD(#"You have an uneasy feeling.")
       FI
     ELSEIF ulev < 12 THEN
-      Msg(Str(#"You feel more experienced."))
+      MsgD(#"You feel more experienced.")
       uxp = NeedXP(ulev)
       LevelUp()
     FI
@@ -5009,11 +5034,11 @@ PROC Quaff()
     Know(t)
     h = Dice(2 + s, 6)
     IF s < 0 THEN
-      Msg(Str(#"You feel lackluster."))
+      MsgD(#"You feel lackluster.")
       IF upwmax > h THEN upwmax -= h ELSE upwmax = 0 FI
       IF upw > upwmax THEN upw = upwmax FI
     ELSE
-      Msg(Str(#"Magical energies course through your body."))
+      MsgD(#"Magical energies course through your body.")
       IF upwmax < 240 THEN upwmax += h FI
       upw = upwmax
     FI
@@ -5022,28 +5047,28 @@ PROC Quaff()
     IF Wearing(O_RFREEACTION) THEN
       Msg("You yawn.")
     ELSE
-      Msg(Str(#"You suddenly fall asleep."))
+      MsgD(#"You suddenly fall asleep.")
       upara = Roll(10 - 4 * s)
     FI
   ELSEIF t == O_SICKNESS THEN
     Know(t)
-    Msg(Str(#"Yecch! This stuff tastes like poison."))
+    MsgD(#"Yecch! This stuff tastes like poison.")
     IF Wearing(O_RPOISONRES) THEN
-      Msg(Str(#"(But in fact it was mildly stale fruit juice.)"))
+      MsgD(#"(But in fact it was mildly stale fruit juice.)")
     ELSE
       HurtSelf(Roll(10 - 5 * s))
     FI
   ELSEIF t == O_FRUITJUICE THEN
-    Msg(Str(#"This tastes like slime mold juice."))
+    MsgD(#"This tastes like slime mold juice.")
   ELSE
     Know(t)
     IF s > 0 THEN
-      Msg(Str(#"You feel full of awe."))
+      MsgD(#"You feel full of awe.")
     ELSEIF s < 0 THEN
-      Msg(Str(#"This burns!"))
+      MsgD(#"This burns!")
       HurtSelf(Roll(6))
     ELSE
-      Msg(Str(#"This tastes like water."))
+      MsgD(#"This tastes like water.")
     FI
   FI
   EndTurn()
@@ -5082,7 +5107,7 @@ PROC Read()
       FOR j = 0 TO MAXINV - 1 DO
         IF it(j) <> 255 THEN IdentifyOne(j) FI
       OD
-      Msg(Str(#"You identify everything you carry."))
+      MsgD(#"You identify everything you carry.")
     ELSE
       j = Menu(Str(#"This is an identify scroll. Identify what?"), $7F, 0)
       IF j <> 255 THEN
@@ -5097,7 +5122,7 @@ PROC Read()
     FI
   ELSEIF t == O_ENCHANTWEAPON THEN
     IF uwep == 255 THEN
-      Msg(Str(#"Your hands twitch."))
+      MsgD(#"Your hands twitch.")
     ELSE
       Know(t)
       ev = 0
@@ -5105,13 +5130,13 @@ PROC Read()
       MsgS("Your ")
       Name(it(uwep), 1, 0, 0, 0)
       IF s < 0 THEN
-        MsgS(Str(#" glows black for a moment."))
+        MsgSD(#" glows black for a moment.")
         ie(uwep) = ie(uwep) - 1
       ELSEIF Signed(ie(uwep)) > 5 AND Rnd(3) THEN
-        MsgS(Str(#" violently glows blue, then evaporates."))
+        MsgSD(#" violently glows blue, then evaporates.")
         ev = 1
       ELSE
-        MsgS(Str(#" glows blue for a moment."))
+        MsgSD(#" glows blue for a moment.")
         ie(uwep) = ie(uwep) + 1
         IF s > 0 THEN ie(uwep) = ie(uwep) + Rnd(2) FI
         ifl(uwep) = ifl(uwep) & (255 ^ OF_CURSE)
@@ -5122,7 +5147,7 @@ PROC Read()
   ELSEIF t == O_ENCHANTARMOR THEN
     j = RandomWorn()
     IF j == 255 THEN
-      Msg(Str(#"Your skin glows then fades."))
+      MsgD(#"Your skin glows then fades.")
     ELSE
       Know(t)
       ev = 0
@@ -5130,13 +5155,13 @@ PROC Read()
       MsgS("Your ")
       Name(it(j), 1, 0, 0, 0)
       IF s < 0 THEN
-        MsgS(Str(#" glows black for a moment."))
+        MsgSD(#" glows black for a moment.")
         ie(j) = ie(j) - 1
       ELSEIF Signed(ie(j)) > 3 AND Rnd(3) THEN
-        MsgS(Str(#" violently glows silver, then evaporates."))
+        MsgSD(#" violently glows silver, then evaporates.")
         ev = 1
       ELSE
-        MsgS(Str(#" glows silver for a moment."))
+        MsgSD(#" glows silver for a moment.")
         ie(j) = ie(j) + 1
         IF s > 0 THEN ie(j) = ie(j) + Rnd(2) FI
         ifl(j) = ifl(j) & (255 ^ OF_CURSE)
@@ -5147,9 +5172,9 @@ PROC Read()
     FI
   ELSEIF t == O_REMOVECURSE THEN
     IF s < 0 THEN
-      Msg(Str(#"You feel like you need some help."))
+      MsgD(#"You feel like you need some help.")
     ELSE
-      Msg(Str(#"You feel like someone is helping you."))
+      MsgD(#"You feel like someone is helping you.")
       FOR j = 0 TO MAXINV - 1 DO
         IF it(j) <> 255 THEN
           IF s > 0 OR IsWorn(j) OR uwep == j THEN ifl(j) = ifl(j) & (255 ^ OF_CURSE) FI
@@ -5159,15 +5184,15 @@ PROC Read()
   ELSEIF t == O_TELEPORT THEN
     Know(t)
     IF s < 0 AND Below() AND lvl < L_SOKO1 THEN
-      Msg(Str(#"You feel very disoriented for a moment."))
+      MsgD(#"You feel very disoriented for a moment.")
       GoLevel(Below(), 2)
     ELSE
       Teleport()
-      Msg(Str(#"You feel disoriented for a moment."))
+      MsgD(#"You feel disoriented for a moment.")
     FI
   ELSEIF t == O_MAGICMAPPING THEN
     IF s < 0 THEN
-      Msg(Str(#"Unfortunately, you can't grasp the details."))
+      MsgD(#"Unfortunately, you can't grasp the details.")
     ELSE
       Know(t)
       FOR c = 0 TO NCELL - 1 DO
@@ -5179,27 +5204,27 @@ PROC Read()
         IF j <> K_ROCK THEN lv(c) = lv(c) | F_SEEN FI
       OD
       DrawView()
-      Msg(Str(#"A map coalesces in your mind!"))
+      MsgD(#"A map coalesces in your mind!")
     FI
   ELSEIF t == O_LIGHT THEN
     Know(t)
     IF s < 0 THEN LightRoom(0) ELSE LightRoom(1) FI
   ELSE
     Know(t)
-    Msg(Str(#"The scroll erupts in a tower of flame!"))
+    MsgD(#"The scroll erupts in a tower of flame!")
     FOR j = 0 TO MAXMON - 1 DO
       IF mstat(j) THEN
         IF mstat(j) & S_PET == 0 AND Dist(mx(j), my(j), px, py) <= 1 THEN
           mbl = 0
           MsgMon(j, 1)
-          MsgS(Str(#" is burnt!"))
+          MsgSD(#" is burnt!")
           MsgEnd()
           ev = HurtMon(j, Dice(3 + s, 4))
         FI
       FI
     OD
     IF s <= 0 THEN
-      Msg(Str(#"The flames burn you."))
+      MsgD(#"The flames burn you.")
       HurtSelf(Roll(4))
     FI
   FI
@@ -5216,7 +5241,7 @@ PROC Zap()
   IF k == 255 THEN RETURN FI
   t = it(k)
   IF ie(k) == 0 THEN
-    Msg(Str(#"Nothing happens."))
+    MsgD(#"Nothing happens.")
     EndTurn()
     RETURN
   FI
@@ -5225,7 +5250,7 @@ PROC Zap()
   IF ifl(k) & OF_UNPAID AND ShkOk() THEN Owe(o_cost(t) / 5) FI
   d = 0
   IF o_slot(t) <> D_NODIR THEN
-    Msg(Str(#"In what direction?"))
+    MsgD(#"In what direction?")
     d = AskDir()
     IF d == 0 THEN RETURN FI
   FI
@@ -5241,16 +5266,16 @@ PROC Zap()
     FI
   ELSEIF d > 8 THEN
     IF t <> O_WDIGGING THEN
-      Msg(Str(#"The bugs on the floor stop moving!"))
+      MsgD(#"The bugs on the floor stop moving!")
     ELSEIF d == 10 THEN
       Know(t)
-      Msg(Str(#"You loosen a rock from the ceiling. It falls on your head!"))
+      MsgD(#"You loosen a rock from the ceiling. It falls on your head!")
       HurtSelf(Roll(6))
     ELSEIF Below() == 0 OR lvl >= L_SOKO1 THEN
-      Msg(Str(#"The floor here is too hard to dig in."))
+      MsgD(#"The floor here is too hard to dig in.")
     ELSE
       Know(t)
-      Msg(Str(#"You dig a hole through the floor. You fall through..."))
+      MsgD(#"You dig a hole through the floor. You fall through...")
       GoLevel(Below(), 2)
     FI
   ELSE
@@ -5276,11 +5301,11 @@ PROC Zap()
           Know(t)
           mbl = 0
           IF t == O_WSTRIKING THEN
-            MsgS(Str(#"The wand hits "))
+            MsgSD(#"The wand hits ")
           ELSEIF t == O_WMISSILE THEN
-            MsgS(Str(#"The magic missile hits "))
+            MsgSD(#"The magic missile hits ")
           ELSE
-            MsgS(Str(#"The sleep ray hits "))
+            MsgSD(#"The sleep ray hits ")
           FI
           MsgMon(m, 0)
           MsgC('.')
@@ -5300,10 +5325,10 @@ PROC Zap()
       See()
       DrawView()
       IF lvl >= L_SOKO1 THEN
-        Msg(Str(#"The walls here are too hard to dig in."))
+        MsgD(#"The walls here are too hard to dig in.")
       ELSE
         Know(t)
-        Msg(Str(#"You dig through the rock."))
+        MsgD(#"You dig through the rock.")
       FI
     FI
   FI
@@ -5385,7 +5410,7 @@ PROC Throw()
     Welded(k)
     RETURN
   FI
-  Msg(Str(#"In what direction?"))
+  MsgD(#"In what direction?")
   d = AskDir()
   IF d == 0 OR d > 8 THEN RETURN FI
   Fly(k, d)
@@ -5404,10 +5429,10 @@ RETURN (255)
 PROC Fire()
   BYTE k, d, n, shots
   IF FindDagger() == 255 THEN
-    Msg(Str(#"You have no daggers to fire."))
+    MsgD(#"You have no daggers to fire.")
     RETURN
   FI
-  Msg(Str(#"In what direction?"))
+  MsgD(#"In what direction?")
   d = AskDir()
   IF d == 0 OR d > 8 THEN RETURN FI
   shots = 1
@@ -5494,14 +5519,14 @@ RETURN
 PROC Cast()
   BYTE d, x, y, n, m
   IF role <> 1 THEN
-    Msg(Str(#"You don't know any spells."))
+    MsgD(#"You don't know any spells.")
     RETURN
   FI
   IF upw < 5 THEN
-    Msg(Str(#"You don't have enough energy."))
+    MsgD(#"You don't have enough energy.")
     RETURN
   FI
-  Msg(Str(#"In what direction?"))
+  MsgD(#"In what direction?")
   d = AskDir()
   IF d == 0 THEN RETURN FI
   upw -= 5
@@ -5515,7 +5540,7 @@ PROC Cast()
     m = MonAt(x, y)
     IF m THEN
       mbl = 0
-      MsgS(Str(#"The force bolt hits "))
+      MsgSD(#"The force bolt hits ")
       MsgMon(m - 1, 0)
       MsgC('.')
       MsgEnd()
@@ -5524,7 +5549,7 @@ PROC Cast()
       RETURN
     FI
   OD
-  Msg(Str(#"The force bolt fizzles."))
+  MsgD(#"The force bolt fizzles.")
   EndTurn()
 RETURN
 
@@ -5587,14 +5612,14 @@ RETURN (0)
 PROC Glows(BYTE k)
   mbl = 0
   IF k == uleft THEN
-    MsgS(Str(#"Your left ring"))
+    MsgSD(#"Your left ring")
   ELSEIF k == uright THEN
-    MsgS(Str(#"Your right ring"))
+    MsgSD(#"Your right ring")
   ELSE
     MsgS("Your ")
     Name(it(k), 1, 0, 0, 0)
   FI
-  MsgS(Str(#" softly glows amber."))
+  MsgSD(#" softly glows amber.")
   MsgEnd()
   ifl(k) = (ifl(k) & (255 ^ OF_CURSE)) | OF_BKNOWN
 RETURN
@@ -5602,7 +5627,7 @@ RETURN
 ; fix_worst_trouble()
 PROC FixTrouble(BYTE tr)
   IF tr == TROUBLE_HIT THEN
-    Msg(Str(#"You feel much better."))
+    MsgD(#"You feel much better.")
     IF uhpmax < ulev * 5 + 11 THEN uhpmax += Roll(5) FI
     IF uhpmax <= 5 THEN uhpmax = 6 FI
     uhp = uhpmax
@@ -5627,15 +5652,15 @@ RETURN (i * 100 / (t / 10))
 PROC GodVoice(BYTE g)
   BYTE v
   mbl = 0
-  MsgS(Str(#"The voice of "))
+  MsgSD(#"The voice of ")
   GodName(g)
   v = Rnd(4)
   IF v == 0 THEN
-    MsgS(Str(#" booms out:"))
+    MsgSD(#" booms out:")
   ELSEIF v == 1 THEN
-    MsgS(Str(#" thunders:"))
+    MsgSD(#" thunders:")
   ELSEIF v == 2 THEN
-    MsgS(Str(#" rings out:"))
+    MsgSD(#" rings out:")
   ELSE
     MsgS(" booms:")
   FI
@@ -5644,9 +5669,9 @@ RETURN
 
 PROC Displeased(BYTE g)
   mbl = 0
-  MsgS(Str(#"You feel that "))
+  MsgSD(#"You feel that ")
   GodName(g)
-  MsgS(Str(#" is displeased."))
+  MsgSD(#" is displeased.")
   MsgEnd()
 RETURN
 
@@ -5690,7 +5715,7 @@ PROC AngryGods(BYTE g)
   ELSEIF r < 7 THEN
     GodVoice(g)
     Msg(Str(#"\"Thou hast angered me.\""))
-    Msg(Str(#"A black glow surrounds you."))
+    MsgD(#"A black glow surrounds you.")
     CurseSome()
   ELSEIF r < 9 THEN
     GodVoice(g)
@@ -5704,8 +5729,8 @@ PROC AngryGods(BYTE g)
   ELSE
     GodVoice(g)
     Msg(Str(#"\"Thou hast angered me.\""))
-    Msg(Str(#"Suddenly, a bolt of lightning strikes you!"))
-    Msg(Str(#"You fry to a crisp."))
+    MsgD(#"Suddenly, a bolt of lightning strikes you!")
+    MsgD(#"You fry to a crisp.")
     killgod = g
     HurtHero(255, KD_WRATH)
   FI
@@ -5728,14 +5753,14 @@ PROC Pleased(BYTE g, BYTE ptrouble)
   tr = Trouble()
   pat = 0
   mbl = 0
-  MsgS(Str(#"You feel that "))
+  MsgSD(#"You feel that ")
   GodName(g)
   IF urec >= 14 THEN
-    MsgS(Str(#" is well-pleased."))
+    MsgSD(#" is well-pleased.")
   ELSEIF urec >= 4 THEN
-    MsgS(Str(#" is pleased."))
+    MsgSD(#" is pleased.")
   ELSE
-    MsgS(Str(#" is satisfied."))
+    MsgSD(#" is satisfied.")
   FI
   MsgEnd()
   IF OnAltar() <> 255 AND g <> ualign THEN
@@ -5787,17 +5812,17 @@ PROC Pleased(BYTE g, BYTE ptrouble)
         mbl = 0
         MsgS("Your ")
         Name(it(uwep), 1, 0, 0, 0)
-        MsgS(Str(#" softly glows with a light blue aura."))
+        MsgSD(#" softly glows with a light blue aura.")
         MsgEnd()
         ifl(uwep) = ifl(uwep) | OF_BLESS | OF_BKNOWN
       FI
     ELSEIF n == 2 THEN
-      Msg(Str(#"You are surrounded by a golden glow."))
+      MsgD(#"You are surrounded by a golden glow.")
       IF uhpmax < 245 THEN uhpmax += 5 FI
       uhp = uhpmax
       IF uluck < 0 THEN uluck = 0 FI
     ELSEIF n == 4 THEN
-      Msg(Str(#"You are surrounded by a light blue aura."))
+      MsgD(#"You are surrounded by a light blue aura.")
       FOR k = 0 TO MAXINV - 1 DO
         IF CursedIn(k) AND it(k) <> 255 THEN Glows(k) FI
       OD
@@ -5821,7 +5846,7 @@ PROC Pray()
   IF g == 255 THEN g = ualign FI
   tr = Trouble()
   mbl = 0
-  MsgS(Str(#"You begin praying to "))
+  MsgSD(#"You begin praying to ")
   GodName(g)
   MsgC('.')
   MsgEnd()
@@ -5841,7 +5866,7 @@ PROC Pray()
     ptype = 2
   ELSE
     ptype = 3
-    Msg(Str(#"You are surrounded by a shimmering light."))
+    MsgD(#"You are surrounded by a shimmering light.")
   FI
   upray = 3
   WHILE upray AND dead == 0 DO
@@ -5850,7 +5875,7 @@ PROC Pray()
   OD
   IF dead THEN RETURN FI
   Sfx(SX_PRAY)
-  Msg(Str(#"You finish your prayer."))
+  MsgD(#"You finish your prayer.")
   IF ptype == 0 THEN
     ublesscnt += Rnz(250)
     Luck(-3)
@@ -5870,18 +5895,18 @@ PROC Engrave()
   CARD at
   k = Kind(px, py)
   IF k >= K_ALTAR THEN
-    Msg(Str(#"You make a motion towards the altar with your fingers."))
+    MsgD(#"You make a motion towards the altar with your fingers.")
     RETURN
   FI
   IF k <> K_FLOOR AND k <> K_CORR AND k <> K_DOORWAY THEN
-    Msg(Str(#"You can't write on the floor here."))
+    MsgD(#"You can't write on the floor here.")
     RETURN
   FI
-  Msg(Str(#"You write in the dust with your fingertip."))
+  MsgD(#"You write in the dust with your fingertip.")
   e = EngrAt(px, py)
   IF e <> 255 THEN
     IF YesNo(Str(#"Do you want to add to the current engraving? [yn]")) == 0 THEN
-      Msg(Str(#"You wipe out the message that was written in the dust here."))
+      MsgD(#"You wipe out the message that was written in the dust here.")
       ex(e) = 255
       e = 255
     FI
@@ -5909,7 +5934,7 @@ PROC Engrave()
     FOR i = 0 TO MAXMON - 1 DO
       IF mstat(i) AND mtype(i) == M_PLATINO THEN n = 1 FI
     OD
-    IF n <> 1 AND SpawnNear(M_PLATINO) THEN Msg(Str(#"Platino pops up beside you!")) FI
+    IF n <> 1 AND SpawnNear(M_PLATINO) THEN MsgD(#"Platino pops up beside you!") FI
   FI
   EndTurn()
 RETURN
@@ -5923,9 +5948,9 @@ PROC Intervene()
   BYTE r, i
   r = Rnd(6)
   IF r < 2 THEN
-    Msg(Str(#"You feel vaguely nervous."))
+    MsgD(#"You feel vaguely nervous.")
   ELSEIF r == 2 THEN
-    Msg(Str(#"You notice a black glow surrounding you."))
+    MsgD(#"You notice a black glow surrounding you.")
     CurseSome()
   ELSEIF r == 3 THEN
     FOR i = 0 TO MAXMON - 1 DO msl(i) = 0 OD
@@ -5936,7 +5961,7 @@ PROC Intervene()
       IF mstat(i) AND mtype(i) == M_WIZARDOFMOTT THEN RETURN FI
     OD
     IF SpawnNear(M_WIZARDOFMOTT) THEN
-      Msg(Str(#"A voice booms out..."))
+      MsgD(#"A voice booms out...")
       Msg(Str(#"\"So thou thought thou couldst elude me, fool.\""))
     FI
   FI
@@ -5963,9 +5988,9 @@ PROC Die()
   BYTE POINTER n, q
   IF won THEN MusicStart(TU_VICTORY) ELSE MusicStart(TU_DEATH) FI
   IF won THEN
-    Msg(Str(#"You climb out into the sunlight, the Amulet of Mott in your hands!"))
+    MsgD(#"You climb out into the sunlight, the Amulet of Mott in your hands!")
   ELSE
-    Msg(Str(#"You die..."))
+    MsgD(#"You die...")
   FI
   More()
   phase = 2
@@ -5973,10 +5998,10 @@ PROC Die()
   mbl = 0
   IF won THEN
     Pic(19, 5, role << 2, 32)
-    MsgS(Str(#"INTO THE SUN"))
+    MsgSD(#"INTO THE SUN")
   ELSE
     Pic(19, 5, T_GRAVE, B_VIEW)
-    MsgS(Str(#"REST IN PEACE"))
+    MsgSD(#"REST IN PEACE")
   FI
   Centre(9, B_WHITE)
   IF role == 0 THEN
@@ -5988,7 +6013,7 @@ PROC Die()
   FI
   Centre(11, B_YELLOW)
   IF won THEN
-    MsgS(Str(#"escaped with the Amulet of Mott"))
+    MsgSD(#"escaped with the Amulet of Mott")
     Centre(13, B_WHITE)
   ELSEIF killer >= KD_FIRST THEN
     MsgS(NameRec(NAME_DEATH + killer - KD_FIRST))
@@ -5997,7 +6022,7 @@ PROC Die()
       MsgS(NameRec(NAME_GOD + killgod))
     FI
   ELSE
-    MsgS(Str(#"killed by "))
+    MsgSD(#"killed by ")
     IF killer == M_ORACLE OR killer == M_WIZARDOFMOTT THEN
       MsgS("the ")
       MsgS(MonName(killer))
@@ -6007,11 +6032,11 @@ PROC Die()
   FI
   IF won == 0 THEN
     Centre(13, B_WHITE)
-    MsgS(Str(#"on dungeon level "))
+    MsgSD(#"on dungeon level ")
     MsgN(depth)
     Centre(14, B_WHITE)
   FI
-  MsgS(Str(#"at experience level "))
+  MsgSD(#"at experience level ")
   MsgN(ulev)
   Centre(16, B_GREY)
   MsgS("after ")
@@ -6020,7 +6045,7 @@ PROC Die()
   Centre(17, B_GREY)
   MsgS("with ")
   MsgN(ugold)
-  MsgS(Str(#" pieces of gold"))
+  MsgSD(#" pieces of gold")
   Centre(18, B_GREY)
   Text(9, 24, Str(#"Enter: back to the title"), B_GREY)
   k = KeyHit(KEY_ENTER)
@@ -6084,19 +6109,19 @@ RETURN (v)
 PROC Consult()
   CARD cost, pay
   IF ugold == 0 THEN
-    Msg(Str(#"You have no money."))
+    MsgD(#"You have no money.")
     RETURN
   FI
   IF YesNo(Str(#"\"Wilt thou settle for a minor consultation?\" (50 zorkmids) [yn]")) THEN
     IF ugold < 50 THEN
-      Msg(Str(#"You don't even have enough money for that!"))
+      MsgD(#"You don't even have enough money for that!")
       RETURN
     FI
     ugold -= 50
     mbl = 0
-    MsgS(Str(#"True to her word, the Oracle "))
+    MsgSD(#"True to her word, the Oracle ")
     pay = Rnd(4)
-    IF pay == 0 THEN MsgS(Str(#"offhandedly ")) ELSEIF pay == 1 THEN MsgS("casually ") FI
+    IF pay == 0 THEN MsgSD(#"offhandedly ") ELSEIF pay == 1 THEN MsgS("casually ") FI
     MsgS("says:")
     MsgEnd()
     mbl = 0
@@ -6143,19 +6168,19 @@ PROC PriestTalk()
   MsgMon(tpri, 1)
   IF ugold == 0 THEN
     IF talign == ualign AND urec >= 0 THEN
-      MsgS(Str(#" preaches the virtues of poverty."))
+      MsgSD(#" preaches the virtues of poverty.")
     ELSE
-      MsgS(Str(#" is not interested."))
+      MsgSD(#" is not interested.")
     FI
     MsgEnd()
     RETURN
   FI
-  MsgS(Str(#" asks you for a contribution for the temple."))
+  MsgSD(#" asks you for a contribution for the temple.")
   MsgEnd()
   More()
   offer = AskNumber(Str(#"How much will you offer?"))
   IF offer == 0 THEN
-    Msg(Str(#"You refuse."))
+    MsgD(#"You refuse.")
     Msg(Str(#"\"Thou shalt regret thine action!\""))
     IF talign == ualign THEN urec -= 1 FI
     RETURN
@@ -6167,7 +6192,7 @@ PROC PriestTalk()
   MsgMon(tpri, 0)
   MsgC(' ')
   MsgN(offer)
-  MsgS(Str(#" gold pieces."))
+  MsgSD(#" gold pieces.")
   MsgEnd()
   lim = ulev
   lim = lim * 200
@@ -6198,13 +6223,13 @@ RETURN
 ; bill, and the rest take no notice
 PROC Chat()
   BYTE d, m
-  Msg(Str(#"Talk to whom? (in what direction)"))
+  MsgD(#"Talk to whom? (in what direction)")
   d = AskDir()
   IF d == 0 OR d > 8 THEN RETURN FI
   MsgClear()
   m = MonAt(px + dir_dx(d), py + dir_dy(d))
   IF m == 0 THEN
-    Msg(Str(#"There is nobody there to talk to."))
+    MsgD(#"There is nobody there to talk to.")
     RETURN
   FI
   m -= 1
@@ -6216,18 +6241,18 @@ PROC Chat()
   ELSEIF m == shk AND ShkOk() THEN
     ShkName()
     IF mstat(m) & S_HOSTILE THEN
-      MsgS(Str(#" mentions how much he dislikes non-paying customers."))
+      MsgSD(#" mentions how much he dislikes non-paying customers.")
     ELSEIF Bill() THEN
-      MsgS(Str(#" says that your bill comes to "))
+      MsgSD(#" says that your bill comes to ")
       MsgN(Bill())
       MsgS(" zorkmids.")
     ELSE
-      MsgS(Str(#" says that business is good."))
+      MsgSD(#" says that business is good.")
     FI
     MsgEnd()
   ELSE
     MsgMon(m, 1)
-    MsgS(Str(#" seems not to notice you."))
+    MsgSD(#" seems not to notice you.")
     MsgEnd()
   FI
   Status()
@@ -6244,7 +6269,7 @@ PROC Extended()
   ELSE
     mbl = 0
     MsgS(lb)
-    MsgS(Str(#": unknown extended command."))
+    MsgSD(#": unknown extended command.")
     MsgEnd()
   FI
 RETURN
@@ -6255,50 +6280,50 @@ PROC Pay()
   BYTE k
   CARD c
   IF ShkOk() == 0 OR InShop(px, py) == 0 THEN
-    Msg(Str(#"There appears to be no shopkeeper here to receive your payment."))
+    MsgD(#"There appears to be no shopkeeper here to receive your payment.")
     RETURN
   FI
   mbl = 0
   IF mstat(shk) & S_HOSTILE THEN
     IF shrob THEN
       IF ugold < shrob / 2 THEN
-        MsgS(Str(#"Unfortunately, "))
+        MsgSD(#"Unfortunately, ")
         ShkName()
-        MsgS(Str(#" doesn't look satisfied."))
+        MsgSD(#" doesn't look satisfied.")
       ELSE
         c = shrob
         IF ugold < c THEN c = ugold FI
         ugold = ugold - c
         shgold = shgold + c
-        MsgS(Str(#"You compensate "))
+        MsgSD(#"You compensate ")
         ShkName()
-        MsgS(Str(#" for the losses, and are forgiven."))
+        MsgSD(#" for the losses, and are forgiven.")
         shrob = 0
         mstat(shk) = mstat(shk) & (255 ^ S_HOSTILE)
       FI
     ELSE
       ShkName()
-      MsgS(Str(#" is after blood, not money!"))
+      MsgSD(#" is after blood, not money!")
       MsgEnd()
       IF ugold < 1000 THEN
-        MsgS(Str(#"Besides, you don't have enough to interest "))
+        MsgSD(#"Besides, you don't have enough to interest ")
         ShkName()
         MsgC('.')
       ELSE
         ugold = ugold - 1000
         shgold = shgold + 1000
-        MsgS(Str(#"You try to appease "))
+        MsgSD(#"You try to appease ")
         ShkName()
-        MsgS(Str(#" by giving 1000 gold pieces."))
+        MsgSD(#" by giving 1000 gold pieces.")
         MsgEnd()
         IF Rnd(3) THEN
           ShkName()
-          MsgS(Str(#" calms down."))
+          MsgSD(#" calms down.")
           mstat(shk) = mstat(shk) & (255 ^ S_HOSTILE)
         ELSE
           MsgS("But ")
           ShkName()
-          MsgS(Str(#" is as angry as ever."))
+          MsgSD(#" is as angry as ever.")
         FI
       FI
     FI
@@ -6307,7 +6332,7 @@ PROC Pay()
     RETURN
   FI
   IF Bill() == 0 THEN
-    MsgS(Str(#"You do not owe "))
+    MsgSD(#"You do not owe ")
     ShkName()
     MsgS(" anything.")
     MsgEnd()
@@ -6315,14 +6340,14 @@ PROC Pay()
   FI
   IF shdebt THEN
     IF ugold < shdebt THEN
-      Msg(Str(#"You don't have gold enough to pay what you owe."))
+      MsgD(#"You don't have gold enough to pay what you owe.")
       RETURN
     FI
     ugold = ugold - shdebt
     shgold = shgold + shdebt
     MsgS("You pay ")
     MsgN(shdebt)
-    MsgS(Str(#" gold pieces for what you used."))
+    MsgSD(#" gold pieces for what you used.")
     MsgEnd()
     shdebt = 0
   FI
@@ -6331,7 +6356,7 @@ PROC Pay()
       c = Price(it(k), ifl(k), ie(k), 0) * iq(k)
       mbl = 0
       IF ugold < c THEN
-        MsgS(Str(#"You don't have gold enough to pay for "))
+        MsgSD(#"You don't have gold enough to pay for ")
         Name(it(k), iq(k), ifl(k), ie(k), 1)
         MsgC('.')
         MsgEnd()
@@ -6345,7 +6370,7 @@ PROC Pay()
       Name(it(k), iq(k), ifl(k), ie(k), 1)
       MsgS(" for ")
       MsgN(c)
-      MsgS(Str(#" gold pieces."))
+      MsgSD(#" gold pieces.")
       MsgEnd()
     FI
   OD
@@ -6363,9 +6388,227 @@ FUNC BYTE Quit()
   MsgClear()
 RETURN (0)
 
+; ------------------------------------------------------------ saving
+; MOTT.SAV: 32 KB on drive 9, starting on a sector, erased and written
+; again in place. A state byte, then the length of the run saved and a
+; byte of where it ends -- the stamp of the build that wrote it -- then
+; the run from save_from to save_end, then the VRAM slot of every level
+; made. Every byte is kept inverted, so the zeros most of a level is are
+; erased flash and never programmed, a request a byte on the board. The
+; state is written last, 1, and cleared to 0 when the game is played on
+; from it: NetHack's rule, a save gone once it is restored
+PROC FlashPut()                      ; fn bytes from fp, or VRAM's port, to fh:fa
+  ASM
+        LDW  Y,[v_fp]
+        LDW  X,[v_fa]
+        LD   R2,[v_fn]
+        LD   R3,[v_fn+1]
+.l:     MOV  R0,R2
+        OR   R0,R3
+        BEQ  .x
+        LD   R0,[v_fv]
+        TST  R0
+        BEQ  .m
+        LD   R0,[v_VRAM_DATA]
+        BRA  .c
+.m:     LD   R0,[Y]
+        INCW Y
+.c:     NOT  R0
+        CMP  R0,#$FF
+        BEQ  .s
+        MOV  R1,XL
+        ST   [v_FLS_ADDR_L],R1
+        MOV  R1,XH
+        ST   [v_FLS_ADDR_M],R1
+        LD   R1,[v_fh]
+        ST   [v_FLS_ADDR_H],R1
+        ST   [v_FLS_WDATA],R0
+        MOV  R1,#1
+        ST   [v_FLS_WCTRL],R1
+.w:     LD   R1,[v_FLS_WCTRL]
+        BTST R1,#$01
+        BNE  .w
+.s:     INCW X
+        BNE  .d
+        LD   R1,[v_fh]
+        ADD  R1,#1
+        ST   [v_fh],R1
+.d:     SUB  R2,#1
+        BCS  .l
+        SUB  R3,#1
+        BRA  .l
+.x:     STW  [v_fa],X
+  ENDASM
+RETURN
+
+PROC FlashGet()                      ; fn bytes of the open stream, inverted back, to fp or VRAM's port
+  ASM
+        LDW  Y,[v_fp]
+        LDW  X,[v_fn]
+.l:     LD   R0,[v_FLS_DATA]
+        NOT  R0
+        LD   R1,[v_fv]
+        TST  R1
+        BEQ  .m
+        ST   [v_VRAM_DATA],R0
+        BRA  .d
+.m:     ST   [Y],R0
+        INCW Y
+.d:     DECW X
+        BNE  .l
+  ENDASM
+RETURN
+
+; the file, on a sector and big enough, or 0
+FUNC BYTE SaveFile()
+  IF DiskFind(MDRIVE, save_file) == 0 THEN RETURN (0) FI
+  IF disk_page & 15 OR disk_len < SAVE_LEN THEN RETURN (0) FI
+  sv_lo = disk_page & 255
+  sv_lo = sv_lo << 8
+  sv_hi = $10 + MDRIVE * 7 + (disk_page >> 8)
+  fh = sv_hi
+RETURN (1)
+
+PROC Stamp()
+  CARD n
+  n = &save_end - &save_from
+  svh(1) = n
+  svh(2) = n >> 8
+  svh(3) = &save_end
+RETURN
+
+; a save this build wrote and nobody has played on from
+FUNC BYTE SaveOk()
+  BYTE s, a, b, c
+  IF SaveFile() == 0 THEN RETURN (0) FI
+  FlashOpen(sv_lo, sv_hi)
+  fp = svh
+  fn = 4
+  fv = 0
+  FlashGet()
+  FlashClose()
+  s = svh(0)
+  a = svh(1)
+  b = svh(2)
+  c = svh(3)
+  Stamp()
+  IF s == 1 AND a == svh(1) AND b == svh(2) AND c == svh(3) THEN RETURN (1) FI
+RETURN (0)
+
+; S: NetHack's dosave(), asked first; the level parked, the file erased and
+; written, and back to the title
+FUNC BYTE SaveGame()
+  BYTE k, n, l
+  CARD a
+  IF YesNo(Str(#"Really save? [yn] (n)")) == 0 THEN
+    MsgClear()
+    RETURN (0)
+  FI
+  MsgClear()
+  IF SaveFile() == 0 THEN
+    MsgD(#"There is no save file on drive 9.")
+    RETURN (0)
+  FI
+  FlashClose()
+  MusicOff()
+  Park()
+  MsgD(#"Saving...")
+  FOR k = 0 TO 7 DO
+    a = k
+    a = sv_lo + (a << 12)
+    FLS_ADDR_L = 0
+    FLS_ADDR_M = a >> 8
+    l = sv_hi
+    IF a < sv_lo THEN l += 1 FI
+    FLS_ADDR_H = l
+    FLS_WCTRL = 2
+    WHILE FLS_WCTRL & 1 DO OD
+  OD
+  Stamp()
+  fa = sv_lo + 1
+  fp = svh + 1
+  fn = 3
+  fv = 0
+  FlashPut()
+  fp = &save_from
+  fn = &save_end - &save_from
+  FlashPut()
+  n = 0
+  FOR l = 1 TO NLEVEL DO n += made(l) OD
+  k = 0
+  FOR l = 1 TO NLEVEL DO
+    IF made(l) THEN
+      k += 1
+      mbl = 0
+      msgrow = 0
+      MsgSD(#"Saving... level ")
+      MsgN(k)
+      MsgSD(#" of ")
+      MsgN(n)
+      MsgEnd()
+      VRAM_ADDR = Slot(l)
+      VRAM_STEP = 1
+      fv = 1
+      fn = NCELL + (&park_end - rx1)
+      FlashPut()
+    FI
+  OD
+  fa = sv_lo
+  fh = sv_hi
+  fp = svh
+  svh(0) = 1
+  fn = 1
+  fv = 0
+  FlashPut()
+  MsgD(#"Be seeing you...")
+  More()
+RETURN (1)
+
+; the title's C: the run and the levels read back, the save used, and the
+; level the hero stood on entered where the hero stood
+PROC LoadGame()
+  BYTE l
+  FlashOpen(sv_lo + 4, sv_hi)
+  fp = &save_from
+  fn = &save_end - &save_from
+  fv = 0
+  FlashGet()
+  FOR l = 1 TO NLEVEL DO
+    IF made(l) THEN
+      VRAM_ADDR = Slot(l)
+      VRAM_STEP = 1
+      fv = 1
+      fn = NCELL + (&park_end - rx1)
+      FlashGet()
+    FI
+  OD
+  FlashClose()
+  fa = sv_lo
+  fh = sv_hi
+  fp = svh
+  svh(0) = 255
+  fn = 1
+  fv = 0
+  FlashPut()
+  phase = 1
+  esc = 0
+  theme = 255
+  mtune = 255
+  MsgClear()
+  EnterLevel(4)
+  mbl = 0
+  MsgSD(#"Hello ")
+  RoleWord()
+  MsgSD(#", welcome back to MOTT!")
+  MsgEnd()
+RETURN
+
 PROC Play()
   BYTE d, i
   ClearScreen()
+  IF restoring THEN
+    LoadGame()
+  ELSE
   FOR i = 0 TO NLEVEL DO made(i) = 0 OD
   rseed = (TMR_L * 256 + TMR_M) | 1
   depth = 1
@@ -6409,7 +6652,8 @@ PROC Play()
     IF i <> 255 THEN mstat(i) = S_LIVE | S_PET FI
     DrawCell(px + dir_dx(d), py + dir_dy(d))
   FI
-  Msg(Str(#"Welcome to the Dungeons of Mott!"))
+  MsgD(#"Welcome to the Dungeons of Mott!")
+  FI
   DO
     Tick()
     loops += 1
@@ -6444,8 +6688,12 @@ PROC Play()
     FI
     IF KeyHit(KEY_S) OR KeyHit(KP5) THEN
       MsgClear()
-      Search()
-      EndTurn()
+      IF Shifted() THEN
+        IF SaveGame() THEN RETURN FI
+      ELSE
+        Search()
+        EndTurn()
+      FI
     FI
     IF KeyHit(KEY_Z) THEN
       MsgClear()
@@ -6507,7 +6755,7 @@ PROC Play()
     IF wantport AND dead == 0 THEN
       wantport = 0
       MsgClear()
-      Msg(Str(#"You feel a wrenching sensation."))
+      MsgD(#"You feel a wrenching sensation.")
       Teleport()
     FI
     IF KeyHit(KEY_ENTER) THEN
@@ -6534,9 +6782,10 @@ PROC TitleRoles(BYTE sel)
 RETURN
 
 PROC Title()
-  BYTE go, d
+  BYTE go, d, cont
   phase = 0
   esc = 0
+  restoring = 0
   ClearScreen()
   go = 1
   IF theme <> 0 THEN go = LoadTheme(0) FI
@@ -6564,7 +6813,10 @@ PROC Title()
   Text(1, 6, Str(#"down. Fetch it, and climb back to the"), B_GREY)
   Text(1, 7, "sun.", B_GREY)
   Text(5, 20, Str(#"up, down: choose   Enter: begin"), B_GREY)
+  cont = SaveOk()
+  IF cont THEN Text(6, 22, Str(#"C: continue your saved game"), B_YELLOW) FI
   TitleRoles(role)
+  go = KeyHit(KEY_C)
   go = KeyHit(KEY_ENTER)
   go = KeyHit(KEY_SPACE)
   go = 0
@@ -6585,8 +6837,14 @@ PROC Title()
       TitleRoles(role)
     FI
     IF KeyHit(KEY_ENTER) OR KeyHit(KEY_SPACE) THEN go = 1 FI
+    IF cont AND KeyHit(KEY_C) THEN
+      restoring = 1
+      go = 1
+    FI
   UNTIL go OD
 RETURN
+
+BYTE save_end                        ; the end of what a save holds: every global is above it
 
 PROC Main()
   Graphics(2)

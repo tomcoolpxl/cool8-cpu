@@ -1666,7 +1666,9 @@ costs nothing until the space is asked for back.
 `icesprog -w disk.img` writes a whole 8 MB image to the board;
 [`tools/cool8disk.py`](../tools/cool8disk.py) builds and reads one on
 the PC — `format`, `add`, `get`, `del`, `dir`, `compact`, one volume at
-a time. `tools/cool8run.py --flash disk.img` hands the same image to
+a time -- and, from Python, `Volume.reserve(name, size)`: a file of erased
+bytes starting on a 4 KB sector, which a program can erase and write
+again in place without touching a neighbour (MOTT's saved game, D112). `tools/cool8run.py --flash disk.img` hands the same image to
 the emulated machine, so a disk prepared on the PC is tested without a
 board. What the tool does not yet have is volume-to-volume copy or
 import/export of a single 448 KB volume image; both are additive if

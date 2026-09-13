@@ -1,7 +1,8 @@
 # MOTT's theme files, which tools/mkdemos.py puts on its drive beside the
 # program: four pattern banks each, streamed into VRAM on the stairs; and
 # the names of the creatures and things, a record each.
-# One path a line, relative to the repository root.
+# One path a line, relative to the repository root; `reserve NAME size`
+# is an erased file on a sector for the program to write -- its saved game.
 assets/mott/MTHEME0.DAT
 assets/mott/MTHEME1.DAT
 assets/mott/MTHEME2.DAT
@@ -9,3 +10,4 @@ assets/mott/MNAMES.DAT
 assets/mott/MPAGES.DAT
 assets/mott/MLEVELS.DAT
 assets/mott/MMUSIC.DAT
+reserve MOTT.SAV 32768

@@ -347,6 +347,21 @@ which memory byte, if any, it is known to equal -- and:
   set. The first version dropped that one too and every `WHILE n > 0`
   ran zero times.
 
+**A second pass, `shorten()`**, runs over what the first leaves and
+does three shapes the generator emits all over a program in fewer bytes:
+
+| was | is now | bytes |
+|---|---|---|
+| a word constant passed: `MOV R0,#lo / MOV R1,#hi / PUSH R1 / PUSH R0` | `LDW X,#w / PUSHW X` -- `PUSHW` puts the high byte first too -- when R0 and R1 are not read again before the `CALL` | 5 or 6 → 4 |
+| an element at a constant index: `MOV R0,#k / LDW Y,#arr / LD R0,[Y+R0]` | `LD R0,[arr+k]`, the same byte and the same flags | 8 → 3 |
+| `CMP Rd,#0` before a `BEQ`/`BNE` | `TST Rd` -- not before a branch into a word compare's join, whose carry is still read | 2 → 1 |
+
+`X` is only ever `MUL`'s product and `Y` the address a load or store is
+about to use, neither live across a sub-expression, which is what lets
+the first two take them. MOTT 59,426 bytes to 58,895, 646 constants
+pushed and 98 compares; `test_calls` holds all three shapes to the
+listing and their answers to the machine.
+
 The facts are forgotten wherever they stop being true: at every label
 (except a `Join`, a label the generator vouches every path into holds
 the same registers -- the `.cm` of a word compare), at every `CALL`, on

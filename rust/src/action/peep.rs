@@ -208,3 +208,140 @@ pub fn optimise(lines: &[(LineKind, String)]) -> Vec<(LineKind, String)> {
     }
     out
 }
+
+/// The identifiers and registers in an operand: `[Y+R0]` is `Y` and `R0`.
+fn tokens(op: &str) -> Vec<&str> {
+    op.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+        .filter(|t| !t.is_empty())
+        .collect()
+}
+
+/// Whether nothing reads `regs` again before a `CALL` overwrites them: a
+/// label, a branch, a return or a raw line first is a no, since the
+/// value may be wanted on the other side of it.
+fn unread(lines: &[(LineKind, String)], from: usize, regs: &[&str]) -> bool {
+    let mut live: Vec<&str> = regs.to_vec();
+    for (kind, text) in lines.iter().skip(from).take(16) {
+        if *kind != LineKind::Code {
+            return false;
+        }
+        let (mn, ops) = split(text);
+        if mn == "CALL" {
+            return true;
+        }
+        if mn.starts_with('B') && mn != "BTST" || mn == "JMP" || mn == "RET" || mn == "RETI" {
+            return false;
+        }
+        let writes_first = matches!(mn.as_str(), "MOV" | "LD" | "CLR" | "POP");
+        for (k, op) in ops.iter().enumerate() {
+            if k == 0 && writes_first && reg_index(op).is_some() {
+                continue;
+            }
+            if tokens(op).iter().any(|t| live.contains(t)) {
+                return false;
+            }
+        }
+        if let Some(d) = ops.first() {
+            if !matches!(mn.as_str(), "PUSH" | "CMP" | "TST" | "BTST") {
+                live.retain(|r| r != d);
+            }
+        }
+        if live.is_empty() {
+            return true;
+        }
+    }
+    false
+}
+
+/// A byte the generator loaded as an immediate: `MOV Rd,#v` or `CLR Rd`.
+fn imm_byte<'a>(mn: &str, ops: &'a [String], reg: &str) -> Option<&'a str> {
+    match (mn, ops) {
+        ("CLR", [r]) if r == reg => Some("#0"),
+        ("MOV", [r, v]) if r == reg && v.starts_with('#') => Some(v.as_str()),
+        _ => None,
+    }
+}
+
+/// The second pass: three shapes the generator emits all over a program,
+/// each done by fewer bytes, where what the longer one leaves behind is
+/// never read.
+///
+/// - `MOV R0,#lo / MOV R1,#hi / PUSH R1 / PUSH R0`, a word constant
+///   passed, is `LDW X,#w / PUSHW X` -- `PUSHW` puts the high byte first
+///   too (02-isa.md) -- when R0 and R1 are not read again before a `CALL`.
+///   `X` is `MUL`'s product and is never live across a sub-expression.
+/// - `MOV R0,#k / LDW Y,#arr / LD R0,[Y+R0]`, an element at a constant
+///   index, is `LD R0,[arr+k]`: the same byte, the same flags, and `Y`
+///   is only ever the address a load or store is about to use.
+/// - `CMP Rd,#0` before a `BEQ`/`BNE` is `TST Rd`, one byte for two --
+///   but not before a branch into a word compare's join, whose `BLO`/`BHS`
+///   still reads the carry the `CMP` set.
+pub fn shorten(lines: Vec<(LineKind, String)>) -> Vec<(LineKind, String)> {
+    let joins: std::collections::HashSet<String> = lines
+        .iter()
+        .filter(|(k, _)| *k == LineKind::Join)
+        .map(|(_, t)| t.clone())
+        .collect();
+    let code = |i: usize| -> Option<(String, Vec<String>)> {
+        lines.get(i).and_then(|(k, t)| if *k == LineKind::Code { Some(split(t)) } else { None })
+    };
+    let mut out: Vec<(LineKind, String)> = Vec::with_capacity(lines.len());
+    let mut i = 0;
+    while i < lines.len() {
+        if let (Some((m0, o0)), Some((m1, o1)), Some((m2, o2))) = (code(i), code(i + 1), code(i + 2)) {
+            // a word constant pushed
+            if let (Some(lo), Some(hi), Some((m3, o3))) = (imm_byte(&m0, &o0, "R0"), imm_byte(&m1, &o1, "R1"), code(i + 3)) {
+                let pushes = m2 == "PUSH" && o2 == ["R1"] && m3 == "PUSH" && o3 == ["R0"];
+                let value = if let (Some(a), Some(b)) = (lo.strip_prefix("#<"), hi.strip_prefix("#>")) {
+                    if a == b { Some(a.to_string()) } else { None }
+                } else {
+                    let num = |s: &str| -> Option<u32> {
+                        let s = s.trim_start_matches('#');
+                        match s.strip_prefix('$') {
+                            Some(h) => u32::from_str_radix(h, 16).ok(),
+                            None => s.parse::<u32>().ok(),
+                        }
+                    };
+                    match (num(lo), num(hi)) {
+                        (Some(a), Some(b)) if a < 256 && b < 256 => Some(format!("{}", a | (b << 8))),
+                        _ => None,
+                    }
+                };
+                if pushes && !(m0 == "CLR" && m1 == "CLR") && unread(&lines, i + 4, &["R0", "R1"]) {
+                    if let Some(v) = value {
+                        out.push((LineKind::Code, format!("LDW     X,#{}", v)));
+                        out.push((LineKind::Code, "PUSHW   X".to_string()));
+                        i += 4;
+                        continue;
+                    }
+                }
+            }
+            // an element at a constant index
+            if let Some(k) = imm_byte(&m0, &o0, "R0") {
+                let arr = if m1 == "LDW" && o1.len() == 2 && o1[0] == "Y" { o1[1].strip_prefix('#') } else { None };
+                if let (Some(arr), Some(k)) = (arr, k.strip_prefix('#').and_then(|s| s.parse::<u32>().ok())) {
+                    if m2 == "LD" && o2 == ["R0", "[Y+R0]"] && !arr.contains('$') && !arr.starts_with(['<', '>']) {
+                        let at = if k == 0 { format!("[{}]", arr) } else { format!("[{}+{}]", arr, k) };
+                        out.push((LineKind::Code, format!("LD      R0,{}", at)));
+                        i += 3;
+                        continue;
+                    }
+                }
+            }
+        }
+        // a compare with zero before a Z branch
+        if let (Some((m0, o0)), Some((m1, o1))) = (code(i), code(i + 1)) {
+            if m0 == "CMP" && o0.len() == 2 && o0[1] == "#0" && reg_index(&o0[0]).is_some()
+                && (m1 == "BEQ" || m1 == "BNE")
+                && !o1.first().map_or(false, |l| joins.contains(l))
+            {
+                out.push((LineKind::Code, format!("TST     {}", o0[0])));
+                i += 1;
+                continue;
+            }
+        }
+        out.push(lines[i].clone());
+        i += 1;
+    }
+    out
+}

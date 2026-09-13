@@ -229,10 +229,12 @@ impl Codegen {
         self.lines.push((LineKind::Raw, s.to_string()));
     }
 
-    /// The text, after the peephole pass (peep.rs) over the emitted code.
+    /// The text, after the peephole passes (peep.rs) over the emitted code:
+    /// loads the registers already hold, then the shapes a shorter
+    /// instruction does.
     fn text(&self) -> String {
         let mut out = String::new();
-        for (kind, s) in super::peep::optimise(&self.lines) {
+        for (kind, s) in super::peep::shorten(super::peep::optimise(&self.lines)) {
             match kind {
                 LineKind::Code => {
                     out.push_str("    ");

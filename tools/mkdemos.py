@@ -304,7 +304,12 @@ def main():
         if os.path.exists(disc):
             for line in open(disc, encoding="utf-8"):
                 line = line.strip()
-                if line and not line.startswith("#"):
+                if line.startswith("reserve "):
+                    # an erased file on a sector, for the program to write: MOTT.SAV
+                    _, rname, rsize = line.split()
+                    volh.reserve(rname, int(rsize))
+                    print("    and %s, %s bytes erased on a sector, for it to write" % (rname, rsize))
+                elif line and not line.startswith("#"):
                     volh.add(os.path.join(ROOT, line), os.path.basename(line).upper())
                     print("    and %s beside it" % os.path.basename(line).upper())
 

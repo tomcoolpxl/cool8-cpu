@@ -6938,3 +6938,57 @@ machine (a parser, and the files are its authors'); NetHack's own
 Sokoban maps (the same); lighting the caves, which without a line of
 sight would show the hero through the rock; more levels of either
 branch, which the slots and the memory do not hold.
+
+## D112 -- MOTT saves: a sector-aligned file rewritten in place, and the room made for it
+
+**The owner asked for saving after milestone 6, and chose NetHack's rules
+for it**: `S` asks, writes the game and ends it; the title offers `C` to
+continue; the save is used up the moment it is played on, so a death is
+a death; and while a slow write runs on the board the game shows which
+level it is writing.
+
+**Taken: one file, `MOTT.SAV`, 32 KB on drive 9, erased and written
+again in place.** `tools/mkdemos.py` reserves it with a `reserve` line in
+`demos/mott.disc`, and `cool8disk.py`'s `Volume.reserve()` starts it on a
+4 KB sector, so the game can erase its eight sectors without touching a
+neighbour. Inside: a state byte, the length of the run saved and a byte of
+where it ends -- the stamp of the build that wrote it, so a save from
+another build is not offered -- then every global from `save_from` to
+`save_end`, 2,084 bytes, then the VRAM slot of each level made, 1,508
+bytes each. The most a save can be is 27,724 bytes; the gate holds it
+under the file. **Every byte is kept inverted**, so the zeros most of a
+level is are erased flash that is never programmed -- which matters,
+because the machine programs one byte a request, and on the board that
+is a flash write cycle each. The state byte is written last, so a save
+cut off is not offered, and cleared to zero on restoring, a byte
+programmed and nothing erased. What belongs to the disc -- where its
+files are -- is declared before `save_from` and never saved, so a disc
+rebuilt between saving and restoring is still read right.
+
+**Rejected**: a new file each save, deleted when used -- the filesystem
+only appends, so drive 9 would fill and want `COMPACT`; saving the whole
+of RAM, 62 KB of mostly unchanging code at a request a byte; keeping the
+save after it is used (the owner chose NetHack's rule).
+
+**The room**: saving cost 1,350 bytes and took MOTT 840 past `$FF00`.
+The owner chose three ways back, measured first:
+
+- **Message helpers** in the game: the 284 places that said
+  `Msg(Str(#"..."))` or `MsgS(Str(#"..."))` call `MsgD`/`MsgSD`, eight
+  bytes a place instead of thirteen.
+- **Scratch buffers into MOTT's own low RAM**, after `oat` at `$1340` to
+  `$13FF`: `sbuf`, `feat` and `lb`, 182 bytes, which nothing keeps from
+  one command to the next -- out of the PRG and out of every save. The
+  view lists, 640 bytes, do not fit there; only the loader's space below
+  `$0800` would hold them, and that was not asked for.
+- **Three shapes in the compiler's peephole pass**, for every program:
+  a word constant passed as `LDW X,#w / PUSHW X`, an element at a
+  constant index as one load, a compare with zero before a `BEQ`/`BNE` as
+  `TST` (15-action.md section 5).
+
+Together 2,105 bytes: MOTT 61,000 to 58,895, 1,265 free.
+
+**The write path is untested on the board**, as 04-system.md section 4.8
+says of the machine's own flash writes; the gate runs it on the machine
+model, where a write lands at once and the image is written back when
+the emulator exits.
