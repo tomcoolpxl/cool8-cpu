@@ -1,0 +1,37 @@
+; YENDOR's art table, written by tools/mkyendor.py from DawnLike's sheets --
+; run it, do not edit this. Tiles, patterns and the palette are DawnLike's,
+; by DragonDePlatino, on DawnBringer's palette (CC-BY 4.0).
+
+; bank 0: tile FONT_FIRST.. is ASCII from 32; a terrain picture is four
+; tiles from its T_ number, and T_WALL + 4 * mask is the wall piece whose
+; neighbours are walls by mask: 8 north, 4 south, 2 west, 1 east
+CONST FONT_FIRST = 32
+CONST T_WALL = 96
+CONST T_FLOOR = 160
+CONST T_CORR = 164
+CONST T_DOOR_CLOSED_H = 168
+CONST T_DOOR_OPEN_H = 172
+CONST T_DOOR_CLOSED_V = 176
+CONST T_DOOR_OPEN_V = 180
+CONST T_DOORWAY = 184
+CONST T_UP = 188
+CONST T_DOWN = 192
+; banks 2 and 3: the creatures, a picture four tiles, frame 0 and frame 1
+CONST C_VALK = 0
+CONST C_WIZ = 4
+CONST C_ROGUE = 8
+CONST N_THEMES = 3
+; a theme's file on YENDOR's drive, eleven characters each
+BYTE ARRAY theme_names = "YTHEME0 DATYTHEME1 DATYTHEME2 DAT"
+CONST N_PAL = 8
+; the palette: 0 in view, 1 remembered, 2.. the inks of the text
+CARD ARRAY yendor_pal(128) = [
+  $112 $423 $336 $545 $843 $362 $C44 $776 $57C $C73 $899 $6A3 $CA9 $6BC $DC6 $DED
+  $112 $212 $224 $323 $422 $232 $623 $433 $336 $632 $445 $352 $655 $356 $663 $666
+  $112 $112 $112 $112 $112 $112 $112 $112 $112 $112 $112 $112 $112 $112 $112 $DED
+  $112 $112 $112 $112 $112 $112 $112 $112 $112 $112 $112 $112 $112 $112 $112 $DC6
+  $112 $112 $112 $112 $112 $112 $112 $112 $112 $112 $112 $112 $112 $112 $112 $C44
+  $112 $112 $112 $112 $112 $112 $112 $112 $112 $112 $112 $112 $112 $112 $112 $6A3
+  $112 $112 $112 $112 $112 $112 $112 $112 $112 $112 $112 $112 $112 $112 $112 $899
+  $112 $112 $112 $112 $112 $112 $112 $112 $112 $112 $112 $112 $112 $112 $112 $6BC
+]

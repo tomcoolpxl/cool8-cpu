@@ -1,0 +1,966 @@
+; YENDOR -- a descent after NetHack, for COOL8, in CoolAction!
+;
+; The Amulet of Yendor lies twelve levels down. Fetch it, and climb back
+; to the sun. The game is Rogue's and NetHack's -- rooms on a three by
+; three grid joined by corridors, a map remembered as it is seen, levels
+; that stay as they were left -- drawn in DawnLike's tiles, by
+; DragonDePlatino on DawnBringer's palette (CC-BY 4.0), which
+; tools/mkyendor.py cuts from assets/dawnlike/ into assets/yendor/.
+;
+; **A cell of the dungeon is 16 x 16, four tiles**, so the screen shows
+; twenty cells by thirteen of a level forty by twenty-four, and follows
+; the hero across it. Mode 2's tiles have no transparency, so a creature
+; or an item is drawn onto the floor by the generator, and each band of
+; the dungeon -- its floor, its walls, its stairs -- is a file of four
+; pattern banks on YENDOR's drive, streamed into VRAM on the stairs.
+;
+; **What is in view is in DawnBringer's sixteen; what is remembered is in
+; the same sixteen dimmed** -- palette bank 0 and 1 -- so the map fades as
+; the hero leaves it, and no tile is drawn twice for it.
+;
+; **Levels persist.** The current one is in memory; the others are parked
+; in VRAM above the pattern banks, a slot each, and come back as they were.
+;
+; This is the first milestone: the dungeon, walking, the doors, the
+; stairs, what is seen and remembered. docs/14-demos.md has the plan.
+;
+; Keys: the cursor keys, the keypad or h j k l y u b n move -- two cursor
+; keys held together go diagonally; walking into a door opens it; > and <
+; take the stairs, and Enter takes the stairs you stand on; s or . waits;
+; Esc leaves for the title, and on the title restarts the machine.
+
+CONST YDRIVE = 9                     ; YENDOR's drive: its program and its themes
+CONST PAT_BASE = $1000               ; the four pattern banks, $1000-$8FFF of VRAM
+CONST SLOT_BASE = $9000              ; a parked level a slot, above them
+CONST SLOT_SIZE = 1536
+
+; the level, and the window on it
+CONST LW = 40
+CONST LH = 24
+CONST NCELL = 960
+CONST VW = 20
+CONST VH = 13
+CONST VTOP = 2                       ; the tile row the window starts on
+CONST MAXDEPTH = 12
+
+; a cell's byte: what is there in the low five bits, and three flags
+CONST K_ROCK = 0
+CONST K_WALL = 1
+CONST K_FLOOR = 2
+CONST K_CORR = 3
+CONST K_DOORC = 4
+CONST K_DOORO = 5
+CONST K_DOORWAY = 6
+CONST K_UP = 7
+CONST K_DOWN = 8
+CONST F_LIT = 32                     ; a floor lit, so its room is seen whole
+CONST F_SEEN = 64                    ; seen once, and remembered
+CONST F_VIS = 128                    ; in view now
+
+; the palette banks: tools/mkyendor.py's
+CONST B_VIEW = 0
+CONST B_DIM = 1
+CONST B_WHITE = 2
+CONST B_YELLOW = 3
+CONST B_RED = 4
+CONST B_GREEN = 5
+CONST B_GREY = 6
+CONST B_CYAN = 7
+
+; keys: Set 2 make codes, an E0-prefixed one at $80 + code
+CONST KEY_UP = $F5
+CONST KEY_DOWN = $F2
+CONST KEY_LEFT = $EB
+CONST KEY_RIGHT = $F4
+CONST KP1 = $69
+CONST KP2 = $72
+CONST KP3 = $7A
+CONST KP4 = $6B
+CONST KP5 = $73
+CONST KP6 = $74
+CONST KP7 = $6C
+CONST KP8 = $75
+CONST KP9 = $7D
+CONST KEY_H = $33
+CONST KEY_J = $3B
+CONST KEY_K = $42
+CONST KEY_L = $4B
+CONST KEY_Y = $35
+CONST KEY_U = $3C
+CONST KEY_B = $32
+CONST KEY_N = $31
+CONST KEY_S = $1B
+CONST KEY_DOT = $49
+CONST KEY_COMMA = $41
+CONST KEY_LSHIFT = $12
+CONST KEY_RSHIFT = $59
+CONST KEY_SPACE = $29
+CONST KEY_ENTER = $5A
+CONST KEY_ESC = $76
+
+; the eight directions, 1 north and on clockwise
+BYTE ARRAY dir_dx(9) = [0 0 1 1 1 0 255 255 255]
+BYTE ARRAY dir_dy(9) = [0 255 255 0 1 1 1 0 255]
+
+BYTE ARRAY lv(960)
+BYTE ARRAY rx1(9), ry1(9), rx2(9), ry2(9), rgone(9)
+BYTE upx, upy, dnx, dny
+BYTE ARRAY made(13)                  ; levels already made, by depth
+CARD ARRAY vis(160)                  ; the cells in view, to fade when they leave it
+BYTE nvis
+
+BYTE depth, theme, role
+BYTE px, py                          ; the hero
+BYTE vx, vy                          ; the window's corner on the level
+CARD turns
+BYTE anim, animt                     ; the creatures' frame, and the frames to the next
+BYTE esc, phase                      ; 0 the title, 1 play
+BYTE rep_c, rep_t
+CARD st_n
+CARD loops                           ; frames of play, for the gate
+
+; ------------------------------------------------------------- the screen
+PROC Tile(BYTE col, BYTE row, BYTE t, BYTE attr)
+  CARD a
+  a = row
+  VRAM_ADDR = (a << 7) + (col << 1)
+  VRAM_STEP = 1
+  VRAM_DATA = t
+  VRAM_DATA = attr
+RETURN
+
+; a 16 x 16 picture: the four tiles from t
+PROC Pic(BYTE col, BYTE row, BYTE t, BYTE attr)
+  CARD a
+  a = row
+  a = (a << 7) + (col << 1)
+  VRAM_STEP = 1
+  VRAM_ADDR = a
+  VRAM_DATA = t
+  VRAM_DATA = attr
+  VRAM_DATA = t + 1
+  VRAM_DATA = attr
+  VRAM_ADDR = a + 128
+  VRAM_DATA = t + 2
+  VRAM_DATA = attr
+  VRAM_DATA = t + 3
+  VRAM_DATA = attr
+RETURN
+
+; a cell never seen: the space glyph, which is empty in every theme
+PROC Blank(BYTE col, BYTE row)
+  CARD a
+  a = row
+  a = (a << 7) + (col << 1)
+  VRAM_STEP = 1
+  VRAM_ADDR = a
+  VRAM_DATA = 0
+  VRAM_DATA = 0
+  VRAM_DATA = 0
+  VRAM_DATA = 0
+  VRAM_ADDR = a + 128
+  VRAM_DATA = 0
+  VRAM_DATA = 0
+  VRAM_DATA = 0
+  VRAM_DATA = 0
+RETURN
+
+PROC Text(BYTE col, BYTE row, BYTE POINTER s, BYTE bank)
+  BYTE n
+  CARD a
+  a = row
+  VRAM_ADDR = (a << 7) + (col << 1)
+  VRAM_STEP = 1
+  n = *s
+  WHILE n > 0 DO
+    s += 1
+    VRAM_DATA = *s - FONT_FIRST
+    VRAM_DATA = bank
+    n -= 1
+  OD
+RETURN
+
+PROC ClearRow(BYTE row)
+  BYTE i
+  CARD a
+  a = row
+  VRAM_ADDR = a << 7
+  VRAM_STEP = 1
+  FOR i = 0 TO 39 DO
+    VRAM_DATA = 0
+    VRAM_DATA = 0
+  OD
+RETURN
+
+; a number right-aligned in n places
+PROC Num(BYTE col, BYTE row, CARD v, BYTE n, BYTE bank)
+  BYTE i
+  CARD a
+  a = row
+  i = n
+  WHILE i > 0 DO
+    i -= 1
+    VRAM_ADDR = (a << 7) + ((col + i) << 1)
+    VRAM_STEP = 1
+    IF v > 0 OR i == n - 1 THEN
+      VRAM_DATA = '0' - FONT_FIRST + v % 10
+    ELSE
+      VRAM_DATA = 0
+    FI
+    VRAM_DATA = bank
+    v = v / 10
+  OD
+RETURN
+
+PROC Msg(BYTE POINTER s)
+  ClearRow(0)
+  Text(0, 0, s, B_WHITE)
+RETURN
+
+PROC ClearScreen()
+  BYTE r
+  FOR r = 0 TO 29 DO ClearRow(r) OD
+RETURN
+
+PROC Palette()
+  BYTE b
+  FOR b = 0 TO N_PAL - 1 DO SetPalette(yendor_pal + (b << 5), b << 4, 16) OD
+RETURN
+
+; ------------------------------------------------------------- a frame
+PROC Tick()
+  WaitVBlank()
+  KeyPoll()
+  IF KeyHit(KEY_ESC) THEN esc = 1 FI
+  IF animt THEN animt -= 1 FI
+RETURN
+
+; ------------------------------------------------------------ the themes
+FUNC BYTE ThemeOf(BYTE d)
+  IF d <= 4 THEN RETURN (0) FI
+  IF d <= 8 THEN RETURN (1) FI
+RETURN (2)
+
+; a theme's four pattern banks from YENDOR's drive into VRAM, at the
+; flash's own rate: 32,768 bytes in about eight frames. The font is the
+; same bytes in every theme, so the words on the screen do not flicker
+FUNC BYTE LoadTheme(BYTE t)
+  CARD o
+  o = t
+  IF DiskFind(YDRIVE, theme_names + o * 11) == 0 THEN RETURN (0) FI
+  DiskOpen(YDRIVE)
+  VRAM_ADDR = PAT_BASE
+  VRAM_STEP = 1
+  st_n = 32768
+  ASM
+    LDW  X,[v_st_n]
+.l: LD   R0,[v_FLS_DATA]
+    ST   [v_VRAM_DATA],R0
+    DECW X
+    BNE  .l
+  ENDASM
+  FlashClose()
+  theme = t
+RETURN (1)
+
+; ------------------------------------------------------------- the level
+FUNC CARD Idx(BYTE x, BYTE y)
+  CARD i
+  i = y
+RETURN ((i << 5) + (i << 3) + x)
+
+FUNC BYTE Kind(BYTE x, BYTE y)
+  IF x >= LW OR y >= LH THEN RETURN (K_ROCK) FI
+RETURN (lv(Idx(x, y)) & 31)
+
+PROC SetKind(BYTE x, BYTE y, BYTE k)
+  CARD i
+  i = Idx(x, y)
+  lv(i) = (lv(i) & 224) | k
+RETURN
+
+; a wall joins to a wall, and to a door in one
+FUNC BYTE WallLike(BYTE x, BYTE y)
+  BYTE k
+  k = Kind(x, y)
+  IF k == K_WALL OR k == K_DOORC OR k == K_DOORO OR k == K_DOORWAY THEN RETURN (1) FI
+RETURN (0)
+
+; a door where a corridor meets a room's wall: half of them an empty
+; doorway, a third shut, the rest standing open
+PROC Door(BYTE x, BYTE y)
+  BYTE r
+  r = Rnd(6)
+  IF r < 3 THEN
+    SetKind(x, y, K_DOORWAY)
+  ELSEIF r < 5 THEN
+    SetKind(x, y, K_DOORC)
+  ELSE
+    SetKind(x, y, K_DOORO)
+  FI
+RETURN
+
+PROC Dig(BYTE x, BYTE y)
+  IF Kind(x, y) == K_ROCK THEN SetKind(x, y, K_CORR) FI
+RETURN
+
+; a corridor from a's east side to b's west, b the grid cell to its right:
+; along a's row to a column between them, down or up to b's, and along
+PROC JoinAcross(BYTE a, BYTE b)
+  BYTE ax, ay, bx, by, m, x, y
+  IF rgone(a) THEN
+    ax = rx1(a)
+    ay = ry1(a)
+  ELSE
+    ax = rx2(a)
+    ay = ry1(a) + 1 + Rnd(ry2(a) - ry1(a) - 1)
+    Door(ax, ay)
+    ax += 1
+  FI
+  IF rgone(b) THEN
+    bx = rx1(b)
+    by = ry1(b)
+  ELSE
+    bx = rx1(b)
+    by = ry1(b) + 1 + Rnd(ry2(b) - ry1(b) - 1)
+    Door(bx, by)
+    bx -= 1
+  FI
+  m = ax + Rnd(bx - ax + 1)
+  FOR x = ax TO m DO Dig(x, ay) OD
+  IF ay < by THEN
+    FOR y = ay TO by DO Dig(m, y) OD
+  ELSE
+    FOR y = by TO ay DO Dig(m, y) OD
+  FI
+  FOR x = m TO bx DO Dig(x, by) OD
+RETURN
+
+; the same, a above b
+PROC JoinDown(BYTE a, BYTE b)
+  BYTE ax, ay, bx, by, m, x, y
+  IF rgone(a) THEN
+    ax = rx1(a)
+    ay = ry1(a)
+  ELSE
+    ay = ry2(a)
+    ax = rx1(a) + 1 + Rnd(rx2(a) - rx1(a) - 1)
+    Door(ax, ay)
+    ay += 1
+  FI
+  IF rgone(b) THEN
+    bx = rx1(b)
+    by = ry1(b)
+  ELSE
+    by = ry1(b)
+    bx = rx1(b) + 1 + Rnd(rx2(b) - rx1(b) - 1)
+    Door(bx, by)
+    by -= 1
+  FI
+  m = ay + Rnd(by - ay + 1)
+  FOR y = ay TO m DO Dig(ax, y) OD
+  IF ax < bx THEN
+    FOR x = ax TO bx DO Dig(x, m) OD
+  ELSE
+    FOR x = bx TO ax DO Dig(x, m) OD
+  FI
+  FOR y = m TO by DO Dig(bx, y) OD
+RETURN
+
+; the grid cell next to g in direction d -- 0 east, 1 south, 2 west,
+; 3 north -- or 255 off the grid
+FUNC BYTE Beside(BYTE g, BYTE d)
+  IF d == 0 THEN
+    IF g % 3 < 2 THEN RETURN (g + 1) FI
+  ELSEIF d == 1 THEN
+    IF g < 6 THEN RETURN (g + 3) FI
+  ELSEIF d == 2 THEN
+    IF g % 3 > 0 THEN RETURN (g - 1) FI
+  ELSEIF g >= 3 THEN
+    RETURN (g - 3)
+  FI
+RETURN (255)
+
+BYTE ARRAY joined(9)                 ; a bit for each cell a cell is joined to
+BYTE ARRAY conn(9)                   ; the cells the walk has reached
+
+PROC Join(BYTE a, BYTE b)
+  BYTE t
+  IF b < a THEN
+    t = a
+    a = b
+    b = t
+  FI
+  IF joined(a) & (1 << (b - a)) THEN RETURN FI
+  joined(a) = joined(a) | (1 << (b - a))
+  IF b == a + 1 THEN JoinAcross(a, b) ELSE JoinDown(a, b) FI
+RETURN
+
+; a stair somewhere inside a room that is a room
+PROC Stair(BYTE r, BYTE k)
+  BYTE x, y
+  DO
+    x = rx1(r) + 1 + Rnd(rx2(r) - rx1(r) - 1)
+    y = ry1(r) + 1 + Rnd(ry2(r) - ry1(r) - 1)
+  UNTIL Kind(x, y) == K_FLOOR OD
+  SetKind(x, y, k)
+  IF k == K_UP THEN
+    upx = x
+    upy = y
+  ELSE
+    dnx = x
+    dny = y
+  FI
+RETURN
+
+; Rogue's level: nine cells of a three by three grid, most of them a room
+; and a few only a turn in a corridor; every cell joined to the rest by a
+; walk from one to a neighbour not yet joined, then a few loops more
+PROC MakeLevel()
+  BYTE g, x0, y0, w, h, x, y, gone, lit, a, b, d, n, u, k
+  CARD i
+  FOR i = 0 TO NCELL - 1 DO lv(i) = 0 OD
+  lit = 9
+  IF depth > 4 THEN lit = 7 FI
+  IF depth > 8 THEN lit = 5 FI
+  gone = 0
+  FOR g = 0 TO 8 DO
+    x0 = (g % 3) * 13 + 1
+    y0 = (g / 3) * 8
+    joined(g) = 0
+    rgone(g) = 0
+    IF gone < 2 AND Rnd(5) == 0 THEN
+      gone += 1
+      rgone(g) = 1
+      rx1(g) = x0 + 1 + Rnd(10)
+      ry1(g) = y0 + 1 + Rnd(5)
+      rx2(g) = rx1(g)
+      ry2(g) = ry1(g)
+      SetKind(rx1(g), ry1(g), K_CORR)
+    ELSE
+      w = 5 + Rnd(8)
+      h = 4 + Rnd(4)
+      rx1(g) = x0 + Rnd(13 - w)
+      ry1(g) = y0 + Rnd(8 - h)
+      rx2(g) = rx1(g) + w - 1
+      ry2(g) = ry1(g) + h - 1
+      k = K_FLOOR
+      IF Rnd(10) < lit THEN k = K_FLOOR | F_LIT FI
+      FOR y = ry1(g) TO ry2(g) DO
+        FOR x = rx1(g) TO rx2(g) DO
+          IF x == rx1(g) OR x == rx2(g) OR y == ry1(g) OR y == ry2(g) THEN
+            SetKind(x, y, K_WALL)
+          ELSE
+            lv(Idx(x, y)) = k
+          FI
+        OD
+      OD
+    FI
+  OD
+  FOR g = 0 TO 8 DO conn(g) = 0 OD
+  g = Rnd(9)
+  conn(g) = 1
+  n = 1
+  WHILE n < 9 DO
+    a = Rnd(9)
+    IF conn(a) THEN
+      b = Beside(a, Rnd(4))
+      IF b <> 255 THEN
+        IF conn(b) == 0 THEN
+          Join(a, b)
+          conn(b) = 1
+          n += 1
+        FI
+      FI
+    FI
+  OD
+  FOR n = 0 TO Rnd(3) DO
+    a = Rnd(9)
+    b = Beside(a, Rnd(4))
+    IF b <> 255 THEN Join(a, b) FI
+  OD
+  DO
+    u = Rnd(9)
+  UNTIL rgone(u) == 0 OD
+  Stair(u, K_UP)
+  IF depth < MAXDEPTH THEN
+    DO
+      d = Rnd(9)
+    UNTIL rgone(d) == 0 AND d <> u OD
+    Stair(d, K_DOWN)
+  FI
+RETURN
+
+; the level parked in its VRAM slot, or brought back from it
+FUNC CARD Slot(BYTE d)
+  CARD s
+  s = d - 1
+RETURN (SLOT_BASE + (s << 10) + (s << 9))
+
+PROC ForgetView()
+  BYTE k
+  CARD i
+  k = 0
+  WHILE k < nvis DO                  ; not FOR k = 0 TO nvis - 1: with none, that is 256
+    i = vis(k)
+    lv(i) = lv(i) & 127
+    k += 1
+  OD
+  nvis = 0
+RETURN
+
+PROC SaveLevel()
+  CARD s
+  IF nvis THEN ForgetView() FI
+  s = Slot(depth)
+  VWrite(s, lv, NCELL)
+  VWrite(s + 960, rx1, 9)
+  VWrite(s + 969, ry1, 9)
+  VWrite(s + 978, rx2, 9)
+  VWrite(s + 987, ry2, 9)
+  VWrite(s + 996, rgone, 9)
+  VWrite(s + 1005, &upx, 4)
+RETURN
+
+PROC LoadLevel()
+  CARD s
+  s = Slot(depth)
+  VRead(s, lv, NCELL)
+  VRead(s + 960, rx1, 9)
+  VRead(s + 969, ry1, 9)
+  VRead(s + 978, rx2, 9)
+  VRead(s + 987, ry2, 9)
+  VRead(s + 996, rgone, 9)
+  VRead(s + 1005, &upx, 4)
+RETURN
+
+; --------------------------------------------------------------- the view
+PROC DrawCell(BYTE x, BYTE y)
+  BYTE c, k, t, a, col, row, m
+  IF x < vx OR x >= vx + VW OR y < vy OR y >= vy + VH THEN RETURN FI
+  col = (x - vx) << 1
+  row = VTOP + ((y - vy) << 1)
+  IF x == px AND y == py THEN
+    Pic(col, row, role << 2, (2 + anim) << 4)
+    RETURN
+  FI
+  c = lv(Idx(x, y))
+  IF c & F_SEEN == 0 THEN
+    Blank(col, row)
+    RETURN
+  FI
+  a = B_VIEW
+  IF c & F_VIS == 0 THEN a = B_DIM FI
+  k = c & 31
+  IF k == K_WALL THEN
+    m = (WallLike(x, y - 1) << 3) | (WallLike(x, y + 1) << 2) | (WallLike(x - 1, y) << 1) | WallLike(x + 1, y)
+    t = T_WALL + (m << 2)
+  ELSEIF k == K_FLOOR THEN
+    t = T_FLOOR
+  ELSEIF k == K_CORR THEN
+    t = T_CORR
+  ELSEIF k == K_DOORWAY THEN
+    t = T_DOORWAY
+  ELSEIF k == K_UP THEN
+    t = T_UP
+  ELSEIF k == K_DOWN THEN
+    t = T_DOWN
+  ELSEIF Kind(x - 1, y) == K_WALL OR Kind(x + 1, y) == K_WALL THEN
+    t = T_DOOR_CLOSED_H
+    IF k == K_DOORO THEN t = T_DOOR_OPEN_H FI
+  ELSE
+    t = T_DOOR_CLOSED_V
+    IF k == K_DOORO THEN t = T_DOOR_OPEN_V FI
+  FI
+  Pic(col, row, t, a)
+RETURN
+
+PROC DrawView()
+  BYTE x, y
+  FOR y = vy TO vy + VH - 1 DO
+    FOR x = vx TO vx + VW - 1 DO DrawCell(x, y) OD
+  OD
+RETURN
+
+; the window moved to keep the hero four cells from its sides and three
+; from its top and bottom; 1 when it moved
+FUNC BYTE Aim()
+  INT nx, ny, v
+  nx = vx
+  ny = vy
+  v = px
+  IF v < nx + 4 OR v >= nx + VW - 4 THEN
+    nx = v - 10
+    IF nx < 0 THEN nx = 0 FI
+    IF nx > LW - VW THEN nx = LW - VW FI
+  FI
+  v = py
+  IF v < ny + 3 OR v >= ny + VH - 3 THEN
+    ny = v - 6
+    IF ny < 0 THEN ny = 0 FI
+    IF ny > LH - VH THEN ny = LH - VH FI
+  FI
+  IF nx == vx AND ny == vy THEN RETURN (0) FI
+  vx = nx
+  vy = ny
+RETURN (1)
+
+FUNC BYTE RoomAt(BYTE x, BYTE y)
+  BYTE r
+  FOR r = 0 TO 8 DO
+    IF rgone(r) == 0 AND x >= rx1(r) AND x <= rx2(r) AND y >= ry1(r) AND y <= ry2(r) THEN RETURN (r) FI
+  OD
+RETURN (255)
+
+PROC Show(CARD i)
+  IF lv(i) & F_VIS THEN RETURN FI
+  lv(i) = lv(i) | F_VIS | F_SEEN
+  IF nvis < 160 THEN
+    vis(nvis) = i
+    nvis += 1
+  FI
+RETURN
+
+CARD ARRAY was(160)
+
+; what the hero sees: the whole of a lit room from inside it or its door,
+; and anywhere the eight cells round. Whatever left the view is drawn
+; again dimmed, whatever came into it drawn bright
+PROC See()
+  BYTE r, x, y, n, k, dx, dy
+  CARD i
+  n = nvis
+  k = 0
+  WHILE k < n DO                     ; a FOR to n - 1 runs 256 times when n is 0
+    i = vis(k)
+    was(k) = i
+    lv(i) = lv(i) & 127
+    k += 1
+  OD
+  nvis = 0
+  r = RoomAt(px, py)
+  IF r <> 255 THEN
+    IF lv(Idx(rx1(r) + 1, ry1(r) + 1)) & F_LIT THEN
+      FOR y = ry1(r) TO ry2(r) DO
+        FOR x = rx1(r) TO rx2(r) DO Show(Idx(x, y)) OD
+      OD
+    FI
+  FI
+  FOR dy = 0 TO 2 DO
+    y = py + dy - 1
+    IF y < LH THEN
+      FOR dx = 0 TO 2 DO
+        x = px + dx - 1
+        IF x < LW THEN
+          IF Kind(x, y) <> K_ROCK THEN Show(Idx(x, y)) FI
+        FI
+      OD
+    FI
+  OD
+  k = 0
+  WHILE k < n DO
+    i = was(k)
+    IF lv(i) & F_VIS == 0 THEN DrawCell(i % LW, i / LW) FI
+    k += 1
+  OD
+  k = 0
+  WHILE k < nvis DO
+    i = vis(k)
+    DrawCell(i % LW, i / LW)
+    k += 1
+  OD
+RETURN
+
+; ---------------------------------------------------------------- status
+PROC RoleName(BYTE col, BYTE row, BYTE r, BYTE bank)
+  IF r == 0 THEN
+    Text(col, row, "Valkyrie", bank)
+  ELSEIF r == 1 THEN
+    Text(col, row, "Wizard  ", bank)
+  ELSE
+    Text(col, row, "Rogue   ", bank)
+  FI
+RETURN
+
+PROC Status()
+  RoleName(0, 28, role, B_WHITE)
+  Text(22, 28, "Dlvl:", B_WHITE)
+  Num(27, 28, depth, 2, B_YELLOW)
+  Text(31, 28, "T:", B_WHITE)
+  Num(33, 28, turns, 6, B_WHITE)
+RETURN
+
+; ------------------------------------------------------------ the dungeon
+PROC EnterLevel(BYTE down)
+  BYTE t, r
+  t = ThemeOf(depth)
+  IF t <> theme THEN
+    FOR r = VTOP TO VTOP + 25 DO ClearRow(r) OD
+    IF LoadTheme(t) == 0 THEN
+      Msg("The theme file is not on drive 9.")
+      RETURN
+    FI
+  FI
+  IF made(depth) THEN
+    LoadLevel()
+  ELSE
+    MakeLevel()
+    made(depth) = 1
+  FI
+  nvis = 0
+  IF down THEN
+    px = upx
+    py = upy
+  ELSE
+    px = dnx
+    py = dny
+  FI
+  vx = 255
+  t = Aim()
+  See()
+  DrawView()
+  Status()
+RETURN
+
+PROC Descend()
+  IF Kind(px, py) <> K_DOWN THEN
+    Msg("You can't go down here.")
+    RETURN
+  FI
+  SaveLevel()
+  depth += 1
+  EnterLevel(1)
+  Msg("You descend the stairs.")
+RETURN
+
+PROC Ascend()
+  IF Kind(px, py) <> K_UP THEN
+    Msg("You can't go up here.")
+    RETURN
+  FI
+  IF depth == 1 THEN
+    Msg("The way out. You have no Amulet yet.")
+    RETURN
+  FI
+  SaveLevel()
+  depth -= 1
+  EnterLevel(0)
+  Msg("You climb the stairs.")
+RETURN
+
+; a step: into a shut door opens it, and a door is never entered or left
+; on the diagonal, as NetHack has it; a doorway with no door is no bar
+PROC Stride(BYTE d)
+  BYTE nx, ny, k, here, ox, oy
+  nx = px + dir_dx(d)
+  ny = py + dir_dy(d)
+  IF nx >= LW OR ny >= LH THEN RETURN FI
+  k = Kind(nx, ny)
+  here = Kind(px, py)
+  IF dir_dx(d) AND dir_dy(d) THEN
+    IF k == K_DOORC OR k == K_DOORO OR here == K_DOORO THEN
+      Msg("You can't move diagonally through a door.")
+      RETURN
+    FI
+  FI
+  IF k == K_DOORC THEN
+    SetKind(nx, ny, K_DOORO)
+    Msg("The door opens.")
+    turns += 1
+    DrawCell(nx, ny)
+    Status()
+    RETURN
+  FI
+  IF k == K_ROCK OR k == K_WALL THEN RETURN FI
+  ox = px
+  oy = py
+  px = nx
+  py = ny
+  turns += 1
+  IF Aim() THEN
+    See()
+    DrawView()
+  ELSE
+    See()
+    DrawCell(ox, oy)
+    DrawCell(px, py)
+  FI
+  Status()
+RETURN
+
+; ------------------------------------------------------------- the keys
+FUNC BYTE Held()
+  BYTE n, s, e, w
+  n = KeyHeld(KEY_UP) OR KeyHeld(KP8) OR KeyHeld(KEY_K)
+  s = KeyHeld(KEY_DOWN) OR KeyHeld(KP2) OR KeyHeld(KEY_J)
+  w = KeyHeld(KEY_LEFT) OR KeyHeld(KP4) OR KeyHeld(KEY_H)
+  e = KeyHeld(KEY_RIGHT) OR KeyHeld(KP6) OR KeyHeld(KEY_L)
+  IF KeyHeld(KP9) OR KeyHeld(KEY_U) OR (n AND e) THEN RETURN (2) FI
+  IF KeyHeld(KP3) OR KeyHeld(KEY_N) OR (s AND e) THEN RETURN (4) FI
+  IF KeyHeld(KP1) OR KeyHeld(KEY_B) OR (s AND w) THEN RETURN (6) FI
+  IF KeyHeld(KP7) OR KeyHeld(KEY_Y) OR (n AND w) THEN RETURN (8) FI
+  IF n THEN RETURN (1) FI
+  IF e THEN RETURN (3) FI
+  IF s THEN RETURN (5) FI
+  IF w THEN RETURN (7) FI
+RETURN (0)
+
+; a press shorter than a frame is still a step: the latches, every one
+; asked so none is left standing
+FUNC BYTE Tapped()
+  BYTE d
+  d = 0
+  IF KeyHit(KEY_UP) OR KeyHit(KP8) OR KeyHit(KEY_K) THEN d = 1 FI
+  IF KeyHit(KEY_RIGHT) OR KeyHit(KP6) OR KeyHit(KEY_L) THEN d = 3 FI
+  IF KeyHit(KEY_DOWN) OR KeyHit(KP2) OR KeyHit(KEY_J) THEN d = 5 FI
+  IF KeyHit(KEY_LEFT) OR KeyHit(KP4) OR KeyHit(KEY_H) THEN d = 7 FI
+  IF KeyHit(KP9) OR KeyHit(KEY_U) THEN d = 2 FI
+  IF KeyHit(KP3) OR KeyHit(KEY_N) THEN d = 4 FI
+  IF KeyHit(KP1) OR KeyHit(KEY_B) THEN d = 6 FI
+  IF KeyHit(KP7) OR KeyHit(KEY_Y) THEN d = 8 FI
+RETURN (d)
+
+; the direction to step this frame: at once on a press, again after ten
+; frames held and then every third
+FUNC BYTE Walk()
+  BYTE held, hit
+  hit = Tapped()
+  held = Held()
+  IF held == 0 THEN
+    rep_c = 0
+    RETURN (hit)
+  FI
+  IF held <> rep_c THEN
+    rep_c = held
+    rep_t = 0
+    RETURN (held)
+  FI
+  rep_t += 1
+  IF rep_t >= 10 THEN
+    rep_t = 7
+    RETURN (held)
+  FI
+RETURN (0)
+
+FUNC BYTE Shifted()
+  IF KeyHeld(KEY_LSHIFT) OR KeyHeld(KEY_RSHIFT) THEN RETURN (1) FI
+RETURN (0)
+
+; ------------------------------------------------------------- the play
+PROC Play()
+  BYTE d, i
+  ClearScreen()
+  FOR i = 0 TO MAXDEPTH DO made(i) = 0 OD
+  rseed = (TMR_L * 256 + TMR_M) | 1
+  depth = 1
+  turns = 0
+  anim = 0
+  animt = 24
+  esc = 0
+  phase = 1
+  EnterLevel(1)
+  Msg("Welcome to the Dungeons of Yendor!")
+  Text(0, 29, "arrows, keypad or hjklyubn   > < stairs", B_GREY)
+  DO
+    Tick()
+    loops += 1
+    IF esc THEN EXIT FI
+    IF animt == 0 THEN
+      animt = 24
+      anim = anim ^ 1
+      DrawCell(px, py)
+    FI
+    d = Walk()
+    IF d THEN Stride(d) FI
+    IF KeyHit(KEY_DOT) THEN
+      IF Shifted() THEN Descend() ELSE turns += 1 FI
+    FI
+    IF KeyHit(KEY_COMMA) AND Shifted() THEN Ascend() FI
+    IF KeyHit(KEY_S) OR KeyHit(KP5) THEN
+      turns += 1
+      Status()
+    FI
+    IF KeyHit(KEY_ENTER) THEN
+      IF Kind(px, py) == K_DOWN THEN
+        Descend()
+      ELSEIF Kind(px, py) == K_UP THEN
+        Ascend()
+      FI
+    FI
+  OD
+RETURN
+
+; ------------------------------------------------------------ the title
+PROC TitleRoles(BYTE sel)
+  BYTE r, bank
+  FOR r = 0 TO 2 DO
+    bank = B_WHITE
+    IF r == sel THEN bank = B_YELLOW FI
+    Pic(14, 9 + r * 3, r << 2, (2 + anim) << 4)
+    RoleName(18, 10 + r * 3, r, bank)
+    IF r == sel THEN Text(11, 10 + r * 3, ">", B_YELLOW) ELSE Text(11, 10 + r * 3, " ", B_WHITE) FI
+  OD
+RETURN
+
+PROC Title()
+  BYTE go, d
+  phase = 0
+  esc = 0
+  ClearScreen()
+  IF theme <> 0 THEN
+    IF LoadTheme(0) == 0 THEN
+      Text(3, 14, "YTHEME0.DAT is not on drive 9.", B_RED)
+      DO
+        Tick()
+      UNTIL esc OD
+      RETURN
+    FI
+  FI
+  Text(17, 3, "YENDOR", B_YELLOW)
+  Text(1, 5, "The Amulet of Yendor lies twelve levels", B_GREY)
+  Text(1, 6, "down. Fetch it, and climb back to the", B_GREY)
+  Text(1, 7, "sun.", B_GREY)
+  Text(5, 20, "up, down: choose   Enter: begin", B_GREY)
+  Text(3, 25, "Tiles: DawnLike by DragonDePlatino", B_CYAN)
+  Text(3, 26, "Palette: DawnBringer    CC-BY 4.0", B_CYAN)
+  TitleRoles(role)
+  go = KeyHit(KEY_ENTER)
+  go = KeyHit(KEY_SPACE)
+  go = 0
+  DO
+    Tick()
+    IF esc THEN EXIT FI
+    IF animt == 0 THEN
+      animt = 24
+      anim = anim ^ 1
+      TitleRoles(role)
+    FI
+    d = Walk()
+    IF d == 1 THEN
+      role = (role + 2) % 3
+      TitleRoles(role)
+    ELSEIF d == 5 THEN
+      role = (role + 1) % 3
+      TitleRoles(role)
+    FI
+    IF KeyHit(KEY_ENTER) OR KeyHit(KEY_SPACE) THEN go = 1 FI
+  UNTIL go OD
+RETURN
+
+PROC Main()
+  Graphics(2)
+  Cursor(0)
+  VID_BORDER = 0
+  VID_PAT = PAT_BASE
+  SpritesOff()
+  Palette()
+  theme = 255
+  role = 0
+  DO
+    Title()
+    IF esc THEN EXIT FI
+    Play()
+  OD
+  SpritesOff()
+  Reset()
+RETURN

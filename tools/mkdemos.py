@@ -77,6 +77,14 @@ def actions():
     return sorted(f for f in os.listdir(DEMOS) if f.endswith(".act"))
 
 
+# **A program too big for the CoolAction disc lives on a drive of its own**
+# (docs/14-demos.md): its PRG and its .disc files go there, and only its
+# loader, which is 3.5 KB and names that drive, goes on drive 11 -- so it
+# is still on the CoolAction menu. YENDOR's four theme files alone are
+# twice what drive 11 had left.
+HOMES = {"YENDOR": disk.YENDOR_VOL}
+
+
 def discname(f):
     name = os.path.splitext(f)[0].upper()
     if name == "COOLTRIS1":
@@ -267,11 +275,13 @@ def main():
         if end > 0xFF00:
             sys.exit("%s: %d bytes from $%04X reaches $%04X, past the top of RAM"
                      % (f, len(prg) - 2, H.PAYLOAD_ORG, end))
+        home = HOMES.get(nm, disk.ACTION_VOL)
+        volh = vol11 if home == disk.ACTION_VOL else disk.Volume(im, home)
         p = os.path.join(H.BUILD, nm + ".PRG")
         with open(p, "wb") as fh:
             fh.write(prg)
-        vol11.add(p, nm + ".PRG")
-        stub, _ = H.build_act(H.ACT_LIB + ["sw/loader.act", H.loader_tail(disk.ACTION_VOL, nm + ".PRG")],
+        volh.add(p, nm + ".PRG")
+        stub, _ = H.build_act(H.ACT_LIB + ["sw/loader.act", H.loader_tail(home, nm + ".PRG")],
                               "stub_" + nm.lower())
         if 0x0200 + len(stub) - 2 > H.PAYLOAD_ORG:
             sys.exit("the loader stub is %d bytes and reaches the payload at $%04X"
@@ -280,8 +290,8 @@ def main():
         with open(p, "wb") as fh:
             fh.write(stub)
         vol11.add(p, nm + ".BIN")
-        print("  compiled %-16s %6d bytes at $%04X -> drive %d as %s.PRG, with %s.BIN to load it"
-              % (f, len(prg) - 2, H.PAYLOAD_ORG, disk.ACTION_VOL, nm, nm))
+        print("  compiled %-16s %6d bytes at $%04X -> drive %d as %s.PRG, with %s.BIN on drive %d to load it"
+              % (f, len(prg) - 2, H.PAYLOAD_ORG, home, nm, nm, disk.ACTION_VOL))
         # the files a program reads from its own drive beside it --
         # Arkanoid's tiles and patterns, which it streams from the flash
         # into VRAM -- as its .disc manifest names them
@@ -290,7 +300,7 @@ def main():
             for line in open(disc, encoding="utf-8"):
                 line = line.strip()
                 if line and not line.startswith("#"):
-                    vol11.add(os.path.join(ROOT, line), os.path.basename(line).upper())
+                    volh.add(os.path.join(ROOT, line), os.path.basename(line).upper())
                     print("    and %s beside it" % os.path.basename(line).upper())
 
     # **The pictures onto their own drive** (D103): every .pic

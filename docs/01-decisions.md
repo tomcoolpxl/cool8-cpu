@@ -6728,3 +6728,58 @@ arcade's font has no glyph for here.
 eight to twelve of a line's eight; the art compressed in the PRG, which
 at a third of its size still would not fit beside the code; a data file
 wider than the filesystem allows.
+
+## D108 -- YENDOR: DawnLike drawn onto each theme's floor, and a drive of its own
+
+**The owner asked for a game after NetHack, with real tiles in place of
+letters and far less memory**, and chose, from pick lists, after looking
+at the candidates online: DawnLike's 16 x 16 tiles, twelve levels down and
+back up, three roles, a pet, unidentified items, shops, altars and
+prayer, traps and secret doors, fountains, Elbereth, a cave branch with a
+town, the Oracle, a small Sokoban, music by depth, and floors that change
+with depth. [14-demos.md](14-demos.md) has the game and its milestones.
+
+**A creature cannot be laid over the floor on the screen.** Mode 2's
+tiles have no transparent index, and DawnLike's creature and item sheets
+between them use all sixteen of DawnBringer's colours, measured -- so no
+index is free to mean "floor here" and be recoloured by a bank. Three
+ways round it were weighed:
+
+- **Sprites for the creatures**: rejected. A sprite's pixel is the
+  raster's, half a tile pixel, so a 16 x 16 creature is four 16 x 16
+  sprites; eight a line is two creatures abreast, and thirty-two
+  descriptors eight creatures on the screen.
+- **Compositing at run time** -- each occupied cell's four tiles built in
+  scratch patterns from the creature, a mask and the floor: rejected for
+  now. It needs the creatures and their masks somewhere the CPU can reach,
+  38 KB of VRAM, and a composite per cell per turn read through one
+  indirect port whose prefetch makes interleaved reads its worst case
+  ([04-system.md](04-system.md) section 5.4).
+- **Compositing in the generator, a set of patterns for each theme**:
+  taken. A theme -- a band of depth with its floor, walls and stairs -- is
+  32,768 bytes, the four pattern banks, with every creature and item
+  already standing on that theme's floor, streamed from the flash into
+  VRAM on the stairs in eight frames. What it costs is that a creature in
+  a doorway or on the stairs stands on a patch of floor, and that a theme
+  holds 64 creatures and 64 items: the budget the game is designed to.
+
+**A drive of its own, because the CoolAction disc is full.** Drive 11 had
+45,568 bytes free; three theme files are 98 KB before the program and the
+special levels' themes. **Drive 9 is claimed for YENDOR**
+(`cool8disk.YENDOR_VOL`, in `CLAIMED`): its PRG and its `.disc` files go
+there, and `tools/mkdemos.py`'s `HOMES` puts only the 3,545-byte loader on
+drive 11, with drive 9 in its tail, so the game stays on the CoolAction
+menu without a fourth menu. The owner chose that over a menu of its own.
+What it takes from anyone: drive 9 was one of the user's eight empty
+drives, and the longest Bad Apple cut the free drives allow is one drive
+shorter -- the full film has not fitted since drive 10 was claimed.
+
+**The other levels are parked in VRAM**, not in the PRG's memory: with the
+pattern banks at `$1000`-`$8FFF` and the map below them, `$9000`-`$FFFF`
+is 28 KB, eighteen slots of 1,536 bytes -- a level's cells, its rooms and
+its stairs now, its monsters and objects when they come.
+
+**Rejected**: an 8 x 8 tileset, which would have shown a whole level at
+once and needed no theme files, and which the owner turned down for
+DawnLike's detail; NetHack's own tiles, copyleft and in more than a
+bank's colours; making room on drive 11 by moving other programs off it.

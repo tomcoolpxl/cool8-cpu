@@ -64,7 +64,7 @@ CHUNK_MAX = 0xFFFF            # the catalogue's 16-bit file length
 # machine comes up. The cut that ships is 344 frames on drive 12 alone;
 # the cap lived only in a gitignored manifest for a round while this
 # said `range(12, 0, -1)`, so a rebuild from the mp4 would have walked
-# straight back over drives 1 to 11. `--drives 12,10,9` asks for more,
+# straight back over drives 1 to 11. `--drives 12,8,7` asks for more,
 # and `plan` refuses any drive `cool8disk.CLAIMED` names.
 DRIVES = [disk.BAPPLE_VOL]
 OUT = os.path.join(ROOT, "demos", "bapple")

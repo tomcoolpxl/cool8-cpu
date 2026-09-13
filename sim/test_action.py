@@ -2946,6 +2946,201 @@ def test_coolsw():
     print()
 
 
+def test_yendor():
+    """YENDOR, on the machine, as far as its first milestone goes: the
+    theme files streamed from its drive into the pattern banks, the title
+    with its credits, Rogue's level -- every room reachable, both stairs
+    -- every cell on the screen the picture its byte says, a lit room
+    seen whole and what is left behind dimmed, doors opened by walking
+    into them and never passed on the diagonal, the stairs down and back
+    to the same level, a new theme at depths 5 and 9, no way down from
+    12, and the loader from the demos disc. Skips, loudly, without the
+    art."""
+    import subprocess
+    import ioregs
+    import mkyendor as MY
+    import yendor as Y
+    print("  YENDOR")
+    if Y.sources() is None:
+        print("    SKIPPED: the art is not here -- tools/mkyendor.py cuts assets/yendor/ from assets/dawnlike/")
+        print()
+        return
+    r = subprocess.run([sys.executable, os.path.join(H.ROOT, "tools", "mkyendor.py"), "--check"],
+                       capture_output=True, text=True)
+    check(r.returncode == 0, "yendor: the art table and the theme files are what DawnLike's sheets make",
+          (r.stdout + r.stderr).strip()[-200:])
+    g = Y.Game(tag="yendor")
+    same_bytes("yendor", g.prg)
+    print("    %d bytes of PRG" % (len(g.prg) - 2))
+    reg = lambda n: g.m.bus.read(ioregs.addr_of(n))   # noqa: E731
+    dat = [open(p, "rb").read() for p in Y.DATS]
+    patterns = lambda: bytes(g.m.video.vram[0x1000:0x9000])   # noqa: E731
+
+    # the title: the theme from the drive, the words, the credits
+    g.m.run_frame(60)
+    check(reg("VID_MODE") & 0x0F == 2 and reg("VID_PAT_H") == 0x10 and g.byte("theme") == 0 and patterns() == dat[0],
+          "yendor: mode 2, and YTHEME0.DAT streamed from drive 9 into the four pattern banks",
+          "MODE %02X theme %d" % (reg("VID_MODE"), g.byte("theme")))
+    words = [g.text(0, r, 40) for r in range(30)]
+    check("YENDOR" in words[3] and any("DawnLike by DragonDePlatino" in w for w in words)
+          and any("DawnBringer" in w and "CC-BY 4.0" in w for w in words),
+          "yendor: the title names DawnLike, DragonDePlatino, DawnBringer and the licence", words[25])
+    pal = MY.palette()
+    check(g.m.palette()[:16 * len(pal)] == [c for b in pal for c in b],
+          "yendor: DawnBringer's sixteen in bank 0, dimmed in bank 1, and the inks", "")
+    g.tap(Y.DOWN)
+    g.m.run_frame(2)
+    down = g.byte("role")
+    g.tap(Y.UP)
+    g.m.run_frame(2)
+    check(down == 1 and g.byte("role") == 0, "yendor: up and down choose the hero", "%d then %d" % (down, g.byte("role")))
+
+    # the first level: Rogue's grid, all of it joined, both stairs
+    g.start(0)
+    g.m.run_frame(10)
+    lv = g.level()
+    kinds = [v & 31 for v in lv]
+    ups = [i for i, k in enumerate(kinds) if k == Y.K_UP]
+    downs = [i for i, k in enumerate(kinds) if k == Y.K_DOWN]
+    hx, hy = g.hero()
+    passable = {Y.K_FLOOR, Y.K_CORR, Y.K_DOORC, Y.K_DOORO, Y.K_DOORWAY, Y.K_UP, Y.K_DOWN}
+    reach, todo = {(hx, hy)}, [(hx, hy)]
+    while todo:
+        x, y = todo.pop()
+        for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+            nx, ny = x + dx, y + dy
+            if 0 <= nx < Y.LW and 0 <= ny < Y.LH and (nx, ny) not in reach and kinds[ny * Y.LW + nx] in passable:
+                reach.add((nx, ny))
+                todo.append((nx, ny))
+    lost = [(i % Y.LW, i // Y.LW) for i, k in enumerate(kinds) if k in passable and (i % Y.LW, i // Y.LW) not in reach]
+    check(len(ups) == 1 and len(downs) == 1 and ups[0] == hy * Y.LW + hx and not lost,
+          "yendor: one stair up, where the hero stands, one down, and every floor and corridor reachable",
+          "%d up, %d down, %d cells cut off %s" % (len(ups), len(downs), len(lost), lost[:4]))
+    rooms = [(g.byte("rx1", r), g.byte("ry1", r), g.byte("rx2", r), g.byte("ry2", r)) for r in range(9) if not g.byte("rgone", r)]
+    walled = all(kinds[y * Y.LW + x] in (Y.K_WALL, Y.K_DOORC, Y.K_DOORO, Y.K_DOORWAY)
+                 for x1, y1, x2, y2 in rooms for y in range(y1, y2 + 1) for x in range(x1, x2 + 1)
+                 if x in (x1, x2) or y in (y1, y2))
+    check(len(rooms) >= 7 and walled and all(x2 < Y.LW and y2 < Y.LH for _, _, x2, y2 in rooms),
+          "yendor: seven to nine rooms, each walled all round but for its doors", "%d rooms" % len(rooms))
+    check(not g.wrong_pics(), "yendor: every cell in the window is the picture its byte says",
+          str(g.wrong_pics()[:4]))
+    here = [r for r in rooms if r[0] <= hx <= r[2] and r[1] <= hy <= r[3]][0]
+    lit = lv[(here[1] + 1) * Y.LW + here[0] + 1] & Y.F_LIT
+    whole = all(lv[y * Y.LW + x] & Y.F_VIS for y in range(here[1], here[3] + 1) for x in range(here[0], here[2] + 1))
+    check((whole if lit else True) and g.cell_pic(hx, hy)[0] == g.byte("role") * 4,
+          "yendor: a lit room is seen whole from inside it, and the hero stands on the stairs up",
+          "lit %s, whole %s" % (bool(lit), whole))
+
+    # a wall does not give, a shut door opens, a door is not taken diagonally
+    t0 = g.uword("turns")
+    wall = next((d for d, (dx, dy) in Y.STEP.items() if g.kind(hx + dx, hy + dy) in (Y.K_WALL, Y.K_ROCK)), None)
+    if wall:
+        g.tap(Y.KP[wall])
+    check(g.hero() == (hx, hy) and g.uword("turns") == t0, "yendor: walking into a wall goes nowhere and takes no turn",
+          "%s turns %d" % (g.hero(), g.uword("turns") - t0))
+    # a floor beside the hero made a shut door: walked into, it opens and
+    # the hero stays; walked into again, the hero stands in it; a step off
+    # it on the diagonal is refused. The door stays, as part of the level
+    key, (dx, dy) = next((k, s) for k, s in Y.STEP.items()
+                         if not (s[0] and s[1]) and g.kind(hx + s[0], hy + s[1]) == Y.K_FLOOR)
+    at = (hy + dy) * Y.LW + hx + dx
+    g.poke("lv", (g.byte("lv", at) & 224) | Y.K_DOORC, at)
+    g.tap(Y.KP[key])
+    opened = g.kind(hx + dx, hy + dy) == Y.K_DOORO and g.hero() == (hx, hy) and "door opens" in g.text(0, 0, 40)
+    g.tap(Y.KP[key])
+    inside = g.hero() == (hx + dx, hy + dy)
+    diag = next((k for k, s in Y.STEP.items() if s[0] and s[1]
+                 and g.kind(hx + dx + s[0], hy + dy + s[1]) in (Y.K_FLOOR, Y.K_UP, Y.K_DOWN)), None)
+    g.tap(Y.KP[diag])
+    refused = g.hero() == (hx + dx, hy + dy) and "diagonally" in g.text(0, 0, 40)
+    check(opened and inside and refused,
+          "yendor: walking into a shut door opens it, the next step stands in it, and a door is not left diagonally",
+          "opened %s, in %s, refused %s: %r" % (opened, inside, refused, g.text(0, 0, 40)))
+
+    # to the stairs down: the way is walked, what is left behind dims
+    g.walk_to((downs[0] % Y.LW, downs[0] // Y.LW))
+    lv = g.level()
+    dim = [i for i, v in enumerate(lv) if v & Y.F_SEEN and not v & Y.F_VIS]
+    check(g.hero() == (downs[0] % Y.LW, downs[0] // Y.LW) and dim and not g.wrong_pics(),
+          "yendor: walked to the stairs down, the window following, what was left behind remembered and dimmed",
+          "hero %s, %d remembered, wrong pictures %s" % (g.hero(), len(dim), g.wrong_pics()[:3]))
+
+    # down and back: the same level, as it was left
+    before = [v & 127 for v in g.level()]
+    g.shifted(Y.DOT)
+    g.m.run_frame(10)
+    l2 = g.level()
+    on_up = (l2[g.byte("py") * Y.LW + g.byte("px")] & 31) == Y.K_UP
+    check(g.byte("depth") == 2 and on_up and not g.wrong_pics() and "descend" in g.text(0, 0, 40),
+          "yendor: > on the stairs down makes level 2 and puts the hero on its stairs up", g.text(0, 0, 40))
+    g.shifted(Y.COMMA)
+    g.m.run_frame(10)
+    after = [v & 127 for v in g.level()]
+    check(g.byte("depth") == 1 and after == before and g.hero() == (downs[0] % Y.LW, downs[0] // Y.LW),
+          "yendor: < goes back up to level 1 exactly as it was left, onto its stairs down",
+          "%d cells differ" % sum(1 for a, b in zip(after, before) if a != b))
+    g.walk_to((ups[0] % Y.LW, ups[0] // Y.LW))
+    g.tap(Y.ENTER)
+    g.m.run_frame(4)
+    check(g.byte("depth") == 1 and "no Amulet" in g.text(0, 0, 40),
+          "yendor: the stairs up from level 1 are the way out, and not without the Amulet", g.text(0, 0, 40))
+
+    # the themes change with depth, and the last level has no way down
+    shots = []
+    for d, t in ((5, 1), (9, 2), (12, 2)):
+        g.poke("depth", d - 1)
+        g.poke("px", g.byte("dnx"))
+        g.poke("py", g.byte("dny"))
+        if g.kind(g.byte("dnx"), g.byte("dny")) != Y.K_DOWN:     # a made level is kept: make sure it has one
+            g.poke("lv", Y.K_DOWN | (g.byte("lv", g.byte("dny") * Y.LW + g.byte("dnx")) & 224),
+                   g.byte("dny") * Y.LW + g.byte("dnx"))
+        g.shifted(Y.DOT)
+        g.m.run_frame(20)
+        shots.append((g.byte("depth"), g.byte("theme"), patterns() == dat[t], not g.wrong_pics()))
+    kinds = [v & 31 for v in g.level()]
+    check(shots[0] == (5, 1, True, True) and shots[1] == (9, 2, True, True),
+          "yendor: depth 5 brings the caverns' theme and depth 9 the depths', each streamed from the drive", str(shots))
+    check(shots[2][0] == 12 and Y.K_DOWN not in kinds and Y.K_UP in kinds,
+          "yendor: level 12 has stairs up and none down", str(shots[2]))
+    g.tap(Y.ESC)
+    back = g.until(lambda: g.byte("phase") == 0 and g.byte("theme") == 0, 200)
+    g.m.run_frame(4)                   # the stream is eight frames; the theme is set at its end
+    check(back is not None and patterns() == dat[0],
+          "yendor: Esc leaves for the title, and the halls' theme comes back for it", "phase %d" % g.byte("phase"))
+    check(0x100 < g.m.cpu.sp <= 0x200, "yendor: the stack is where it should be", "SP $%04X" % g.m.cpu.sp)
+    del g
+
+    # the path a person takes: YENDOR.BIN on the CoolAction disc, the program on drive 9
+    import cool8rsvm as vm
+    import cool8disk
+    img = os.path.join(H.BUILD, "demos.img")
+    if not os.path.exists(img):
+        print("    (the demos disc is not built: poe demos -- the loader's path not run)")
+        print()
+        return
+    prg, _ = H.build_act(H.act_sources(Y.SOURCE), "yendor_payload", org=H.PAYLOAD_ORG)
+    im = cool8disk.Image(img)
+    home, v11 = cool8disk.Volume(im, cool8disk.YENDOR_VOL), cool8disk.Volume(im, cool8disk.ACTION_VOL)
+    check(home.find("YENDOR.PRG") and home.get("YENDOR.PRG") == bytes(prg) and all(home.get(os.path.basename(p)) == d for p, d in zip(Y.DATS, dat))
+          and v11.find("YENDOR.BIN") and not v11.find("YENDOR.PRG"),
+          "yendor: the demos disc has YENDOR.PRG and its themes on drive 9, and only YENDOR.BIN on drive 11",
+          "stale or missing: poe demos")
+    code, bsyms = basic_image()
+    m = vm.boot(flash_path=img, render=True)
+    for _ in range(90):
+        m.run_frame()
+    m.settle(bsyms["in_raw.rk0"], bsyms["irhead"], bsyms["irtail"], 80_000_000)
+    H.key(m, bsyms, 'DRIVE 11\r')
+    H.key(m, bsyms, 'SYS "YENDOR.BIN"')
+    m.key(["\r"])
+    m.run_frame(200)
+    title = "".join(chr(m.video.vram[3 * 128 + 2 * (17 + i)] + 32) for i in range(6))
+    check(title == "YENDOR" and bytes(m.video.vram[0x1000:0x9000]) == dat[0],
+          "yendor: SYS \"YENDOR.BIN\" on drive 11 loads the program from drive 9 and it finds its theme there",
+          repr(title))
+    print()
+
+
 def main():
     if "--profile" in sys.argv:
         return profile_sieve()
@@ -2958,7 +3153,7 @@ def main():
     only = [a for a in sys.argv[1:] if not a.startswith("--")]    # e.g. `cobra`: just those
     for t in (test_every_encoding, test_features, test_sieve, test_primes, test_library,
               test_hardware, test_line, test_rainbow, test_cobra, test_cobra2, test_ports, test_keys,
-              test_keytest, test_loader, test_mscoolman, test_arkanoid, test_blockade, test_cooltris, test_coolsw,
+              test_keytest, test_loader, test_mscoolman, test_arkanoid, test_blockade, test_cooltris, test_coolsw, test_yendor,
               test_slides, test_refusals):
         if not only or any(o in t.__name__ for o in only):
             t()

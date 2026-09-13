@@ -18,9 +18,10 @@ that volume until the next `DRIVE`.
 |---|---|---|
 | **0** | `SYSTEM` | **the ROM's**: `BOOT.BIN`, and nothing a user should write |
 | **1** | `COOL8` | **where a cold machine comes up** — the user's, empty |
-| 2–9 | `COOL8` | the user's, formatted and empty |
+| 2–8 | `COOL8` | the user's, formatted and empty |
+| **9** | `YENDOR` | **YENDOR's**: its program and its theme files, too big for the CoolAction disc; its loader is on 11 ([D108](01-decisions.md)) |
 | **10** | **`PICTURES`** | **the picture drive**: the `.PIC` files SLIDES shows, a screen of mode 6 each, and beside each the `.RPL` that changes its palette row by row -- §4, `SLIDES` |
-| **11** | **`ACTION`** | **the CoolAction! disc**: every `demos/*.act`, compiled, as a bare `.BIN` — the Demos menu's twin |
+| **11** | **`ACTION`** | **the CoolAction! disc**: every `demos/*.act`, compiled, as a bare `.BIN` — the Demos menu's twin; YENDOR's is only its loader |
 | **12** | `BAPPLE` | Bad Apple's stream, capped to this one drive — §4 |
 | **13** | **`DEMOS`** | **the demo disc**: everything written in BASIC, games included |
 | **14** | `SOFTWARE` | the machine-code systems — the four Infocom games and the p-System's loader — each a `.BIN` behind a `.BAS` stub |
@@ -53,7 +54,7 @@ but as two programs: the compiled one tumbles, every frame computed
 |---|---|---|
 | **Demos** | 13 | MAZE, RAINBOW, WAVE, PLASMA, INTRO, BOING, TRIANGLES, MANDEL, COBRA, SYNTH, BENCH, MINIBNCH, BAPPLE, TAIPAN, COOLTRS1, COOLTRS2 |
 | **Software** | 14 | HHGG, ZORK1, PLANET, LGOP, PASCAL |
-| **CoolAction** | 11 | RAINBOW, TRIANGLE, MAZE, PLASMA, WAVE, MANDEL, SYNTH, INTRO, PRIMES — the compiled twins, §4 — COBRA, which shares only its ship and its name with the BASIC's, COBRA2, its camera and sky, and MSCOOLMN, ARKANOID, BLOCKADE, COOLTRIS, COOLSW, KEYTEST and SLIDES, which have no BASIC |
+| **CoolAction** | 11 | RAINBOW, TRIANGLE, MAZE, PLASMA, WAVE, MANDEL, SYNTH, INTRO, PRIMES — the compiled twins, §4 — COBRA, which shares only its ship and its name with the BASIC's, COBRA2, its camera and sky, and MSCOOLMN, ARKANOID, BLOCKADE, COOLTRIS, COOLSW, YENDOR, KEYTEST and SLIDES, which have no BASIC |
 
 **Volume 0 is not the user's, and that is the ROM's decision.**
 `sw/boot.asm` walks volume 0's directory for `BOOT.BIN`; it is the 4 KB
@@ -897,14 +898,14 @@ the disc to drive 12 alone, but the cut lived only in
 section went on describing the twelve-drive film — so a rebuild from
 the mp4 would have walked straight back over drives 1 to 11 without a
 word. Now the generator's default drive list is `[BAPPLE_VOL]`,
-`--drives 12,10,9` asks for more, `plan()` refuses any drive in
+`--drives 12,8,7` asks for more, `plan()` refuses any drive in
 `cool8disk.CLAIMED`, and `tools/mkdemos.py` asserts the same thing on
 every chunk it places, so a manifest from before the cap fails the
 build rather than the user. Rebuild the shipping cut with
 `python tools/mkbadapple.py badapple.mp4` — the stream stops when the
 drive is full, which is the 344 frames — or `--frames N` for fewer;
-the full film is `--drives 12,9,8,7,6,5,4,3,2` -- drive 10 is the
-picture drive now ([D103](01-decisions.md)), claimed, and the planner
+the longest cut the free drives allow is `--drives 12,8,7,6,5,4,3,2` -- drive 10 is the
+picture drive now ([D103](01-decisions.md)) and drive 9 YENDOR's ([D108](01-decisions.md)), both claimed, and the planner
 says so if it is asked for, as it says when the stream outgrows the
 drives it was given -- and it is not in
 the tree because the full build's directory is kept beside the cut,
@@ -1044,7 +1045,7 @@ drive 11 as bare `.BIN`s: RAINBOW, TRIANGLES, MAZE, PLASMA, WAVE,
 MANDEL, SYNTH and INTRO, each a `demos/name.act` beside its
 `demos/name.bas`; COBRA, which was the ninth and is now a program of
 its own, and COBRA2, its camera and sky, the next two sections; and
-KEYTEST, MSCOOLMN, ARKANOID, BLOCKADE, COOLTRIS, COOLSW and SLIDES, which have no BASIC and follow them. **The picture is the contract, not the code.** A port
+KEYTEST, MSCOOLMN, ARKANOID, BLOCKADE, COOLTRIS, COOLSW, YENDOR and SLIDES, which have no BASIC and follow them. **The picture is the contract, not the code.** A port
 may do the work any way the language allows -- and mostly does it the
 BASIC's way, because the BASIC's way was measured -- but
 `sim/test_action.py` runs every pair to the same point and requires
@@ -1812,6 +1813,108 @@ colours; every frame of play and of the first dig fitting in its frame
 on the largest field; the stack. `python sim/coolsw.py play` (or
 `title`, `win`, `boom`, `pause`, with a level of 0, 1 or 2 after it)
 plays it and writes the frames as PNG.
+
+### `YENDOR` — a descent after NetHack, in DawnLike's tiles
+
+`demos/yendor.act`, on its own drive: **YENDOR.PRG and its theme files
+are on drive 9**, and only the loader, `YENDOR.BIN`, is on drive 11 --
+it names drive 9 -- so the game is on the CoolAction menu and drive 11,
+which had 45,568 bytes free, carries 3.5 KB of it
+([D108](01-decisions.md)). The Amulet of Yendor lies twelve levels down;
+fetch it and climb back to the sun. The game is Rogue's and NetHack's,
+and **it is being built in milestones**, of which the first is done.
+
+**The tiles are DawnLike**, DragonDePlatino's 16 x 16 tileset drawn for
+NetHack, on DawnBringer's sixteen colours -- CC-BY 4.0, the sheets in
+[`assets/dawnlike/`](../assets/dawnlike/README.md) with their credits,
+and the credit on the title screen. Chosen by the owner over Kenney's
+Micro Roguelike and ink_slime's 8 x 8 sheet (both CC0, both small enough
+to show a whole level at once) and NetHack's own tiles (under the
+NetHack General Public License, and in more colours than a bank has):
+DawnLike's palette *is* one bank of sixteen, which is what mode 2
+gives a tile. The text is DawnLike's own SDS 8x8 font, which has lower
+case, where the Namco glyphs the other games borrow have none.
+
+**A cell is 16 x 16, four tiles**, so the screen shows twenty cells by
+thirteen of a level forty by twenty-four -- rows 0 and 1 for messages,
+2 to 27 the window, 28 and 29 the status -- and the window follows the
+hero, jumping to recentre four cells from its sides and three from its
+top and bottom. **Mode 2's tiles have no transparency**, and every one
+of DawnBringer's sixteen is used somewhere in DawnLike's creatures and
+items (measured over the sheets), so no colour can stand for "floor
+here". A creature or an item is therefore drawn onto the floor by
+`tools/mkyendor.py`, and **each band of the dungeon is a theme of its
+own**: its floor, its walls, its stairs, and every creature and item on
+that floor -- a file of 32,768 bytes, the four pattern banks an
+attribute reaches, streamed from drive 9 into VRAM on the stairs in
+about eight frames. Bank 0 is the font and the terrain, sixteen wall
+pieces chosen by which neighbours are walls; bank 1 the items; banks 2
+and 3 the creatures in DawnLike's two animation frames, so a creature
+animates by its cell's attribute naming the other bank. The floors
+change with depth, as the owner chose: brick halls for levels 1-4,
+caverns of brown earth for 5-8, blue crystal stone for 9-12.
+
+**What is in view is in palette bank 0, what is remembered in bank 1**,
+the same sixteen dimmed towards the void, so the map fades as the hero
+leaves it and no picture is stored twice. **Levels persist**: the
+current one is in memory, and each other one is parked in its own slot
+of VRAM above the pattern banks, `$9000` up, 1,536 bytes a slot, and
+comes back exactly as it was left.
+
+**The level is Rogue's**: nine cells of a three by three grid, most of
+them a room and up to two only a turn in a corridor; one cell joined to
+a neighbour not yet joined until all nine are, then up to three loops
+more; a corridor leaves a room by a door in its wall, half of them an
+empty doorway, a third shut, the rest open. Lit rooms are seen whole
+from inside or from a doorway -- nine in ten on levels 1-4, seven in
+ten on 5-8, half on 9-12 -- and anywhere else the hero sees the eight
+cells round. Walking into a shut door opens it (NetHack's autoopen), and
+a door is never entered or left diagonally; an empty doorway is no bar.
+
+**The plan**, decided with the owner before any code:
+
+| milestone | what it brings |
+|---|---|
+| **1 — done** | the themes from drive 9; the title with the three heroes and the credits; Rogue's level; seeing and remembering; doors; stairs; persistence |
+| 2 | monsters and combat, the three roles -- Valkyrie, Wizard, Rogue -- experience, and a pet that follows and fights |
+| 3 | items: inventory, wielding and wearing, gold; potions, scrolls, wands and rings under random names each game, blessed, uncursed or cursed |
+| 4 | shops and their keeper; altars and prayer; fountains; traps and secret doors; Elbereth in the dust |
+| 5 | the special levels: the Oracle, a small Sokoban up from below it, and a cave branch after the Gnomish Mines with a town |
+| 6 | the Amulet on level 12 and the climb back; music by depth and the effects; the Platino sprite hidden, as DawnLike's author asks |
+
+Chosen with the owner and not in it: hunger (so food is not a clock);
+saving (a game is one sitting, as the first roguelikes were).
+
+Keys: the cursor keys, the keypad or `h j k l y u b n` move, and two
+cursor keys held together go diagonally; a key held repeats after ten
+frames, every third after that; `>` and `<` take the stairs, and Enter
+the stairs the hero stands on; `s`, `.` or keypad 5 waits; Esc leaves
+for the title, and on the title restarts the machine.
+
+**Measured**, milestone 1: 13,742 bytes of PRG, the art table included;
+three theme files of 32,768 bytes on drive 9, and the loader of 3,545 on
+drive 11.
+
+**The gate** (`sim/test_action.py`, on `sim/yendor.py`): the art table
+and theme files what the sheets make; the compiled bytes the same as
+`tools/cool8asm.py`'s; YTHEME0.DAT in the pattern banks byte for byte;
+the title naming DawnLike, DragonDePlatino, DawnBringer and the
+licence, and the palette's banks; the hero chosen; the first level --
+one stair up under the hero, one down, every floor and corridor
+reachable, seven to nine rooms each walled but for its doors; every
+cell in the window the picture its byte says, in view or remembered; a
+lit room seen whole; a wall refusing a step without taking a turn; a
+shut door opened by walking into it, stood in, and not left
+diagonally; the walk to the stairs down with the window following and
+what was left behind dimmed; level 2 made under the stairs and level 1
+back exactly as it was left; the way out refused without the Amulet;
+the caverns' theme at depth 5 and the depths' at 9, each streamed from
+the drive; no stairs down on level 12; Esc to the title with the halls'
+theme back; the stack; and from the demos disc, YENDOR.PRG and its
+themes on drive 9, only the loader on 11, and `SYS "YENDOR.BIN"` from
+BASIC finding its program and its theme there. `python sim/yendor.py
+walk` (or `title`, `stairs`, `deep`) plays it and writes the frames as
+PNG.
 
 ### `SLIDES` — the old test pictures, as fully as mode 6 can show them
 
