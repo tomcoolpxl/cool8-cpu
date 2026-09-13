@@ -2090,6 +2090,80 @@ thousand gold two times in three.
 title no longer carries the art's credit, at the owner's word -- it
 stays with the sheets in `assets/dawnlike/` and here.
 
+**The dungeon's branches, as NetHack's `dungeon.def` lays them out, cut
+to size.** A game is seventeen levels, and each has its own VRAM slot:
+the dungeon's twelve by depth; the Gnomish Mines, three levels opening
+from a second stairs down on level 2 or 3; and Sokoban, two levels up
+from a second stairs up on the level above the Oracle, who sits on level
+5, 6 or 7. A level knows its number and its depth apart -- the mines'
+are one to three below where they open, Sokoban's one and two above
+where it starts -- and every way off a level (stairs, a branch's stairs,
+a trap door, a hole, a level teleporter, digging, a cursed scroll or
+potion) asks which level is under or over this one. The status line's
+`Dlvl` is the depth, as NetHack's is.
+
+**The mines are caves, made as `mkmap.c` makes them**: two cells in five
+floor at random, one pass that keeps a cell with three or four floor
+neighbours and settles the rest, one that makes rock of a cell with
+exactly five, two more that make rock of a cell with fewer than three;
+every cave then joined to the first by a corridor dug across and down,
+and the rock round the floor walled. The passes and the joining's flood
+fill are assembly, over the cell maps' fixed addresses: 45 frames for a
+level, where CoolAction! took 74 and 717 bytes more. Four gnomes, a
+gnome lord, a dwarf and a hill orc live in each, with things and gold,
+and more of both at the bottom, which has no way down. The caves are
+dark, so the hero sees the cells round it -- NetHack lights most of its
+mines' levels, which needs a line of sight the game does not have.
+
+**The mines' second level is a town**, the game's own after NetHack's
+Minetown: a lit square inside a wall with a temple, a general store,
+three houses, two fountains, three watchmen and three gnomes, all at
+peace. Its store is a shop like any other, with its keeper. **The temple**
+has an altar of an alignment chosen when the level is made and an aligned
+priest by it; walking in, as NetHack's `intemple()` has it, "The priest
+of Odin intones: Pilgrim, you enter a sacred place!" and then a hero of
+the altar's alignment in good standing experiences a sense of peace --
+"a" for the pious, "an unusual" below piety -- and anyone else a
+forbidding feeling. `#chat` with the priest is `priest_talk()`: with no
+gold, poverty preached; otherwise a contribution asked for and a number
+typed, and a gift under 200 a level thanked ("Cheapskate." if it was
+mean), under 400 a blessing, under 600 protection -- two to four points
+off the armour class the first time, one more after -- and anything more
+gratitude.
+
+**Delphi, on the Oracle's level**, the game's own after `oracle.des`: a
+lit court, a ring of wall with a gap each side, and the Oracle's chamber
+inside it with four fountains round her; four forest centaurs at peace in
+the court, and three monsters that are not. `#chat` with her is
+`doconsult()`: "Wilt thou settle for a minor consultation?" for fifty
+zorkmids, a rumour -- sixteen true ones, written for the game in the
+voice of NetHack's, since NetHack's own rumours and oracles are its
+authors' text -- and five experience the first time; declined, "Then
+dost thou desire a major one?" for 500 and fifty a level, one of four
+pages of oracularity over the map -- or, for less than the price, the one
+she gives when she scornfully takes all the hero's money -- and a tenth of
+the price in experience the first time (a twenty-fifth after a minor
+one).
+
+**Sokoban, two small puzzles** drawn for the game and proven solvable
+by `tools/mkmott.py`, which searches every map it writes and refuses one
+it cannot solve. Boulders are NetHack's `moverock()`: pushed a cell ahead
+of the hero, never aslant in Sokoban ("The boulder won't roll diagonally
+on this floor."), never into a wall, a shut door, another boulder or a
+monster; into a hole it falls and plugs it, into a pit it fills it. The
+levels are known from the start, their holes seen; a step into a hole
+is not escaped -- "Air currents pull you down into a hole!" -- and lands
+on the level below; the hero cannot squeeze diagonally between boulders
+and walls; nothing teleports and nothing digs. The top of the second
+holds an amulet of life saving and gold.
+
+**Where milestone 5 is not NetHack.** The Mines are three levels, not
+eight, with a town and no Mines' End luckstone; Sokoban two levels, not
+four, with a prize, not a zoo, and no luck penalty for its rules broken;
+the maps are the game's, not NetHack's; the rumours and oracularities are
+the game's; the town's watch does not guard the fountains or the shop.
+`#chat` is the second long command.
+
 **Where milestone 4 is not NetHack.** Monsters walk round traps rather
 than into them, which spares every trap its monster half. No Keystone
 Kops: the robbed keeper is the punishment. No credit, itemized billing,
@@ -2134,6 +2208,15 @@ bytes. The PRG is **49,438 bytes**, its last byte at `$D51D`, with
 **10,722 free** below `$FF00` for milestones 5 and 6: 44,653 in
 routines, 957 in the short strings still in the image.
 
+**Memory at the end of milestone 5.** The branches, the caves, the
+special levels, the Oracle, the temple and Sokoban added 5,635 bytes to
+the PRG -- 6,332 before the cave's loops became assembly -- so it is
+**55,073 bytes**, its last byte at `$EB20`, with **5,087 free** below
+`$FF00` for milestone 6. The maps are not in it: `MLEVELS.DAT` on drive 9
+holds the four special levels, 1,100 bytes each, cells, rooms, stairs and
+up to twenty features, and `MPAGES.DAT` the Oracle's pages beside the
+keys ([D111](01-decisions.md#d111--motts-special-levels-drawn-in-the-tool-proven-and-read-from-the-disc)).
+
 **The grave**: when the hit points run out, "You die...", then DawnLike's
 gravestone and who died, what killed them, on which level, at which
 experience level, after how many turns and with how much gold.
@@ -2146,7 +2229,7 @@ experience level, after how many turns and with how much gold.
 | **2 — done** | monsters and combat by NetHack's numbers, the three roles, experience, the pet, the force bolt, the grave |
 | **3 — done** | the things by NetHack's numbers: the pack, wielding, wearing, gold; potions, scrolls, wands and rings under appearances shuffled each game; blessed, uncursed, cursed; what each does |
 | **4 — done** | shops and their keeper; altars and prayer; fountains; traps and secret doors; Elbereth in the dust; `?` |
-| 5 | the special levels: the Oracle, a small Sokoban up from below it, and a cave branch after the Gnomish Mines with a town |
+| **5 — done** | the special levels: the Oracle, a small Sokoban up from below it, and a cave branch after the Gnomish Mines with a town |
 | 6 | the Amulet on level 12 and the climb back; music by depth and the effects; the Platino sprite hidden, as DawnLike's author asks |
 
 Chosen with the owner and not in it: hunger (so food is not a clock);
@@ -2161,7 +2244,7 @@ one. NetHack's letters for the rest: `i` the pack, `,` picks up, `d`
 drops, `w` wields, `W` wears, `T` takes off, `P` puts on, `R` removes,
 `q` drinks (from a fountain too), `r` reads, `z` zaps, `t` throws, `f`
 fires daggers, `:` looks here, `\` lists the discoveries, `Z` casts, `p`
-pays, `E` engraves, `#` takes a long command (`#pray`), `?` shows the
+pays, `E` engraves, `#` takes a long command (`#pray`, `#chat`), `?` shows the
 keys; a thing asked for is chosen by its
 letter from the pack shown over the map, a direction by a movement key,
 and `>` or `<` for down and up. Gold walked over is picked up. Ctrl+R
@@ -2170,9 +2253,11 @@ restarts the machine.
 
 **Measured**: milestone 1, 13,742 bytes of PRG, the art table included;
 milestone 2, 26,289; milestone 3, 45,525, and 39,334 after the room
-was made; milestone 4, **49,438**. On drive 9 three theme files of
-32,768 bytes, `MNAMES.DAT` of 11,088 (231 names at 48 bytes), `MHELP.DAT`
-of 920 and `MOTT.STR` of 7,404; the loader of 1,044 on drive 11.
+was made; milestone 4, 49,438; milestone 5, **55,073**. On drive 9
+three theme files of 32,768 bytes, `MNAMES.DAT` of 11,952 (249 names at
+48 bytes), `MPAGES.DAT` of 5,520 (six pages), `MLEVELS.DAT` of 4,400
+(four levels) and `MOTT.STR` of 8,893 (292 strings); the loader of 1,044
+on drive 11.
 
 **The gate** (`sim/test_action.py`, on `sim/mott.py`): the art table
 and theme files what the sheets make; the compiled bytes the same as
@@ -2226,10 +2311,25 @@ a bite; a shop poked round the hero's room: Asidonhopo's welcome, an axe
 quoted at 8 and unpaid, `p` paying for it, the keeper buying it back for
 4, and the hero out of the door owing having stolen 8 zorkmids' worth
 with the keeper angry; a water nymph stealing a potion and carrying it;
-and from the demos disc, MOTT.PRG, its themes, names, help and strings on drive 9,
+Milestone 5: the mines' and the Oracle's levels in their ranges; the
+branch's second stairs down on the mines' level; a mines level a cave of
+more than 150 floor cells, every one joined to the stairs up, none on the
+edge, all walled, with its gnomes, dwarf and orc, and the depth and theme
+the mines'; the town's temple, altar, priest, general store, watchmen and
+gnomes at peace; into the temple with the priest's words and an unusual
+sense of peace; `#chat` with the priest and 500 given at level 1 for
+protection off the armour class; the mines' bottom without stairs down,
+and three climbs back to the branch's stairs; Sokoban up from level 4,
+its boulders where the map puts them, its holes seen, its map known; a
+boulder refused aslant; a step into a hole down to level 4 and back; both
+puzzles solved through the keyboard, push by push, as `sokoban_solve()`
+finds them, the stairs up reached and the prize taken; Delphi with the
+Oracle, four fountains and four centaurs at peace; a minor consultation
+for fifty, a rumour and five experience, and a major one for 550 with a
+page over the map; the stack; and from the demos disc, MOTT.PRG, its themes, names, pages, levels and strings on drive 9,
 only the loader on 11, and `SYS "MOTT.BIN"` from BASIC finding its
 program and its theme there. `python sim/mott.py walk` (or `title`,
-`stairs`, `deep`, `fight`, `scene`, `tour`, `shop`) plays it and writes the
+`stairs`, `deep`, `fight`, `scene`, `tour`, `shop`, `branches`) plays it and writes the
 frames as PNG.
 
 ### `SLIDES` — the old test pictures, as fully as mode 6 can show them

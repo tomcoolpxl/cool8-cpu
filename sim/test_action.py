@@ -3089,11 +3089,12 @@ def test_mott():
     same_bytes("mott", g.prg)
     print("    %d bytes of PRG" % (len(g.prg) - 2))
     park = [("rx1", 9), ("ry1", 9), ("rx2", 9), ("ry2", 9), ("rgone", 9), ("upx", 1), ("upy", 1), ("dnx", 1),
-            ("dny", 1)] + [(n, 20) for n in ("mtype", "mx", "my", "mhp", "mhpmax", "mlev", "mstat", "mmove", "msl",
+            ("dny", 1), ("brx", 1), ("bry", 1)] + [(n, 20) for n in ("mtype", "mx", "my", "mhp", "mhpmax", "mlev", "mstat", "mmove", "msl",
                                             "mflee")] \
         + [(n, 32) for n in ("ot", "ox", "oy", "oq", "of", "oe")] + [(n, 8) for n in ("tt", "tx", "ty", "tf")] \
         + [("ex", 3), ("ey", 3), ("etx", 51)] + [(n, 1) for n in ("shroom", "shtype", "shk", "shname", "shdx", "shdy",
-                                                                  "spx", "spy", "shvis")] + [("shgold", 2), ("shrob", 2)]
+                                                                  "spx", "spy", "shvis")] + [("shgold", 2), ("shrob", 2)] \
+        + [("troom", 1), ("tpri", 1), ("talign", 1)]
     at, runs = g.addr("rx1"), True
     for n, size in park:
         runs = runs and g.addr(n) == at
@@ -3214,7 +3215,14 @@ def test_mott():
           "mott: walking into a shut door opens it, the next step stands in it, and a door is not left diagonally",
           "opened %s, in %s, refused %s: %r" % (opened, inside, refused, g.messages()))
 
-    # to the stairs down: the way is walked, what is left behind dims
+    # to the stairs down: the way is walked, what is left behind dims --
+    # the secret doors and passages found and the traps gone first, so the
+    # way is there to walk
+    for i in range(Y.LW * Y.LH):
+        k = g.byte("lv", i) & 15
+        if k in (Y.K_SDOOR, Y.K_SCORR):
+            g.poke("lv", (g.byte("lv", i) & 0xF0) | (Y.K_DOORC if k == Y.K_SDOOR else Y.K_CORR), i)
+    g.clear_traps()
     g.walk_to((downs[0] % Y.LW, downs[0] // Y.LW))
     lv = g.level()
     dim = [i for i, v in enumerate(lv) if v & Y.F_SEEN and not v & Y.F_VIS]
@@ -3251,6 +3259,7 @@ def test_mott():
     g.poke("ulev", 6)
     for d, t in ((5, 1), (9, 2), (12, 2)):
         g.poke("depth", d - 1)
+        g.poke("lvl", d - 1)
         g.poke("px", g.byte("dnx"))
         g.poke("py", g.byte("dny"))
         if g.kind(g.byte("dnx"), g.byte("dny")) != Y.K_DOWN:     # a made level is kept: make sure it has one
@@ -3931,6 +3940,236 @@ def test_mott():
     check(0x100 < g.m.cpu.sp <= 0x200, "mott: the stack is where it should be after milestone 4", "SP $%04X" % g.m.cpu.sp)
     del g
 
+    # ------------------------------------------------------ milestone 5
+    flat = lambda t: " ".join(t.replace("--More--", " ").replace(" | ", " ").replace(" / ", " ").split())   # noqa: E731
+    g = Y.Game(tag="mott5")
+    c = g.c
+    g.start(0)
+    g.m.run_frame(10)
+    check(2 <= g.byte("mines_at") <= 3 and 5 <= g.byte("oracle_at") <= 7 and g.byte("lvl") == 1,
+          "mott: a game puts the mines' stairs on level 2 or 3 and the Oracle on 5 to 7",
+          "mines %d, Oracle %d" % (g.byte("mines_at"), g.byte("oracle_at")))
+    g.poke("mines_at", 2)
+    g.poke("oracle_at", 5)
+    g.clear_monsters(keep_pet=False)
+    g.sturdy()
+    g.down_to(2)
+    br = (g.byte("brx"), g.byte("bry"))
+    check(g.byte("lvl") == 2 and br[0] < Y.LW and g.kind(*br) == Y.K_DOWN and br != (g.byte("dnx"), g.byte("dny")),
+          "mott: the mines' level has a second stairs down, the branch's", str(br))
+
+    # the mines: a cave, joined, walled, with its little folk
+    g.clear_monsters(keep_pet=False)
+    frames = g.stairs(Y.DOT, br)
+    kinds = [v & 15 for v in g.level()]
+    up = (g.byte("upx"), g.byte("upy"))
+    reach, todo = {up}, [up]
+    while todo:
+        x, y = todo.pop()
+        for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+            n = (x + dx, y + dy)
+            if 0 <= n[0] < Y.LW and 0 <= n[1] < Y.LH and n not in reach and kinds[n[1] * Y.LW + n[0]] in (Y.K_FLOOR, Y.K_UP, Y.K_DOWN):
+                reach.add(n)
+                todo.append(n)
+    floors = [(i % Y.LW, i // Y.LW) for i, k in enumerate(kinds) if k in (Y.K_FLOOR, Y.K_UP, Y.K_DOWN)]
+    open_edge = [(x, y) for x, y in floors if x in (0, Y.LW - 1) or y in (0, Y.LH - 1)]
+    unwalled = [(x, y) for x, y in floors for dx in (-1, 0, 1) for dy in (-1, 0, 1)
+                if kinds[(y + dy) * Y.LW + x + dx] == Y.K_ROCK]
+    folk = [m for m in g.monsters() if m[1] in (c("M_GNOME"), c("M_GNOMELORD"), c("M_DWARF"), c("M_HILLORC"))]
+    check(g.byte("lvl") == c("L_MINES") and g.byte("depth") == 3 and g.hero() == up and g.byte("theme") == 1
+          and len(floors) > 150 and all(f in reach for f in floors) and not open_edge and not unwalled
+          and all(g.byte("rgone", r) for r in range(9)) and len(folk) >= 6 and kinds.count(Y.K_DOWN) == 1,
+          "mott: below it the mines -- a cave of NetHack's passes, every floor cell joined, walled, gnomes, a dwarf, an orc",
+          "lvl %d depth %d, %d floor, %d cut off, edge %s, unwalled %s, %d folk, %d frames"
+          % (g.byte("lvl"), g.byte("depth"), len(floors), len([f for f in floors if f not in reach]), open_edge[:2],
+             unwalled[:2], len(folk), frames))
+
+    # the town: its temple and priest, its shop, its watch and its gnomes
+    g.clear_monsters(keep_pet=False)
+    g.stairs(Y.DOT, (g.byte("dnx"), g.byte("dny")))
+    mons = g.monsters()
+    tr, pri = g.byte("troom"), g.byte("tpri")
+    altar = [(x, y) for y in range(Y.LH) for x in range(Y.LW) if g.kind(x, y) >= Y.K_ALTAR]
+    peace = [m for m in mons if m[1] in (c("M_WATCHMAN"), c("M_GNOME"))]
+    check(g.byte("lvl") == c("L_TOWN") and g.byte("depth") == 4 and tr == 0 and g.byte("mtype", pri) == c("M_PRIEST")
+          and len(altar) == 1 and g.kind(*altar[0]) == Y.K_ALTAR + g.byte("talign") and g.byte("shroom") == 1
+          and g.byte("mtype", g.byte("shk")) == c("M_SHOPKEEPER") and len(peace) == 6
+          and all(m[5] & Y.S_PEACE for m in peace if m[1] == c("M_GNOME")),
+          "mott: the town below that: a temple with its altar and priest, a general store, three watchmen, three gnomes at peace",
+          "lvl %d, temple %d priest %d, altars %s, shop %d, %d at peace" % (g.byte("lvl"), tr, pri, altar, g.byte("shroom"), len(peace)))
+    g.poke("talign", 1)
+    ax, ay = altar[0]
+    g.set_kind(ax, ay, Y.K_ALTAR + 1)
+    x1, y1, x2, y2 = (g.byte(n, tr) for n in ("rx1", "ry1", "rx2", "ry2"))
+    door = next((x, y) for y in (y1, y2) for x in range(x1, x2 + 1) if g.kind(x, y) in (Y.K_DOORC, Y.K_DOORO))
+    g.set_kind(door[0], door[1], Y.K_DOORO)
+    g.poke("px", door[0])
+    g.poke("py", door[1] + 1)
+    g.redraw()
+    g.tap(Y.KP[8])
+    said = g.play()
+    check("Pilgrim, you enter a sacred place!" in flat(said) and "an unusual sense of peace" in flat(said),
+          "mott: into the temple, the priest of Odin intones, and a neutral Valkyrie below piety feels an unusual sense of peace",
+          said)
+    hx, hy = g.hero()
+    g.poke("px", g.byte("mx", pri) + (1 if g.kind(g.byte("mx", pri) + 1, g.byte("my", pri)) == Y.K_FLOOR else -1))
+    g.poke("py", g.byte("my", pri))
+    g.redraw()
+    d = next(k for k, s in Y.STEP.items() if (g.byte("px") + s[0], g.byte("py") + s[1]) == (g.byte("mx", pri), g.byte("my", pri)))
+    g.word_poke("ugold", 1000)
+    ac0 = g.word("uac")
+    g.shifted(Y.KEY_3)
+    g.m.run_frame(4)
+    g.type_text("chat")
+    g.tap(Y.ENTER)
+    g.m.run_frame(6)
+    g.tap(Y.KP[d])
+    said = g.play(cap=6)
+    for ch in "500":
+        g.tap([{"5": 0x2E, "0": 0x45}[ch]])
+    g.tap(Y.ENTER)
+    said += " / " + g.play()
+    check("asks you for a contribution" in flat(said) and "rewarded for thy devotion" in flat(said)
+          and g.uword("ugold") == 500 and 2 <= g.byte("uprot") <= 4 and g.word("uac") == ac0 - g.byte("uprot"),
+          "mott: #chat with the priest, 500 given at level 1, and protection off the armour class, as priest_talk() has it",
+          "%s; gold %d, protection %d, AC %d from %d" % (flat(said)[-120:], g.uword("ugold"), g.byte("uprot"), g.word("uac"), ac0))
+
+    # the mines' bottom, and back up to the branch
+    g.clear_monsters(keep_pet=False)
+    g.stairs(Y.DOT, (g.byte("dnx"), g.byte("dny")))
+    bottom = g.byte("lvl") == c("L_MINEEND") and not [i for i in range(Y.LW * Y.LH) if g.byte("lv", i) & 15 == Y.K_DOWN]
+    for _ in range(3):
+        g.clear_monsters(keep_pet=False)
+        g.stairs(Y.COMMA, (g.byte("upx"), g.byte("upy")))
+    check(bottom and g.byte("lvl") == 2 and g.hero() == br,
+          "mott: the third level of the mines has no way down, and three stairs up come out on the branch's stairs",
+          "lvl %d, hero %s" % (g.byte("lvl"), g.hero()))
+
+    # Sokoban, up from the level under the Oracle
+    g.down_to(4)
+    sb = (g.byte("brx"), g.byte("bry"))
+    up_here = sb[0] < Y.LW and g.kind(*sb) == Y.K_UP
+    g.clear_monsters(keep_pet=False)
+    g.stairs(Y.COMMA, sb)
+    SOK = {sp["key"]: sp for sp in MY.SPECIALS}
+    ox, oy = SOK["SOKO1"]["at"]
+    boulders = sorted((o_[2] - ox, o_[3] - oy) for o_ in g.objs() if o_[1] == c("O_BOULDER"))
+    want = sorted((x, y) for y, row in enumerate(SOK["SOKO1"]["rows"]) for x, ch in enumerate(row) if ch == "0")
+    holes = [t_ for t_ in g.traps() if t_[1] == c("TR_HOLE")]
+    premap = all(g.byte("lv", i) & Y.F_SEEN for i in range(Y.LW * Y.LH) if g.byte("lv", i) & 15)
+    check(up_here and g.byte("lvl") == c("L_SOKO1") and g.byte("depth") == 3 and boulders == want
+          and len(holes) == 3 and all(t_[4] & Y.TF_SEEN for t_ in holes) and premap,
+          "mott: stairs up beside the Oracle's level's stairs lead to Sokoban: its boulders, its holes seen, its map known",
+          "lvl %d depth %d, boulders %s, holes %d, premapped %s" % (g.byte("lvl"), g.byte("depth"), boulders, len(holes), premap))
+    g.clear_monsters(keep_pet=False)
+
+    # a boulder does not roll aslant here; a teleport does not work
+    bx, by = want[0][0] + ox, want[0][1] + oy
+    g.poke("px", bx - 1)
+    g.poke("py", by - 1)
+    g.redraw()
+    g.tap(Y.KP[3])
+    said = g.play()
+    still = (bx, by) in [(o_[2], o_[3]) for o_ in g.objs() if o_[1] == c("O_BOULDER")]
+    check("won't roll diagonally" in said and still and g.hero() == (bx - 1, by - 1),
+          "mott: a boulder pushed aslant in Sokoban won't roll", said)
+
+    # down a hole, and back
+    hx_, hy_ = holes[0][2], holes[0][3] - 1
+    g.poke("px", hx_)
+    g.poke("py", hy_)
+    g.redraw()
+    g.tap(Y.KP[2])
+    l0 = g.uword("loops")
+    g.until(lambda: g.uword("loops") > l0 + 3, 2000)
+    said = g.play()
+    fell = g.byte("lvl") == 4
+    g.clear_monsters(keep_pet=False)
+    g.stairs(Y.COMMA, sb)
+    check("Air currents pull you down into a hole!" in flat(said) and fell and g.byte("lvl") == c("L_SOKO1"),
+          "mott: a step into a Sokoban hole: the air currents pull the hero down to the level below, and the stairs lead back",
+          said)
+
+    # the puzzles, solved as MY.sokoban_solve() says, a push a key
+    def solve(key):
+        ox, oy = SOK[key]["at"]
+        pushes = MY.sokoban_solve(SOK[key]["rows"])
+        for (bx, by), (dx, dy) in pushes:
+            g.clear_monsters(keep_pet=False)
+            stand = (bx - dx + ox, by - dy + oy)
+            if g.hero() != stand and not g.walk_to(stand):
+                return "could not reach %s" % (stand,)
+            g.tap(Y.KP[next(k for k, s in Y.STEP.items() if s == (dx, dy))])
+            g.play(cap=4)
+        return len(pushes)
+    n1 = solve("SOKO1")
+    g.clear_monsters(keep_pet=False)
+    goal = (g.byte("upx"), g.byte("upy"))
+    walked = g.walk_to(goal)
+    left = [t_ for t_ in g.traps() if t_[1] == c("TR_HOLE")]
+    check(isinstance(n1, int) and not left and walked,
+          "mott: the first puzzle solved by its %s pushes: every hole plugged, and the stairs up reached" % n1,
+          "%s, holes left %d, at %s" % (n1, len(left), g.hero()))
+    g.stairs(Y.COMMA, goal)
+    n2 = solve("SOKO2")
+    g.clear_monsters(keep_pet=False)
+    prize = next(((o_[2], o_[3]) for o_ in g.objs() if o_[1] == c("O_LIFESAVING")), None)
+    walked = prize and g.walk_to(prize)
+    g.tap(Y.COMMA)
+    said = g.play()
+    check(g.byte("lvl") == c("L_SOKO2") and isinstance(n2, int) and walked
+          and any(p[1] == c("O_LIFESAVING") for p in g.pack()),
+          "mott: the second, by its %s pushes, and the prize at its top taken" % n2, "%s, %s" % (n2, said))
+
+    # Delphi: the Oracle among fountains and centaurs, consulted
+    g.stairs(Y.DOT, (g.byte("dnx"), g.byte("dny")))
+    g.clear_monsters(keep_pet=False)
+    g.stairs(Y.DOT, (g.byte("dnx"), g.byte("dny")))
+    g.stairs(Y.DOT, (g.byte("dnx"), g.byte("dny")))
+    mons = g.monsters()
+    oracle = next((m for m in mons if m[1] == c("M_ORACLE")), None)
+    fountains = [(x, y) for y in range(Y.LH) for x in range(Y.LW) if g.kind(x, y) == Y.K_FOUNTAIN]
+    cents = [m for m in mons if m[1] == c("M_FORESTCENTAUR") and m[5] & Y.S_PEACE]
+    check(g.byte("lvl") == 5 and oracle and (oracle[2], oracle[3]) == (19, 10) and len(fountains) == 4 and len(cents) == 4,
+          "mott: level 5 is Delphi, the Oracle in her chamber between four fountains, four centaurs at peace",
+          "lvl %d, Oracle %s, fountains %s, centaurs %d" % (g.byte("lvl"), oracle, fountains, len(cents)))
+    g.poke("px", 20)
+    g.poke("py", 10)
+    g.redraw()
+    g.word_poke("ugold", 1000)
+    xp0 = g.uword("uxp")
+
+    def chat_west():
+        g.shifted(Y.KEY_3)
+        g.m.run_frame(4)
+        g.type_text("chat")
+        g.tap(Y.ENTER)
+        g.m.run_frame(6)
+        g.tap(Y.KP[4])
+        g.m.run_frame(6)
+    chat_west()
+    asked = "minor consultation" in flat(g.play(cap=2))
+    g.tap(Y.KEY_Y)
+    said = g.play()
+    check(asked and "True to her word, the Oracle" in flat(said) and g.uword("ugold") == 950 and g.uword("uxp") == xp0 + 5,
+          "mott: #chat with the Oracle, a minor consultation: fifty zorkmids, a rumour of hers, and five experience",
+          said)
+    cost = 500 + 50 * g.byte("ulev")
+    chat_west()
+    g.play(cap=2)
+    g.tap(Y.KEY_N)
+    g.m.run_frame(6)
+    g.tap(Y.KEY_Y)
+    g.m.run_frame(10)
+    page = [g.text(0, r, 40).rstrip() for r in range(0, 14)]
+    g.tap(Y.SPACE)
+    g.play()
+    check(any("meditates" in r for r in page[:2]) and any(r.startswith('"') for r in page[2:])
+          and g.uword("ugold") == 950 - cost,
+          "mott: and a major one: %d zorkmids, and one of her pages over the map" % cost, str(page[:5]))
+    check(0x100 < g.m.cpu.sp <= 0x200, "mott: the stack is where it should be after milestone 5", "SP $%04X" % g.m.cpu.sp)
+    del g
+
     # the path a person takes: MOTT.BIN on the CoolAction disc, the program on drive 9
     import cool8rsvm as vm
     import cool8disk
@@ -3943,7 +4182,8 @@ def test_mott():
     im = cool8disk.Image(img)
     home, v11 = cool8disk.Volume(im, cool8disk.MOTT_VOL), cool8disk.Volume(im, cool8disk.ACTION_VOL)
     check(home.find("MOTT.PRG") and home.get("MOTT.PRG") == bytes(prg) and all(home.get(os.path.basename(p)) == d for p, d in zip(Y.DATS, dat))
-          and home.get("MNAMES.DAT") == names and home.get("MHELP.DAT") == open(Y.HELP, "rb").read()
+          and home.get("MNAMES.DAT") == names and home.get("MPAGES.DAT") == open(Y.HELP, "rb").read()
+          and home.get("MLEVELS.DAT") == open(Y.LEVELS, "rb").read()
           and home.get("MOTT.STR") == open(H.act_strings("mott_payload"), "rb").read()
           and v11.find("MOTT.BIN") and not v11.find("MOTT.PRG"),
           "mott: the demos disc has MOTT.PRG and its themes on drive 9, and only MOTT.BIN on drive 11",

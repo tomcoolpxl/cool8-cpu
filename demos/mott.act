@@ -35,10 +35,11 @@
 ; under appearances each game shuffles -- a pink potion, a scroll labeled
 ; ZELGO MER -- until they are used or identified.
 ;
-; Milestones 1 to 4: the dungeon, walking, doors, stairs, what is seen and
+; Milestones 1 to 5: the dungeon, walking, doors, stairs, what is seen and
 ; remembered; the monsters, the fighting, the three heroes, their levels,
 ; the pet; the things and what they do; traps and secret doors, fountains,
-; altars and prayer, Elbereth, shops. docs/14-demos.md has the plan.
+; altars and prayer, Elbereth, shops; the mines' caves and town, the
+; Oracle's Delphi, Sokoban. docs/14-demos.md has the plan.
 ;
 ; **Its messages are on its drive**: a #"text" is a number here and a
 ; string in MOTT.STR, which the compiler writes and Str() reads, as the
@@ -52,7 +53,7 @@
 ; wears, T takes off, P puts on, R removes, q drinks, r reads, z zaps, t
 ; throws, f fires daggers, : looks here, \ lists what is known, Z casts
 ; the Wizard's force bolt, p pays, E engraves, # takes a long command
-; (#pray), ? shows the keys. Ctrl+R draws the screen again; Esc asks to
+; (#pray, #chat), ? shows the keys. Ctrl+R draws the screen again; Esc asks to
 ; quit.
 
 CONST MDRIVE = 9                     ; MOTT's drive: its program and its themes
@@ -181,7 +182,22 @@ BYTE ARRAY r_pet(3) = [M_KITTEN M_KITTEN M_LITTLEDOG]
 BYTE ARRAY lv(960) = $0800
 BYTE ARRAY mat(960) = $0BC0          ; the monster on a cell, plus one; rebuilt, not parked
 BYTE ARRAY oat(960) = $0F80          ; the top thing on a cell, plus one; rebuilt
-BYTE ARRAY made(13)                  ; levels already made, by depth
+; the levels a game has: the dungeon's twelve by depth, the three of the
+; mines below the level they open from, the two of Sokoban above the one
+; below the Oracle's; a slot of VRAM each
+CONST L_MINES = 13
+CONST L_TOWN = 14
+CONST L_MINEEND = 15
+CONST L_SOKO1 = 16
+CONST L_SOKO2 = 17
+CONST NLEVEL = 17
+BYTE lvl                             ; the level the hero is on
+BYTE mines_at, oracle_at             ; where the mines open and the Oracle sits, this game
+BYTE uprot                           ; a priest's protection, off the armour class
+BYTE uoracle                         ; consultations had: 1 minor, 2 major
+BYTE aesc                            ; the last question was answered with Esc
+BYTE lastpush                        ; the turn a boulder last moved
+BYTE ARRAY made(18)                  ; levels already made, by level
 CARD ARRAY vis(160)                  ; the cells in view, to fade when they leave it
 BYTE nvis
 
@@ -194,6 +210,7 @@ CONST MAXENGR = 3
 ; the rooms and the stairs
 BYTE ARRAY rx1(9), ry1(9), rx2(9), ry2(9), rgone(9)
 BYTE upx, upy, dnx, dny
+BYTE brx, bry                        ; the stairs of a branch, 255 none
 ; the monsters: parallel arrays; a monster's turns of sleep, and of running
 ; from the hero -- 255 until it is well again
 BYTE ARRAY mtype(20), mx(20), my(20), mhp(20), mhpmax(20), mlev(20), mstat(20), mmove(20)
@@ -211,6 +228,8 @@ BYTE ARRAY ex(3), ey(3), etx(51)
 ; keeper's gold and what was stolen from it
 BYTE shroom, shtype, shk, shname, shdx, shdy, spx, spy, shvis
 CARD shgold, shrob
+; the temple: its room (255 none), its priest's slot, its altar's alignment
+BYTE troom, tpri, talign
 BYTE park_end
 ; ---- the end of what is parked
 ; the hero's pack, and what of it is in use
@@ -471,6 +490,7 @@ FUNC BYTE Answer()
     Tick()
     IF KeyHit(KEY_Y) THEN a = 1 FI
   UNTIL a OR KeyHit(KEY_N) OR esc OD
+  aesc = esc
   esc = 0
   rep_c = 4
   IF a THEN rep_c = 8 FI
@@ -754,6 +774,7 @@ CONST OF_UNPAID = 16                 ; in the pack, the shop's until paid for
 CONST OF_DEAR = 32                   ; one in four of a shop's things: dearer while its kind is unknown
 CONST OF_NOCHG = 64                  ; on a shop's floor, the hero's own
 CONST S_HOSTILE = 8                  ; a peaceful kind of monster made angry
+CONST S_PEACE = 16                   ; a hostile kind made peaceful: the Oracle's centaurs, the town's gnomes
 CARD shdebt                          ; what the hero has used up unpaid, not parked: it is settled or stolen on leaving
 
 FUNC BYTE TrapAt(BYTE x, BYTE y)
@@ -763,6 +784,16 @@ FUNC BYTE TrapAt(BYTE x, BYTE y)
   FOR i = 0 TO MAXTRAP - 1 DO
     IF tt(i) <> 255 AND tx(i) == x AND ty(i) == y THEN RETURN (i) FI
   OD
+RETURN (255)
+
+; the boulder on a cell -- always the only thing there -- or 255
+FUNC BYTE BoulderAt(BYTE x, BYTE y)
+  BYTE i
+  IF x >= LW OR y >= LH THEN RETURN (255) FI
+  i = oat(Idx(x, y))
+  IF i THEN
+    IF ot(i - 1) == O_BOULDER THEN RETURN (i - 1) FI
+  FI
 RETURN (255)
 
 PROC DelTrap(BYTE i)
@@ -929,7 +960,7 @@ PROC CalcAC()
     k = worn(s)
     IF k <> 255 THEN a = a - o_arg(it(k)) - Signed(ie(k)) FI
   OD
-  uac = a - RingEnch(O_RPROTECTION)
+  uac = a - RingEnch(O_RPROTECTION) - uprot
 RETURN
 
 ; q of the pack's letter k gone; when none is left, it is no longer worn
@@ -1113,24 +1144,42 @@ PROC Spawn(BYTE x, BYTE y)
 RETURN
 
 ; a monster arriving out of sight, one turn in seventy
+; a free floor or corridor cell anywhere on the level -- no monster, thing
+; or trap on it, and not the hero's -- or $FFFF
+FUNC CARD AnySpot()
+  BYTE x, y, tries, k
+  CARD i, s
+  FOR tries = 1 TO 250 DO
+    x = Rnd(LW)
+    y = Rnd(LH)
+    i = Idx(x, y)
+    k = lv(i) & (15 | F_TRAP)
+    IF (k == K_FLOOR OR k == K_CORR) AND mat(i) == 0 AND oat(i) == 0 AND (x <> px OR y <> py) THEN
+      s = x
+      RETURN ((s << 8) | y)
+    FI
+  OD
+RETURN ($FFFF)
+
 PROC SpawnSomewhere()
-  BYTE r, tries, x, y
+  BYTE tries
   CARD s
   FOR tries = 1 TO 20 DO
-    r = Rnd(9)
-    IF rgone(r) == 0 THEN
-      s = RoomSpot(r)
-      IF s <> $FFFF THEN
-        x = s >> 8
-        y = s
-        IF lv(Idx(x, y)) & F_VIS == 0 AND (x <> px OR y <> py) THEN
-          Spawn(x, y)
-          RETURN
-        FI
+    s = AnySpot()
+    IF s <> $FFFF THEN
+      IF lv(Idx(s >> 8, s)) & F_VIS == 0 THEN
+        Spawn(s >> 8, s)
+        RETURN
       FI
     FI
   OD
 RETURN
+
+; a monster peaceful by its kind, or made so, and not made angry
+FUNC BYTE Peaceful(BYTE i)
+  IF mstat(i) & S_HOSTILE THEN RETURN (0) FI
+  IF mstat(i) & S_PEACE THEN RETURN (1) FI
+RETURN (m_flag(mtype(i)) & MF_PEACE)
 
 FUNC BYTE FindPet()
   BYTE i
@@ -1141,25 +1190,31 @@ RETURN (255)
 
 ; NetHack's mktrap(): a trap somewhere in room g, of a kind no harder than
 ; the depth allows, and no trap door on the bottom level
-PROC MkTrap(BYTE g)
-  BYTE i, k
-  CARD s
-  s = RoomSpot(g)
-  IF s == $FFFF THEN RETURN FI
+PROC MkTrapAt(BYTE k, BYTE x, BYTE y, BYTE f)
+  BYTE i
+  CARD c
   FOR i = 0 TO MAXTRAP - 1 DO
     IF tt(i) == 255 THEN
-      DO
-        k = Rnd(N_TRAP)
-      UNTIL depth >= tr_min(k) AND (k <> TR_TRAPDOOR OR depth < MAXDEPTH) OD
       tt(i) = k
-      tx(i) = s >> 8
-      ty(i) = s
-      tf(i) = 0
-      s = Idx(tx(i), ty(i))
-      lv(s) = lv(s) | F_TRAP
+      tx(i) = x
+      ty(i) = y
+      tf(i) = f
+      c = Idx(x, y)
+      lv(c) = lv(c) | F_TRAP
       RETURN
     FI
   OD
+RETURN
+
+PROC MkTrap(BYTE g)
+  BYTE k
+  CARD s
+  s = RoomSpot(g)
+  IF s == $FFFF THEN RETURN FI
+  DO
+    k = Rnd(N_TRAP)
+  UNTIL depth >= tr_min(k) AND (k <> TR_TRAPDOOR OR depth < MAXDEPTH) OD
+  MkTrapAt(k, s >> 8, s, 0)
 RETURN
 
 ; ---------------------------------------------------------------- shops
@@ -1190,12 +1245,25 @@ PROC MkShop(BYTE u, BYTE d)
   CARD k
   shroom = 255
   FOR g = 0 TO 8 DO
-    IF rgone(g) == 0 AND g <> u AND g <> d AND shroom == 255 THEN
+    IF rgone(g) == 0 AND g <> u AND g <> d AND shroom == 255 AND RoomAt(brx, bry) <> g THEN
       IF Doors(g) == 1 THEN shroom = g FI
     FI
   OD
   IF shroom == 255 THEN RETURN FI
-  g = shroom
+  r = Rnd(SHOP_ODDS)
+  t = 0
+  WHILE r >= sh_prob(t) DO
+    r -= sh_prob(t)
+    t += 1
+  OD
+  MkShopIn(shroom, t)
+RETURN
+
+PROC MkShopIn(BYTE g, BYTE st)
+  BYTE x, y, r, i, t, c
+  CARD k
+  shroom = g
+  shtype = st
   Doors(g)
   k = Kind(shdx, shdy)
   IF k == K_SDOOR THEN SetKind(shdx, shdy, K_DOORC) FI
@@ -1206,12 +1274,6 @@ PROC MkShop(BYTE u, BYTE d)
   IF shdx == rx2(g) THEN spx -= 1 FI
   IF shdy == ry1(g) THEN spy += 1 FI
   IF shdy == ry2(g) THEN spy -= 1 FI
-  r = Rnd(SHOP_ODDS)
-  shtype = 0
-  WHILE r >= sh_prob(shtype) DO
-    r -= sh_prob(shtype)
-    shtype += 1
-  OD
   IF shtype == SH_WAND AND (rx2(g) - rx1(g) - 1) * (ry2(g) - ry1(g) - 1) > 20 THEN shtype = SH_GENERAL FI
   shname = Rnd(8)
   shvis = 0
@@ -1261,10 +1323,13 @@ FUNC BYTE ShkOk()
 RETURN (1)
 
 ; the shop's room, its walls and door among it
-FUNC BYTE InShop(BYTE x, BYTE y)
-  IF shroom == 255 THEN RETURN (0) FI
-  IF x < rx1(shroom) OR x > rx2(shroom) OR y < ry1(shroom) OR y > ry2(shroom) THEN RETURN (0) FI
+FUNC BYTE InRect(BYTE r, BYTE x, BYTE y)
+  IF r == 255 THEN RETURN (0) FI
+  IF x < rx1(r) OR x > rx2(r) OR y < ry1(r) OR y > ry2(r) THEN RETURN (0) FI
 RETURN (1)
+
+FUNC BYTE InShop(BYTE x, BYTE y)
+RETURN (InRect(shroom, x, y))
 
 PROC ShkName()
   MsgS(NameRec(NAME_SHK + shtype * 8 + shname))
@@ -1350,9 +1415,11 @@ RETURN
 ; walk from one to a neighbour not yet joined, then a few loops more;
 ; then its monsters, one in three rooms, never in the room of the stairs
 ; the hero comes down
-PROC MakeLevel()
-  BYTE g, x0, y0, w, h, x, y, gone, lit, a, b, d, n, u, k
-  CARD i, s
+; a level empty: rock, no monster, thing, trap, writing, room, shop,
+; temple or branch
+PROC ClearLevel()
+  BYTE g
+  CARD i
   FOR i = 0 TO NCELL - 1 DO
     lv(i) = 0
     mat(i) = 0
@@ -1362,6 +1429,17 @@ PROC MakeLevel()
   FOR g = 0 TO MAXOBJ - 1 DO ot(g) = 255 OD
   FOR g = 0 TO MAXTRAP - 1 DO tt(g) = 255 OD
   FOR g = 0 TO MAXENGR - 1 DO ex(g) = 255 OD
+  FOR g = 0 TO 8 DO rgone(g) = 1 OD
+  shroom = 255
+  troom = 255
+  brx = 255
+  bry = 255
+RETURN
+
+PROC MakeLevel()
+  BYTE g, x0, y0, w, h, x, y, gone, lit, a, b, d, n, u, k
+  CARD i, s
+  ClearLevel()
   lit = 9
   IF depth > 4 THEN lit = 7 FI
   IF depth > 8 THEN lit = 5 FI
@@ -1435,6 +1513,17 @@ PROC MakeLevel()
     UNTIL rgone(d) == 0 AND d <> u OD
     Stair(d, K_DOWN)
   FI
+  IF lvl == mines_at OR lvl == oracle_at - 1 THEN   ; the mines' stairs down, Sokoban's up
+    DO
+      b = Rnd(9)
+    UNTIL rgone(b) == 0 AND b <> u AND b <> d OD
+    s = RoomSpot(b)
+    IF s <> $FFFF THEN
+      brx = s >> 8
+      bry = s
+      IF lvl == mines_at THEN SetKind(brx, bry, K_DOWN) ELSE SetKind(brx, bry, K_UP) FI
+    FI
+  FI
   IF depth > 1 AND Rnd(depth) < 3 THEN MkShop(u, d) FI
   FOR g = 0 TO 8 DO
     IF rgone(g) == 0 AND g <> u AND g <> shroom AND Rnd(3) == 0 THEN
@@ -1470,6 +1559,380 @@ PROC MakeLevel()
   OD
 RETURN
 
+; ------------------------------------------------------- special levels
+; NetHack's mkmap() for the mines' caves: two cells in five floor at random,
+; its three passes of counting neighbours, every cave joined to the first by
+; a corridor dug across and down, and the rock beside floor walled. While it
+; is made a cell is 1 for floor and 0 for rock, so a count is a sum; the
+; passes and the joining's flood walk lv, mat and oat at their fixed
+; addresses, and are assembly for their size and their speed
+BYTE cpass
+
+; one pass over the cells inside the edge: the first in place -- two or
+; fewer floor neighbours rock, five or more floor -- the others into mat,
+; the second making rock of five, the third and fourth of fewer than three
+PROC CavePass()
+  ASM
+        LDW  X,#$0829
+        LDW  Y,#$0BE9
+        MOV  R1,#1
+.c:     CLR  R2
+        LD   R0,[X-41]
+        ADD  R2,R0
+        LD   R0,[X-40]
+        ADD  R2,R0
+        LD   R0,[X-39]
+        ADD  R2,R0
+        LD   R0,[X-1]
+        ADD  R2,R0
+        LD   R0,[X+1]
+        ADD  R2,R0
+        LD   R0,[X+39]
+        ADD  R2,R0
+        LD   R0,[X+40]
+        ADD  R2,R0
+        LD   R0,[X+41]
+        ADD  R2,R0
+        LD   R0,[X]
+        LD   R3,[v_cpass]
+        TST  R3
+        BNE  .p1
+        CMP  R2,#3
+        BHS  .a
+        CLR  R0
+.a:     CMP  R2,#5
+        BLO  .s
+        MOV  R0,#1
+.s:     ST   [X],R0
+        BRA  .n
+.p1:    CMP  R3,#1
+        BNE  .p3
+        CMP  R2,#5
+        BNE  .m
+        CLR  R0
+        BRA  .m
+.p3:    CMP  R2,#3
+        BHS  .m
+        CLR  R0
+.m:     ST   [Y],R0
+.n:     INCW X
+        INCW Y
+        ADD  R1,#1
+        CMP  R1,#39
+        BNE  .c
+        ADDW X,#2
+        ADDW Y,#2
+        MOV  R1,#1
+        MOV  R0,XH
+        CMP  R0,#$0B
+        BNE  .c
+        MOV  R0,XL
+        CMP  R0,#$99
+        BNE  .c
+  ENDASM
+RETURN
+
+; the cave oat marks with 1 grown over every floor cell beside it, sweeping
+; forwards and back until a sweep marks nothing
+PROC CaveFlood()
+  ASM
+.g:     CLR  R3
+        LDW  X,#$0829
+        LDW  Y,#$0FA9
+.f:     CALL .k
+        INCW X
+        INCW Y
+        MOV  R0,XH
+        CMP  R0,#$0B
+        BNE  .f
+        MOV  R0,XL
+        CMP  R0,#$97
+        BNE  .f
+.b:     DECW X
+        DECW Y
+        CALL .k
+        MOV  R0,XH
+        CMP  R0,#$08
+        BNE  .b
+        MOV  R0,XL
+        CMP  R0,#$29
+        BNE  .b
+        TST  R3
+        BNE  .g
+        BRA  .x
+.k:     LD   R0,[Y]
+        BNE  .r
+        LD   R0,[X]
+        BEQ  .r
+        LD   R0,[Y-1]
+        LD   R1,[Y+1]
+        OR   R0,R1
+        LD   R1,[Y-40]
+        OR   R0,R1
+        LD   R1,[Y+40]
+        OR   R0,R1
+        BEQ  .r
+        MOV  R0,#1
+        ST   [Y],R0
+        MOV  R3,#1
+.r:     RET
+.x:
+  ENDASM
+RETURN
+
+; mat copied over lv
+PROC CaveCopy()
+  ASM
+        LDW  X,#$0800
+        LDW  Y,#$0BC0
+.l:     LD   R0,[Y]
+        ST   [X],R0
+        INCW X
+        INCW Y
+        MOV  R0,XH
+        CMP  R0,#$0B
+        BNE  .l
+        MOV  R0,XL
+        CMP  R0,#$C0
+        BNE  .l
+  ENDASM
+RETURN
+
+; the first floor cell inside the edge oat has not marked, into cidx: 919
+; for none
+CARD cidx
+
+PROC CaveFind()
+  ASM
+        LDW  X,#$0829
+        LDW  Y,#$0FA9
+.l:     LD   R0,[X]
+        BEQ  .n
+        LD   R0,[Y]
+        BEQ  .x
+.n:     INCW X
+        INCW Y
+        MOV  R0,XH
+        CMP  R0,#$0B
+        BNE  .l
+        MOV  R0,XL
+        CMP  R0,#$97
+        BNE  .l
+.x:     ADDW X,#$F800
+        STW  [v_cidx],X
+  ENDASM
+RETURN
+
+; the cave's floor made K_FLOOR and oat cleared; then the rock round every
+; floor cell walled
+PROC CaveWalls()
+  ASM
+        LDW  X,#$0800
+        LDW  Y,#$0F80
+        CLR  R1
+.c:     ST   [Y],R1
+        LD   R0,[X]
+        BEQ  .d
+        MOV  R0,#2
+        ST   [X],R0
+.d:     INCW X
+        INCW Y
+        MOV  R0,XH
+        CMP  R0,#$0B
+        BNE  .c
+        MOV  R0,XL
+        CMP  R0,#$C0
+        BNE  .c
+        LDW  X,#$0829
+        MOV  R1,#1
+.w:     LD   R0,[X]
+        CMP  R0,#2
+        BNE  .n
+        CALL .r
+.n:     INCW X
+        MOV  R0,XH
+        CMP  R0,#$0B
+        BNE  .w
+        MOV  R0,XL
+        CMP  R0,#$97
+        BNE  .w
+        BRA  .x
+.r:     LD   R0,[X-41]
+        BNE  .1
+        ST   [X-41],R1
+.1:     LD   R0,[X-40]
+        BNE  .2
+        ST   [X-40],R1
+.2:     LD   R0,[X-39]
+        BNE  .3
+        ST   [X-39],R1
+.3:     LD   R0,[X-1]
+        BNE  .4
+        ST   [X-1],R1
+.4:     LD   R0,[X+1]
+        BNE  .5
+        ST   [X+1],R1
+.5:     LD   R0,[X+39]
+        BNE  .6
+        ST   [X+39],R1
+.6:     LD   R0,[X+40]
+        BNE  .7
+        ST   [X+40],R1
+.7:     LD   R0,[X+41]
+        BNE  .8
+        ST   [X+41],R1
+.8:     RET
+.x:
+  ENDASM
+RETURN
+
+FUNC CARD CaveSpot(BYTE xlo, BYTE xhi)
+  BYTE x, y, tries
+  CARD s
+  FOR tries = 1 TO 250 DO
+    x = xlo + Rnd(xhi - xlo)
+    y = 1 + Rnd(22)
+    IF lv(Idx(x, y)) == K_FLOOR AND mat(Idx(x, y)) == 0 THEN
+      s = x
+      RETURN ((s << 8) | y)
+    FI
+  OD
+RETURN ($FFFF)
+
+PROC CaveMon(BYTE t, BYTE n)
+  BYTE i
+  CARD s
+  WHILE n > 0 DO
+    s = CaveSpot(1, 39)
+    IF s <> $FFFF THEN i = NewMon(t, s >> 8, s) FI
+    n -= 1
+  OD
+RETURN
+
+PROC MakeCave()
+  BYTE x, y, n, p, jx, jy
+  CARD i, j, c
+  ClearLevel()
+  c = 0
+  WHILE c < 350 DO
+    i = Idx(1 + Rnd(38), 1 + Rnd(22))
+    IF lv(i) == 0 THEN
+      lv(i) = 1
+      c += 1
+    FI
+  OD
+  FOR p = 0 TO 3 DO
+    cpass = p
+    CavePass()
+    IF p THEN CaveCopy() FI
+  OD
+  CaveFind()
+  j = cidx
+  IF j == 919 THEN
+    j = 500
+    lv(j) = 1
+  FI
+  jx = j % LW
+  jy = j / LW
+  DO
+    FOR i = 0 TO NCELL - 1 DO
+      oat(i) = 0
+      mat(i) = 0
+    OD
+    oat(j) = 1
+    CaveFlood()
+    CaveFind()
+    IF cidx == 919 THEN EXIT FI
+    x = cidx % LW
+    y = cidx / LW
+    WHILE x <> jx DO
+      lv(Idx(x, y)) = 1
+      IF x < jx THEN x += 1 ELSE x -= 1 FI
+    OD
+    WHILE y <> jy DO
+      lv(Idx(x, y)) = 1
+      IF y < jy THEN y += 1 ELSE y -= 1 FI
+    OD
+  OD
+  CaveWalls()
+  c = CaveSpot(1, 13)
+  upx = c >> 8
+  upy = c
+  SetKind(upx, upy, K_UP)
+  IF lvl < L_MINEEND THEN
+    c = CaveSpot(27, 39)
+    dnx = c >> 8
+    dny = c
+    SetKind(dnx, dny, K_DOWN)
+  FI
+  CaveMon(M_GNOME, 4)
+  CaveMon(M_GNOMELORD, 1)
+  CaveMon(M_DWARF, 1)
+  CaveMon(M_HILLORC, 1)
+  n = 3
+  IF lvl == L_MINEEND THEN n = 7 FI
+  FOR p = 1 TO n DO
+    c = CaveSpot(1, 39)
+    IF c <> $FFFF THEN MkObj(c >> 8, c) FI
+    c = CaveSpot(1, 39)
+    IF c <> $FFFF THEN MkGold(c >> 8, c) FI
+  OD
+RETURN
+
+; a special level from MLEVELS.DAT: its cells, rooms and stairs, then its
+; features -- monsters, peaceful ones, things, gold, traps, the shop, the
+; temple, monsters at random, and Sokoban's map known from the start
+CARD levels_page
+BYTE ARRAY feat(80)
+
+PROC LoadSpecial(BYTE n)
+  BYTE f, c, a, x, y, i
+  CARD k
+  ClearLevel()
+  FOpen(levels_page, SPEC_REC * n)
+  FlashRead(lv, NCELL)
+  FlashRead(rx1, 51)
+  FlashRead(feat, 80)
+  FlashClose()
+  FOR f = 0 TO MAXFEAT - 1 DO
+    k = f * 4
+    c = feat(k)
+    a = feat(k + 1)
+    x = feat(k + 2)
+    y = feat(k + 3)
+    IF c == FT_MON OR c == FT_PEACE THEN
+      i = NewMon(a, x, y)
+      IF c == FT_PEACE AND i <> 255 THEN mstat(i) = mstat(i) | S_PEACE FI
+    ELSEIF c == FT_OBJ THEN
+      nf = 0
+      ne = 0
+      IF a <> O_BOULDER THEN Bless(a) FI
+      i = PutObj(a, 1, nf, ne, x, y)
+    ELSEIF c == FT_GOLD THEN
+      i = PutObj(O_GOLD, a * 5, 0, 0, x, y)
+    ELSEIF c == FT_TRAP THEN
+      MkTrapAt(a, x, y, TF_SEEN)
+    ELSEIF c == FT_SHOP THEN
+      MkShopIn(a, x)
+    ELSEIF c == FT_TEMPLE THEN
+      troom = a
+      talign = Rnd(3)
+      tpri = NewMon(M_PRIEST, x, y)
+      FOR y = ry1(a) TO ry2(a) DO
+        FOR x = rx1(a) TO rx2(a) DO
+          IF Kind(x, y) >= K_ALTAR THEN SetKind(x, y, K_ALTAR + talign) FI
+        OD
+      OD
+    ELSEIF c == FT_SPAWN THEN
+      FOR i = 1 TO a DO SpawnSomewhere() OD
+    ELSEIF c == FT_PREMAP THEN
+      FOR k = 0 TO NCELL - 1 DO
+        IF lv(k) & 15 <> K_ROCK THEN lv(k) = lv(k) | F_SEEN FI
+      OD
+    FI
+  OD
+RETURN
+
 ; the level parked in its VRAM slot, or brought back from it
 FUNC CARD Slot(BYTE d)
   CARD s
@@ -1492,7 +1955,7 @@ PROC SaveLevel()
   CARD s
   Rob()
   IF nvis THEN ForgetView() FI
-  s = Slot(depth)
+  s = Slot(lvl)
   VWrite(s, lv, NCELL)
   VWrite(s + NCELL, rx1, &park_end - rx1)
 RETURN
@@ -1500,7 +1963,7 @@ RETURN
 PROC LoadLevel()
   CARD s, i
   BYTE m
-  s = Slot(depth)
+  s = Slot(lvl)
   VRead(s, lv, NCELL)
   VRead(s + NCELL, rx1, &park_end - rx1)
   FOR i = 0 TO NCELL - 1 DO
@@ -1822,11 +2285,9 @@ PROC LoseLevel()
 RETURN
 
 PROC MonTeleport(BYTE i)
-  BYTE r, x, y
+  BYTE x, y
   CARD s
-  r = Rnd(9)
-  IF rgone(r) THEN RETURN FI
-  s = RoomSpot(r)
+  s = AnySpot()
   IF s == $FFFF THEN RETURN FI
   x = mx(i)
   y = my(i)
@@ -1870,6 +2331,11 @@ RETURN
 PROC MsgMon(BYTE i, BYTE cap)
   IF i == shk AND ShkOk() AND lv(Idx(mx(i), my(i))) & F_VIS THEN
     ShkName()
+    RETURN
+  FI
+  IF i == tpri AND troom <> 255 AND mtype(i) == M_PRIEST THEN
+    IF cap THEN MsgS(Str(#"The priest of ")) ELSE MsgS(Str(#"the priest of ")) FI
+    MsgS(NameRec(NAME_GOD + role * 3 + talign))
     RETURN
   FI
   IF lv(Idx(mx(i), my(i))) & F_VIS THEN
@@ -1936,7 +2402,7 @@ FUNC BYTE HurtMon(BYTE i, BYTE d)
   MsgMon(i, 0)
   MsgC('!')
   MsgEnd()
-  IF m_flag(t) & MF_PEACE AND mstat(i) & S_HOSTILE == 0 THEN
+  IF Peaceful(i) THEN
     urec -= 6
     IF ualign <> 2 THEN
       Msg(Str(#"You murderer!"))
@@ -2234,7 +2700,7 @@ FUNC BYTE Scary(BYTE i)
   BYTE e, j, ch, t
   CARD at
   t = mtype(i)
-  IF t == M_SOLDIER OR t >= M_SHOPKEEPER THEN RETURN (0) FI
+  IF t == M_SOLDIER OR t >= M_SHOPKEEPER OR Peaceful(i) THEN RETURN (0) FI
   e = EngrAt(px, py)
   IF e == 255 THEN RETURN (0) FI
   at = e * 17
@@ -2274,7 +2740,7 @@ FUNC BYTE StepToward(BYTE i, BYTE tx, BYTE ty, BYTE away)
     ny = y + dir_dy(k)
     IF nx < LW AND ny < LH THEN
       kind = Kind(nx, ny)
-      IF (Open(kind) OR kind == K_DOORC) AND MonAt(nx, ny) == 0 AND (nx <> px OR ny <> py) AND Diagonal(x, y, nx, ny) AND lv(Idx(nx, ny)) & F_TRAP == 0 THEN
+      IF (Open(kind) OR kind == K_DOORC) AND MonAt(nx, ny) == 0 AND (nx <> px OR ny <> py) AND Diagonal(x, y, nx, ny) AND lv(Idx(nx, ny)) & F_TRAP == 0 AND BoulderAt(nx, ny) == 255 THEN
         dx = nx
         dx = dx - tx
         dy = ny
@@ -2311,7 +2777,7 @@ PROC PetAct(BYTE i)
   FOR j = 0 TO MAXMON - 1 DO
     IF mstat(j) AND j <> i THEN
       IF Dist(mx(i), my(i), mx(j), my(j)) == 1 AND mlev(j) < mlev(i) + 2 THEN
-        IF m_flag(mtype(j)) & MF_PEACE == 0 AND Diagonal(mx(i), my(i), mx(j), my(j)) THEN
+        IF Peaceful(j) == 0 AND Diagonal(mx(i), my(i), mx(j), my(j)) THEN
           MonHitsMon(i, j)
           RETURN
         FI
@@ -2357,8 +2823,12 @@ PROC MonAct(BYTE i)
     PetAct(i)
     RETURN
   FI
-  IF m_flag(t) & MF_PEACE AND mstat(i) & S_HOSTILE == 0 THEN
-    IF t == M_SHOPKEEPER AND ShkOk() THEN ShkAct(i) FI
+  IF Peaceful(i) THEN
+    IF t == M_SHOPKEEPER AND ShkOk() THEN
+      ShkAct(i)
+    ELSEIF t <> M_PRIEST AND m_spd(t) AND Rnd(3) == 0 THEN
+      p = StepToward(i, mx(i) + Rnd(5) - 2, my(i) + Rnd(5) - 2, 0)
+    FI
     RETURN
   FI
   IF m_spd(t) == 0 THEN RETURN FI
@@ -2468,6 +2938,8 @@ PROC EnterLevel(BYTE down)
   BYTE t, r, i, d
   CARD s
   t = ThemeOf(depth)
+  IF lvl >= L_MINES THEN t = 1 FI
+  IF lvl >= L_SOKO1 THEN t = 0 FI
   IF t <> theme THEN
     FOR r = VTOP TO VTOP + 25 DO ClearRow(r) OD
     IF LoadTheme(t) == 0 THEN
@@ -2475,11 +2947,23 @@ PROC EnterLevel(BYTE down)
       RETURN
     FI
   FI
-  IF made(depth) THEN
+  IF made(lvl) THEN
     LoadLevel()
   ELSE
-    MakeLevel()
-    made(depth) = 1
+    IF lvl == oracle_at THEN
+      LoadSpecial(SP_DELPHI)
+    ELSEIF lvl == L_TOWN THEN
+      LoadSpecial(SP_TOWN)
+    ELSEIF lvl == L_SOKO1 THEN
+      LoadSpecial(SP_SOKO1)
+    ELSEIF lvl == L_SOKO2 THEN
+      LoadSpecial(SP_SOKO2)
+    ELSEIF lvl >= L_MINES THEN
+      MakeCave()
+    ELSE
+      MakeLevel()
+    FI
+    made(lvl) = 1
   FI
   nvis = 0
   IF down == 1 THEN
@@ -2488,13 +2972,13 @@ PROC EnterLevel(BYTE down)
   ELSEIF down == 0 THEN
     px = dnx
     py = dny
+  ELSEIF down == 3 THEN
+    px = brx
+    py = bry
   ELSE
-    DO
-      r = Rnd(9)
-    UNTIL rgone(r) == 0 OD
     px = upx
     py = upy
-    s = RoomSpot(r)
+    s = AnySpot()
     IF s <> $FFFF THEN
       px = s >> 8
       py = s
@@ -2547,30 +3031,70 @@ PROC TakePet()
   mstat(p) = 0
 RETURN
 
+; the level's depth: the dungeon's by number, the mines' below where they
+; open, Sokoban's above the level under the Oracle
+FUNC BYTE LDepth(BYTE l)
+  IF l <= MAXDEPTH THEN RETURN (l) FI
+  IF l <= L_MINEEND THEN RETURN (mines_at + l - MAXDEPTH) FI
+RETURN (oracle_at + L_MINEEND - 1 - l)
+
+; the level under this one, and the one over it; 0 for none
+FUNC BYTE Below()
+  IF lvl < MAXDEPTH OR (lvl >= L_MINES AND lvl < L_MINEEND) THEN RETURN (lvl + 1) FI
+  IF lvl == L_SOKO2 THEN RETURN (L_SOKO1) FI
+  IF lvl == L_SOKO1 THEN RETURN (oracle_at - 1) FI
+RETURN (0)
+
+FUNC BYTE Above()
+  IF lvl == L_MINES THEN RETURN (mines_at) FI
+  IF lvl == L_SOKO1 THEN RETURN (L_SOKO2) FI
+  IF lvl == L_SOKO2 THEN RETURN (0) FI
+RETURN (lvl - 1)
+
+; to another level, the pet beside the hero along: arriving 1 on its stairs
+; up, 0 on its stairs down, 2 anywhere, 3 on its branch's stairs
+PROC GoLevel(BYTE l, BYTE arrive)
+  TakePet()
+  SaveLevel()
+  lvl = l
+  depth = LDepth(l)
+  EnterLevel(arrive)
+RETURN
+
 PROC Descend()
+  BYTE l, a
   IF Kind(px, py) <> K_DOWN THEN
     Msg(Str(#"You can't go down here."))
     RETURN
   FI
-  TakePet()
-  SaveLevel()
-  depth += 1
-  EnterLevel(1)
+  a = 1
+  l = Below()
+  IF px == brx AND py == bry THEN
+    l = L_MINES
+  ELSEIF lvl == L_SOKO1 THEN
+    a = 3
+  FI
+  GoLevel(l, a)
 RETURN
 
 PROC Ascend()
+  BYTE l, a
   IF Kind(px, py) <> K_UP THEN
     Msg(Str(#"You can't go up here."))
     RETURN
   FI
-  IF depth == 1 THEN
+  a = 0
+  l = Above()
+  IF px == brx AND py == bry THEN
+    l = L_SOKO1
+  ELSEIF lvl == L_MINES THEN
+    a = 3
+  FI
+  IF l == 0 THEN
     Msg(Str(#"The way out. You have no Amulet yet."))
     RETURN
   FI
-  TakePet()
-  SaveLevel()
-  depth -= 1
-  EnterLevel(0)
+  GoLevel(l, a)
 RETURN
 
 ; ------------------------------------------------------- names of things
@@ -2853,16 +3377,42 @@ PROC Sell(BYTE j)
   FI
 RETURN
 
+; NetHack's intemple(): into the temple of a peaceful priest, his
+; greeting, and the feeling of the place -- peace for a hero of the
+; altar's alignment in good standing, a forbidding feeling otherwise
+PROC TempleMove(BYTE ox, BYTE oy)
+  IF troom == 255 OR InRect(troom, px, py) == 0 OR InRect(troom, ox, oy) THEN RETURN FI
+  IF mstat(tpri) == 0 OR mtype(tpri) <> M_PRIEST OR Peaceful(tpri) == 0 THEN RETURN FI
+  mbl = 0
+  MsgMon(tpri, 1)
+  MsgS(" intones:")
+  MsgEnd()
+  Msg(Str(#"\"Pilgrim, you enter a sacred place!\""))
+  mbl = 0
+  MsgS("You ")
+  IF talign <> ualign OR urec <= -4 THEN
+    MsgS("have a")
+    IF talign == ualign THEN MsgS(" strange") FI
+    MsgS(Str(#" forbidding feeling..."))
+  ELSE
+    MsgS("experience ")
+    IF urec >= 20 THEN MsgS("a") ELSE MsgS(Str(#"an unusual")) FI
+    MsgS(Str(#" sense of peace."))
+  FI
+  MsgEnd()
+RETURN
+
 ; the hero set down somewhere on the level, at random
 PROC Teleport()
   BYTE r, ox, oy
   CARD s
+  IF lvl >= L_SOKO1 THEN
+    Msg(Str(#"You feel a wrenching sensation."))
+    RETURN
+  FI
   ox = px
   oy = py
-  DO
-    r = Rnd(9)
-  UNTIL rgone(r) == 0 OD
-  s = RoomSpot(r)
+  s = AnySpot()
   IF s == $FFFF THEN RETURN FI
   px = s >> 8
   py = s
@@ -3008,11 +3558,8 @@ RETURN
 
 ; down to another level through a hole in the floor, the pet beside the
 ; hero coming along
-PROC FallTo(BYTE d)
-  TakePet()
-  SaveLevel()
-  depth = d
-  EnterLevel(2)
+PROC FallTo(BYTE l)
+  GoLevel(l, 2)
 RETURN
 
 ; the trap under the hero goes off: NetHack's dotrap() for these eleven.
@@ -3024,7 +3571,7 @@ PROC Spring()
   IF i == 255 THEN RETURN FI
   k = tt(i)
   f = tf(i)
-  IF f & TF_SEEN AND Rnd(5) == 0 THEN
+  IF f & TF_SEEN AND Rnd(5) == 0 AND lvl < L_SOKO1 THEN
     mbl = 0
     MsgS(Str(#"You escape "))
     MsgA(NameRec(NAME_TRAP + k))
@@ -3084,21 +3631,32 @@ PROC Spring()
     FI
   ELSEIF k == TR_TRAPDOOR THEN
     Msg(Str(#"A trap door opens up under you!"))
-    n = depth + 1
-    WHILE Rnd(4) == 0 AND n < MAXDEPTH DO n += 1 OD
+    n = Below()
+    IF lvl < MAXDEPTH THEN
+      WHILE Rnd(4) == 0 AND n < MAXDEPTH DO n += 1 OD
+    FI
     mbl = 0
-    IF n > depth + 1 THEN
+    IF n > lvl + 1 THEN
       MsgS(Str(#"You fall down a "))
-      IF n > depth + 3 THEN MsgS("very ") FI
-      IF n > depth + 2 THEN MsgS("deep ") FI
+      IF n > lvl + 3 THEN MsgS("very ") FI
+      IF n > lvl + 2 THEN MsgS("deep ") FI
       MsgS("shaft!")
     ELSE
       MsgS(Str(#"You fall through..."))
     FI
     MsgEnd()
     FallTo(n)
+  ELSEIF k == TR_HOLE THEN
+    IF lvl >= L_SOKO1 THEN
+      Msg(Str(#"Air currents pull you down into a hole!"))
+    ELSE
+      Msg(Str(#"There's a gaping hole under you!"))
+    FI
+    FallTo(Below())
   ELSEIF k == TR_TELEPORT THEN
     Teleport()
+  ELSEIF lvl > MAXDEPTH THEN
+    Msg(Str(#"You shudder for a moment."))
   ELSE
     Msg(Str(#"You are momentarily blinded by a flash of light."))
     DelTrap(i)
@@ -3116,10 +3674,51 @@ PROC Spring()
   FI
 RETURN
 
+; NetHack's moverock(): the boulder rolls a cell ahead of the hero, never
+; aslant in Sokoban, nor into a wall, a shut door, another boulder or a
+; monster; into a hole or a pit it falls and plugs it. 1 if it moved
+FUNC BYTE Push(BYTE b, BYTE d)
+  BYTE x, y, tx, ty, t, k
+  x = ox(b)
+  y = oy(b)
+  IF d % 2 == 0 AND lvl >= L_SOKO1 THEN
+    Msg(Str(#"The boulder won't roll diagonally on this floor."))
+    RETURN (0)
+  FI
+  tx = x + dir_dx(d)
+  ty = y + dir_dy(d)
+  IF tx >= LW OR ty >= LH THEN RETURN (0) FI
+  IF Open(Kind(tx, ty)) == 0 OR BoulderAt(tx, ty) <> 255 OR MonAt(tx, ty) OR Diagonal(x, y, tx, ty) == 0 THEN
+    Msg(Str(#"You try to move the boulder, but in vain."))
+    RETURN (0)
+  FI
+  IF turns > lastpush + 2 THEN Msg(Str(#"With great effort you move the boulder.")) FI
+  lastpush = turns
+  TakeObj(b)
+  t = TrapAt(tx, ty)
+  k = 255
+  IF t <> 255 THEN k = tt(t) FI
+  IF k == TR_HOLE OR k == TR_TRAPDOOR THEN
+    Msg(Str(#"The boulder falls into and plugs a hole in the floor!"))
+    DelTrap(t)
+  ELSEIF k == TR_PIT OR k == TR_SPIKEDPIT THEN
+    Msg(Str(#"The boulder fills a pit."))
+    DelTrap(t)
+  ELSE
+    t = PutObj(O_BOULDER, 1, 0, 0, tx, ty)
+  FI
+  DrawCell(tx, ty)
+RETURN (1)
+
+; not to be squeezed past in Sokoban: rock, wall, a boulder
+FUNC BYTE Blocked(BYTE x, BYTE y)
+  IF Open(Kind(x, y)) == 0 OR BoulderAt(x, y) <> 255 THEN RETURN (1) FI
+RETURN (0)
+
 ; a step: into a monster is an attack, into the pet a change of places,
 ; into a shut door opens it; a door is never passed diagonally
 PROC Stride(BYTE d)
-  BYTE nx, ny, k, ox, oy, m, swap
+  BYTE nx, ny, k, ox, oy, m, swap, b
   swap = 0
   nx = px + dir_dx(d)
   ny = py + dir_dy(d)
@@ -3133,7 +3732,7 @@ PROC Stride(BYTE d)
   IF m THEN
     m -= 1
     IF mstat(m) & S_PET == 0 THEN
-      IF m_flag(mtype(m)) & MF_PEACE AND mstat(m) & S_HOSTILE == 0 THEN
+      IF Peaceful(m) THEN
         mbl = 0
         MsgS(Str(#"Really attack "))
         MsgMon(m, 0)
@@ -3170,6 +3769,16 @@ PROC Stride(BYTE d)
     EndTurn()
     RETURN
   FI
+  IF lvl >= L_SOKO1 AND d % 2 == 0 THEN
+    IF Blocked(nx, py) AND Blocked(px, ny) THEN
+      Msg(Str(#"You cannot pass that way."))
+      RETURN
+    FI
+  FI
+  b = BoulderAt(nx, ny)
+  IF b <> 255 THEN
+    IF Push(b, d) == 0 THEN RETURN FI
+  FI
   IF k == K_DOORC THEN
     SetKind(nx, ny, K_DOORO)
     Msg(Str(#"The door opens."))
@@ -3202,6 +3811,7 @@ PROC Stride(BYTE d)
     DrawCell(px, py)
   FI
   ShopMove(ox, oy)
+  TempleMove(ox, oy)
   LookHere()
   Spring()
   EndTurn()
@@ -3514,6 +4124,10 @@ PROC PickUp()
     RETURN
   FI
   i -= 1
+  IF ot(i) == O_BOULDER THEN
+    Msg(Str(#"The boulder is too heavy to lift."))
+    RETURN
+  FI
   IF ot(i) == O_GOLD THEN
     ugold += oq(i)
     mbl = 0
@@ -3897,11 +4511,9 @@ PROC Quaff()
   ELSEIF t == O_GAINLEVEL THEN
     Know(t)
     IF s < 0 THEN
-      IF depth > 1 THEN
+      IF Above() THEN
         Msg(Str(#"You rise up, through the ceiling!"))
-        SaveLevel()
-        depth -= 1
-        EnterLevel(2)
+        GoLevel(Above(), 2)
       ELSE
         Msg(Str(#"You have an uneasy feeling."))
       FI
@@ -4063,12 +4675,9 @@ PROC Read()
     FI
   ELSEIF t == O_TELEPORT THEN
     Know(t)
-    IF s < 0 AND depth < MAXDEPTH THEN
+    IF s < 0 AND Below() AND lvl < L_SOKO1 THEN
       Msg(Str(#"You feel very disoriented for a moment."))
-      TakePet()
-      SaveLevel()
-      depth += 1
-      EnterLevel(2)
+      GoLevel(Below(), 2)
     ELSE
       Teleport()
       Msg(Str(#"You feel disoriented for a moment."))
@@ -4153,15 +4762,12 @@ PROC Zap()
       Know(t)
       Msg(Str(#"You loosen a rock from the ceiling. It falls on your head!"))
       HurtSelf(Roll(6))
-    ELSEIF depth >= MAXDEPTH THEN
+    ELSEIF Below() == 0 OR lvl >= L_SOKO1 THEN
       Msg(Str(#"The floor here is too hard to dig in."))
     ELSE
       Know(t)
       Msg(Str(#"You dig a hole through the floor. You fall through..."))
-      TakePet()
-      SaveLevel()
-      depth += 1
-      EnterLevel(2)
+      GoLevel(Below(), 2)
     FI
   ELSE
     x = px
@@ -4170,7 +4776,7 @@ PROC Zap()
       x += dir_dx(d)
       y += dir_dy(d)
       IF x >= LW OR y >= LH THEN EXIT FI
-      IF t == O_WDIGGING THEN
+      IF t == O_WDIGGING AND lvl < L_SOKO1 THEN
         kind = Kind(x, y)
         IF kind == K_WALL OR kind == K_ROCK OR kind == K_SCORR THEN
           SetKind(x, y, K_CORR)
@@ -4207,10 +4813,14 @@ PROC Zap()
       FI
     OD
     IF t == O_WDIGGING THEN
-      Know(t)
       See()
       DrawView()
-      Msg(Str(#"You dig through the rock."))
+      IF lvl >= L_SOKO1 THEN
+        Msg(Str(#"The walls here are too hard to dig in."))
+      ELSE
+        Know(t)
+        Msg(Str(#"You dig through the rock."))
+      FI
     FI
   FI
   EndTurn()
@@ -4234,7 +4844,7 @@ PROC Fly(BYTE k, BYTE d)
     x += dir_dx(d)
     y += dir_dy(d)
     IF x >= LW OR y >= LH THEN EXIT FI
-    IF Open(Kind(x, y)) == 0 OR Diagonal(lx, ly, x, y) == 0 THEN EXIT FI
+    IF Open(Kind(x, y)) == 0 OR Diagonal(lx, ly, x, y) == 0 OR BoulderAt(x, y) <> 255 THEN EXIT FI
     lx = x
     ly = y
     IF x >= vx AND x < vx + VW AND y >= vy AND y < vy + VH THEN
@@ -4878,16 +5488,18 @@ PROC Die()
   esc = 0
 RETURN
 
-; NetHack's ?: the keys, a page of MHELP.DAT over the map
-PROC Help()
+; a page of MPAGES.DAT over the map, its title in the message rows, until
+; a key: NetHack's ? page of keys, and the Oracle's words
+PROC ShowPage(BYTE POINTER title, BYTE page)
   BYTE r, c, d
   CARD a
   MsgClear()
   FOR r = VTOP TO VTOP + 25 DO ClearRow(r) OD
-  Text(0, 0, Str(#"MOTT -- the keys"), B_YELLOW)
+  Msg(title)
   IF DiskFind(MDRIVE, help_file) THEN
-    DiskOpen(MDRIVE)
-    FOR r = 0 TO N_HELP - 1 DO
+    a = page
+    FOpen(disk_page, a * PAGE_LINES * 40)
+    FOR r = 0 TO PAGE_LINES - 1 DO
       a = r + VTOP + 1                 ; a shift keeps its left side's width: widen first
       VRAM_ADDR = a << 7
       VRAM_STEP = 1
@@ -4905,14 +5517,188 @@ PROC Help()
   UNTIL KeyHit(KEY_SPACE) OR KeyHit(KEY_ENTER) OR esc OD
   esc = 0
   FOR r = VTOP TO VTOP + 25 DO ClearRow(r) OD
+  MsgClear()
   DrawView()
 RETURN
 
-; # and a long command, as NetHack's extended commands: #pray
+PROC Help()
+  ShowPage(Str(#"MOTT -- the keys"), 0)
+RETURN
+
+; a number typed at the keyboard, as NetHack asks for one; 0 for none
+FUNC CARD AskNumber(BYTE POINTER prompt)
+  BYTE i
+  CARD v
+  v = 0
+  IF GetLine(prompt, 5) == 0 THEN RETURN (0) FI
+  FOR i = 1 TO lb(0) DO
+    IF lb(i) >= '0' AND lb(i) <= '9' THEN v = v * 10 + lb(i) - '0' FI
+  OD
+RETURN (v)
+
+; NetHack's doconsult(): fifty for a rumour, 500 and fifty a level for an
+; oracularity -- less, and the Oracle scorns it -- and the first of each
+; worth experience
+PROC Consult()
+  CARD cost, pay
+  IF ugold == 0 THEN
+    Msg(Str(#"You have no money."))
+    RETURN
+  FI
+  IF YesNo(Str(#"\"Wilt thou settle for a minor consultation?\" (50 zorkmids) [yn]")) THEN
+    IF ugold < 50 THEN
+      Msg(Str(#"You don't even have enough money for that!"))
+      RETURN
+    FI
+    ugold -= 50
+    mbl = 0
+    MsgS(Str(#"True to her word, the Oracle "))
+    pay = Rnd(4)
+    IF pay == 0 THEN MsgS(Str(#"offhandedly ")) ELSEIF pay == 1 THEN MsgS("casually ") FI
+    MsgS("says:")
+    MsgEnd()
+    mbl = 0
+    MsgC('"')
+    MsgS(NameRec(NAME_RUMOR + Rnd(N_RUMOR)))
+    MsgC('"')
+    MsgEnd()
+    IF uoracle & 1 == 0 THEN
+      IF uoracle & 2 THEN GainXP(2) ELSE GainXP(5) FI
+    FI
+    uoracle = uoracle | 1
+    RETURN
+  FI
+  IF aesc OR ugold <= 50 THEN RETURN FI
+  MsgClear()
+  cost = ulev
+  cost = 500 + cost * 50
+  mbl = 0
+  MsgS(Str(#"\"Then dost thou desire a major one?\" ("))
+  MsgN(cost)
+  MsgS(" zorkmids) [yn]")
+  MsgEnd()
+  IF Answer() == 0 THEN RETURN FI
+  pay = cost
+  IF ugold < cost THEN pay = ugold FI
+  ugold -= pay
+  IF pay < cost THEN
+    ShowPage(Str(#"The Oracle scornfully takes all your money and says:"), PAGE_CHEAP)
+  ELSE
+    ShowPage(Str(#"The Oracle meditates for a moment and then intones:"), PAGE_ORACLE + Rnd(N_ORACLE))
+    IF uoracle & 2 == 0 THEN
+      IF uoracle & 1 THEN GainXP(pay / 25) ELSE GainXP(pay / 10) FI
+    FI
+    uoracle = uoracle | 2
+  FI
+RETURN
+
+; NetHack's priest_talk(): with no gold, poverty preached; a gift under 200
+; a level thanked, under 400 a blessing, under 600 protection off the
+; armour class, and more than that gratitude
+PROC PriestTalk()
+  CARD offer, lim
+  mbl = 0
+  MsgMon(tpri, 1)
+  IF ugold == 0 THEN
+    IF talign == ualign AND urec >= 0 THEN
+      MsgS(Str(#" preaches the virtues of poverty."))
+    ELSE
+      MsgS(Str(#" is not interested."))
+    FI
+    MsgEnd()
+    RETURN
+  FI
+  MsgS(Str(#" asks you for a contribution for the temple."))
+  MsgEnd()
+  More()
+  offer = AskNumber(Str(#"How much will you offer?"))
+  IF offer == 0 THEN
+    Msg(Str(#"You refuse."))
+    Msg(Str(#"\"Thou shalt regret thine action!\""))
+    IF talign == ualign THEN urec -= 1 FI
+    RETURN
+  FI
+  IF offer > ugold THEN offer = ugold FI
+  ugold -= offer
+  mbl = 0
+  MsgS("You give ")
+  MsgMon(tpri, 0)
+  MsgC(' ')
+  MsgN(offer)
+  MsgS(Str(#" gold pieces."))
+  MsgEnd()
+  lim = ulev
+  lim = lim * 200
+  IF offer < lim THEN
+    IF ugold > offer * 2 THEN
+      Msg(Str(#"\"Cheapskate.\""))
+    ELSE
+      Msg(Str(#"\"I thank thee for thy contribution.\""))
+    FI
+  ELSEIF offer < lim * 2 THEN
+    Msg(Str(#"\"Thou art indeed a pious individual.\""))
+    IF ugold < offer * 2 THEN
+      IF talign == ualign AND urec <= -4 THEN urec += 1 FI
+      Msg(Str(#"\"I bestow upon thee a blessing.\""))
+    FI
+  ELSEIF offer < lim * 3 AND (uprot == 0 OR (uprot < 20 AND (uprot < 9 OR Rnd(uprot) == 0))) THEN
+    Msg(Str(#"\"Thou hast been rewarded for thy devotion.\""))
+    IF uprot == 0 THEN uprot = 2 + Rnd(3) ELSE uprot += 1 FI
+    CalcAC()
+  ELSE
+    Msg(Str(#"\"Thy selfless generosity is deeply appreciated.\""))
+    IF ugold < offer * 2 AND talign == ualign THEN urec += 2 FI
+  FI
+RETURN
+
+; #chat: NetHack's dotalk() to the monster in a direction -- the Oracle
+; consulted, the priest in his temple asked a gift, the shopkeeper on the
+; bill, and the rest take no notice
+PROC Chat()
+  BYTE d, m
+  Msg(Str(#"Talk to whom? (in what direction)"))
+  d = AskDir()
+  IF d == 0 OR d > 8 THEN RETURN FI
+  MsgClear()
+  m = MonAt(px + dir_dx(d), py + dir_dy(d))
+  IF m == 0 THEN
+    Msg(Str(#"There is nobody there to talk to."))
+    RETURN
+  FI
+  m -= 1
+  mbl = 0
+  IF mtype(m) == M_ORACLE AND Peaceful(m) THEN
+    Consult()
+  ELSEIF m == tpri AND troom <> 255 AND mtype(m) == M_PRIEST AND Peaceful(m) THEN
+    PriestTalk()
+  ELSEIF m == shk AND ShkOk() THEN
+    ShkName()
+    IF mstat(m) & S_HOSTILE THEN
+      MsgS(Str(#" mentions how much he dislikes non-paying customers."))
+    ELSEIF Bill() THEN
+      MsgS(Str(#" says that your bill comes to "))
+      MsgN(Bill())
+      MsgS(" zorkmids.")
+    ELSE
+      MsgS(Str(#" says that business is good."))
+    FI
+    MsgEnd()
+  ELSE
+    MsgMon(m, 1)
+    MsgS(Str(#" seems not to notice you."))
+    MsgEnd()
+  FI
+  Status()
+  EndTurn()
+RETURN
+
+; # and a long command, as NetHack's extended commands: #pray, #chat
 PROC Extended()
   IF GetLine("#", 12) == 0 THEN RETURN FI
   IF Typed("pray") THEN
     Pray()
+  ELSEIF Typed("chat") THEN
+    Chat()
   ELSE
     mbl = 0
     MsgS(lb)
@@ -5038,9 +5824,14 @@ RETURN (0)
 PROC Play()
   BYTE d, i
   ClearScreen()
-  FOR i = 0 TO MAXDEPTH DO made(i) = 0 OD
+  FOR i = 0 TO NLEVEL DO made(i) = 0 OD
   rseed = (TMR_L * 256 + TMR_M) | 1
   depth = 1
+  lvl = 1
+  mines_at = 2 + Rnd(2)
+  oracle_at = 5 + Rnd(3)
+  uprot = 0
+  uoracle = 0
   turns = 0
   anim = 0
   animt = 24
@@ -5200,6 +5991,7 @@ PROC Title()
   IF theme <> 0 THEN go = LoadTheme(0) FI
   IF DiskFind(MDRIVE, names_file) THEN names_page = disk_page ELSE go = 0 FI
   IF DiskFind(MDRIVE, str_file) THEN str_page = disk_page ELSE go = 0 FI
+  IF DiskFind(MDRIVE, levels_file) THEN levels_page = disk_page ELSE go = 0 FI
   IF go == 0 THEN
     Text(1, 14, "MOTT's files are not all on drive 9.", B_RED)
     DO

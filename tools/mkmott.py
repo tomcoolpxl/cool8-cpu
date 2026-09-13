@@ -184,7 +184,7 @@ PLATINO = ("Reptile", 3, 12)
 # shuffles which appearance a kind of item wears, as NetHack does: the
 # appearance's name is NetHack's description, and DawnLike's picture of
 # that name is its picture.
-C_WEAPON, C_ARMOR, C_POTION, C_SCROLL, C_WAND, C_RING, C_AMULET, C_GOLD = range(8)
+C_WEAPON, C_ARMOR, C_POTION, C_SCROLL, C_WAND, C_RING, C_AMULET, C_GOLD, C_ROCK = range(9)
 SLOT_BODY, SLOT_SHIELD, SLOT_HELM, SLOT_GLOVES, SLOT_BOOTS, SLOT_CLOAK = range(1, 7)
 D_NODIR, D_IMMEDIATE, D_RAY = range(3)
 
@@ -238,6 +238,7 @@ ITEMS = [
     ("MOTT", "Amulet of Mott", C_AMULET, 0, 0, 0, 30000, ("Amulet", 1, 2)),
     ("FAKEMOTT", "cheap plastic imitation", C_AMULET, 0, 0, 0, 0, ("Amulet", 0, 2)),
     ("GOLD", "gold piece", C_GOLD, 0, 0, 0, 1, ("Money", 0, 1)),
+    ("BOULDER", "boulder", C_ROCK, 0, 0, 0, 0, ("Rock", 2, 1)),
 ]
 # the appearances of the shuffled classes: NetHack's descriptions, and
 # DawnLike's picture of each; water is always clear, and a scroll's
@@ -537,7 +538,7 @@ def item_table():
     out += ["CONST O_%s = %d" % (it[0], i) for i, it in enumerate(ITEMS)]
     out += ["CONST %s = %d" % kv for kv in (
         ("C_WEAPON", C_WEAPON), ("C_ARMOR", C_ARMOR), ("C_POTION", C_POTION), ("C_SCROLL", C_SCROLL),
-        ("C_WAND", C_WAND), ("C_RING", C_RING), ("C_AMULET", C_AMULET), ("C_GOLD", C_GOLD),
+        ("C_WAND", C_WAND), ("C_RING", C_RING), ("C_AMULET", C_AMULET), ("C_GOLD", C_GOLD), ("C_ROCK", C_ROCK),
         ("SLOT_BODY", SLOT_BODY), ("SLOT_SHIELD", SLOT_SHIELD), ("SLOT_HELM", SLOT_HELM),
         ("SLOT_GLOVES", SLOT_GLOVES), ("SLOT_BOOTS", SLOT_BOOTS), ("SLOT_CLOAK", SLOT_CLOAK),
         ("D_NODIR", D_NODIR), ("D_IMMEDIATE", D_IMMEDIATE), ("D_RAY", D_RAY))]
@@ -567,6 +568,7 @@ TRAPS = [
     ("PIT", "pit", 2, 2, 1), ("SPIKEDPIT", "spiked pit", 3, 2, 5),
     ("TRAPDOOR", "trap door", 5, 2, 1), ("TELEPORT", "teleportation trap", 2, 1, 1),
     ("LEVELTELE", "level teleporter", 3, 1, 5),
+    ("HOLE", "hole", 4, 2, 99),                 # Sokoban's, never made at random
 ]
 
 # the gods of each role -- lawful, neutral, chaotic -- as role.c has them
@@ -603,8 +605,296 @@ DEATHS = [
 ]
 KD_FIRST = 200
 
-# the ? page: the keys, a line a row of the window
-HELP_FILE = "MHELP"
+# ------------------------------------------------------- the special levels
+# Drawn here, the game's own designs after NetHack's: Delphi, the Oracle's
+# seat; the mines' town; and two small Sokoban puzzles, which --check proves
+# solvable. A map's characters: space rock, - and | wall, . floor, + a shut
+# door, { a fountain, _ an altar, < and > stairs, 0 a boulder, ^ a hole,
+# * the prize; @ the Oracle, C a centaur, W a watchman, G a gnome, all
+# peaceful. Everything but rock and wall is lit.
+LEVELS_FILE = "MLEVELS"
+SPEC_REC = 1100
+FT_END, FT_MON, FT_PEACE, FT_OBJ, FT_GOLD, FT_TRAP, FT_SHOP, FT_TEMPLE, FT_SPAWN, FT_PREMAP = range(10)
+MAXFEAT = 20
+
+SPECIALS = [
+    dict(key="DELPHI", at=(0, 0), rows=[
+        "",
+        " --------------------------------------",
+        " |....................................|",
+        " |..<.................................|",
+        " |.........--------.---------.........|",
+        " |.........|................|.........|",
+        " |.........|................|....C....|",
+        " |.........|..-----.------..|.........|",
+        " |....C....|..|..........|..|.........|",
+        " |.........|..|..{....{..|..|.........|",
+        " |.................@..................|",
+        " |.........|..|..{....{..|..|.........|",
+        " |.........|..|..........|..|.........|",
+        " |.........|..------.-----..|.........|",
+        " |.........|................|..C......|",
+        " |......C..|................|.........|",
+        " |.........---------.--------.........|",
+        " |.................................>..|",
+        " |....................................|",
+        " --------------------------------------",
+    ], rooms=[(14, 7, 25, 13), (11, 4, 28, 16), (1, 1, 38, 19)], extra=[(FT_SPAWN, 3, 0, 0)]),
+    dict(key="TOWN", at=(0, 1), rows=[
+        "----------------------------------------",
+        "|......................................|",
+        "|......................................|",
+        "|..----------...---------...---------..|",
+        "|..|........|...|.......|...|.......|..|",
+        "|..|..._....|...|.......|...|.......|..|",
+        "|..|........|...|.......|...|.......|..|",
+        "|..|........|...|.......|...|.......|..|",
+        "|..-----+----...----+----...----+----..|",
+        "|......................................|",
+        "|<....................W......G.........|",
+        "|........G.....{........{.........W...>|",
+        "|.................G....................|",
+        "|..----+----..............-----+-----..|",
+        "|..|.......|..............|.........|..|",
+        "|..|.......|..............|.........|..|",
+        "|..|.......|..W...........|.........|..|",
+        "|..|.......|..............|.........|..|",
+        "|..---------..............-----------..|",
+        "|......................................|",
+        "|......................................|",
+        "----------------------------------------",
+    ], rooms=[(3, 3, 12, 8), (16, 3, 24, 8), (28, 3, 36, 8), (3, 13, 11, 18), (26, 13, 36, 18), (0, 0, 39, 21)],
+         extra=[(FT_TEMPLE, 0, 8, 6), (FT_SHOP, 1, 0, 0), (FT_SPAWN, 2, 0, 0)]),
+    dict(key="SOKO1", at=(14, 6), rows=[
+        "------------",
+        "|....|.....|",
+        "|.0..|..0..|",
+        "|..0....0..|",
+        "|.>..|..0..|",
+        "|....|.....|",
+        "------.-----",
+        "     |^|",
+        "     |^|",
+        "     |^|",
+        "     |<|",
+        "     ---",
+    ], rooms=[(0, 0, 11, 6), (5, 6, 7, 11)], extra=[(FT_PREMAP, 0, 0, 0)]),
+    dict(key="SOKO2", at=(11, 8), rows=[
+        "--------------",
+        "|......|.....|",
+        "|.0..0.|.0...|",
+        "|..--.....0..|",
+        "|.0...0.|....----",
+        "|.>..|..|.0.^^^*|",
+        "|....|..0....----",
+        "--------------",
+    ], rooms=[(0, 0, 13, 7), (12, 4, 16, 6)], extra=[(FT_PREMAP, 0, 0, 0)]),
+]
+
+
+def sokoban_solve(rows, cap=300_000):
+    """A way through a Sokoban map by NetHack's rules -- a boulder pushed
+    orthogonally, never onto a wall or another boulder, plugging the hole
+    it is pushed into; the hero never steps into a hole -- from > to the
+    < or the *: a list of pushes, ((boulder x, y), (dx, dy)), or None.
+    A best-first search: fewest holes and nearest boulders first."""
+    import heapq
+    dirs = [(0, -1), (1, 0), (0, 1), (-1, 0)]
+    w = max(len(r) for r in rows)
+    walls, holes, bs = set(), set(), set()
+    start = goal = None
+    for y, row in enumerate(rows):
+        for x in range(w):
+            ch = row[x] if x < len(row) else " "
+            if ch in "-| ":
+                walls.add((x, y))
+            elif ch == "^":
+                holes.add((x, y))
+            elif ch == "0":
+                bs.add((x, y))
+            elif ch == ">":
+                start = (x, y)
+            elif ch in "<*":
+                goal = (x, y)
+
+    def region(hs, bset, at):
+        seen, todo = {at}, [at]
+        while todo:
+            x, y = todo.pop()
+            for dx, dy in dirs:
+                n = (x + dx, y + dy)
+                if n not in seen and n not in walls and n not in hs and n not in bset:
+                    seen.add(n)
+                    todo.append(n)
+        return seen
+
+    def score(bset, hs):
+        if not hs:
+            return 0
+        d = sorted(min(abs(b[0] - h[0]) + abs(b[1] - h[1]) for h in hs) for b in bset)
+        return 20 * len(hs) + sum(d[:len(hs)])
+
+    holes, bs = frozenset(holes), frozenset(bs)
+    area = region(holes, bs, start)
+    k0 = (min(area), bs, holes)
+    parent = {k0: None}
+    heap, tick = [(0, 0, 0, k0, area)], 0
+    while heap and tick < cap:
+        _, pushes, _, k, area = heapq.heappop(heap)
+        _, bset, hs = k
+        if goal in area:
+            path = []
+            while parent[k]:
+                k, push = parent[k]
+                path.append(push)
+            return path[::-1]
+        for b in bset:
+            for dx, dy in dirs:
+                to = (b[0] + dx, b[1] + dy)
+                if (b[0] - dx, b[1] - dy) not in area or to in walls or to in bset:
+                    continue
+                nb, nh = bset - {b}, hs
+                if to in hs:
+                    nh = hs - {to}
+                else:
+                    nb = nb | {to}
+                na = region(nh, nb, b)
+                nk = (min(na), nb, nh)
+                if nk not in parent:
+                    parent[nk] = (k, (b, (dx, dy)))
+                    tick += 1
+                    heapq.heappush(heap, (score(nb, nh) * 4 + pushes + 1, pushes + 1, tick, nk, na))
+    return None
+
+
+def special_bytes(sp):
+    """A level's record: its 960 cells, its rooms and stairs as the game
+    parks them (rx1..rgone, upx upy dnx dny, brx bry), and its features."""
+    cells = bytearray(40 * 24)
+    rx1, ry1, rx2, ry2, gone = [0] * 9, [0] * 9, [0] * 9, [0] * 9, [1] * 9
+    ox, oy = sp["at"]
+    for i, (x1, y1, x2, y2) in enumerate(sp["rooms"]):
+        rx1[i], ry1[i], rx2[i], ry2[i], gone[i] = x1 + ox, y1 + oy, x2 + ox, y2 + oy, 0
+    stairs = [255, 255, 255, 255, 255, 255]
+    feats = []
+    mons = {"@": "ORACLE", "C": "FORESTCENTAUR", "W": "WATCHMAN", "G": "GNOME"}
+    items = {it[0]: i for i, it in enumerate(ITEMS)}
+    kinds = {c[0]: i for i, c in enumerate(CREATURES)}
+    for y, row in enumerate(sp["rows"]):
+        for x, ch in enumerate(row):
+            X, Y = x + ox, y + oy
+            assert X < 40 and Y < 24, (sp["key"], X, Y)
+            k = {" ": 0, "-": 1, "|": 1, "+": 4, "{": 11, "_": 12, "<": 7, ">": 8}.get(ch, 2)
+            if k not in (0, 1, 4):
+                k |= 32
+            cells[Y * 40 + X] = k
+            if ch == "<":
+                stairs[0:2] = [X, Y]
+            elif ch == ">":
+                stairs[2:4] = [X, Y]
+            elif ch in mons:
+                feats.append((FT_PEACE, kinds[mons[ch]], X, Y))
+            elif ch == "0":
+                feats.append((FT_OBJ, items["BOULDER"], X, Y))
+            elif ch == "^":
+                feats.append((FT_TRAP, [t[0] for t in TRAPS].index("HOLE"), X, Y))
+            elif ch == "*":
+                feats.append((FT_OBJ, items["LIFESAVING"], X, Y))
+                feats.append((FT_GOLD, 40, X, Y))
+    for code, a, x, y in sp["extra"]:
+        feats.append((code, a, x + ox if code == FT_TEMPLE else x, y + oy if code == FT_TEMPLE else y))
+    assert len(feats) <= MAXFEAT, (sp["key"], len(feats))
+    out = bytes(cells) + bytes(rx1 + ry1 + rx2 + ry2 + gone) + bytes(stairs)
+    for f in feats:
+        out += bytes(f)
+    out += bytes(4 * (MAXFEAT - len(feats)))
+    assert len(out) <= SPEC_REC
+    return out.ljust(SPEC_REC, b"\0")
+
+
+def levels_bytes():
+    return b"".join(special_bytes(sp) for sp in SPECIALS)
+
+
+def special_table():
+    out = ["; the special levels: a record of SPEC_REC bytes each in %s.DAT" % LEVELS_FILE,
+           "CONST SPEC_REC = %d" % SPEC_REC, "CONST MAXFEAT = %d" % MAXFEAT]
+    out += ["CONST SP_%s = %d" % (sp["key"], i) for i, sp in enumerate(SPECIALS)]
+    out += ["CONST FT_%s = %d" % (n, i) for i, n in enumerate(
+        ("END", "MON", "PEACE", "OBJ", "GOLD", "TRAP", "SHOP", "TEMPLE", "SPAWN", "PREMAP"))]
+    out.append('BYTE ARRAY levels_file = "%s"' % (LEVELS_FILE.ljust(8) + "DAT"))
+    return out
+
+# what the Oracle says for fifty zorkmids: the game's own true rumours
+RUMORS = [
+    "Elbereth scares beasts, but never men.",
+    "A fountain may hide a nymph, or a demon.",
+    "Drop a thing on an altar to learn its curse.",
+    "Pray when you are in need, not when you like.",
+    "Search where a wall seems to hide a way on.",
+    "Shopkeepers do not forget a thief.",
+    "Kill the nymph, and you get your things back.",
+    "In Sokoban, boulders never roll aslant.",
+    "The little folk dig their caves below.",
+    "Priests repay a generous gift with protection.",
+    "A bear trap lets go sooner if you pull aslant.",
+    "Magic mapping will not show a secret door.",
+    "A ring of free action keeps a sleeper awake.",
+    "Luck comes back slowly to the unlucky.",
+    "A thing that is cursed will not come off.",
+    "The Oracle knows more than she tells for fifty.",
+]
+
+# and for more: a page each, the first for the one who pays too little
+ORACLES = [
+    ["\"Thy purse is lighter than thy wit, and",
+     "thou wouldst buy the deep's secret for",
+     "a handful of coin?",
+     "",
+     "Then take this, and no more: the stairs",
+     "go down, and the stairs come up, and",
+     "the one who hurries finds the bottom",
+     "soonest.\""],
+    ["\"The Amulet lies where the halls end, on",
+     "the twelfth floor of the dark. It was",
+     "not made for thee, nor for the Wizard",
+     "who would keep it: it was made to be",
+     "carried back into the light.",
+     "",
+     "Seek it with a full pack and an empty",
+     "fear. Many who reached it forgot that",
+     "the way up is the longer road.\""],
+    ["\"The gods hear those who are in need,",
+     "and weary of those who are only in",
+     "want.",
+     "",
+     "When thy blood runs thin, call upon thy",
+     "god; when thou art well, be still. A",
+     "prayer spent too soon is a debt, and",
+     "the gods keep better accounts than any",
+     "shopkeeper under the hills.\""],
+    ["\"Beneath the shallow halls the little",
+     "folk have dug their caves, and among",
+     "them is a town where the watch keeps",
+     "the peace and a priest keeps the altar.",
+     "",
+     "Above my seat, stones wait to be rolled",
+     "into the holes of an old puzzle. Push",
+     "them straight, never aslant, and the",
+     "top of the stair holds a gift.\""],
+    ["\"Write the old name in the dust and the",
+     "beasts will fear to strike thee; but",
+     "men will not read it, and thine own",
+     "blade will wipe it away.",
+     "",
+     "Do not drink from every fountain thou",
+     "findest. Some water remembers what was",
+     "drowned in it.\""],
+]
+
+# the pages: the ? page of keys, then the Oracle's; a line a row of the window
+HELP_FILE = "MPAGES"
+PAGE_LINES = 23
 HELP = [
     "Move: the arrows, the keypad, or",
     "      h j k l y u b n; two arrows held",
@@ -624,7 +914,7 @@ HELP = [
     "r    read           Z  cast a spell",
     "p    pay the shopkeeper",
     "E    write in the dust",
-    "#    a long command: #pray",
+    "#    a long command: #pray, #chat",
     "\\    what you have discovered",
     "",
     "Ctrl+R  draw the screen again",
@@ -650,9 +940,11 @@ def trap_table():
 
 def help_bytes():
     out = bytearray()
-    for line in HELP:
-        assert len(line) <= 40, line
-        out += line.ljust(40).encode("ascii")
+    for page in [HELP] + ORACLES:
+        assert len(page) <= PAGE_LINES, page
+        for line in page + [""] * (PAGE_LINES - len(page)):
+            assert len(line) <= 40, line
+            out += line.ljust(40).encode("ascii")
     return bytes(out)
 
 
@@ -663,7 +955,7 @@ def name_groups():
                for c, key in ((C_POTION, "POTION"), (C_SCROLL, "SCROLL"), (C_WAND, "WAND"), (C_RING, "RING"))]
     groups += [("NAME_TRAP", [t[1] for t in TRAPS]), ("NAME_GOD", GODS),
                ("NAME_SHOP", [s[1] for s in SHOPS]), ("NAME_SHK", [k for s in SHOPS for k in s[3]]),
-               ("NAME_DEATH", [d[1] for d in DEATHS])]
+               ("NAME_DEATH", [d[1] for d in DEATHS]), ("NAME_RUMOR", RUMORS)]
     out, k = [], 0
     for const, words in groups:
         out.append((const, k, words))
@@ -687,9 +979,16 @@ def names_table():
            "CONST NAME_REC = %d" % NAME_REC]
     out += ["CONST %s = %d" % (const, k) for const, k, _ in name_groups()]
     out.append('BYTE ARRAY names_file = "%s"' % (NAMES_FILE.ljust(8) + "DAT"))
-    out.append("; the ? page: %d lines of forty characters in %s.DAT" % (len(HELP), HELP_FILE))
+    out.append("CONST N_RUMOR = %d" % len(RUMORS))
+    out.append("; the pages in %s.DAT, %d lines of forty characters each: the keys," % (HELP_FILE, PAGE_LINES))
+    out.append("; the Oracle's for a cheap major consultation, and her others")
+    out.append("CONST PAGE_LINES = %d" % PAGE_LINES)
     out.append("CONST N_HELP = %d" % len(HELP))
+    out.append("CONST PAGE_CHEAP = 1")
+    out.append("CONST PAGE_ORACLE = 2")
+    out.append("CONST N_ORACLE = %d" % (len(ORACLES) - 1))
     out.append('BYTE ARRAY help_file = "%s"' % (HELP_FILE.ljust(8) + "DAT"))
+    out += special_table()
     return out
 
 
@@ -700,6 +999,7 @@ def outputs():
         files[os.path.join(OUT_DIR, t["file"] + ".DAT")] = theme_bytes(t, font)
     files[os.path.join(OUT_DIR, NAMES_FILE + ".DAT")] = names_bytes()
     files[os.path.join(OUT_DIR, HELP_FILE + ".DAT")] = help_bytes()
+    files[os.path.join(OUT_DIR, LEVELS_FILE + ".DAT")] = levels_bytes()
     return files
 
 
@@ -767,6 +1067,10 @@ def main():
         print("  wrote %s" % os.path.relpath(FONT_PNG, ROOT))
         return 0
     files = outputs()
+    for sp in SPECIALS:
+        if sp["key"].startswith("SOKO") and sokoban_solve(sp["rows"]) is None:
+            print("  %s cannot be solved" % sp["key"])
+            return 1
     if "--check" in sys.argv:
         stale = [p for p, b in files.items() if not os.path.exists(p) or open(p, "rb").read() != b]
         if stale:

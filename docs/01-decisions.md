@@ -6899,3 +6899,42 @@ symbol table to it: every one in its place, and the whole inside a slot.
 
 **Measured after all three**: MOTT's PRG 49,438 bytes, its last byte at
 `$D51D`, 10,722 free below `$FF00`.
+
+## D111 -- MOTT's special levels: drawn in the tool, proven, and read from the disc
+
+**The owner chose the Oracle, a small Sokoban and a cave branch with a
+town for milestone 5, with 10,722 bytes left for it and milestone 6.**
+NetHack makes its special levels from `.des` files through a level
+compiler and `sp_lev.c`, both far larger than the game.
+
+**Taken**: the maps are drawn as text in `tools/mkmott.py` -- Delphi, the
+town and two Sokoban puzzles, the game's own designs after NetHack's --
+and written to `MLEVELS.DAT` on drive 9 as a fixed record each: 960 cell
+bytes, the rooms, stairs and branch stairs exactly as the game parks
+them, and twenty four-byte features (a monster, a peaceful one, a thing,
+gold, a trap, the shop in a room, the temple in a room with its priest,
+monsters at random, the map known). The game reads the record straight
+into its level and runs the features: `LoadSpecial()`, 616 bytes, for all
+four. The mines' caves are not maps but NetHack's own passes, run on the
+machine.
+
+**Every Sokoban map is proven when it is written**: `sokoban_solve()`, a
+best-first search over pushes by NetHack's rules, must find a way to the
+stairs or the prize, or `tools/mkmott.py` refuses the map; and the gate
+plays the search's answer through the keyboard, push by push, so the game
+and the proof cannot disagree about a rule.
+
+**The words are the game's**: NetHack's rumours and oracularities are its
+authors' text, so the Oracle's sixteen rumours and five pages are written
+for MOTT in their manner, and kept on the disc with the names and pages.
+
+**The levels are seventeen**, and each keeps a VRAM slot of eighteen: the
+dungeon's twelve by depth, three of the mines, two of Sokoban. A level's
+number and its depth are apart, and one routine each answers what is
+under and over a level for every way off it.
+
+**Rejected**: NetHack's level compiler, or its `.des` files read on the
+machine (a parser, and the files are its authors'); NetHack's own
+Sokoban maps (the same); lighting the caves, which without a line of
+sight would show the hero through the rock; more levels of either
+branch, which the slots and the memory do not hold.

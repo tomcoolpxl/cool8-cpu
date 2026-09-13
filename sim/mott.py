@@ -23,7 +23,8 @@ SOURCE = "demos/mott.act"
 ART = os.path.join(H.ROOT, "assets", "mott")
 DATS = [os.path.join(ART, "MTHEME%d.DAT" % i) for i in range(3)]
 NAMES = os.path.join(ART, "MNAMES.DAT")
-HELP = os.path.join(ART, "MHELP.DAT")
+HELP = os.path.join(ART, "MPAGES.DAT")
+LEVELS = os.path.join(ART, "MLEVELS.DAT")
 # make codes: the cursor keys are E0-prefixed
 LEFT, RIGHT, DOWN, UP = [0xE0, 0x6B], [0xE0, 0x74], [0xE0, 0x72], [0xE0, 0x75]
 KP = {1: [0x69], 2: [0x72], 3: [0x7A], 4: [0x6B], 5: [0x73], 6: [0x74], 7: [0x6C], 8: [0x75], 9: [0x7D]}
@@ -45,14 +46,14 @@ K_SDOOR, K_SCORR, K_FOUNTAIN, K_ALTAR = 9, 10, 11, 12       # 12-14 an altar, la
 F_TRAP, F_LIT, F_SEEN, F_VIS = 16, 32, 64, 128
 TF_SEEN, TF_ONCE = 1, 2
 OF_UNPAID, OF_DEAR, OF_NOCHG = 16, 32, 64
-S_HOSTILE = 8
+S_HOSTILE, S_PEACE = 8, 16
 # the direction a keypad key steps, as (dx, dy)
 STEP = {8: (0, -1), 9: (1, -1), 6: (1, 0), 3: (1, 1), 2: (0, 1), 1: (-1, 1), 4: (-1, 0), 7: (-1, -1)}
 
 
 def sources():
     """The files that compile the game, or None without the art."""
-    if not os.path.exists(os.path.join(ART, "mott_art.act")) or not all(os.path.exists(p) for p in DATS + [NAMES, HELP]):
+    if not os.path.exists(os.path.join(ART, "mott_art.act")) or not all(os.path.exists(p) for p in DATS + [NAMES, HELP, LEVELS]):
         return None
     return H.act_sources(SOURCE)
 
@@ -65,7 +66,7 @@ def flash_image(name="mott"):
     disk.make_image(img)
     im = disk.Image(img)
     vol = disk.Volume(im, disk.MOTT_VOL)
-    for p in DATS + [NAMES, HELP]:
+    for p in DATS + [NAMES, HELP, LEVELS]:
         vol.add(p, os.path.basename(p))
     if H.act_strings(name):
         vol.add(H.act_strings(name), "MOTT.STR")
@@ -336,6 +337,9 @@ class Game:
                  if self.byte("mstat", i) and not self.byte("mstat", i) & S_PET}
         prev = {start: None}
         q = deque([start])
+        rocks = {(self.byte("ox", i), self.byte("oy", i)) for i in range(32)
+                 if self.byte("ot", i) == self.c("O_BOULDER")}
+        sokoban = self.byte("lvl") >= self.c("L_SOKO1")
         door = (K_DOORC, K_DOORO)
         while q:
             x, y = q.popleft()
@@ -347,6 +351,8 @@ class Game:
                     continue
                 k, here = lv[ny * LW + nx] & 15, lv[y * LW + x] & 15
                 if k in (K_ROCK, K_WALL, K_SDOOR, K_SCORR) or lv[ny * LW + nx] & F_TRAP or (nx, ny) in taken:
+                    continue
+                if (nx, ny) in rocks or (dx and dy and sokoban):
                     continue
                 if dx and dy and (k in door or here in door):
                     continue
@@ -412,6 +418,24 @@ class Game:
             code = [SCAN[ch.lower()]]
             (self.shifted if ch.isupper() else self.tap)(code)
 
+    # ------------------------------------------------------ milestone 5
+    def stairs(self, key, at):
+        """The hero put on a cell and the stairs there taken: > or <."""
+        self.poke("px", at[0])
+        self.poke("py", at[1])
+        f0 = self.m.frames
+        self.shifted(key)
+        l0 = self.uword("loops")
+        self.until(lambda: self.uword("loops") > l0 + 2, 3000)
+        self.m.run_frame(4)
+        self.sturdy()
+        return self.m.frames - f0
+
+    def down_to(self, target):
+        """Down the dungeon's stairs, a level at a time, to a level number."""
+        while self.byte("lvl") < target:
+            self.stairs(DOT, (self.byte("dnx"), self.byte("dny")))
+
     def play(self, keys=(), frames=6, cap=40):
         """Frames run, --More-- answered, and every message line seen kept."""
         seen = []
@@ -426,6 +450,11 @@ class Game:
             if self.messages() == m and self.text(32, 1, 8) != "--More--":
                 break
         return " / ".join(seen)
+
+
+def MY_NAME(g, t):
+    import mkmott
+    return mkmott.CREATURES[t][1]
 
 
 def main():
@@ -522,6 +551,7 @@ def main():
             g.m.run_frame(3)
         g.poke("ulev", 8)
         g.poke("depth", 8)
+        g.poke("lvl", 8)
         g.poke("px", g.byte("dnx"))
         g.poke("py", g.byte("dny"))
         i = g.byte("dny") * LW + g.byte("dnx")
@@ -548,6 +578,7 @@ def main():
         g.poke("ulev", 8)
         for d in (9,):
             g.poke("depth", d - 1)
+            g.poke("lvl", d - 1)
             g.poke("px", g.byte("dnx"))
             g.poke("py", g.byte("dny"))
             if g.kind(g.byte("dnx"), g.byte("dny")) != K_DOWN:
@@ -624,9 +655,40 @@ def main():
         g.m.run_frame(8)
         print(g.png("yd_help"))
         g.tap(SPACE)
+    if what == "branches":
+        # the mines' stairs, the caves, the town, Delphi, and Sokoban
+        g.poke("mines_at", 2)
+        g.poke("oracle_at", 5)
+        g.down_to(2)
+        print("level 2: mines stairs at", (g.byte("brx"), g.byte("bry")), "kind", g.kind(g.byte("brx"), g.byte("bry")))
+        frames = g.stairs(DOT, (g.byte("brx"), g.byte("bry")))
+        print(g.png("yd_mines1"), "lvl", g.byte("lvl"), "depth", g.byte("depth"), "hero", g.hero(), "frames", frames,
+              "monsters", [(MY_NAME(g, m[1]), m[2], m[3]) for m in g.monsters()])
+        g.stairs(DOT, (g.byte("dnx"), g.byte("dny")))
+        print(g.png("yd_town"), "lvl", g.byte("lvl"), "depth", g.byte("depth"), "shop", g.byte("shroom"),
+              "temple", g.byte("troom"), "priest", g.byte("tpri"), "monsters", g.monsters())
+        g.stairs(DOT, (g.byte("dnx"), g.byte("dny")))
+        print(g.png("yd_mineend"), "lvl", g.byte("lvl"), "down", (g.byte("dnx"), g.byte("dny")))
+        g.stairs(COMMA, (g.byte("upx"), g.byte("upy")))
+        g.stairs(COMMA, (g.byte("upx"), g.byte("upy")))
+        g.stairs(COMMA, (g.byte("upx"), g.byte("upy")))
+        print("back up: lvl", g.byte("lvl"), "hero", g.hero(), "branch", (g.byte("brx"), g.byte("bry")))
+        g.down_to(4)
+        print("level 4: Sokoban stairs at", (g.byte("brx"), g.byte("bry")), "kind", g.kind(g.byte("brx"), g.byte("bry")))
+        g.stairs(COMMA, (g.byte("brx"), g.byte("bry")))
+        print(g.png("yd_soko1"), "lvl", g.byte("lvl"), "depth", g.byte("depth"), "hero", g.hero(),
+              "boulders", len([o for o in g.objs() if o[1] == g.c("O_BOULDER")]), "traps", g.traps())
+        g.stairs(COMMA, (g.byte("upx"), g.byte("upy")))
+        print(g.png("yd_soko2"), "lvl", g.byte("lvl"), "depth", g.byte("depth"), "hero", g.hero())
+        g.stairs(DOT, (g.byte("dnx"), g.byte("dny")))
+        g.stairs(DOT, (g.byte("dnx"), g.byte("dny")))
+        print("back down: lvl", g.byte("lvl"), "hero", g.hero())
+        g.stairs(DOT, (g.byte("dnx"), g.byte("dny")))
+        print(g.png("yd_delphi"), "lvl", g.byte("lvl"), "depth", g.byte("depth"), "monsters", g.monsters())
     if what == "deep":
         for d in (5, 9):
             g.poke("depth", d - 1)
+            g.poke("lvl", d - 1)
             dn = (g.byte("dnx"), g.byte("dny"))
             g.poke("px", dn[0])
             g.poke("py", dn[1])
