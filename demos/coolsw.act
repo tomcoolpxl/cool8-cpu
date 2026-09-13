@@ -1,0 +1,1324 @@
+; COOL SWEEPER -- for COOL8, in CoolAction!
+;
+; A field of covered cells, some of them mines. Dig a cell and it shows
+; how many of its eight neighbours are mines; dig a mine and it is over;
+; open every cell that is not a mine and the field is cleared. The rules
+; are the ones every coolsweeper since 1990 has had, with the modern
+; kindness that the first cell dug, and the eight round it, are never
+; mines -- so the first dig always opens ground to reason from.
+;
+; Its pictures and its music are its own: tools/mkcoolsw.py draws every
+; cell, frame piece, icon and the cursor, doubles the Namco glyphs into
+; the logo, sets out the three themes' palettes and writes out the tunes
+; note by note, all into assets/coolsw/coolsw_art.act, which
+; demos/coolsw.parts names.
+;
+; **A cell is 16 x 16, four tiles of mode 2**, so the largest field is
+; 18 x 12 and the levels are sized to the screen rather than to the 1990
+; game: 9 x 9 with 10 mines, 14 x 11 with 25, 18 x 12 with 45. The field
+; is a checkerboard of two shades, so the grid reads without lines; a
+; number's colour is its palette bank. **Each level has a theme** -- a
+; meadow, the sea, lava -- which is the whole palette, so the front
+; shows the theme of the level the cursor is on.
+;
+; **The score**: 10 times the level for a cell dug, 5 for each cell the
+; dig opens beyond it, and at the end 25 times the level for every mine
+; correctly flagged; clearing the field is worth 1000 times the level,
+; and 20 for every second under the level's par. A best for each level,
+; with three letters.
+;
+; **The cursor** is four sprites, the corners of a bracket, that glide
+; to the cell and breathe. **The music** is three voices and a bass
+; with envelopes, a vibrato and a detuned double on the lead, and drums
+; on the noise channel; it quickens when few cells are left.
+;
+; Keys: the cursor keys move; the space bar digs, and on a number whose
+; mines are all flagged opens the cells round it; Enter or F flags; P
+; pauses; Esc leaves the game, and on the front restarts the machine.
+
+CONST PAT_BASE = $1000
+CONST SPR_PAT = $3000
+
+CONST KEY_LEFT = $EB
+CONST KEY_RIGHT = $F4
+CONST KEY_DOWN = $F2
+CONST KEY_UP = $F5
+CONST KEY_SPACE = $29
+CONST KEY_ENTER = $5A
+CONST KEY_KPENTER = $DA
+CONST KEY_F = $2B
+CONST KEY_P = $4D
+CONST KEY_ESC = $76
+
+; the banks, as tools/mkcoolsw.py lays them out
+CONST B_SUR = 0
+CONST B_FIELD = 1
+CONST B_NUM = 2
+CONST B_BOOM = 10
+CONST B_WRONG = 11
+CONST B_LOGO = 12
+CONST B_TEXT = 13
+CONST B_HEAD = 14
+CONST B_SPR = 15
+
+; a cell's byte: its count of neighbouring mines, and four flags
+CONST F_MINE = 16
+CONST F_OPEN = 32
+CONST F_FLAG = 64
+CONST F_MARK = 128                   ; the mine that went off, or a flag that was wrong
+
+; the three levels
+BYTE ARRAY lv_w(3) = [9 14 18]
+BYTE ARRAY lv_h(3) = [9 11 12]
+BYTE ARRAY lv_m(3) = [10 25 45]
+CARD ARRAY lv_par(3) = [60 150 300]  ; seconds; each one under is worth 20
+
+BYTE sel                             ; the level chosen, and its theme
+BYTE bw, bh, nm, total               ; this field: wide, deep, mines, cells
+BYTE ox, oy                          ; the field's top-left tile
+BYTE ARRAY f(216)
+BYTE ARRAY q(216)                    ; the cells opened and not yet drawn, in order
+BYTE qh, qt
+BYTE opened, flags, first
+BYTE over                            ; 0 playing, 1 cleared, 2 blown up
+BYTE boom_i
+BYTE ccx, ccy                        ; the cursor's cell
+BYTE hide                            ; 1 while paused: every cell drawn covered
+CARD secs
+BYTE fr60, timing
+BYTE esc
+BYTE phase                           ; 0 the front, 1 play, 2 the reckoning, 3 a name
+CARD loops                           ; frames of play, for the gate
+
+BYTE ARRAY dig(6)                    ; the score, a digit a byte, dig(0) the units
+BYTE ARRAY tmpd(6)
+BYTE ARRAY best(18)                  ; each level's best, the same way
+BYTE ARRAY bname(9)                  ; ...and its three letters
+
+; the cursor: where it is drawn, where it is going, how big a box
+INT curx, cury
+INT tgx, tgy
+CARD cur_w, cur_h
+BYTE cur_on
+BYTE gt, gp                          ; the glow's frame and step
+BYTE shake                           ; fine scroll, while the ground shakes
+
+; keys held, and the repeat
+BYTE rep_c, rep_t
+
+; the music
+BYTE POINTER mp, mloop
+BYTE mon, mstep, mrate
+INT mtime
+BYTE ARRAY ev(4), eg(4), ea(4)       ; a voice's volume, whether its note is held, its age
+CARD ARRAY en(4)                     ; ...and its note
+BYTE ARRAY in_peak(4) = [12 7 13 9]  ; lead, harmony, bass, arpeggio
+BYTE ARRAY in_sus(4) = [8 5 9 0]
+BYTE ARRAY in_dec(4) = [3 4 2 1]     ; frames a step of the fall to the sustain
+BYTE ARRAY in_rel(4) = [2 1 3 3]     ; steps a frame once let go
+BYTE dk, dt                          ; the drum sounding and its age
+CARD dinc
+; the drums: none, hat, snare, kick, open hat, crash
+BYTE ARRAY dr_vol(6) = [0 7 12 14 7 11]
+BYTE ARRAY dr_dec(6) = [1 1 1 1 2 3]
+BYTE ARRAY dr_step(6) = [0 3 2 2 1 1]
+CARD ARRAY dr_inc(6) = [0 52000 14000 300 46000 30000]
+
+; the effects, on voices 6 (a tone) and 7 (noise)
+CARD ARRAY sx_inc(2)
+INT ARRAY sx_step(2)
+BYTE ARRAY sx_t(2), sx_vol(2), sx_dec(2), sx_age(2)
+CONST SX_MOVE = 0
+CONST SX_DIG = 1
+CONST SX_FLAG = 2
+CONST SX_UNFLAG = 3
+CONST SX_NO = 4
+CONST SX_RING = 5
+CONST SX_BOOM = 6
+CONST SX_POP = 7
+CONST SX_TICK = 8
+CONST SX_SELECT = 9
+CONST SX_STAR = 10
+CONST SX_START = 11
+
+; ------------------------------------------------------------- the screen
+PROC Tile(BYTE col, BYTE row, BYTE t, BYTE attr)
+  CARD a
+  a = row
+  VRAM_ADDR = (a << 7) + (col << 1)
+  VRAM_STEP = 1
+  VRAM_DATA = t
+  VRAM_DATA = attr
+RETURN
+
+; a 16 x 16 picture: the four tiles from t
+PROC Pic(BYTE col, BYTE row, BYTE t, BYTE attr)
+  CARD a
+  a = row
+  a = (a << 7) + (col << 1)
+  VRAM_STEP = 1
+  VRAM_ADDR = a
+  VRAM_DATA = t
+  VRAM_DATA = attr
+  VRAM_DATA = t + 1
+  VRAM_DATA = attr
+  VRAM_ADDR = a + 128
+  VRAM_DATA = t + 2
+  VRAM_DATA = attr
+  VRAM_DATA = t + 3
+  VRAM_DATA = attr
+RETURN
+
+FUNC BYTE Glyph(BYTE ch)
+  BYTE i, n
+  n = fontmap(0)
+  FOR i = 1 TO n DO
+    IF fontmap(i) == ch THEN RETURN (i - 1) FI
+  OD
+RETURN (N_FONT - 1)
+
+; a string on a panel, and on the background
+PROC Text(BYTE col, BYTE row, BYTE POINTER s, BYTE bank)
+  BYTE n
+  n = *s
+  WHILE n > 0 DO
+    s += 1
+    Tile(col, row, T_FONT + Glyph(*s), bank)
+    col += 1
+    n -= 1
+  OD
+RETURN
+
+PROC BText(BYTE col, BYTE row, BYTE POINTER s, BYTE bank)
+  BYTE n
+  n = *s
+  WHILE n > 0 DO
+    s += 1
+    Tile(col, row, T_BFONT + Glyph(*s), bank)
+    col += 1
+    n -= 1
+  OD
+RETURN
+
+; n digits, the most significant first, zeros and all
+PROC Digits(BYTE col, BYTE row, BYTE POINTER d, BYTE n, BYTE bank)
+  BYTE i
+  BYTE POINTER p
+  FOR i = 0 TO n - 1 DO
+    p = d + n - 1 - i
+    Tile(col + i, row, T_FONT + *p, bank)
+  OD
+RETURN
+
+; a number to six digits in tmpd
+PROC ToDigits(CARD v)
+  BYTE i
+  FOR i = 0 TO 5 DO
+    tmpd(i) = v % 10
+    v = v / 10
+  OD
+RETURN
+
+PROC Num(BYTE col, BYTE row, CARD v, BYTE n, BYTE bank)
+  ToDigits(v)
+  Digits(col, row, tmpd, n, bank)
+RETURN
+
+; a frame round a box w by h, and its inside filled with the panel
+PROC Box(BYTE col, BYTE row, BYTE w, BYTE h, BYTE fill)
+  BYTE i, j
+  Tile(col, row, T_FR_TL, B_SUR)
+  Tile(col + w + 1, row, T_FR_TR, B_SUR)
+  Tile(col, row + h + 1, T_FR_BL, B_SUR)
+  Tile(col + w + 1, row + h + 1, T_FR_BR, B_SUR)
+  FOR i = 1 TO w DO
+    Tile(col + i, row, T_FR_T, B_SUR)
+    Tile(col + i, row + h + 1, T_FR_B, B_SUR)
+  OD
+  FOR i = 1 TO h DO
+    Tile(col, row + i, T_FR_L, B_SUR)
+    Tile(col + w + 1, row + i, T_FR_R, B_SUR)
+    IF fill THEN
+      FOR j = 1 TO w DO Tile(col + j, row + i, T_SOLID, B_SUR) OD
+    FI
+  OD
+RETURN
+
+; the background: a 16 x 16 motif of four tiles, over one column and
+; one row more than the screen shows, for the shake
+PROC Weave()
+  BYTE r, c, t
+  CARD a
+  FOR r = 0 TO 30 DO
+    a = r
+    VRAM_ADDR = a << 7
+    VRAM_STEP = 1
+    t = T_BG + ((r & 1) << 1)
+    FOR c = 0 TO 40 DO
+      VRAM_DATA = t + (c & 1)
+      VRAM_DATA = B_SUR
+    OD
+  OD
+RETURN
+
+BYTE ARRAY logo_text = "COOL SWEEPER"
+
+; the name in the doubled letters, two tiles a letter
+PROC Logo(BYTE col, BYTE row)
+  BYTE i, j, n, ch
+  n = logomap(0)
+  FOR i = 1 TO logo_text(0) DO
+    ch = logo_text(i)
+    FOR j = 1 TO n DO
+      IF logomap(j) == ch THEN Pic(col, row, T_LOGO + ((j - 1) << 2), B_LOGO) FI
+    OD
+    col += 2
+  OD
+RETURN
+
+PROC LevelName(BYTE col, BYTE row, BYTE k, BYTE bank)
+  IF k == 0 THEN
+    Text(col, row, "EASY  ", bank)
+  ELSEIF k == 1 THEN
+    Text(col, row, "MEDIUM", bank)
+  ELSE
+    Text(col, row, "HARD  ", bank)
+  FI
+RETURN
+
+; a theme: all 256 colours
+PROC Theme(BYTE t)
+  CARD POINTER p
+  CARD o
+  o = t
+  p = theme_pal + (o << 9)
+  SetPalette(p, 0, 128)
+  SetPalette(p + 256, 128, 128)
+RETURN
+
+; a theme's colour, as written, for the entry that cycles
+FUNC CARD ThemeColour(BYTE t, BYTE idx)
+  CARD POINTER p
+  CARD o
+  o = t
+  o = (o << 9) + idx + idx
+  p = theme_pal + o
+RETURN (*p)
+
+; ---------------------------------------------------------- the cursor
+; four corners of one sprite, flipped, round a box cur_w by cur_h at
+; (curx, cury), a raster pixel or two further out as it breathes
+BYTE ARRAY breathe(8) = [0 1 2 3 3 2 1 0]
+
+PROC CursorShow()
+  SetSprite(0, 0, 0, SPR_PAT, 1, 0)
+  SetSprite(1, 0, 0, SPR_PAT, 1, $40)
+  SetSprite(2, 0, 0, SPR_PAT, 1, $80)
+  SetSprite(3, 0, 0, SPR_PAT, 1, $C0)
+  cur_on = 1
+RETURN
+
+PROC CursorHide()
+  BYTE i
+  FOR i = 0 TO 3 DO SpriteHide(i) OD
+  cur_on = 0
+RETURN
+
+PROC CursorDraw()
+  INT d, x0, y0, x1, y1
+  BYTE b
+  d = tgx - curx
+  IF d > 1 OR d < -1 THEN curx = curx + d / 2 ELSE curx = tgx FI
+  d = tgy - cury
+  IF d > 1 OR d < -1 THEN cury = cury + d / 2 ELSE cury = tgy FI
+  IF cur_on == 0 THEN RETURN FI
+  b = breathe(gp) + 3
+  x0 = ((curx - shake) << 1) - b
+  y0 = ((cury - shake) << 1) - b
+  x1 = ((curx - shake) << 1) + (cur_w << 1) + b - 16
+  y1 = ((cury - shake) << 1) + (cur_h << 1) + b - 16
+  SpriteMove(0, x0, y0, 1)
+  SpriteMove(1, x1, y0, 1)
+  SpriteMove(2, x0, y1, 1)
+  SpriteMove(3, x1, y1, 1)
+RETURN
+
+; the cursor's box round a cell of the field
+PROC AimCell()
+  INT v, w
+  v = ox
+  w = ccx
+  tgx = (v << 3) + (w << 4)
+  v = oy
+  w = ccy
+  tgy = (v << 3) + (w << 4)
+  cur_w = 16
+  cur_h = 16
+RETURN
+
+; ------------------------------------------------------------- the sound
+PROC Vol(BYTE v, BYTE vol)
+  SND_IDX = (v << 3) + 4
+  SND_DATA = vol
+  SND_DATA = $40
+RETURN
+
+PROC Inc(BYTE v, CARD inc)
+  SND_IDX = v << 3
+  SND_DATA = inc
+  SND_DATA = inc >> 8
+RETURN
+
+PROC MusicOff()
+  BYTE c
+  mon = 0
+  FOR c = 0 TO 5 DO Silence(c) OD
+  FOR c = 0 TO 3 DO ev(c) = 0 OD
+  dk = 0
+RETURN
+
+PROC MusicStart(BYTE n)
+  MusicOff()
+  mp = tune_data + tune_off(n)
+  mstep = *mp
+  mp += 1
+  mloop = mp
+  mtime = 0
+  mon = 1
+RETURN
+
+PROC NoteOn(BYTE c, BYTE b)
+  CARD i
+  IF b == 0 THEN
+    eg(c) = 0
+    RETURN
+  FI
+  i = note_inc(b - 1)
+  en(c) = i
+  ev(c) = in_peak(c)
+  eg(c) = 1
+  ea(c) = 0
+  Sound(c, i, ev(c), 0)
+  IF c == 0 THEN Sound(5, i + (i >> 8) + 1, ev(0) - 4, 0) FI
+RETURN
+
+PROC NextStep()
+  BYTE m, c
+  m = *mp
+  mp += 1
+  IF m & $80 THEN
+    IF m & $40 THEN                  ; the end of a tune that stops
+      mon = 0
+      FOR c = 0 TO 3 DO eg(c) = 0 OD
+      RETURN
+    FI
+    mp = mloop
+    m = *mp
+    mp += 1
+  FI
+  FOR c = 0 TO 3 DO
+    IF m & (1 << c) THEN
+      NoteOn(c, *mp)
+      mp += 1
+    FI
+  OD
+  IF m & 16 THEN
+    dk = *mp
+    mp += 1
+    dt = 0
+  FI
+RETURN
+
+; every voice's volume one frame on: a fall from the peak to the
+; sustain while the note is held, faster once it is let go; the lead's
+; vibrato, and its double on voice 5 four steps quieter and a few cents
+; sharp, so the two beat against each other
+PROC Envelopes()
+  BYTE c, v, ph
+  CARD i, d
+  FOR c = 0 TO 3 DO
+    IF ev(c) THEN
+      IF ea(c) < 255 THEN ea(c) += 1 FI
+      v = ev(c)
+      IF eg(c) THEN
+        IF v > in_sus(c) AND ea(c) % in_dec(c) == 0 THEN v -= 1 FI
+      ELSEIF v > in_rel(c) THEN
+        v -= in_rel(c)
+      ELSE
+        v = 0
+      FI
+      IF v <> ev(c) THEN
+        ev(c) = v
+        IF v THEN Vol(c, v) ELSE Silence(c) FI
+        IF c == 0 THEN
+          IF v > 4 THEN Vol(5, v - 4) ELSE Silence(5) FI
+        FI
+      FI
+      IF c == 0 AND v AND ea(0) > 10 AND ea(0) & 3 == 0 THEN
+        ph = (ea(0) >> 2) & 3
+        i = en(0)
+        d = i >> 7
+        IF ph == 1 THEN
+          i += d
+        ELSEIF ph == 3 THEN
+          i -= d
+        FI
+        Inc(0, i)
+        Inc(5, i + (i >> 8) + 1)
+      FI
+    FI
+  OD
+RETURN
+
+PROC Drums()
+  INT v
+  IF dk == 0 THEN RETURN FI
+  IF dt == 0 THEN dinc = dr_inc(dk) ELSEIF dk == 3 THEN dinc = dinc - (dinc >> 3) FI
+  v = dr_vol(dk)
+  v = v - (dt / dr_dec(dk)) * dr_step(dk)
+  IF v <= 0 THEN
+    Silence(4)
+    dk = 0
+    RETURN
+  FI
+  Sound(4, dinc, v, dk <> 3)
+  dt += 1
+RETURN
+
+PROC MusicStep()
+  CARD t
+  IF mon THEN
+    mtime = mtime - mrate
+    WHILE mtime <= 0 AND mon DO
+      NextStep()
+      t = mstep
+      mtime = mtime + (t << 4)
+    OD
+  FI
+  Envelopes()
+  Drums()
+RETURN
+
+PROC SfxSet(BYTE s, CARD inc, INT sweep, BYTE vol, BYTE t, BYTE dec)
+  sx_inc(s) = inc
+  sx_step(s) = sweep
+  sx_vol(s) = vol
+  sx_t(s) = t
+  sx_dec(s) = dec
+  sx_age(s) = 0
+  Sound(6 + s, inc, vol, s)
+RETURN
+
+PROC Sfx(BYTE n, BYTE arg)
+  CARD a
+  a = arg
+  IF n == SX_MOVE THEN
+    SfxSet(0, 2600, 0, 4, 2, 8)
+  ELSEIF n == SX_DIG THEN
+    SfxSet(0, 700, 110, 11, 7, 2)
+  ELSEIF n == SX_FLAG THEN
+    SfxSet(0, 1400, 350, 10, 4, 3)
+  ELSEIF n == SX_UNFLAG THEN
+    SfxSet(0, 2800, -350, 9, 4, 3)
+  ELSEIF n == SX_NO THEN
+    SfxSet(0, 150, -4, 10, 7, 3)
+  ELSEIF n == SX_RING THEN
+    SfxSet(0, 1000 + a * 90, 40, 7, 3, 1)
+  ELSEIF n == SX_BOOM THEN
+    SfxSet(1, 26000, -300, 15, 70, 5)
+    SfxSet(0, 130, -1, 15, 45, 3)
+  ELSEIF n == SX_POP THEN
+    SfxSet(1, 9000, -400, 10, 8, 1)
+  ELSEIF n == SX_TICK THEN
+    SfxSet(0, 3400, 0, 5, 2, 4)
+  ELSEIF n == SX_SELECT THEN
+    SfxSet(0, 1200, 180, 9, 5, 2)
+  ELSEIF n == SX_STAR THEN
+    SfxSet(0, 2200 + a * 40, 260, 8, 4, 2)
+  ELSE
+    SfxSet(0, 900, 90, 12, 12, 2)
+  FI
+RETURN
+
+PROC SfxStep()
+  BYTE s
+  FOR s = 0 TO 1 DO
+    IF sx_t(s) THEN
+      sx_t(s) -= 1
+      IF sx_t(s) == 0 THEN
+        Silence(6 + s)
+      ELSE
+        sx_inc(s) = sx_inc(s) + sx_step(s)
+        sx_age(s) += 1
+        IF sx_age(s) % sx_dec(s) == 0 AND sx_vol(s) > 1 THEN sx_vol(s) -= 1 FI
+        Sound(6 + s, sx_inc(s), sx_vol(s), s)
+      FI
+    FI
+  OD
+RETURN
+
+PROC Quiet()
+  BYTE s
+  MusicOff()
+  FOR s = 0 TO 1 DO
+    sx_t(s) = 0
+    Silence(6 + s)
+  OD
+RETURN
+
+; ------------------------------------------------------------ a frame
+; the pulse of the cursor and the twinkle in the background, both from
+; the theme's ramps; and the logo's shine on the front
+BYTE shine_at
+
+PROC Glow()
+  BYTE k
+  gt += 1
+  IF gt & 3 == 0 THEN
+    gp = (gp + 1) & 7
+    SetColor((B_SPR << 4) + 3, glow_ramp((sel << 3) + gp))
+  FI
+  IF gt & 7 == 0 THEN
+    SetColor(2, twinkle_ramp((sel << 3) + ((gt >> 3) & 7)))
+  FI
+  IF phase == 0 AND gt & 3 == 0 THEN
+    k = (gt >> 2) & 15               ; a band of light down the letters, then a rest
+    IF shine_at THEN SetColor((B_LOGO << 4) + shine_at, ThemeColour(sel, (B_LOGO << 4) + shine_at)) FI
+    shine_at = 0
+    IF k < 6 THEN
+      shine_at = 6 - k
+      SetColor((B_LOGO << 4) + shine_at, $FFF)
+    FI
+  FI
+  CursorDraw()
+RETURN
+
+PROC Tick()
+  WaitVBlank()
+  Glow()
+  KeyPoll()
+  IF KeyHit(KEY_ESC) THEN esc = 1 FI
+  MusicStep()
+  SfxStep()
+RETURN
+
+; ------------------------------------------------------------- the score
+PROC Carry(BYTE i)
+  WHILE dig(i) > 9 DO
+    dig(i) = dig(i) - 10
+    i += 1
+    IF i > 5 THEN RETURN FI
+    dig(i) = dig(i) + 1
+  OD
+RETURN
+
+PROC AddPts(CARD v)
+  BYTE i
+  i = 0
+  WHILE v > 0 DO
+    dig(i) = dig(i) + (v % 10)
+    Carry(i)
+    v = v / 10
+    i += 1
+    IF i > 5 THEN RETURN FI
+  OD
+RETURN
+
+PROC ShowScore()
+  Digits(8, 1, dig, 6, B_TEXT)
+RETURN
+
+PROC ShowMines()
+  INT left
+  left = nm
+  left = left - flags
+  IF left < 0 THEN left = 0 FI
+  Num(18, 1, left, 3, B_TEXT)
+RETURN
+
+PROC ShowTime()
+  Num(33, 1, secs, 3, B_TEXT)
+RETURN
+
+; ------------------------------------------------------------- the field
+PROC DrawCell(BYTE x, BYTE y)
+  BYTE v, t, b, n
+  v = f(y * bw + x)
+  b = B_FIELD
+  IF hide THEN
+    t = T_COVER
+  ELSEIF v & F_OPEN THEN
+    n = v & 15
+    IF v & F_MINE THEN
+      t = T_MINE
+      IF v & F_MARK THEN b = B_BOOM FI
+    ELSEIF n THEN
+      t = T_DIGIT + ((n - 1) << 3)
+      b = B_NUM + n - 1
+    ELSE
+      t = T_OPEN
+    FI
+  ELSEIF v & F_FLAG THEN
+    t = T_FLAG
+    IF v & F_MARK THEN
+      t = T_WRONG
+      b = B_WRONG
+    FI
+  ELSE
+    t = T_COVER
+  FI
+  IF (x + y) & 1 THEN t += 4 FI
+  Pic(ox + (x << 1), oy + (y << 1), t, b)
+RETURN
+
+PROC DrawField()
+  BYTE x, y
+  FOR y = 0 TO bh - 1 DO
+    FOR x = 0 TO bw - 1 DO DrawCell(x, y) OD
+  OD
+RETURN
+
+; is a within one of b
+FUNC BYTE Near(BYTE a, BYTE b)
+  IF a + 1 >= b AND a <= b + 1 THEN RETURN (1) FI
+RETURN (0)
+
+; the mines, anywhere but the cell first dug and the eight round it;
+; then each mine adds one to the count of every cell round it that is
+; not a mine. It asked every cell about its nine instead, and that was
+; 107,541 clocks on the largest field -- most of a frame, in the frame
+; of the first dig
+PROC PlaceMines(BYTE fx, BYTE fy)
+  BYTE n, i, x, y, dx, dy, nx, ny, j
+  n = 0
+  WHILE n < nm DO
+    i = Rnd(total)
+    x = i % bw
+    y = i / bw
+    IF f(i) & F_MINE == 0 AND (Near(x, fx) == 0 OR Near(y, fy) == 0) THEN
+      f(i) = f(i) | F_MINE
+      n += 1
+      FOR dy = 0 TO 2 DO
+        ny = y + dy - 1
+        IF ny < bh THEN
+          FOR dx = 0 TO 2 DO
+            nx = x + dx - 1
+            IF nx < bw THEN
+              j = ny * bw + nx
+              f(j) = f(j) + 1
+            FI
+          OD
+        FI
+      OD
+    FI
+  OD
+  ; a mine counted its own cell and its fellows' too: those counts are
+  ; never shown, and are cleared so a mine's byte is only its flag
+  FOR i = 0 TO total - 1 DO
+    IF f(i) & F_MINE THEN f(i) = f(i) & (255 ^ 15) FI
+  OD
+RETURN
+
+; a cell opened: marked at once, so nothing queues it twice, and drawn
+; when its turn in the ripple comes
+PROC Push(BYTE i)
+  f(i) = f(i) | F_OPEN
+  q(qt) = i
+  qt += 1
+RETURN
+
+; the queue drawn out a ring at a time, a frame apart: every cell with
+; no mines round it opens its neighbours, five points each
+PROC Spread()
+  BYTE e, i, x, y, dx, dy, nx, ny, j, ring
+  ring = 0
+  WHILE qh < qt DO
+    e = qt
+    WHILE qh < e DO
+      i = q(qh)
+      qh += 1
+      x = i % bw
+      y = i / bw
+      DrawCell(x, y)
+      opened += 1
+      IF f(i) & 15 == 0 THEN
+        FOR dy = 0 TO 2 DO
+          ny = y + dy - 1
+          IF ny < bh THEN
+            FOR dx = 0 TO 2 DO
+              nx = x + dx - 1
+              IF nx < bw THEN
+                j = ny * bw + nx
+                IF f(j) & (F_OPEN | F_FLAG | F_MINE) == 0 THEN
+                  Push(j)
+                  AddPts(5)
+                FI
+              FI
+            OD
+          FI
+        OD
+      FI
+    OD
+    ShowScore()
+    IF qh < qt THEN
+      ring += 1
+      Sfx(SX_RING, ring)
+      Tick()
+    FI
+  OD
+  IF opened == total - nm THEN
+    over = 1
+    timing = 0
+  FI
+RETURN
+
+PROC Boom(BYTE i)
+  f(i) = f(i) | F_OPEN | F_MARK
+  boom_i = i
+  over = 2
+  timing = 0
+RETURN
+
+; the space bar: a covered cell dug; a number whose mines are all
+; flagged opens the rest round it
+PROC Dig()
+  BYTE i, v, n, c, dx, dy, nx, ny, j, hit
+  CARD pts
+  pts = sel
+  pts = (pts + 1) * 10
+  i = ccy * bw + ccx
+  v = f(i)
+  qh = 0
+  qt = 0
+  IF v & F_FLAG THEN
+    Sfx(SX_NO, 0)
+    RETURN
+  FI
+  IF v & F_OPEN THEN
+    n = v & 15
+    c = 0
+    FOR dy = 0 TO 2 DO
+      ny = ccy + dy - 1
+      IF ny < bh THEN
+        FOR dx = 0 TO 2 DO
+          nx = ccx + dx - 1
+          IF nx < bw THEN
+            IF f(ny * bw + nx) & F_FLAG THEN c += 1 FI
+          FI
+        OD
+      FI
+    OD
+    IF n == 0 OR c <> n THEN
+      Sfx(SX_NO, 0)
+      RETURN
+    FI
+    hit = 255
+    FOR dy = 0 TO 2 DO
+      ny = ccy + dy - 1
+      IF ny < bh THEN
+        FOR dx = 0 TO 2 DO
+          nx = ccx + dx - 1
+          IF nx < bw THEN
+            j = ny * bw + nx
+            IF f(j) & (F_OPEN | F_FLAG) == 0 THEN
+              IF f(j) & F_MINE THEN
+                IF hit == 255 THEN hit = j FI
+              ELSE
+                Push(j)
+                AddPts(pts)
+              FI
+            FI
+          FI
+        OD
+      FI
+    OD
+    IF qt == 0 AND hit == 255 THEN
+      Sfx(SX_NO, 0)
+      RETURN
+    FI
+    Sfx(SX_DIG, 0)
+    Spread()
+    IF hit <> 255 THEN Boom(hit) FI
+    RETURN
+  FI
+  IF first THEN
+    PlaceMines(ccx, ccy)
+    first = 0
+    timing = 1
+    v = f(i)
+  FI
+  IF v & F_MINE THEN
+    Boom(i)
+    RETURN
+  FI
+  Push(i)
+  AddPts(pts)
+  Sfx(SX_DIG, 0)
+  Spread()
+RETURN
+
+PROC Flag()
+  BYTE i, v
+  i = ccy * bw + ccx
+  v = f(i)
+  IF v & F_OPEN THEN
+    Sfx(SX_NO, 0)
+    RETURN
+  FI
+  IF v & F_FLAG THEN
+    f(i) = v ^ F_FLAG
+    flags -= 1
+    Sfx(SX_UNFLAG, 0)
+  ELSE
+    f(i) = v | F_FLAG
+    flags += 1
+    Sfx(SX_FLAG, 0)
+  FI
+  DrawCell(ccx, ccy)
+  ShowMines()
+RETURN
+
+; ------------------------------------------------------------ steering
+PROC MoveBy(BYTE c)
+  IF c & 1 THEN ccx = (ccx + bw - 1) % bw FI
+  IF c & 2 THEN ccx = (ccx + 1) % bw FI
+  IF c & 4 THEN ccy = (ccy + bh - 1) % bh FI
+  IF c & 8 THEN ccy = (ccy + 1) % bh FI
+  Sfx(SX_MOVE, 0)
+RETURN
+
+; the keys held, and the ones tapped between two frames: a key moves
+; the cursor at once, again after 12 frames held and then every 4, and
+; it goes round from one edge to the other
+FUNC BYTE Arrows()
+  BYTE held, hit
+  held = 0
+  hit = 0
+  IF KeyHeld(KEY_LEFT) THEN held = held | 1 FI
+  IF KeyHeld(KEY_RIGHT) THEN held = held | 2 FI
+  IF KeyHeld(KEY_UP) THEN held = held | 4 FI
+  IF KeyHeld(KEY_DOWN) THEN held = held | 8 FI
+  IF KeyHit(KEY_LEFT) THEN hit = hit | 1 FI
+  IF KeyHit(KEY_RIGHT) THEN hit = hit | 2 FI
+  IF KeyHit(KEY_UP) THEN hit = hit | 4 FI
+  IF KeyHit(KEY_DOWN) THEN hit = hit | 8 FI
+  IF held == 0 THEN
+    rep_c = 0
+    RETURN (hit)
+  FI
+  IF held <> rep_c THEN
+    rep_c = held
+    rep_t = 0
+    RETURN (held)
+  FI
+  rep_t += 1
+  IF rep_t >= 12 THEN
+    rep_t = 8
+    RETURN (held)
+  FI
+RETURN (0)
+
+; ----------------------------------------------------------- the ending
+PROC Shake()
+  BYTE t, k
+  FOR t = 0 TO 29 DO
+    k = (30 - t) / 8
+    IF t & 1 THEN shake = k ELSE shake = 0 FI
+    Tick()
+    IF t & 2 THEN Scroll(shake, 0) ELSE Scroll(shake, shake) FI
+  OD
+  shake = 0
+  Scroll(0, 0)
+RETURN
+
+; blown up: the ground shakes, every mine shows itself one after
+; another, and every flag that was wrong is crossed
+PROC Lost()
+  BYTE i, x, y, t
+  MusicOff()
+  CursorHide()
+  Sfx(SX_BOOM, 0)
+  DrawCell(boom_i % bw, boom_i / bw)
+  Shake()
+  FOR i = 0 TO total - 1 DO
+    x = i % bw
+    y = i / bw
+    IF f(i) & F_MINE AND f(i) & (F_OPEN | F_FLAG) == 0 THEN
+      f(i) = f(i) | F_OPEN
+      DrawCell(x, y)
+      Sfx(SX_POP, 0)
+      FOR t = 0 TO 1 DO Tick() OD
+    ELSEIF f(i) & F_FLAG AND f(i) & F_MINE == 0 THEN
+      f(i) = f(i) | F_MARK
+      DrawCell(x, y)
+    FI
+  OD
+  MusicStart(TUNE_LOSE)
+RETURN
+
+; cleared: the tune, and a flag onto every mine left, one at a time
+PROC Won()
+  BYTE i, n
+  MusicStart(TUNE_WIN)
+  n = 0
+  FOR i = 0 TO total - 1 DO
+    IF f(i) & (F_MINE | F_FLAG) == F_MINE THEN
+      f(i) = f(i) | F_FLAG
+      DrawCell(i % bw, i / bw)
+      n += 1
+      Sfx(SX_STAR, n)
+      Tick()
+      Tick()
+    FI
+  OD
+RETURN
+
+; this game's score against the level's best, digit by digit from the top
+FUNC BYTE Better()
+  BYTE i, o
+  o = sel * 6
+  i = 6
+  WHILE i > 0 DO
+    i -= 1
+    IF dig(i) > best(o + i) THEN RETURN (1) FI
+    IF dig(i) < best(o + i) THEN RETURN (0) FI
+  OD
+RETURN (0)
+
+; three letters on the reckoning's panel: up and down for the letter,
+; right for the next, the space bar or Enter to have done
+PROC EnterName()
+  BYTE at, ch, done, bank, v, o
+  o = sel * 3
+  FOR at = 0 TO 2 DO bname(o + at) = 'A' OD
+  at = 0
+  done = 0
+  phase = 3
+  v = KeyHit(KEY_SPACE)
+  v = KeyHit(KEY_ENTER)
+  v = KeyHit(KEY_UP)
+  v = KeyHit(KEY_DOWN)
+  v = KeyHit(KEY_RIGHT)
+  DO
+    FOR ch = 0 TO 2 DO
+      bank = B_TEXT
+      IF ch == at THEN bank = B_HEAD FI
+      Tile(16 + ch, 18, T_FONT + Glyph(bname(o + ch)), bank)
+    OD
+    Tick()
+    IF esc THEN EXIT FI
+    IF KeyHit(KEY_UP) THEN
+      v = bname(o + at) + 1
+      IF v > 'Z' THEN v = 'A' FI
+      bname(o + at) = v
+    FI
+    IF KeyHit(KEY_DOWN) THEN
+      v = bname(o + at) - 1
+      IF v < 'A' THEN v = 'Z' FI
+      bname(o + at) = v
+    FI
+    IF KeyHit(KEY_RIGHT) THEN
+      at += 1
+      IF at > 2 THEN done = 1 FI
+    FI
+    IF KeyHit(KEY_SPACE) OR KeyHit(KEY_ENTER) THEN done = 1 FI
+  UNTIL done OD
+  FOR ch = 0 TO 2 DO Tile(16 + ch, 18, T_FONT + Glyph(bname(o + ch)), B_TEXT) OD
+  phase = 2
+RETURN
+
+; the panel over the field: what the field was worth, the bonuses, and
+; the score counting up to its total
+PROC Reckoning()
+  BYTE i, won
+  CARD clear, tb, flg, chunk, left
+  CursorHide()
+  won = 0
+  IF over == 1 THEN won = 1 FI
+  phase = 2
+  flg = 0
+  FOR i = 0 TO total - 1 DO
+    IF f(i) & (F_MINE | F_FLAG) == F_MINE | F_FLAG AND f(i) & F_MARK == 0 THEN flg += 1 FI
+  OD
+  clear = sel
+  clear = clear + 1
+  IF won THEN flg = flags FI          ; a cleared field's flags were all right; the ending's own are not counted
+  flg = flg * 25 * clear
+  tb = 0
+  IF won THEN
+    IF secs < lv_par(sel) THEN tb = (lv_par(sel) - secs) * 20 FI
+    clear = clear * 1000
+  ELSE
+    clear = 0
+  FI
+  Box(9, 8, 20, 11, 1)
+  IF won THEN Text(16, 10, "CLEARED!", B_HEAD) ELSE Text(17, 10, "BOOM!", B_HEAD) FI
+  Text(11, 12, "FIELD", B_TEXT)
+  Digits(23, 12, dig, 6, B_TEXT)
+  Text(11, 13, "CLEAR", B_TEXT)
+  Num(23, 13, clear, 6, B_TEXT)
+  Text(11, 14, "TIME", B_TEXT)
+  Num(23, 14, tb, 6, B_TEXT)
+  Text(11, 15, "FLAGS", B_TEXT)
+  Num(23, 15, flg, 6, B_TEXT)
+  Text(11, 17, "SCORE", B_HEAD)
+  Digits(23, 17, dig, 6, B_HEAD)
+  left = clear + tb + flg
+  chunk = left / 90 + 1
+  i = KeyHit(KEY_SPACE)
+  i = 0
+  WHILE left > 0 DO
+    Tick()
+    IF KeyHit(KEY_SPACE) THEN chunk = left FI
+    IF chunk > left THEN chunk = left FI
+    AddPts(chunk)
+    left = left - chunk
+    Digits(23, 17, dig, 6, B_HEAD)
+    i += 1
+    IF i & 3 == 0 THEN Sfx(SX_TICK, 0) FI
+  OD
+  Text(11, 18, "BEST", B_TEXT)
+  IF Better() THEN
+    FOR i = 0 TO 5 DO best(sel * 6 + i) = dig(i) OD
+    Digits(23, 18, best + sel * 6, 6, B_HEAD)
+    EnterName()
+  ELSE
+    Digits(23, 18, best + sel * 6, 6, B_TEXT)
+    FOR i = 0 TO 2 DO Tile(16 + i, 18, T_FONT + Glyph(bname(sel * 3 + i)), B_TEXT) OD
+  FI
+  Text(14, 19, "PRESS SPACE", B_TEXT)
+  i = KeyHit(KEY_SPACE)
+  i = KeyHit(KEY_ENTER)
+  DO
+    Tick()
+  UNTIL KeyHit(KEY_SPACE) OR KeyHit(KEY_ENTER) OR esc OD
+  esc = 0
+RETURN
+
+; ------------------------------------------------------------- the play
+PROC Hints(BYTE paused)
+  IF paused THEN
+    BText(1, 29, "          PAUSED    P TO GO ON         ", B_HEAD)
+  ELSE
+    BText(1, 29, "SPACE DIG  ENTER FLAG  P PAUSE  ESC OUT", B_TEXT)
+  FI
+RETURN
+
+PROC Pause()
+  hide = 1
+  CursorHide()
+  DrawField()
+  Hints(1)
+  DO
+    Tick()
+  UNTIL KeyHit(KEY_P) OR esc OD
+  hide = 0
+  DrawField()
+  Hints(0)
+  CursorShow()
+RETURN
+
+PROC Play()
+  BYTE i, c, hurry_at, left
+  bw = lv_w(sel)
+  bh = lv_h(sel)
+  nm = lv_m(sel)
+  total = bw * bh
+  ox = 20 - bw
+  oy = 16 - bh
+  hurry_at = (total - nm) / 8
+  phase = 1
+  FOR i = 0 TO total - 1 DO f(i) = 0 OD
+  FOR i = 0 TO 5 DO dig(i) = 0 OD
+  opened = 0
+  flags = 0
+  first = 1
+  over = 0
+  secs = 0
+  fr60 = 0
+  timing = 0
+  hide = 0
+  esc = 0
+  rseed = (TMR_L * 256 + TMR_M) | 1
+  CursorHide()
+  Weave()
+  Box(1, 0, 36, 1, 1)
+  Box(ox - 1, oy - 1, bw << 1, bh << 1, 0)
+  Text(2, 1, "SCORE", B_HEAD)
+  Tile(16, 1, T_ICON_MINE, B_TEXT)
+  LevelName(23, 1, sel, B_HEAD)
+  Tile(31, 1, T_ICON_CLOCK, B_TEXT)
+  ShowScore()
+  ShowMines()
+  ShowTime()
+  Hints(0)
+  DrawField()
+  ccx = bw >> 1
+  ccy = bh >> 1
+  AimCell()
+  curx = 160 - 8
+  cury = 120 - 8
+  CursorShow()
+  Sfx(SX_START, 0)
+  MusicStart(TUNE_EASY + sel)
+  DO
+    Tick()
+    loops += 1
+    IF esc THEN EXIT FI
+    IF KeyHit(KEY_P) THEN Pause() FI
+    c = Arrows()
+    IF c THEN
+      MoveBy(c)
+      AimCell()
+    FI
+    IF KeyHit(KEY_SPACE) THEN Dig() FI
+    IF over == 0 AND (KeyHit(KEY_ENTER) OR KeyHit(KEY_KPENTER) OR KeyHit(KEY_F)) THEN Flag() FI
+    IF timing THEN
+      fr60 += 1
+      IF fr60 >= 60 THEN
+        fr60 = 0
+        IF secs < 999 THEN secs += 1 FI
+        ShowTime()
+      FI
+    FI
+    left = total - nm - opened
+    mrate = 16
+    IF first == 0 AND left <= hurry_at THEN mrate = 21 FI
+    IF over THEN EXIT FI
+  OD
+  mrate = 16
+  IF esc THEN
+    esc = 0
+    RETURN
+  FI
+  ShowMines()
+  IF over == 1 THEN
+    Won()
+    ShowMines()
+  ELSE
+    Lost()
+  FI
+  Reckoning()
+RETURN
+
+; ---------------------------------------------------------------- the front
+PROC MenuRow(BYTE k)
+  BYTE row, bank
+  row = 11 + (k << 1)
+  bank = B_TEXT
+  IF k == sel THEN bank = B_HEAD FI
+  LevelName(6, row, k, bank)
+  IF k == 0 THEN
+    Text(13, row, "  9X9", bank)
+  ELSEIF k == 1 THEN
+    Text(13, row, "14X11", bank)
+  ELSE
+    Text(13, row, "18X12", bank)
+  FI
+  Num(20, row, lv_m(k), 2, bank)
+  Digits(25, row, best + k * 6, 6, bank)
+  Tile(32, row, T_FONT + Glyph(bname(k * 3)), bank)
+  Tile(33, row, T_FONT + Glyph(bname(k * 3 + 1)), bank)
+  Tile(34, row, T_FONT + Glyph(bname(k * 3 + 2)), bank)
+RETURN
+
+PROC AimMenu()
+  INT r
+  r = 11 + (sel << 1)
+  tgx = 36
+  tgy = (r << 3) - 4
+  cur_w = 248
+  cur_h = 16
+RETURN
+
+PROC Title()
+  BYTE i, k, go, c
+  phase = 0
+  shine_at = 0
+  esc = 0
+  Theme(sel)
+  CursorHide()
+  Weave()
+  Logo(8, 2)
+  ; what the field is made of: covered, opened, the eight numbers, a flag, a mine
+  Pic(7, 5, T_COVER, B_FIELD)
+  Pic(9, 5, T_COVER + 4, B_FIELD)
+  Pic(11, 5, T_OPEN, B_FIELD)
+  FOR i = 0 TO 7 DO
+    k = 0
+    IF (i & 1) == 0 THEN k = 4 FI
+    Pic(13 + (i << 1), 5, T_DIGIT + (i << 3) + k, B_NUM + i)
+  OD
+  Pic(29, 5, T_FLAG + 4, B_FIELD)
+  Pic(31, 5, T_MINE, B_FIELD)
+  Box(3, 8, 32, 7, 1)
+  Text(6, 9, "LEVEL", B_HEAD)
+  Text(14, 9, "SIZE", B_HEAD)
+  Text(19, 9, "MINES", B_HEAD)
+  Text(25, 9, "BEST", B_HEAD)
+  FOR i = 0 TO 2 DO MenuRow(i) OD
+  Box(3, 18, 32, 7, 1)
+  Text(6, 19, "ARROWS", B_HEAD)
+  Text(14, 19, "MOVE", B_TEXT)
+  Text(22, 19, "SPACE", B_HEAD)
+  Text(29, 19, "DIG", B_TEXT)
+  Text(6, 21, "ENTER F", B_HEAD)
+  Text(14, 21, "FLAG", B_TEXT)
+  Text(22, 21, "P", B_HEAD)
+  Text(29, 21, "PAUSE", B_TEXT)
+  Text(6, 23, "SPACE ON A NUMBER", B_HEAD)
+  Text(24, 23, "OPEN AROUND", B_TEXT)
+  Text(6, 25, "ESC", B_HEAD)
+  Text(14, 25, "LEAVE", B_TEXT)
+  BText(6, 28, "UP DOWN CHOOSE   SPACE PLAYS", B_TEXT)
+  AimMenu()
+  curx = tgx
+  cury = tgy
+  CursorShow()
+  MusicStart(TUNE_TITLE)
+  go = KeyHit(KEY_SPACE)
+  go = KeyHit(KEY_ENTER)
+  go = 0
+  DO
+    Tick()
+    IF esc THEN EXIT FI
+    c = Arrows()
+    IF c & 12 THEN
+      k = sel
+      IF c & 4 THEN sel = (sel + 2) % 3 ELSE sel = (sel + 1) % 3 FI
+      WaitVBlank()
+      Theme(sel)
+      shine_at = 0
+      MenuRow(k)
+      MenuRow(sel)
+      AimMenu()
+      Sfx(SX_SELECT, 0)
+    FI
+    IF KeyHit(KEY_SPACE) OR KeyHit(KEY_ENTER) THEN go = 1 FI
+  UNTIL go OD
+RETURN
+
+PROC Main()
+  BYTE i
+  Graphics(2)
+  Cursor(0)
+  VID_BORDER = 0
+  VID_PAT = PAT_BASE
+  SpritesOff()
+  VWrite(PAT_BASE, sw_tiles, N_TILES << 5)
+  VWrite(SPR_PAT, cursor_spr, 128)
+  SpritesOn(B_SPR)
+  FOR i = 0 TO 3 DO SpriteHide(i) OD
+  FOR i = 0 TO 17 DO best(i) = 0 OD
+  FOR i = 0 TO 8 DO bname(i) = '-' OD
+  mrate = 16
+  sel = 0
+  DO
+    Title()
+    IF esc THEN EXIT FI
+    Play()
+  OD
+  Quiet()
+  SpritesOff()
+  Reset()
+RETURN

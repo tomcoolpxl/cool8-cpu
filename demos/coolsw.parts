@@ -1,0 +1,4 @@
+# COOL SWEEPER compiles behind its art and music, which tools/mkcoolsw.py
+# draws and writes out -- the cells, the frame, the logo, the cursor, the
+# three themes and the tunes. One path a line, relative to the repository root.
+assets/coolsw/coolsw_art.act

@@ -336,6 +336,12 @@ args = ["--check"]
 about = "COOLTRIS's drawn art file -- blocks, frame, weave, glyphs, palettes and tune -- against its generator"
 
 [[tool.cool8.jobs.check]]
+id = "coolsw"
+run = "tools/mkcoolsw.py"
+args = ["--check"]
+about = "COOL SWEEPER's drawn art file -- cells, frame, logo, cursor, three themes and six tunes -- against its generator"
+
+[[tool.cool8.jobs.check]]
 id = "pics"
 run = "tools/mkpics.py"
 args = ["--check"]

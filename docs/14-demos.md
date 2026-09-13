@@ -53,7 +53,7 @@ but as two programs: the compiled one tumbles, every frame computed
 |---|---|---|
 | **Demos** | 13 | MAZE, RAINBOW, WAVE, PLASMA, INTRO, BOING, TRIANGLES, MANDEL, COBRA, SYNTH, BENCH, MINIBNCH, BAPPLE, TAIPAN, COOLTRS1, COOLTRS2 |
 | **Software** | 14 | HHGG, ZORK1, PLANET, LGOP, PASCAL |
-| **CoolAction** | 11 | RAINBOW, TRIANGLE, MAZE, PLASMA, WAVE, MANDEL, SYNTH, INTRO, PRIMES — the compiled twins, §4 — COBRA, which shares only its ship and its name with the BASIC's, COBRA2, its camera and sky, and MSCOOLMN, ARKANOID, BLOCKADE, COOLTRIS, KEYTEST and SLIDES, which have no BASIC |
+| **CoolAction** | 11 | RAINBOW, TRIANGLE, MAZE, PLASMA, WAVE, MANDEL, SYNTH, INTRO, PRIMES — the compiled twins, §4 — COBRA, which shares only its ship and its name with the BASIC's, COBRA2, its camera and sky, and MSCOOLMN, ARKANOID, BLOCKADE, COOLTRIS, COOLSW, KEYTEST and SLIDES, which have no BASIC |
 
 **Volume 0 is not the user's, and that is the ROM's decision.**
 `sw/boot.asm` walks volume 0's directory for `BOOT.BIN`; it is the 4 KB
@@ -1044,7 +1044,7 @@ drive 11 as bare `.BIN`s: RAINBOW, TRIANGLES, MAZE, PLASMA, WAVE,
 MANDEL, SYNTH and INTRO, each a `demos/name.act` beside its
 `demos/name.bas`; COBRA, which was the ninth and is now a program of
 its own, and COBRA2, its camera and sky, the next two sections; and
-KEYTEST, MSCOOLMN, ARKANOID, BLOCKADE, COOLTRIS and SLIDES, which have no BASIC and follow them. **The picture is the contract, not the code.** A port
+KEYTEST, MSCOOLMN, ARKANOID, BLOCKADE, COOLTRIS, COOLSW and SLIDES, which have no BASIC and follow them. **The picture is the contract, not the code.** A port
 may do the work any way the language allows -- and mostly does it the
 BASIC's way, because the BASIC's way was measured -- but
 `sim/test_action.py` runs every pair to the same point and requires
@@ -1694,6 +1694,124 @@ and the shapes' colours kept; twenty levels with the last at two frames
 a row; the bag holding each shape once; a full well ending the game; the
 stack. `python sim/cooltris.py play` (or `title`, `rows`, `level`) plays
 it and writes the frames as PNG.
+
+### `COOLSW` — COOL SWEEPER, three fields in three themes, and its own music
+
+`demos/coolsw.act`, under the loader of [D102](01-decisions.md): a field
+of covered cells, some of them mines; a dug cell shows how many of its
+eight neighbours are mines, a dug mine ends the game, and every cell that
+is not a mine opened clears the field. The rules are the common property
+of every coolsweeper since 1990, with the modern kindness that **the
+first cell dug and the eight round it are never mines** -- the mines are
+placed on the first dig, not before -- so the first dig always opens
+ground to reason from. The picture and the music are this game's own:
+`tools/mkcoolsw.py` draws every cell, frame piece, icon and the cursor,
+doubles the Namco glyphs Ms. Cool-Man's sheets carry into the logo, sets
+out the palettes and writes out the tunes, all into
+`assets/coolsw/coolsw_art.act`, which `demos/coolsw.parts` names.
+`poe check` holds the art file to the generator. On the screen the game
+is COOL SWEEPER; on the disc, where a name has eight characters, COOLSW.
+
+**A cell is 16 x 16, four tiles**, chosen over one 8 x 8 tile a cell so
+that a number has room to be a bold digit with a bevel and a shadow
+rather than a glyph. What it costs is the field size: mode 2's 40 x 30
+tiles hold 18 x 12 such cells with a frame and a score bar, so **the
+levels are sized to the screen, not to the 1990 game** -- 9 x 9 with 10
+mines, 14 x 11 with 25, 18 x 12 with 45, where Windows had 9 x 9, 16 x 16
+and 30 x 16. (One tile a cell would have fitted those exactly; both, by
+level, would have drawn every picture twice.) The field is a
+checkerboard of two shades of each kind of cell, so the grid reads
+without lines; the light and dark squares are separate patterns, and a
+number's colour is its palette bank -- eight banks for the eight, in the
+colours coolsweepers have always used. 234 tiles in all.
+
+**Each level has a theme, and a theme is the whole palette**: a meadow
+for Easy, the sea for Medium, lava for Hard, 256 colours each written in
+one go. Everything on the screen draws through banks, so a theme change
+repaints the lot with no tile touched, and **the front shows the theme
+of the level the cursor is on** as it moves. Three entries cycle: the
+twinkle in the background, the cursor's glow, and a band of light up the
+logo's letters on the front.
+
+**The cursor is four sprites**, one 16 x 16 corner flipped four ways,
+round the cell at the raster's own resolution. It glides -- half the
+distance a frame -- and breathes a pixel or three outwards; the same
+four brackets mark the level on the front. **The first dig opens its
+ground as a ripple**, one ring of cells a frame from the one dug, with a
+rising note a ring. **A mine shakes the ground** -- the tile layer's fine
+scroll for half a second, the cursor hidden -- then every other mine
+shows itself one after another, the one that went off on red, and every
+flag that was wrong is crossed.
+
+**The score**: 10 times the level for a cell dug, 5 for each further
+cell a dig opens; at the end 25 times the level for every mine the
+player flagged. Clearing the field is worth 1000 times the level and 20
+for every second under par -- 60, 150 and 300 -- so a fast clear of Hard
+is the best score there is. A blown-up field keeps what it earned. The
+reckoning is a panel over the field: what the field was worth, the
+bonuses line by line, and the score counting up to its total in about a
+second and a half. Each level keeps a best with three letters, up and
+down for the letter and right for the next, and the front lists them.
+The clock starts at the first dig.
+
+**The music is written out note by note in `tools/mkcoolsw.py`**, an
+eighth at a time and a bar a line, and the game gives it its shape: a
+title theme (D major, sixteen bars, a verse and a soaring second half
+with sparkling arpeggios), a tune for each level -- G major and
+unhurried for Easy, E minor and uneasy for Medium with a driving
+repeated bass and water drops on top, A minor and headlong for Hard
+with a galloping octave bass -- and two endings, a fanfare for a
+cleared field and a sinking chromatic wail for a mine. Each is five
+tracks on voices 0-4: a lead, a sustained harmony, a bass, an arpeggio
+and drums. **The player makes the square waves sound played**: every
+note falls from a peak to a sustain frame by frame and faster once let
+go -- a pluck for the arpeggio, a slow bloom for the lead -- the lead
+gets a vibrato once it has sounded for ten frames and a double on voice
+5 four steps quieter and a few cents sharp, so the two beat; the drums
+are a kick falling in pitch, and a snare, hats and a crash on the noise
+channel. **The music quickens by a quarter** when an eighth of the
+field's safe cells or fewer are left to open. The effects take voices
+6 (a tone) and 7 (noise).
+
+Keys: the cursor keys move, and go round from one edge to the other;
+the space bar digs, and on a number whose mines are all flagged opens
+the cells round it; Enter or F flags and unflags; P pauses and hides the
+field; Esc leaves a game for the front, and on the front restarts the
+machine.
+
+**Measured**: 27,070 bytes of PRG, of which 7,488 are the tiles, 1,536
+the three palettes and 2,352 the six tunes. On the largest field a frame
+of play costs 4,956 clocks at rest with the music playing, of the
+139,583 a frame has. The busiest thing the game does is the first dig,
+and the first version of it cost **138,395 clocks in one frame** -- the
+gate's frame-by-frame profile put 77 % of that in `PlaceMines`, which
+asked every one of the 216 cells about its nine. Having each of the 45
+mines add one round itself instead took that frame to **23,099**, and
+the program 46 bytes smaller.
+
+**The gate** (`sim/test_action.py`, on `sim/coolsw.py`): the art file
+current; the compiled bytes the same as `tools/cool8asm.py`'s; mode 2
+with the sprites on bank 15; the front with its logo, its three levels
+and the cursor on the first, in the meadow's colours; the front's tune
+playing the lead as the generator wrote it, note for note from the
+pitches voice 0 is given, with its envelope's peak and its double, and
+drums on the noise; down picking each level in its own theme and going
+round; nine by nine framed and all covered with the score and level
+above; the cursor keys moving the cursor round the edges with the
+corners following; the first dig never a mine nor next to one, every
+count right, exactly the cells the rules open opened, and every cell's
+picture its byte; ten points for the dig and five a cell opened, the
+clock running; a flag counted, refusing a dig and taken off; a number
+with its mines flagged opening round it; the pause hiding the field;
+the tune quickening near the end; the last safe cell clearing the field
+and flagging every mine, and the score the rules give; a best taking
+three letters and the front showing it; the second level blown up --
+the shake, every mine shown, the wrong flag crossed, the ending's tune;
+Esc leaving for the front; the third level eighteen by twelve in lava's
+colours; every frame of play and of the first dig fitting in its frame
+on the largest field; the stack. `python sim/coolsw.py play` (or
+`title`, `win`, `boom`, `pause`, with a level of 0, 1 or 2 after it)
+plays it and writes the frames as PNG.
 
 ### `SLIDES` — the old test pictures, as fully as mode 6 can show them
 

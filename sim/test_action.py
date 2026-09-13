@@ -2626,6 +2626,326 @@ def test_cooltris():
     print()
 
 
+def test_coolsw():
+    """COOL SWEEPER, on the machine: the front and its three themes, a
+    first dig that is never a mine and opens the ground the rules say,
+    every cell's picture its byte, flags, a number opening round it, the
+    pause hiding the field, a cleared field's score and a best's name, a
+    mine blowing up the field, Esc, and the tune playing what was
+    written. Skips, loudly, without the art."""
+    import subprocess
+    import ioregs
+    import mkcoolsw as MW
+    import coolsw as W
+    print("  COOL SWEEPER")
+    if W.sources() is None:
+        print("    SKIPPED: the art is not here -- tools/mkcoolsw.py draws "
+              "assets/coolsw/coolsw_art.act")
+        print()
+        return
+    r = subprocess.run([sys.executable, os.path.join(H.ROOT, "tools", "mkcoolsw.py"), "--check"],
+                       capture_output=True, text=True)
+    check(r.returncode == 0, "coolsw: the art file is what the generator draws",
+          (r.stdout + r.stderr).strip()[-200:])
+    g = W.Game(tag="coolsw")
+    same_bytes("coolsw", g.prg)
+    print("    %d bytes of PRG" % (len(g.prg) - 2))
+    reg = lambda n: g.m.bus.read(ioregs.addr_of(n))   # noqa: E731
+    c = g.c
+
+    def theme_is(t):
+        """The palette is theme t's, but for the entries that cycle: the
+        twinkle, the cursor's glow and the logo's shine."""
+        want, have = MW.theme_palette(MW.THEMES[t]), g.m.palette()
+        cycling = {2, 16 * c("B_SPR") + 3} | {16 * c("B_LOGO") + k for k in range(1, 7)}
+        return all(want[i] == have[i] for i in range(256) if i not in cycling)
+
+    def pictures_match():
+        bw, bh, _ = g.size()
+        return [(x, y) for y in range(bh) for x in range(bw)
+                if g.pic(x, y) != g.want(g.byte("f", y * bw + x), x, y)]
+
+    def neighbours(i):
+        bw, bh, _ = g.size()
+        x, y = i % bw, i // bw
+        return [(y + dy) * bw + x + dx for dy in (-1, 0, 1) for dx in (-1, 0, 1)
+                if (dx or dy) and 0 <= x + dx < bw and 0 <= y + dy < bh]
+
+    # the front: mode 2, the logo, the three levels, the cursor, the tune
+    g.m.run_frame(40)
+    check(reg("VID_MODE") & 0x0F == 2 and reg("VID_PAT_H") == 0x10 and reg("SPR_CTRL") & 0xF1 == 0xF1,
+          "coolsw: mode 2, patterns at $1000, sprites on bank 15",
+          "MODE %02X PAT_H %02X SPR_CTRL %02X" % (reg("VID_MODE"), reg("VID_PAT_H"), reg("SPR_CTRL")))
+    rows = [g.text(6, 11 + 2 * k, 6) for k in range(3)]
+    check(g.cell(8, 2) == (c("T_LOGO"), c("B_LOGO")) and rows == ["EASY  ", "MEDIUM", "HARD  "],
+          "coolsw: the front has the logo and the three levels", "%s %s" % (g.cell(8, 2), rows))
+    spr = g.m.sprites()
+    check(all(spr[8 * i + 1] & 0x40 for i in range(4)) and g.byte("sel") == 0 and theme_is(0),
+          "coolsw: the cursor's four corners are on the first level, in the meadow's colours",
+          "enables %s, level %d" % ([spr[8 * i + 1] & 0x40 for i in range(4)], g.byte("sel")))
+
+    # the tune plays what the generator wrote: the lead's first bars, as
+    # notes, from the pitches voice 0 is given frame by frame
+    inc_of = {v: m for m, v in enumerate(MW.note_incs(), MW.LOW_MIDI)}
+    heard = []
+    peak = sus = 0
+    chorus = False
+    for _ in range(14 * 32 + 4):           # four bars of eighths, 14 frames each
+        s = g.m.sound()
+        v0 = s[0] | (s[1] << 8)
+        if s[5] & 0x40 and v0 in inc_of and (not heard or heard[-1] != inc_of[v0]):
+            heard.append(inc_of[v0])
+        peak = max(peak, s[4])
+        chorus = chorus or (s[5 * 8 + 5] & 0x40 and (s[40] | (s[41] << 8)) > v0 > 0)
+        g.m.run_frame(1)
+    # the lead as written, its repeated notes run together as the ear
+    # hears them, round twice; what was heard must be a run of it
+    written = [n for n in MW.track_steps("lead", MW.TITLE["parts"]["lead"]) if isinstance(n, int)] * 2
+    written = [n for i, n in enumerate(written) if i == 0 or written[i - 1] != n]
+    run = any(written[k:k + len(heard)] == heard for k in range(len(written) - len(heard)))
+    check(len(heard) >= 12 and run and peak == g.byte("in_peak", 0) and chorus,
+          "coolsw: the front's tune plays the lead as written, with its envelope and its double",
+          "heard %s, peak %d, double %s" % (heard[:12], peak, chorus))
+    drums = False
+    for _ in range(60):
+        drums = drums or (g.m.sound()[4 * 8 + 5] & 0x80 != 0)
+        g.m.run_frame(1)
+    check(drums, "coolsw: and drums on the noise", "")
+
+    # down and up: the theme follows the cursor
+    g.tap(W.DOWN)
+    g.m.run_frame(4)
+    medium = g.byte("sel") == 1 and theme_is(1) and g.cell(6, 13)[1] == c("B_HEAD")
+    g.tap(W.DOWN)
+    g.m.run_frame(4)
+    hard = g.byte("sel") == 2 and theme_is(2)
+    g.tap(W.DOWN)
+    g.m.run_frame(4)
+    check(medium and hard and g.byte("sel") == 0 and theme_is(0),
+          "coolsw: down picks the next level, in its own theme, and goes round", "")
+
+    # a game of the first level: the field framed, every cell covered
+    g.start(0)
+    g.m.run_frame(10)
+    bw, bh, nm = g.size()
+    ox, oy = g.byte("ox"), g.byte("oy")
+    check((bw, bh, nm, ox, oy) == (9, 9, 10, 11, 7) and g.cell(ox - 1, oy - 1)[0] == c("T_FR_TL")
+          and g.cell(ox + 18, oy + 18)[0] == c("T_FR_BR") and all(v == 0 for v in g.field())
+          and not pictures_match() and g.text(2, 1, 5) == "SCORE" and g.text(23, 1, 4) == "EASY",
+          "coolsw: nine by nine, framed, all of it covered, the score and the level above",
+          "%s at %s; wrong pictures %s" % ((bw, bh, nm), (ox, oy), pictures_match()[:3]))
+
+    # the cursor: the keys move it, round the edges too, and the corners follow
+    g.m.run_frame(20)
+    x0 = g.byte("ccx")
+    g.tap(W.RIGHT)
+    right = g.byte("ccx") == x0 + 1
+    for _ in range(bw):
+        g.tap(W.RIGHT)
+    g.m.run_frame(12)
+    spr = g.m.sprites()
+    sx = spr[2] | (spr[3] << 8)
+    cx = (ox * 8 + g.byte("ccx") * 16) * 2
+    check(right and g.byte("ccx") == (x0 + 1 + bw) % bw and cx - 8 <= sx <= cx,
+          "coolsw: the cursor keys move the cursor, round from one edge to the other, the corners with it",
+          "cell %d, sprite x %d for %d" % (g.byte("ccx"), sx, cx))
+
+    # the first dig: never a mine, nor the eight round it; the counts
+    # right; the ground opened as far as the rules open it; the score
+    g.dig(4, 4, 60)
+    f = g.field()
+    mines = [i for i, v in enumerate(f) if v & W.F_MINE]
+    near = [i for i in mines if abs(i % bw - 4) <= 1 and abs(i // bw - 4) <= 1]
+    counts = [i for i, v in enumerate(f) if not v & W.F_MINE
+              and v & 15 != sum(1 for j in neighbours(i) if f[j] & W.F_MINE)]
+    opened = [i for i, v in enumerate(f) if v & W.F_OPEN]
+    closed = [i for i in opened if f[i] & 15 == 0 and any(not f[j] & W.F_OPEN for j in neighbours(i))]
+    reach = {40}
+    todo = [40]
+    while todo:
+        i = todo.pop()
+        if f[i] & 15 == 0:
+            for j in neighbours(i):
+                if j not in reach:
+                    reach.add(j)
+                    todo.append(j)
+    check(len(mines) == nm and not near and not counts,
+          "coolsw: ten mines, none in the first cell dug or round it, and every count right",
+          "%d mines, %s near, %s miscounted" % (len(mines), near, counts[:3]))
+    check(set(opened) == reach and not closed and g.byte("opened") == len(opened) and not pictures_match(),
+          "coolsw: the dig opens exactly what the rules open, and every cell shows its byte",
+          "%d opened, %d reachable, wrong pictures %s" % (len(opened), len(reach), pictures_match()[:3]))
+    check(g.score() == 10 + 5 * (len(opened) - 1) and g.byte("timing") == 1,
+          "coolsw: ten for the cell dug and five for each it opened, and the clock running",
+          "%d for %d cells" % (g.score(), len(opened)))
+
+    # a flag: Enter puts it on, the count of mines left comes down, a dig
+    # will not go through it, and F takes it off
+    safe = next(i for i, v in enumerate(f) if not v & (W.F_MINE | W.F_OPEN))
+    g.flag(safe % bw, safe // bw)
+    flagged = g.byte("f", safe) & W.F_FLAG and g.pic(safe % bw, safe // bw)[0] in (c("T_FLAG"), c("T_FLAG") + 4)
+    left = g.text(18, 1, 3)
+    g.tap(W.SPACE)
+    g.m.run_frame(4)
+    refused = not g.byte("f", safe) & W.F_OPEN and g.byte("over") == 0
+    g.tap(W.F)
+    g.m.run_frame(2)
+    check(flagged and left == "009" and refused and not g.byte("f", safe) & W.F_FLAG and g.text(18, 1, 3) == "010",
+          "coolsw: Enter flags a cell, the mines left count it, a dig will not go through it, F takes it off",
+          "flag %s, left %s, refused %s" % (flagged, left, refused))
+
+    # a number with all its mines flagged: the space bar on it opens the
+    # rest round it
+    f = g.field()
+    target = next((i for i, v in enumerate(f) if v & W.F_OPEN and v & 15
+                   and any(not f[j] & (W.F_OPEN | W.F_MINE) for j in neighbours(i))), None)
+    if target is None:
+        check(False, "coolsw: a number to open round", "none on this field")
+    else:
+        for j in neighbours(target):
+            if f[j] & W.F_MINE and not f[j] & W.F_FLAG:
+                g.flag(j % bw, j // bw)
+        s0 = g.score()
+        g.dig(target % bw, target // bw, 40)
+        f = g.field()
+        rest = [j for j in neighbours(target) if not f[j] & (W.F_OPEN | W.F_MINE)]
+        check(not rest and g.byte("over") == 0 and g.score() >= s0 + 10 and not pictures_match(),
+              "coolsw: the space bar on a number whose mines are flagged opens the cells round it",
+              "left closed %s, %d points" % (rest, g.score() - s0))
+
+    # the pause hides the field and gives it back
+    g.tap(W.P)
+    g.m.run_frame(4)
+    hidden = all(g.pic(x, y)[0] in (c("T_COVER"), c("T_COVER") + 4) for y in range(bh) for x in range(bw))
+    words = g.text(1, 29, 39).strip()
+    g.tap(W.P)
+    g.m.run_frame(4)
+    check(hidden and words.startswith("PAUSED") and not pictures_match(),
+          "coolsw: P hides the field and says so, and P again gives it back", words)
+
+    # the field all but cleared: the music quickens, then the last dig clears it
+    f = g.field()
+    todo = [i for i, v in enumerate(f) if not v & (W.F_MINE | W.F_OPEN)]
+    last = todo[-1]
+    for i in todo[:-1]:
+        g.poke("f", f[i] | W.F_OPEN, i)
+    g.poke("opened", g.byte("opened") + len(todo) - 1)
+    g.m.run_frame(2)
+    check(g.byte("mrate") > 16, "coolsw: the tune quickens when few cells are left", "rate %d" % g.byte("mrate"))
+    g.tap(W.P)
+    g.m.run_frame(3)
+    g.tap(W.P)
+    s0, flags, secs = g.score(), g.byte("flags"), g.uword("secs")
+    g.dig(last % bw, last // bw, 2)
+    g.until(lambda: g.byte("phase") >= 2, 300)
+    g.until(lambda: g.byte("phase") == 3, 400)
+    want = s0 + 10 + 1000 + 20 * max(0, 60 - g.uword("secs")) + 25 * flags
+    f = g.field()
+    check(g.byte("over") == 1 and g.text(16, 10, 8) == "CLEARED!" and all(f[i] & W.F_FLAG for i in mines)
+          and secs <= g.uword("secs") <= secs + 1,
+          "coolsw: the last safe cell clears the field, and every mine gets its flag", g.text(16, 10, 8))
+    check(g.score() == want, "coolsw: clearing is a thousand, twenty a second under par and 25 a flag",
+          "%d, not %d" % (g.score(), want))
+
+    # a new best: three letters
+    check(g.byte("phase") == 3, "coolsw: a best asks for a name", "phase %d" % g.byte("phase"))
+    letters = lambda: "".join(chr(g.byte("bname", i)) for i in range(3))   # noqa: E731
+
+    def press(keys, done, cap=60):
+        g.m.kbd.feed(keys)
+        g.m.run_frame(2)
+        g.m.kbd.feed(keys[:-1] + [0xF0, keys[-1]])
+        return g.until(done, cap) is not None
+    was = letters()
+    up = press(W.UP, lambda: letters() != was)
+    on = press(W.RIGHT, lambda: g.cell(17, 18)[1] == c("B_HEAD"))
+    done = press(W.SPACE, lambda: g.byte("phase") == 2)
+    best = g.score()
+    g.m.run_frame(4)
+    press(W.SPACE, lambda: g.byte("phase") == 0, 120)
+    g.m.run_frame(10)
+    check(up and on and done and letters() == "BAA" and g.byte("phase") == 0
+          and g.text(25, 11, 6) == "%06d" % best and g.text(32, 11, 3) == "BAA",
+          "coolsw: a best takes three letters, and the front shows it against the level",
+          "%r, %s on the front, up %s on %s done %s" % (letters(), g.text(25, 11, 6), up, on, done))
+
+    # the second level, blown up: the ground shakes, every mine shows,
+    # a wrong flag is crossed, and the ending's tune
+    g.start(1)
+    g.m.run_frame(10)
+    bw, bh, nm = g.size()
+    check((bw, bh, nm) == (14, 11, 25) and theme_is(1) and g.text(23, 1, 6) == "MEDIUM",
+          "coolsw: the second level is fourteen by eleven, in the sea's colours", str((bw, bh, nm)))
+    g.dig(7, 5, 60)
+    f = g.field()
+    wrong = next(i for i, v in enumerate(f) if not v & (W.F_MINE | W.F_OPEN))
+    g.flag(wrong % bw, wrong // bw)
+    mine = next(i for i, v in enumerate(f) if v & W.F_MINE)
+    g.goto(mine % bw, mine // bw)
+    g.tap(W.SPACE, 1)
+    shook = 0
+    for _ in range(30):
+        shook = max(shook, reg("VID_SCX_L"))
+        g.m.run_frame(1)
+    g.until(lambda: g.byte("phase") >= 2, 400)
+    g.m.run_frame(10)                  # the panel is drawn over the frames after
+    f = g.field()
+    lose = g.uword("tune_off", c("TUNE_LOSE")) + g.addr("tune_data")
+    check(g.byte("over") == 2 and shook > 0 and f[mine] & W.F_MARK and g.pic(mine % bw, mine // bw)[1] == c("B_BOOM")
+          and all(f[i] & W.F_OPEN for i in range(bw * bh) if f[i] & W.F_MINE) and f[wrong] & W.F_MARK
+          and g.pic(wrong % bw, wrong // bw)[0] in (c("T_WRONG"), c("T_WRONG") + 4)
+          and g.text(17, 10, 5) == "BOOM!" and lose <= g.uword("mp") < lose + 60,
+          "coolsw: a mine shakes the ground, shows every mine, crosses the wrong flag, and plays the end",
+          "over %d, phase %d, shake %d, %r, mines open %s, wrong flag %02X, mp %04X for the tune at %04X"
+          % (g.byte("over"), g.byte("phase"), shook, g.text(17, 10, 5),
+             all(f[i] & W.F_OPEN for i in range(bw * bh) if f[i] & W.F_MINE), f[wrong], g.uword("mp"), lose))
+    g.until(lambda: g.byte("phase") == 3, 200)
+    if g.byte("phase") == 3:
+        press(W.SPACE, lambda: g.byte("phase") == 2)
+    press(W.SPACE, lambda: g.byte("phase") == 0, 120)
+
+    # Esc leaves a game for the front
+    g.start(1)
+    g.m.run_frame(10)
+    g.tap(W.ESC)
+    check(g.until(lambda: g.byte("phase") == 0, 60) is not None, "coolsw: Esc leaves the game for the front",
+          "phase %d" % g.byte("phase"))
+    g.start(2)
+    g.m.run_frame(10)
+    bw, bh, nm = g.size()
+    check((bw, bh, nm, g.byte("ox"), g.byte("oy")) == (18, 12, 45, 2, 4) and theme_is(2)
+          and not pictures_match(),
+          "coolsw: the third level is eighteen by twelve, framed on the screen, in lava's colours",
+          str((bw, bh, nm, g.byte("ox"), g.byte("oy"))))
+
+    # what a frame costs on the largest field: every clock that is not
+    # the wait for the next vblank, frame by frame -- at rest with the
+    # music playing, and through the first dig's ripple, the busiest
+    # thing the game does. A frame that fills its frame has no wait in it
+    def frame_work(n):
+        out = []
+        for _ in range(n):
+            p = dbg.Profile(g.syms, g.org, g.end)
+            p.start(g.m)
+            g.m.run_frame(1)
+            p.collect(g.m)
+            out.append((p.total - p.of("WaitVBlank"), p.of("WaitVBlank"), p))
+        return out
+    rest = frame_work(60)
+    g.tap(W.SPACE, 1)
+    ripple = frame_work(40)
+    busiest = max(ripple, key=lambda r: r[0])
+    print("    a frame of play: %d clocks at rest (mean of 60), %d at the first dig's busiest; %d cells opened"
+          % (sum(w for w, _, _ in rest) // 60, busiest[0], g.byte("opened")))
+    check(all(wait for _, wait, _ in rest + ripple) and g.byte("opened") > 1,
+          "coolsw: on the largest field every frame of play and of the first dig fits in its frame",
+          "frames with no wait: %d at rest, %d after the dig" % (sum(1 for _, w, _ in rest if not w),
+                                                                  sum(1 for _, w, _ in ripple if not w)))
+    check(0x100 < g.m.cpu.sp <= 0x200, "coolsw: the stack is where it should be", "SP $%04X" % g.m.cpu.sp)
+    del g
+    print()
+
+
 def main():
     if "--profile" in sys.argv:
         return profile_sieve()
@@ -2638,7 +2958,8 @@ def main():
     only = [a for a in sys.argv[1:] if not a.startswith("--")]    # e.g. `cobra`: just those
     for t in (test_every_encoding, test_features, test_sieve, test_primes, test_library,
               test_hardware, test_line, test_rainbow, test_cobra, test_cobra2, test_ports, test_keys,
-              test_keytest, test_loader, test_mscoolman, test_arkanoid, test_blockade, test_cooltris, test_slides, test_refusals):
+              test_keytest, test_loader, test_mscoolman, test_arkanoid, test_blockade, test_cooltris, test_coolsw,
+              test_slides, test_refusals):
         if not only or any(o in t.__name__ for o in only):
             t()
     return H.report()
