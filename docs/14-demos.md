@@ -2256,7 +2256,16 @@ the game's; the town's watch does not guard the fountains or the shop.
 than into them, which spares every trap its monster half. No Keystone
 Kops: the robbed keeper is the punishment. No credit, itemized billing,
 selling to a keeper without gold, or shopkeepers leaving their level.
-The fountain has no wish, no Excalibur and no pools; an altar cannot be
+**The shop's loopholes are kept on purpose**, found in a review after
+milestone 6 and left in by the owner for players to discover: a wand or
+a thrown weapon never angers a peaceful -- a keeper put to sleep can be
+walked past with the goods, or killed from across the room; an angry
+keeper is paid only inside the shop; paying stops at the first thing the
+gold does not cover; the keeper's gold is lost when he dies; the post
+inside the door is sold and bought on; the one-in-four surcharge is shop
+stock's alone and gone once bought; an unpaid thing's price follows what
+is known and the keeper's mood; and digging through the shop's wall or
+floor costs nothing but the robbery. The fountain has no wish, no Excalibur and no pools; an altar cannot be
 converted, as there are no corpses to sacrifice; an angry god's minion is
 the water demon, the one demon the game has. `#pray` is the one long
 command so far.
