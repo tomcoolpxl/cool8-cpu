@@ -529,6 +529,84 @@ def bitmap_art(s):
     return arts, blob, offs
 
 
+# ---------------------------------------------------------------- flights
+# The arcade's flight paths, starts, stage waves and home slots, from
+# tools/galaga_paths.py -- the disassembly's own bytes. The path tables sit
+# in the sub CPU's ROM at their own addresses and point at one another;
+# here they are one blob, packed region by region, every pointer rewritten
+# to an offset into it.
+STAGES, RANK = 16, 3                    # rank A: MAME's default difficulty
+
+
+def flights():
+    import random
+    import galaga_paths as P
+    tabs = sorted(P.PATH_TABLES, key=lambda t: t[1])
+    regions = []                        # [start, end, [items]]
+    for name, addr, items in tabs:
+        size = sum(2 if isinstance(i, str) else 1 for i in items)
+        if regions and regions[-1][1] == addr:
+            regions[-1][1] += size
+            regions[-1][2] += items
+        elif not (regions and regions[-1][0] <= addr < regions[-1][1]):
+            regions.append([addr, addr + size, list(items)])
+    base, off = {}, 0
+    for r in regions:
+        base[r[0]] = off
+        off += r[1] - r[0]
+
+    def reloc(addr):
+        for r in regions:
+            if r[0] <= addr < r[1]:
+                return base[r[0]] + addr - r[0]
+        raise SystemExit("a path points at $%04X, outside every table" % addr)
+
+    blob = []
+    for r in regions:
+        for it in r[2]:
+            if isinstance(it, str):
+                w = reloc(P.LABEL_ADDR[it])
+                blob += [w & 255, w >> 8]
+            else:
+                blob.append(it)
+    # the blob is the ROM's bytes where the ROM has them
+    for r in regions:
+        for a in range(r[0], r[1]):
+            b = blob[base[r[0]] + a - r[0]]
+            if not any(isinstance(it, str) for it in r[2]):
+                assert b == P.SUB_ROM[a]
+    starts = [reloc(P.LABEL_ADDR[lab]) for lab, _ in P.DB_2A3C]
+    sels = [sel for _, sel in P.DB_2A3C]
+    # object id -> formation row and column, and the game's slot
+    obj_row, obj_col, obj_slot = [], [], []
+    for obj in range(0, 0x60, 2):
+        r, c = (P.HPOS[obj] - 0x14) // 2, P.HPOS[obj + 1] // 2
+        obj_row.append(r)
+        obj_col.append(c)
+        if r == 0:
+            slot = c - 3
+        elif r == 1:
+            slot = 4 + c - 3
+        elif r in (2, 3):
+            slot = 255 if c in (0, 9) else 8 + (r - 2) * 8 + c - 1
+        else:
+            slot = 24 + (r - 4) * 10 + c
+        obj_slot.append(slot)
+    waves, woffs, kinds, parms = [], [], [], []
+    for st in range(1, STAGES + 1):
+        kind, _, _ = P.stage_row(st, RANK)
+        _, _, table = P.build_wave_table(st, RANK, random.Random(st))
+        woffs.append(len(waves))
+        waves += table
+        kinds.append(1 if kind == "challenge" else 0)
+        parms += P.stage_parms(st, RANK)[:10]
+    return dict(blob=blob, starts=starts, sels=sels, start_bytes=list(P.DB_2A6C), obj_row=obj_row,
+                obj_col=obj_col, obj_slot=obj_slot, waves=waves, woffs=woffs, kinds=kinds, parms=parms,
+                origins=list(P.DB_FMTN_HPOS_ORIG), atk_yllw=reloc(P.LABEL_ADDR["db_flv_atk_yllw"]),
+                atk_red=reloc(P.LABEL_ADDR["db_flv_atk_red"]), atk_boss=reloc(P.LABEL_ADDR["db_flv_0411"]),
+                atk_capture=reloc(P.LABEL_ADDR["db_0454"]), rogue=reloc(P.LABEL_ADDR["db_fltv_rogefgter"]))
+
+
 # ------------------------------------------------------------------ build
 class Dat:
     def __init__(self):
@@ -557,7 +635,7 @@ def build():
     bds = [backdrop(b) for b in BACKDROPS]
     for k, (_, rows) in enumerate(bds):
         dat.add("BD%d" % k, pack_band(rows))
-    return dict(pats=pats, common=common, ncommon=ncommon, fimgs=imgs, fblob=fblob, foffs=foffs, bds=bds,
+    return dict(fl=flights(), pats=pats, common=common, ncommon=ncommon, fimgs=imgs, fblob=fblob, foffs=foffs, bds=bds,
                 shot=shot[0], arts=arts, ablob=ablob, aoffs=aoffs,
                 font=font(t), dat=dat, sheet=s)
 
@@ -634,6 +712,33 @@ def act(o):
         fm += mask(img)
     w("; where each frame is, two bytes a row, bit 15 the left pixel")
     arr(w, "BYTE ARRAY fm_mask(%d)" % len(fm), fm, fmt="$%02X")
+    w("")
+    fl = o["fl"]
+    w("; the flights, the arcade's (tools/galaga_paths.py): the path tables in one")
+    w("; blob, every pointer an offset into it; each of the 24 entry paths' offset")
+    w("; and its start set in fl_start, three bytes -- Y, X, the angle's high")
+    w("; byte -- a set, the mirrored start the three after")
+    arr(w, "BYTE ARRAY fl_rom(%d)" % len(fl["blob"]), fl["blob"], per=24, fmt="$%02X")
+    arr(w, "CARD ARRAY fl_path(24)", fl["starts"])
+    arr(w, "BYTE ARRAY fl_sel(24)", fl["sels"])
+    arr(w, "BYTE ARRAY fl_start(%d)" % len(fl["start_bytes"]), fl["start_bytes"], fmt="$%02X")
+    for k in ("atk_yllw", "atk_red", "atk_boss", "atk_capture", "rogue"):
+        w("CONST FL_%s = %d" % (k.upper(), fl[k]))
+    w("; the formation's origins as the arcade holds them: ten columns' sprite X,")
+    w("; six rows' raw bytes (Y as Yint >> 1)")
+    arr(w, "BYTE ARRAY fm_orig(16)", fl["origins"], fmt="$%02X")
+    w("; an object id's (/2) formation row and column, and the game's slot (255 none)")
+    arr(w, "BYTE ARRAY obj_row(48)", fl["obj_row"])
+    arr(w, "BYTE ARRAY obj_col(48)", fl["obj_col"])
+    arr(w, "BYTE ARRAY obj_slot(48)", fl["obj_slot"])
+    w("; each stage's waves as the arcade's launcher reads them: $7E a wave's end,")
+    w("; $7F the last, else a path token and an object id; the stage's kind (1 a")
+    w("; challenging stage) and its ten parameter nibbles")
+    w("CONST STAGES = %d" % STAGES)
+    arr(w, "BYTE ARRAY st_waves(%d)" % len(fl["waves"]), fl["waves"], per=24, fmt="$%02X")
+    arr(w, "CARD ARRAY st_woff(%d)" % STAGES, fl["woffs"])
+    arr(w, "BYTE ARRAY st_kind(%d)" % STAGES, fl["kinds"])
+    arr(w, "BYTE ARRAY st_parm(%d)" % len(fl["parms"]), fl["parms"], per=10)
     w("")
     w("; the fighter's shot: one sprite, its 3 x 8 in columns 2-4")
     w("CONST P_SHOT = %d" % o["shot"])

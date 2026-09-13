@@ -447,6 +447,14 @@ RETURN
 ; pixel, turning at 32 either side of the centre
 PROC Sway()
   IF sway_dir THEN sway -= 1 ELSE sway += 1 FI
+  IF nest_inh AND sway == 0 THEN
+    ; the last wave is home and the columns are back: the breathing takes over
+    sway_on = 0
+    sway_dir = 0
+    breathing = 1
+    br_cnt = 0
+    RETURN
+  FI
   IF sway == 32 THEN sway_dir = 1 FI
   IF sway == -32 THEN sway_dir = 0 FI
 RETURN
@@ -622,15 +630,15 @@ RETURN (0)
 
 ; SlotAt(x, y): the slot whose character at rest owns that pixel, 255
 ; none. The column and row are found from where the formation is going,
-; and a character may be drawn a few pixels behind that -- a quarter of
-; the columns step each frame, and one an explosion covers waits -- so
-; the rows are taken eight pixels wide either way and the columns either
-; side are asked too; Owns answers from where each is drawn.
-CONST LAG = 8
+; and a character may be drawn a pixel behind that -- a quarter of the
+; columns step each frame -- so the rows are taken LAG pixels wider either
+; way, and the column either side is asked too when the pixel is within
+; LAG of the edge; Owns answers from where each is drawn.
+CONST LAG = 2
 FUNC BYTE SlotAt(BYTE x, BYTE y)
-  BYTE r, c, i, k, k1
+  BYTE r, c, i, left, right
   INT xi, yi, e
-  xi = x + LAG                       ; the margin added to this side: a byte less 8 would wrap
+  xi = x + LAG                       ; the margin added to this side: a byte less LAG would wrap
   yi = y + LAG
   e = row_y(0)
   IF yi < e THEN RETURN (255) FI
@@ -640,16 +648,30 @@ FUNC BYTE SlotAt(BYTE x, BYTE y)
   IF xi < e THEN RETURN (255) FI
   c = 0
   WHILE c < 9 AND x >= col_x(c) + 16 DO c += 1 OD
+  ; c is the first column whose box ends right of x: the one before it
+  ; can still reach x if x is within LAG of that box's end, and the one
+  ; after if x is within LAG of its start
+  left = 0
+  IF c > 0 THEN
+    IF x < col_x(c - 1) + 16 + LAG THEN left = 1 FI
+  FI
+  right = 0
+  IF c < 9 THEN
+    IF xi >= col_x(c + 1) THEN right = 1 FI
+  FI
   FOR r = 0 TO 5 DO
     e = row_y(r)
     IF yi >= e AND y < e + 16 + LAG THEN
-      IF c > 0 THEN k = c - 1 ELSE k = 0 FI
-      IF c < 9 THEN k1 = c + 1 ELSE k1 = 9 FI
-      WHILE k <= k1 DO
-        i = slot_at(r * 10 + k)
+      i = slot_at(r * 10 + c)
+      IF Owns(i, x, y) THEN RETURN (i) FI
+      IF left THEN
+        i = slot_at(r * 10 + c - 1)
         IF Owns(i, x, y) THEN RETURN (i) FI
-        k += 1
-      OD
+      FI
+      IF right THEN
+        i = slot_at(r * 10 + c + 1)
+        IF Owns(i, x, y) THEN RETURN (i) FI
+      FI
     FI
   OD
 RETURN (255)
@@ -839,6 +861,526 @@ PROC LoadBackdrop(BYTE k)
   PalSplit(k)
 RETURN
 
+; --------------------------------------------------------------- flights
+; What flies is the arcade's own motion, ported from the sub CPU's
+; f_08D3 as tools/galaga_paths.py states it (the gate holds the two to
+; the same positions frame by frame). A slot is the arcade's twenty-byte
+; one, field by field: Y and X in 2-pixel units with a byte of fraction,
+; Y growing upward; a ten-bit angle, 0 right and 256 up; a path pointer;
+; the speed's two nibbles, odd frames' and even frames'; the turn a frame
+; and the frames left of a segment. A segment moves `v` pixels along its
+; main axis and v * L / 128 along the other, L the angle's distance from
+; that axis -- linear, not trigonometric, which is the arcade's rule too.
+;
+; The arcade runs twelve slots; here six, because a flyer is four of the
+; thirty-two sprites. A wave of eight waits for a slot when six are up.
+CONST NFLY = 6
+CONST SP_FLY = 6                     ; descriptors 6-29, four a flyer
+BYTE frm                             ; the arcade's frame counter: its parity and its fours drive everything
+
+BYTE ARRAY fl_on(NFLY)               ; moving under a path (the arcade's b13 bit 0)
+BYTE ARRAY fl_state(NFLY)            ; the object's state: 7 launched, 3 cullable, 9 homing, 2 arrived, 0 none
+BYTE ARRAY fl_obj(NFLY)              ; the arcade's object id
+CARD ARRAY fl_y(NFLY), fl_x(NFLY)    ; b01:b00 and b03:b02
+BYTE ARRAY fl_a4(NFLY), fl_a5(NFLY)  ; the angle: b05 (bits 1:0 used) and b04
+BYTE ARRAY fl_t6(NFLY), fl_t7(NFLY)  ; the target: home's row and column, or FC's line
+CARD ARRAY fl_p(NFLY)                ; into fl_rom
+BYTE ARRAY fl_vo(NFLY), fl_ve(NFLY), fl_dl(NFLY), fl_n(NFLY)
+BYTE ARRAY fl_ox(NFLY), fl_oy(NFLY)  ; b11, b12: the formation's offset added while homing
+BYTE ARRAY fl_fl(NFLY)               ; b13: bit 5 FC's line armed, 6 homing, 7 mirrored
+BYTE ARRAY fl_code(NFLY), fl_ctrl(NFLY) ; the tile, 0 facing left to 6 facing up, and ctrl: bit 1 mirrors across, bit 0 down
+BYTE ARRAY fl_char(NFLY)             ; the character's first sprite frame
+BYTE ARRAY fl_x8(NFLY)               ; the arcade's sprite X and Y, as displayed
+CARD ARRAY fl_y9(NFLY)
+INT ARRAY fl_sx(NFLY), fl_sy(NFLY)   ; where that is on this screen, the box's top-left
+BYTE flying, flying_nbr              ; slots moving this frame, and last frame
+BYTE cont_bomb                       ; FA's continuous bombing: not yet
+BYTE stage                           ; 1 up
+
+; the launcher, f_2916
+CARD wv_p
+BYTE launching
+; the sway, f_2A90, before the breathing takes over
+BYTE sway_on, nest_inh
+
+FUNC BYTE StParm(BYTE n)
+  CARD i
+  i = stage - 1
+  i = (i << 3) + (i << 1) + n
+RETURN (st_parm(i))
+
+; Div(hl, c): the arcade's c_0EAA, HL / C by seventeen restoring steps,
+; bit for bit -- including what it does with a zero
+FUNC CARD Div(CARD hl, BYTE c)
+  CARD acc, nx
+  BYTE cy, i
+  acc = 0
+  cy = 0
+  FOR i = 1 TO 17 DO
+    acc = (acc << 1) | cy
+    IF acc > 255 THEN
+      acc = (acc - c) & 255
+      cy = 1
+    ELSEIF acc < c THEN
+      cy = 0
+    ELSE
+      acc = acc - c
+      cy = 1
+    FI
+    nx = (hl << 1) | cy
+    cy = hl >> 15
+    hl = nx
+  OD
+RETURN (hl)
+
+; AngleTo(ty, tx, y, x): c_0E5B, the ten-bit angle from (y, x) to (ty, tx),
+; all in 2-pixel units -- the exact inverse of the linear motion
+FUNC CARD AngleTo(BYTE ty, BYTE tx, BYTE y, BYTE x)
+  INT dx, dy
+  BYTE b, c, a, cy1, t, cy, lo
+  CARD q
+  dx = tx
+  dx = dx - x
+  b = 0
+  IF dx < 0 THEN
+    b = 1
+    dx = -dx
+  FI
+  c = dx
+  dy = ty
+  dy = dy - y
+  IF dy < 0 THEN
+    b = (b ^ 1) | 2
+    dy = -dy
+  FI
+  a = dy
+  IF a < c THEN cy1 = 1 ELSE cy1 = 0 FI
+  t = (a << 1) | cy1
+  t = t ^ b
+  cy = (t & 1) ^ 1
+  b = (b << 1) | cy
+  IF cy1 THEN
+    q = a
+    q = Div(q << 8, c)
+  ELSE
+    q = c
+    q = Div(q << 8, a)
+  FI
+  lo = q
+  IF ((q >> 8) ^ b) & 1 THEN lo = lo ^ $FF FI
+  q = b
+  q = (q << 8) | lo
+RETURN (q >> 1)
+
+FUNC BYTE Near(BYTE a, BYTE b)
+  BYTE d
+  d = a - b
+  IF d == 0 OR d == 1 OR d == $FF THEN RETURN (1) FI
+RETURN (0)
+
+; MapY(y9): the arcade's sprite Y as this screen's row of the box's top:
+; its rows 16-151 one for one, the 120 below them into 88
+FUNC INT MapY(CARD y9)
+  INT ay
+  CARD c
+  ay = y9
+  ay = ay - 56
+  IF ay > 136 THEN
+    IF ay > 290 THEN RETURN (300) FI
+    c = ay - 136
+    c = (c * 215) >> 8
+    ay = c
+    ay = ay + 136
+  FI
+RETURN (ay)
+
+PROC FlyPosn(BYTE k)
+  BYTE xh, xl, x8, yh, yl, a
+  CARD y9, w
+  w = fl_x(k)
+  xh = w >> 8
+  xl = w
+  x8 = xh << 1
+  IF xl > $7F THEN x8 += 1 FI
+  IF fl_fl(k) & $40 THEN x8 += fl_ox(k) FI
+  w = fl_y(k)
+  yh = w >> 8
+  yl = w
+  a = (yh + $4F) ^ $FF
+  y9 = a
+  y9 = y9 << 1
+  IF yl <= $7F THEN y9 += 1 FI
+  IF fl_fl(k) & $40 THEN
+    a = fl_oy(k)
+    y9 = y9 + a
+    IF a & $80 THEN y9 = y9 - 256 FI
+  FI
+  y9 = y9 & $1FF
+  fl_x8(k) = x8
+  fl_y9(k) = y9
+  fl_sx(k) = x8
+  fl_sx(k) = fl_sx(k) - 17
+  fl_sy(k) = MapY(y9)
+RETURN
+
+PROC FlyFree(BYTE k)
+  fl_on(k) = 0
+  fl_state(k) = 0
+  HideChar(SP_FLY + (k << 2))
+RETURN
+
+; FlyHome(k): FB -- into the formation's zero-offset frame, where the slot
+; is still, aimed at it once
+PROC FlyHome(BYTE k)
+  BYTE obj, r, c, ox, oy, e
+  CARD w
+  obj = fl_obj(k) >> 1
+  r = obj_row(obj)
+  c = obj_col(obj)
+  fl_state(k) = 9
+  ox = col_x(c) - col_x0(c)
+  oy = row_off(r)
+  fl_ox(k) = ox
+  fl_oy(k) = oy
+  w = oy
+  IF oy & $80 THEN w = w - 256 FI
+  fl_y(k) = fl_y(k) + (w << 7)
+  w = ox
+  IF ox & $80 THEN w = w - 256 FI
+  fl_x(k) = fl_x(k) - (w << 7)
+  e = fm_orig(c) >> 1
+  w = AngleTo(fm_orig(10 + r), e, fl_y(k) >> 8, fl_x(k) >> 8)
+  fl_a4(k) = w
+  fl_a5(k) = w >> 8
+  fl_t6(k) = fm_orig(10 + r)
+  fl_t7(k) = e
+  fl_fl(k) = fl_fl(k) | $40
+RETURN
+
+FUNC CARD Word(CARD p)
+  CARD w
+  w = fl_rom(p + 1)
+RETURN ((w << 8) | fl_rom(p))
+
+; FlyStep(k): f_08D3 for one slot, a frame of its path
+PROC FlyStep(BYTE k)
+  BYTE t, st, consume, a, e, d, dl, v, q, o, l, obj
+  CARD p, pv, sw, w
+  obj = fl_obj(k)
+  flying += 1
+  st = fl_state(k)
+  IF st != 3 AND st != 7 AND st != 9 THEN
+    FlyFree(k)
+    RETURN
+  FI
+  fl_n(k) -= 1
+  IF fl_n(k) == 0 THEN
+    p = fl_p(k)
+    consume = 0
+    DO
+      t = fl_rom(p)
+      IF t < $EF THEN
+        fl_vo(k) = t & $0F
+        fl_ve(k) = t >> 4
+        dl = fl_rom(p + 1)
+        IF fl_fl(k) & $80 THEN dl = 0 - dl FI
+        fl_dl(k) = dl
+        fl_n(k) = fl_rom(p + 2)
+        p += 3
+        EXIT
+      FI
+      IF t == $FF THEN
+        FlyFree(k)
+        RETURN
+      ELSEIF t == $FE THEN
+        a = fx + 17
+        IF a == 0 THEN a = $80 FI
+        IF (fl_fl(k) & $80) == 0 THEN a = $F2 - a FI
+        a += $0E
+        fl_n(k) = fl_rom(p + a / 30)
+        p += 9
+        EXIT
+      ELSEIF t == $FD THEN
+        p = Word(p + 1)
+      ELSEIF t == $FC THEN
+        fl_t6(k) = fl_rom(p + 1)
+        fl_t7(k) = 0
+        fl_fl(k) = fl_fl(k) | $20
+        p += 2
+        EXIT
+      ELSEIF t == $FB THEN
+        FlyHome(k)
+        p += 1
+      ELSEIF t == $FA THEN
+        IF cont_bomb == 0 THEN p = Word(p + 1) ELSE p += 3 FI
+      ELSEIF t == $F9 THEN
+        a = col_x(obj_col(obj >> 1)) + 17
+        w = a >> 1
+        fl_x(k) = (fl_x(k) & $FF) | (w << 8)
+        p += 1
+        consume = 1
+        EXIT
+      ELSEIF t == $F8 THEN
+        fl_y(k) = (fl_y(k) & $FF) | $9C00
+        p += 1
+        consume = 1
+        EXIT
+      ELSEIF t == $F7 THEN
+        IF obj & $38 == $38 THEN p = Word(p + 1) ELSE p += 3 FI
+      ELSEIF t == $F6 THEN
+        a = fl_rom(p + 1)
+        IF fl_fl(k) & $80 THEN a = 0 - (a + $80) FI
+        fl_a4(k) = a << 2
+        fl_a5(k) = a >> 6
+        p += 2
+        consume = 1
+        EXIT
+      ELSEIF t == $F5 THEN
+        fl_state(k) = 3
+        p += 1
+      ELSEIF t == $F4 THEN
+        a = ((fx + 17 + 3) & $F8) + 1
+        IF a < $29 THEN a = $29 FI
+        IF a >= $CA THEN a = $C9 FI
+        w = AngleTo($48, a >> 1, fl_y(k) >> 8, fl_x(k) >> 8)
+        fl_a4(k) = w
+        fl_a5(k) = w >> 8
+        p += 1
+      ELSEIF t == $F3 THEN
+        a = fx + 17
+        IF a < $1E THEN a = $1E FI
+        IF a > $D1 THEN a = $D1 FI
+        a = a >> 1
+        e = fl_x(k) >> 8
+        d = a - e
+        IF a < e THEN a = (d >> 1) | $80 ELSE a = d >> 1 FI
+        IF fl_fl(k) & $80 THEN a = 0 - a FI
+        a += $18
+        IF a & $80 THEN a = 0 FI
+        IF a >= $30 THEN a = $2F FI
+        fl_n(k) = fl_rom(p + a / 6 + 1)
+        p += 9
+        EXIT
+      ELSEIF t == $F2 THEN
+        p += 3                       ; the clone: not yet
+      ELSEIF t == $F1 THEN
+        a = fm_orig(10 + obj_row(obj >> 1)) + $20
+        w = a
+        fl_y(k) = (fl_y(k) & $FF) | (w << 8)
+        p += 1
+        consume = 1
+        EXIT
+      ELSE
+        IF t == $F0 THEN a = StParm(8) ELSE a = StParm(9) FI
+        IF a THEN p = Word(p + 1) ELSE p += 3 FI
+        consume = 1
+        EXIT
+      FI
+    OD
+    fl_p(k) = p
+    IF consume THEN
+      fl_n(k) += 1
+      RETURN
+    FI
+  FI
+  ; the step
+  IF fl_fl(k) & $40 THEN
+    IF Near(fl_y(k) >> 8, fl_t6(k)) AND Near(fl_x(k) >> 8, fl_t7(k)) THEN
+      fl_on(k) = 0
+      fl_state(k) = 2
+      w = fl_t6(k)
+      fl_y(k) = w << 8
+      w = fl_t7(k)
+      fl_x(k) = w << 8
+      FlyPosn(k)
+      RETURN
+    FI
+  FI
+  IF fl_fl(k) & $20 THEN
+    a = (fl_y(k) >> 8) - fl_t6(k)
+    IF a == 0 OR a == $FF THEN
+      fl_n(k) = 1
+      fl_fl(k) = fl_fl(k) & $DF
+    FI
+  FI
+  e = fl_a4(k)
+  d = fl_a5(k)
+  dl = fl_dl(k)
+  w = e
+  w = w + dl
+  fl_a4(k) = w
+  IF ((w >> 8) ^ (dl >> 7)) & 1 THEN
+    IF dl < $80 THEN fl_a5(k) = d + 1 ELSE fl_a5(k) = d - 1 FI
+  FI
+  a = e
+  IF d & 1 THEN a = a ^ $FF FI
+  IF a > 234 THEN
+    fl_code(k) = 6
+  ELSE
+    v = a + 21
+    fl_code(k) = (((v >> 1) + (v >> 2)) >> 5) & 7
+  FI
+  q = (d >> 1) & 1
+  fl_ctrl(k) = (((d & 1) ^ q ^ 1) << 1) | q
+  IF frm & 1 THEN v = fl_vo(k) ELSE v = fl_ve(k) FI
+  IF v THEN
+    q = d & 3
+    o = (q << 1) | (e >> 7)
+    pv = v
+    pv = pv << 7
+    IF (o + 1) & 4 THEN pv = 0 - pv FI
+    l = e & $7F
+    IF e & $80 THEN l = l ^ $7F FI
+    sw = l * v
+    t = (o ^ 2) - 1
+    IF t & 4 THEN sw = 0 - sw FI
+    IF (q ^ o) & 1 THEN
+      fl_y(k) = fl_y(k) + pv
+      fl_x(k) = fl_x(k) + sw
+    ELSE
+      fl_x(k) = fl_x(k) + pv
+      fl_y(k) = fl_y(k) + sw
+    FI
+  FI
+  FlyPosn(k)
+RETURN
+
+; FlyStates: c_23E0, which visits each object every fourth frame -- the
+; odd frames, half the ids at a time
+PROC FlyStates()
+  BYTE k, obj, st, r, c, slot
+  IF frm & 1 == 0 THEN RETURN FI
+  FOR k = 0 TO NFLY - 1 DO
+    st = fl_state(k)
+    obj = fl_obj(k)
+    IF st AND (obj & 2) == (frm & 2) THEN
+      r = obj_row(obj >> 1)
+      c = obj_col(obj >> 1)
+      IF st == 9 THEN
+        fl_ox(k) = col_x(c) - col_x0(c)
+        fl_oy(k) = row_off(r)
+      ELSEIF st == 7 THEN
+        fl_state(k) = 3
+      ELSEIF st == 3 THEN
+        IF fl_x8(k) >= $F4 OR (fl_y9(k) >> 1) < $0B OR (fl_y9(k) >> 1) >= $A5 THEN FlyFree(k) FI
+      ELSEIF st == 2 THEN
+        ; arrived: the tile turned upright a step at a time, on the slot
+        IF fl_ctrl(k) & 1 THEN
+          IF fl_code(k) == 0 THEN fl_ctrl(k) = fl_ctrl(k) & $FE ELSE fl_code(k) -= 1 FI
+        ELSEIF fl_code(k) == 6 THEN
+          slot = obj_slot(obj >> 1)
+          FlyFree(k)
+          IF slot != 255 THEN SlotShow(slot) FI
+        ELSE
+          fl_code(k) += 1
+        FI
+        IF fl_state(k) == 2 THEN
+          fl_sx(k) = col_x(c)
+          fl_sy(k) = row_y(r)
+        FI
+      FI
+    FI
+  OD
+RETURN
+
+PROC FlyDraw()
+  BYTE k
+  FOR k = 0 TO NFLY - 1 DO
+    IF fl_state(k) THEN
+      ShowChar(SP_FLY + (k << 2), fl_char(k) + fl_code(k), fl_ctrl(k) & 2, fl_ctrl(k) & 1, fl_sx(k) + FX, fl_sy(k))
+    FI
+  OD
+RETURN
+
+; Launch(k, obj, raw, tok): f_2916's l_2974 -- an object onto its path at
+; its start, mirrored and from the second start by the token's bit 6
+PROC Launch(BYTE k, BYTE obj, BYTE raw, BYTE tok)
+  BYTE i, d
+  CARD w
+  d = tok << 1
+  i = fl_sel(tok & $3F) * 6
+  IF d & $80 THEN i += 3 FI
+  w = fl_start(i)
+  fl_y(k) = w << 8
+  w = fl_start(i + 1)
+  fl_x(k) = w << 8
+  fl_a5(k) = fl_start(i + 2)
+  fl_a4(k) = 0
+  fl_p(k) = fl_path(tok & $3F)
+  fl_n(k) = 1
+  fl_fl(k) = d & $80
+  fl_on(k) = 1
+  fl_state(k) = 7
+  fl_obj(k) = obj
+  fl_code(k) = 6
+  fl_ctrl(k) = 0
+  IF obj < $08 THEN
+    fl_char(k) = F_CAPTURED
+  ELSEIF obj < $30 THEN
+    fl_char(k) = F_ZAKO
+  ELSEIF obj < $38 THEN
+    fl_char(k) = F_BOSS
+  ELSEIF (obj & $38) == $38 AND (raw & $40) == 0 THEN
+    fl_char(k) = F_ZAKO              ; a transient bee
+  ELSE
+    fl_char(k) = F_GOEI
+  FI
+  FlyPosn(k)
+RETURN
+
+FUNC BYTE FreeFlyer()
+  BYTE k
+  FOR k = 0 TO NFLY - 1 DO
+    IF fl_state(k) == 0 THEN RETURN (k) FI
+  OD
+RETURN (255)
+
+PROC Launcher()
+  BYTE tok, raw, obj, k
+  IF launching == 0 THEN RETURN FI
+  tok = st_waves(wv_p)
+  IF tok == $7F THEN
+    IF flying_nbr == 0 THEN
+      launching = 0
+      nest_inh = 1
+    FI
+    RETURN
+  FI
+  IF tok == $7E THEN
+    IF flying_nbr == 0 THEN wv_p += 1 FI
+    RETURN
+  FI
+  IF (tok & $80) == 0 AND (frm & 7) != 0 THEN RETURN FI
+  k = FreeFlyer()
+  IF k == 255 THEN RETURN FI
+  raw = st_waves(wv_p + 1)
+  obj = raw
+  IF raw & $78 == $78 THEN obj = raw & $BF FI
+  wv_p += 2
+  Launch(k, obj, raw, tok)
+RETURN
+
+; FlyFrame: a frame of the arcade's order -- the launcher, the breathing,
+; the sway, the objects' states, then every slot's motion
+PROC FlyFrame()
+  BYTE k
+  frm += 1
+  Launcher()
+  IF breathing AND frm & 3 == 0 THEN
+    Breathe()
+    IF br_cnt & 7 == 0 THEN flap = 1 - flap FI
+  FI
+  IF sway_on AND (frm - 1) & 3 == 0 THEN Sway() FI
+  Positions()
+  FlyStates()
+  flying_nbr = flying
+  flying = 0
+  FOR k = 0 TO NFLY - 1 DO
+    IF fl_on(k) THEN FlyStep(k) FI
+  OD
+  FlyDraw()
+RETURN
+
 ; ------------------------------------------------------------ explosions
 ; An explosion is the arcade's double-size frames drawn into the bitmap,
 ; a frame every four; going on to the next puts back what was under the
@@ -962,6 +1504,44 @@ PROC ShootSlot(BYTE i)
   Boom(A_EBOOM0, N_EBOOM, sl_x(i) + 8, sl_y(i) + 8)
 RETURN
 
+; FlyAt(x, y): the flyer whose box a shot's head at the field's (x, y)
+; is in over the six pixels it moved -- the box's middle 12 x 14
+FUNC BYTE FlyAt(INT x, INT y)
+  BYTE k
+  INT dx, dy
+  FOR k = 0 TO NFLY - 1 DO
+    IF fl_state(k) THEN
+      dx = x - fl_sx(k)
+      dy = y - fl_sy(k)
+      IF dx >= 2 AND dx < 14 AND dy >= -5 AND dy < 15 THEN RETURN (k) FI
+    FI
+  OD
+RETURN (255)
+
+; ShootFlyer(k): a flyer hit -- a boss the first time only turns blue, and
+; stays so in the formation; otherwise the points for it in the air, an
+; explosion, and its place in the formation stays empty
+PROC ShootFlyer(BYTE k)
+  BYTE slot
+  CARD pts
+  slot = obj_slot(fl_obj(k) >> 1)
+  IF fl_char(k) == F_BOSS THEN
+    fl_char(k) = F_BOSS_HIT
+    IF slot != 255 THEN sl_kind(slot) = FM_BOSS_HIT6 FI
+    RETURN
+  FI
+  IF fl_char(k) == F_ZAKO THEN
+    pts = 10
+  ELSEIF fl_char(k) == F_GOEI THEN
+    pts = 16
+  ELSE
+    pts = 40
+  FI
+  AddScore(pts)
+  Boom(A_EBOOM0, N_EBOOM, fl_sx(k) + 8, fl_sy(k) + 8)
+  FlyFree(k)
+RETURN
+
 ; ------------------------------------------------------------- the shots
 ; Two at most, as the arcade's, six pixels a frame; each tests the column
 ; of pixels its head has passed through since the last frame
@@ -994,15 +1574,23 @@ PROC Shots()
         sh_on(i) = 0
         SpriteHide(SP_SHOT + i)
       ELSE
-        FOR k = 0 TO 5 DO
-          j = SlotAt(sh_x(i) + 3, y + k)
-          IF j != 255 THEN
-            ShootSlot(j)
-            sh_on(i) = 0
-            SpriteHide(SP_SHOT + i)
-            EXIT
-          FI
-        OD
+        j = FlyAt(sh_x(i) + 3, y)
+        IF j != 255 THEN
+          ShootFlyer(j)
+          sh_on(i) = 0
+          SpriteHide(SP_SHOT + i)
+        FI
+        IF sh_on(i) THEN
+          FOR k = 0 TO 5 DO
+            j = SlotAt(sh_x(i) + 3, y + k)
+            IF j != 255 THEN
+              ShootSlot(j)
+              sh_on(i) = 0
+              SpriteHide(SP_SHOT + i)
+              EXIT
+            FI
+          OD
+        FI
         IF sh_on(i) THEN SetSprite(SP_SHOT + i, (sh_x(i) + FX) << 1, y << 1, pat, 1, 0) FI
       FI
     FI
@@ -1035,35 +1623,44 @@ PROC Frame1()
   loops += 1
 RETURN
 
+; StageStart: the formation empty, the columns at rest, the launcher on
+; the stage's waves and the sway on until the last is home
+PROC StageStart()
+  BYTE i
+  FOR i = 0 TO NSLOT - 1 DO SlotHide(i) OD
+  SlotsInit()
+  FOR i = 0 TO 9 DO col_off(i) = 0 OD
+  FOR i = 0 TO 5 DO row_off(i) = 0 OD
+  FOR i = 0 TO NFLY - 1 DO FlyFree(i) OD
+  sway = 0
+  sway_dir = 0
+  sway_on = 1
+  nest_inh = 0
+  breathing = 0
+  br_cnt = 0
+  flap = 0
+  frm = 0
+  flying = 0
+  flying_nbr = 0
+  wv_p = st_woff(stage - 1)
+  launching = 1
+  Positions()
+RETURN
+
 PROC Play()
-  BYTE i, t
   Clg(0)
   Hud()
   LoadBackdrop(level_bd)
-  SlotsInit()
   StarsInit()
-  br_cnt = 0
-  FOR i = 0 TO 9 DO col_off(i) = 0 OD
-  FOR i = 0 TO 5 DO row_off(i) = 0 OD
-  Positions()
-  FOR i = 0 TO NSLOT - 1 DO
-    IF i >= 4 THEN SlotShow(i) FI
-  OD
   fx = 104
-  t = 0
+  stage = 1
+  StageStart()
   DO
     Frame1()
     IF KeyHit(KEY_ESC) THEN EXIT FI
-    t += 1
     StarsErase()
-    ; the breathing steps every fourth frame, as f_1DE6 does, and the
-    ; wings flap with every eighth step
-    IF t & 3 == 0 THEN
-      Breathe()
-      IF br_cnt & 7 == 0 THEN flap = 1 - flap FI
-      Positions()
-    FI
-    FmStep(t & 3)
+    FlyFrame()
+    FmStep(frm & 3)
     Booms()
     StarsDraw()
     Fighter()

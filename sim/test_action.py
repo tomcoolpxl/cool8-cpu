@@ -1691,11 +1691,12 @@ def test_mscoolman():
 
 def test_galaga():
     """GALAGA, on the machine, with its data file on drive 11 of a flash of
-    its own: mode 4 and the sprites on bank 15, the formation drawn into the
-    bitmap by its lists of changing pixels and exactly where the program
-    says -- every pixel of the field, at rest, through the breathing and
-    the flaps -- and every frame's work inside its frame. Skips, loudly,
-    without the art."""
+    its own: mode 4 and the sprites on bank 15; stage 1's forty flying in
+    on the arcade's own paths, every one held frame by frame to
+    tools/galaga_paths.py, and all home; the formation drawn into the bitmap
+    exactly where the program says, breathing and flapping, and a volley
+    into it leaving nothing behind; the backdrop's raster split; every
+    frame's work inside its frame. Skips, loudly, without the art."""
     import subprocess
     import ioregs
     import galaga as G
@@ -1713,44 +1714,36 @@ def test_galaga():
     same_bytes("galaga", g.prg)
     print("    %d bytes of PRG" % (len(g.prg) - 2))
     reg = lambda n: g.m.bus.read(ioregs.addr_of(n))   # noqa: E731
-    g.m.run_frame(30)
+
+    # stage 1 from its first frame: each object held to the reference
+    # machine launched on the frame the game launched it -- those a full set
+    # of flyers kept waiting included -- and all forty home
+    same, bad = G.compare_flights(g, 1, 1500)
+    on = sum(g.byte("sl_on", i) for i in range(g.c("NSLOT")))
     check(reg("VID_MODE") & 0x0F == 4 and reg("SPR_CTRL") & 0xF1 == 0xF1,
           "galaga: mode 4, the sprite engine on bank 15", "MODE %02X SPR_CTRL %02X" % (reg("VID_MODE"), reg("SPR_CTRL")))
-    on = sum(g.byte("sl_on", i) for i in range(g.c("NSLOT")))
-    check(on == 40, "galaga: forty characters in the formation", str(on))
+    check(same == 40 and not bad and on == 40,
+          "galaga: stage 1's forty fly in on the arcade's paths, frame for frame, and all come home",
+          "%d matched, %d home; %s" % (same, on, bad[:2]))
 
     # the bitmap is the program's state, pixel for pixel, at rest in the
-    # loop, across a whole breath out and in and the flaps with it
+    # loop, as the formation breathes out and flaps
+    g.until(lambda: g.byte("breathing"), 300)
     bad = []
-    for _ in range(9):
+    for _ in range(6):
         g.m.run_frame(29)
         g.at_rest()
         bad = g.bitmap_diff()
         if bad:
             break
-    check(not bad and g.byte("br_cnt") != 0,
+    check(g.byte("breathing") and not bad and g.byte("br_cnt") != 0,
           "galaga: the formation breathes and flaps over the backdrop without a pixel left behind",
           "%d pixels differ: %s, breath at %02X" % (len(bad), bad[:4], g.byte("br_cnt")))
 
-    # the backdrop's own eight colours written on the row above the band,
-    # the arcade's back at the vertical blank, and nothing else
-    by = g.c("BAND_Y")
-    band = [(g.byte("bd_pal", 2 * i) << 8) | g.byte("bd_pal", 2 * i + 1) for i in range(8)]
-    top = [g.uword("gal_pal", i) for i in range(g.c("SAFE"), 16)]
-    log = g.split(3)
-    lines = {}
-    for ln, e, v in log:
-        lines.setdefault(ln, []).append((e, v))
-    want = {2 * by - 2: list(zip(range(8, 16), band)), 480: list(zip(range(8, 16), top))}
-    check(set(lines) == set(want) and all(lines[ln] == want[ln] * (len(lines[ln]) // 8) for ln in want)
-          and len(log) >= 32,
-          "galaga: the band's colours from the row above it, the arcade's from the vertical blank",
-          "lines %s, %d commits" % (sorted(lines), len(log)))
-
-    # a volley into the formation: each hit scored and exploded, and when
-    # the explosions -- overlapping, and one at the right edge, where a span
-    # reaches x 255 -- are over, not a pixel of them left behind and none of
-    # the characters beside them marked
+    # a volley into it: each hit scored and exploded, and when the
+    # explosions -- overlapping, one at the right edge, where a span reaches
+    # x 255 -- are over, not a pixel of them left and none of the characters
+    # beside them marked
     s0 = g.uword("score10")
     on0 = sum(g.byte("sl_on", i) for i in range(g.c("NSLOT")))
     for col in (0, 3, 4, 5, 9, 2):
@@ -1765,11 +1758,29 @@ def test_galaga():
     check(not bad and on1 < on0 and got == 50 * (on0 - on1) and g.byte("booms") == 0,
           "galaga: shots at the formation score 50 a bee and leave no explosion behind",
           "%d characters shot for %d points; %d pixels differ: %s" % (on0 - on1, got, len(bad), bad[:4]))
+    del g
 
-    costs, (work, p) = g.frame_work(64)
-    check(max(costs) < G.FRAME, "galaga: every frame's work inside its frame",
-          "busiest %d clocks of %d\n%s" % (max(costs), G.FRAME, p.report(top=6)))
-    print("    work per frame over 64 frames: mean %d, busiest %d clocks" % (sum(costs) // len(costs), max(costs)))
+    # the backdrop's own eight colours written on the row above the band,
+    # the arcade's back at the vertical blank, and nothing else; and the
+    # work of the frames the waves fly in
+    g = G.Game(tag="galaga2")
+    by = g.c("BAND_Y")
+    band = [(g.byte("bd_pal", 2 * i) << 8) | g.byte("bd_pal", 2 * i + 1) for i in range(8)]
+    top = [g.uword("gal_pal", i) for i in range(g.c("SAFE"), 16)]
+    g.until(lambda: g.uword("loops") > 0, 60)       # past loading the backdrop
+    log = g.split(3)
+    lines = {}
+    for ln, e, v in log:
+        lines.setdefault(ln, []).append((e, v))
+    want = {2 * by - 2: list(zip(range(8, 16), band)), 480: list(zip(range(8, 16), top))}
+    check(set(lines) == set(want) and all(lines[ln] == want[ln] * (len(lines[ln]) // 8) for ln in want)
+          and len(log) >= 32,
+          "galaga: the band's colours from the row above it, the arcade's from the vertical blank",
+          "lines %s, %d commits" % (sorted(lines), len(log)))
+    costs, (work, p) = g.frame_work(160)
+    check(max(costs) < G.FRAME, "galaga: every frame's work inside its frame, the waves flying",
+          "busiest %d clocks of %d; %s" % (max(costs), G.FRAME, p.report(top=6)))
+    print("    work per frame over 160 frames of waves: mean %d, busiest %d clocks" % (sum(costs) // len(costs), max(costs)))
     print()
 
 

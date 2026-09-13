@@ -7039,9 +7039,8 @@ program's state pixel for pixel through a whole breath.
 
 **What it costs.** A column is up to three frames behind its neighbour in
 a step -- a pixel, for a twentieth of a second. The sprites that remain
-are 32: the fighter's four (eight when doubled), the rest for what flies,
-so at most seven characters are in the air at once and a wave of eight
-waits for a slot. VRAM is the bitmap's 38,400 bytes and 27,136 of sprite
+are 32: the fighter's four (eight when doubled), its two shots, and six
+flyers of four each, so a wave of eight waits for a slot when six are up. VRAM is the bitmap's 38,400 bytes and 27,136 of sprite
 patterns from `$9600`: the fighters, bees, butterflies and bosses in all
 their rotations are 152 patterns, 19,456 bytes -- upright frames being
 symmetric about a column, not about the quadrants' edge, they are two
@@ -7075,3 +7074,38 @@ the same fade done by the split, stepping the eight through a quarter, a
 half and three quarters of their brightness, which at twelve bits drew
 stripes; and hunting each picture for a window already dark along its
 top, which found them for two of the four.
+
+## D114 -- GALAGA flies the arcade's own paths, by a port of its interpreter
+
+**The motion is the arcade's, not a likeness of it.** Galaga's sub CPU
+flies every enemy from tables of three-byte segments -- a speed whose two
+nibbles alternate by frame, a turn a frame, a count -- and a dozen command
+tokens (home to the slot, fly until a line, jump by the fighter's X, start
+again at the top of a column...). The hackbar/galaga disassembly holds all
+of it as data. `tools/galaga_paths.py` is those tables, extracted by script
+and checked label by label against the addresses re-assembly gives, and a
+bit-exact Python model of the interpreter (f_08D3), the launcher (f_2916),
+the object states (c_23E0), the sway (f_2A90) and the breathing (f_1DE6).
+`tools/mkgalaga.py` takes the path bytes into one relocated blob with the
+24 entry paths' starts, the object-to-slot map and every stage's wave
+script, and `demos/galaga.act` is a CoolAction! port of the interpreter:
+16-bit coordinates in 2-pixel units, the ten-bit angle, the linear
+direction model (the main axis moves `v`, the other `v * L / 128`), the
+angle-to-a-point routine with its seventeen-step division, and the
+arcade's own sprite tile and flips from the angle.
+
+**Measured**: the gate launches stage 1 on the machine and holds every one
+of its forty objects to the reference machine flying it from the frame the
+game launched it, position for position on every frame it moves: 40 of 40
+exact, all home, the stage's entry taking 1,499 frames. With six flyers up
+the busiest frame is 60,791 clocks of 139,583.
+
+**What differs, and why.** The arcade runs twelve slots; here six (D113),
+so a wave of eight holds its seventh and eighth until two have landed, and
+the waves after it start later; each object, launched, flies exactly the
+arcade's path, because the sway it homes against depends only on the
+stage's frame. The arcade's portrait playfield is 256 rows and this one
+240: rows are mapped one for one down to the formation's lowest reach and
+the 120 below into 88, so paths keep their shape above and are pressed a
+little below. **Not yet**: the clone token F2 (the morphing attackers), the
+capture beam's timing, and FA's continuous bombing.

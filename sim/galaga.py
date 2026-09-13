@@ -219,6 +219,29 @@ class Game:
                     out.append((sxx, y, have, want[y][x]))
         return out
 
+    def flights(self, frames):
+        """Every moving flyer's arcade sprite position after each of so many
+        frames of play, from the stage's start: {obj: [(frame, x, y9)]}, the
+        frame counted as the program's `frm` counts it, and the frame each
+        object was launched on."""
+        n = self.c("NFLY")
+        tracks, launched, seen = {}, {}, set()
+        for f in range(frames):
+            self.m.run_frame(1)
+            self.at_rest()
+            frm = self.byte("frm") if f < 250 else None
+            loops = self.uword("loops")
+            on, obj, x8 = (self.array(k, n) for k in ("fl_on", "fl_obj", "fl_x8"))
+            y9 = self.m.bus.mem[self.addr("fl_y9"):self.addr("fl_y9") + 2 * n]
+            st = self.array("fl_state", n)
+            for k in range(n):
+                if st[k] and obj[k] not in seen:
+                    seen.add(obj[k])
+                    launched[obj[k]] = loops
+                if on[k]:
+                    tracks.setdefault(obj[k], []).append((loops, x8[k], y9[2 * k] | (y9[2 * k + 1] << 8)))
+        return tracks, launched
+
     def split(self, frames=3):
         """Which raw raster lines the palette's last eight were written on,
         and with what, over so many frames: [(line, entry, $0RGB)]."""
@@ -230,6 +253,54 @@ class Game:
         path = os.path.join(H.BUILD, name + ".png")
         H.shot(self.m, path)
         return path
+
+
+def compare_flights(g, stage, frames):
+    """The game's flights of a stage from its first frame, each object held
+    to tools/galaga_paths.py's machine flying it from the frame the game
+    launched it on -- so an object a full set of flyers kept waiting is
+    compared too, the formation's sway depending only on the stage's frame.
+    Returns (objects that matched, [(obj, what differed)])."""
+    import random
+    import galaga_paths as P
+    tracks, launched = g.flights(frames)
+    _, _, table = P.build_wave_table(stage, 3, random.Random(stage))
+    token = {}
+    i = 0
+    while i < len(table):
+        if table[i] in (0x7E, 0x7F):
+            i += 1
+            continue
+        raw = table[i + 1]
+        obj = raw & ~0x40 if (raw & 0x78) == 0x78 else raw
+        token[obj] = table[i]
+        i += 2
+    same, bad = 0, []
+    for obj, tick in sorted(launched.items(), key=lambda kv: kv[1]):
+        m = P.Machine(frame0=0)
+        m.form.sway_active = True
+        m.f2916_active = True
+
+        def hook(mm, obj=obj, tick=tick):
+            if mm.tick == tick:
+                slot = next(s.idx for s in mm.slots if not s.b[0x13] & 1)
+                mm.launch_entry(slot, obj, token[obj])
+        m.hooks.append(hook)
+        for _ in range(tick + 400):
+            m.step()
+            recs = m.tracks.get(obj, [])
+            if recs and recs[-1]["event"] and ("HOME" in recs[-1]["event"] or "END" in recs[-1]["event"]):
+                break
+        want = {r["tick"]: (r["x"], r["y"]) for r in m.tracks.get(obj, [])
+                if r["moved"] and "HOME" not in (r["event"] or "") and r["tick"] <= frames}
+        have = {t: (x, y) for t, x, y in tracks.get(obj, [])}
+        wrong = [(t, want[t], have.get(t)) for t in sorted(want) if want[t] != have.get(t)]
+        if wrong:
+            bad.append((obj, "%d of %d frames differ, first at frame %d: reference %s, game %s"
+                        % (len(wrong), len(want), wrong[0][0], wrong[0][1], wrong[0][2])))
+        else:
+            same += 1
+    return same, bad
 
 
 def main():
@@ -319,6 +390,14 @@ def main():
             g.at_rest()
             d = g.bitmap_diff()
             print("  booms %d frame %d: %d differ, e.g. %s" % (g.byte("booms"), g.byte("bm_f"), len(d), d[:4]))
+    elif what == "flights":
+        g = Game(tag="gal_flights")    # from the first frame: the stage starts with the first loop
+        same, bad = compare_flights(g, 1, 1500)
+        print("stage 1's %d objects all home by frame %d" % (sum(g.byte("sl_on", i) for i in range(g.c("NSLOT"))),
+                                                           g.uword("loops")))
+        for obj, why in bad:
+            print("obj %02X: %s" % (obj, why))
+        print("%d objects fly the reference's path exactly, frame for frame; %d do not" % (same, len(bad)))
     elif what == "split":
         log = g.split()
         print("%d commits; lines %s" % (len(log), sorted(set(ln for ln, _, _ in log))))
