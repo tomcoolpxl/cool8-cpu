@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""YENDOR's art: DawnLike's tiles cut into the machine's pattern banks, a
+"""MOTT's art: DawnLike's tiles cut into the machine's pattern banks, a
 file of them for each theme of the dungeon, and the table that names them.
 
-    python tools/mkyendor.py           write assets/yendor/ -- the .act, the theme files, a preview
-    python tools/mkyendor.py --check   everything there is what the sheets make
-    python tools/mkyendor.py --font    render the SDS 8x8 font into assets/yendor/sds8x8.png
+    python tools/mkmott.py           write assets/mott/ -- the .act, the theme files, a preview
+    python tools/mkmott.py --check   everything there is what the sheets make
+    python tools/mkmott.py --font    render the SDS 8x8 font into assets/mott/sds8x8.png
 
 **The pictures are DawnLike's**, DragonDePlatino's 16 x 16 tileset drawn
 for NetHack, on DawnBringer's sixteen-colour palette -- CC-BY 4.0, in
@@ -44,8 +44,8 @@ warnings.filterwarnings("ignore")
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DL = os.path.join(ROOT, "assets", "dawnlike")
-OUT_DIR = os.path.join(ROOT, "assets", "yendor")
-OUT = os.path.join(OUT_DIR, "yendor_art.act")
+OUT_DIR = os.path.join(ROOT, "assets", "mott")
+OUT = os.path.join(OUT_DIR, "mott_art.act")
 FONT_PNG = os.path.join(OUT_DIR, "sds8x8.png")
 PREVIEW = os.path.join(OUT_DIR, "preview.png")
 
@@ -60,11 +60,11 @@ DB16 = [0x140C1C, 0x442434, 0x30346D, 0x4E4A4E, 0x854C30, 0x346524, 0xD04648, 0x
 # a wall set is DawnLike's 7 x 3 autotile block; the floor is its middle,
 # the wall pieces are read from the block by the legend in WALL_PIECE.
 THEMES = [
-    dict(name="halls", file="YTHEME0", depths="1-4",
+    dict(name="halls", file="MTHEME0", depths="1-4",
          floor=(1, 7), wall=(0, 9), up=(0, 1), down=(1, 1)),
-    dict(name="caverns", file="YTHEME1", depths="5-8",
+    dict(name="caverns", file="MTHEME1", depths="5-8",
          floor=(1, 22), wall=(0, 21), up=(4, 1), down=(5, 1)),
-    dict(name="depths", file="YTHEME2", depths="9-12",
+    dict(name="depths", file="MTHEME2", depths="9-12",
          floor=(1, 25), wall=(14, 48), up=(2, 1), down=(3, 1)),
 ]
 
@@ -96,7 +96,7 @@ ROLES = [("VALK", "Valkyrie", 4, 0), ("WIZ", "Wizard", 6, 0), ("ROGUE", "Rogue",
 # danger is the one players know; an effect the game does not have does
 # its dice and nothing more.
 A_BITE, A_CLAW, A_WEAP, A_STNG, A_TUCH, A_BUTT, A_HUGS, A_PASV, A_KICK = range(1, 10)
-E_PHYS, E_POIS, E_PLYS, E_ACID, E_SLEE, E_DRLI, E_STUN, E_SGLD = range(8)
+E_PHYS, E_POIS, E_PLYS, E_ACID, E_SLEE, E_DRLI, E_STUN, E_SGLD, E_SITM = range(9)
 NOHANDS, FLY, REGEN, SGROUP, LGROUP, NOGEN, PET, PEACE = 1, 2, 4, 8, 16, 32, 64, 128
 
 CREATURES = [
@@ -159,13 +159,18 @@ CREATURES = [
     ("ETTIN", "ettin", "Humanoid", 6, 0, 10, 12, 3, 1, 13, 0, [(A_WEAP, E_PHYS, 2, 8), (A_WEAP, E_PHYS, 3, 6)]),
     ("VAMPIRELORD", "vampire lord", "Undead", 1, 3, 12, 14, 0, 1, 14, FLY | REGEN,
      [(A_CLAW, E_PHYS, 1, 8), (A_BITE, E_DRLI, 1, 8)]),
+    # the fountain's two, the nymph generated as NetHack generates her; the
+    # humans that do not respect Elbereth come after them, from here on
+    ("WATERNYMPH", "water nymph", "Humanoid", 1, 11, 3, 12, 9, 2, 5, 0, [(A_CLAW, E_SITM, 0, 0)]),
+    ("WATERDEMON", "water demon", "Demon", 6, 1, 8, 12, -4, 0, 11, NOGEN,
+     [(A_WEAP, E_PHYS, 1, 3), (A_CLAW, E_PHYS, 1, 3), (A_BITE, E_PHYS, 1, 3)]),
     ("SHOPKEEPER", "shopkeeper", "Humanoid", 4, 2, 12, 18, 0, 0, 15, NOGEN | PEACE,
      [(A_WEAP, E_PHYS, 4, 4), (A_WEAP, E_PHYS, 4, 4)]),
     ("ORACLE", "Oracle", "Humanoid", 0, 22, 12, 0, 0, 0, 13, NOGEN | PEACE, [(A_PASV, E_PHYS, 0, 4)]),
     ("WATCHMAN", "watchman", "Humanoid", 4, 5, 6, 10, 10, 0, 8, NOGEN | PEACE, [(A_WEAP, E_PHYS, 1, 8)]),
     ("PRIEST", "aligned priest", "Humanoid", 0, 23, 12, 12, 10, 0, 15, NOGEN | PEACE,
      [(A_WEAP, E_PHYS, 4, 10), (A_KICK, E_PHYS, 1, 4)]),
-    ("WIZARDOFYENDOR", "Wizard of Yendor", "Undead", 1, 7, 30, 12, -8, 0, 34, NOGEN, [(A_WEAP, E_PHYS, 2, 12)]),
+    ("WIZARDOFMOTT", "Wizard of Mott", "Undead", 1, 7, 30, 12, -8, 0, 34, NOGEN, [(A_WEAP, E_PHYS, 2, 12)]),
 ]
 # DawnLike's easter egg, which its author asks be hidden in the game
 PLATINO = ("Reptile", 3, 12)
@@ -230,8 +235,8 @@ ITEMS = [
     ("RDAMAGE", "increase damage", C_RING, 0, 0, 1, 150, None),
     ("RTELEPORT", "teleportation", C_RING, 0, 0, 1, 200, None),
     ("LIFESAVING", "life saving", C_AMULET, 0, 0, 75, 150, ("Amulet", 5, 0)),
-    ("YENDOR", "Amulet of Yendor", C_AMULET, 0, 0, 0, 30000, ("Amulet", 1, 2)),
-    ("FAKEYENDOR", "cheap plastic imitation", C_AMULET, 0, 0, 0, 0, ("Amulet", 0, 2)),
+    ("MOTT", "Amulet of Mott", C_AMULET, 0, 0, 0, 30000, ("Amulet", 1, 2)),
+    ("FAKEMOTT", "cheap plastic imitation", C_AMULET, 0, 0, 0, 0, ("Amulet", 0, 2)),
     ("GOLD", "gold piece", C_GOLD, 0, 0, 0, 1, ("Money", 0, 1)),
 ]
 # the appearances of the shuffled classes: NetHack's descriptions, and
@@ -385,13 +390,16 @@ def terrain_images(t):
         c, r = WALL_PIECE[key]
         imgs.append(("WALL" if mask == 0 else "", indices(over(floor, cut("Objects/Wall.png", wx + c, wy + r)))))
     imgs.append(("FLOOR", indices(floor)))
-    imgs.append(("CORR", indices(floor)))
     for k in ("closed_h", "open_h", "closed_v", "open_v"):
         imgs.append(("DOOR_" + k.upper(), indices(over(floor, cut(*DOORS[k])))))
-    imgs.append(("DOORWAY", indices(floor)))
     imgs.append(("UP", indices(over(floor, cut("Objects/Tile.png", *t["up"])))))
     imgs.append(("DOWN", indices(over(floor, cut("Objects/Tile.png", *t["down"])))))
     imgs.append(("GRAVE", indices(over(floor, cut("Objects/Decor0.png", 0, 17)))))
+    imgs.append(("FOUNTAIN", indices(over(floor, cut("Objects/Decor0.png", 1, 21)))))
+    imgs.append(("ALTAR", indices(over(floor, cut("Objects/Decor0.png", 0, 20)))))
+    for i, (key, _name, c, r, _lvl) in enumerate(TRAPS):
+        imgs.append(("TRAP" if i == 0 else "", indices(over(floor, cut("Objects/Trap0.png", c, r)))))
+    assert 96 + 4 * len(imgs) <= 256, len(imgs)
     return imgs
 
 
@@ -420,7 +428,7 @@ def creature_table():
         ("A_BITE", A_BITE), ("A_CLAW", A_CLAW), ("A_WEAP", A_WEAP), ("A_STNG", A_STNG), ("A_TUCH", A_TUCH),
         ("A_BUTT", A_BUTT), ("A_HUGS", A_HUGS), ("A_PASV", A_PASV), ("A_KICK", A_KICK),
         ("E_POIS", E_POIS), ("E_PLYS", E_PLYS), ("E_ACID", E_ACID), ("E_SLEE", E_SLEE),
-        ("E_DRLI", E_DRLI), ("E_STUN", E_STUN), ("E_SGLD", E_SGLD))]
+        ("E_DRLI", E_DRLI), ("E_STUN", E_STUN), ("E_SGLD", E_SGLD), ("E_SITM", E_SITM))]
     out.append("BYTE ARRAY m_lvl(%d) = [%s]" % (n, col(c[5] for c in CREATURES)))
     out.append("BYTE ARRAY m_spd(%d) = [%s]" % (n, col(c[6] for c in CREATURES)))
     out.append("; armour class plus ten, so a byte holds it")
@@ -473,7 +481,7 @@ def palette():
 
 def act(font):
     lines = [
-        "; YENDOR's art table, written by tools/mkyendor.py from DawnLike's sheets --",
+        "; MOTT's art table, written by tools/mkmott.py from DawnLike's sheets --",
         "; run it, do not edit this. Tiles, patterns and the palette are DawnLike's,",
         "; by DragonDePlatino, on DawnBringer's palette (CC-BY 4.0).",
         "",
@@ -487,6 +495,10 @@ def act(font):
         if name:
             lines.append("CONST T_%s = %d" % (name, n))
         n += 4
+    lines.append("; a corridor and an empty doorway are the floor's picture")
+    lines.append("CONST T_CORR = T_FLOOR")
+    lines.append("CONST T_DOORWAY = T_FLOOR")
+    lines += trap_table()
     lines.append("; banks 2 and 3: the creatures, a picture four tiles, frame 0 and frame 1")
     for i, (key, _, _, _) in enumerate(ROLES):
         lines.append("CONST C_%s = %d" % (key, i * 4))
@@ -495,12 +507,12 @@ def act(font):
     lines += item_table()
     lines += names_table()
     lines.append("CONST N_THEMES = %d" % len(THEMES))
-    lines.append("; a theme's file on YENDOR's drive, eleven characters each")
+    lines.append("; a theme's file on MOTT's drive, eleven characters each")
     lines.append('BYTE ARRAY theme_names = "%s"' % "".join(t["file"].ljust(8) + "DAT" for t in THEMES))
     pal = palette()
     lines.append("CONST N_PAL = %d" % len(pal))
     lines.append("; the palette: 0 in view, 1 remembered, 2.. the inks of the text")
-    lines.append("CARD ARRAY yendor_pal(%d) = [" % (16 * len(pal)))
+    lines.append("CARD ARRAY mott_pal(%d) = [" % (16 * len(pal)))
     for b in pal:
         lines.append("  " + " ".join("$%03X" % c for c in b))
     lines.append("]")
@@ -542,8 +554,106 @@ def item_table():
 
 # the names' file: a record of NAME_REC bytes for each name, a length byte
 # and the letters, so the game finds one by multiplying and keeps no table
-NAMES_FILE = "YNAMES"
-NAME_REC = 24
+NAMES_FILE = "MNAMES"
+NAME_REC = 48
+
+# NetHack's traps the game has, in the order of their pictures from T_TRAP:
+# the key, defsyms' name, DawnLike's Trap0 cell, and mktrap()'s least
+# difficulty for it
+TRAPS = [
+    ("ARROW", "arrow trap", 0, 0, 1), ("DART", "dart trap", 1, 0, 1),
+    ("ROCK", "falling rock trap", 2, 0, 1), ("SQUEAKY", "squeaky board", 3, 0, 1),
+    ("BEAR", "bear trap", 4, 0, 1), ("SLEEPGAS", "sleeping gas trap", 7, 0, 2),
+    ("PIT", "pit", 2, 2, 1), ("SPIKEDPIT", "spiked pit", 3, 2, 5),
+    ("TRAPDOOR", "trap door", 5, 2, 1), ("TELEPORT", "teleportation trap", 2, 1, 1),
+    ("LEVELTELE", "level teleporter", 3, 1, 5),
+]
+
+# the gods of each role -- lawful, neutral, chaotic -- as role.c has them
+GODS = ["Tyr", "Odin", "Loki", "Ptah", "Thoth", "Anhur", "Issek", "Mog", "Kos"]
+
+# the shops the game has, shknam.c's names and probabilities, and the first
+# eight of each one's keepers
+SHOPS = [
+    ("GENERAL", "general store", 42,
+     ["Hebiwerie", "Possogroenoe", "Asidonhopo", "Manlobbi", "Adjama", "Pakka Pakka", "Kabalebo", "Wonotobo"]),
+    ("ARMOR", "used armor dealership", 14,
+     ["Demirci", "Kalecik", "Boyabai", "Yildizeli", "Gaziantep", "Siirt", "Akhalataki", "Tirebolu"]),
+    ("SCROLL", "second-hand bookstore", 10,
+     ["Skibbereen", "Kanturk", "Rath Luirc", "Ennistymon", "Lahinch", "Kinnegad", "Lugnaquillia", "Enniscorthy"]),
+    ("POTION", "liquor emporium", 10,
+     ["Njezjin", "Tsjernigof", "Ossipewsk", "Gorlowka", "Gomel", "Konosja", "Weliki Oestjoeg", "Syktywkar"]),
+    ("WEAPON", "antique weapons outlet", 5,
+     ["Voulgezac", "Rouffiac", "Lerignac", "Touverac", "Guizengeard", "Melac", "Neuvicq", "Vanzac"]),
+    ("RING", "jewelers", 3,
+     ["Feyfer", "Flugi", "Gheel", "Havic", "Haynin", "Hoboken", "Imbyze", "Juyn"]),
+    ("WAND", "quality apparel and accessories", 3,
+     ["Yr Wyddgrug", "Trallwng", "Mallwyd", "Pontarfynach", "Rhaeader", "Llandrindod", "Llanfair-ym-muallt",
+      "Y-Fenni"]),
+]
+
+# what the gravestone says of a death that is not a monster's
+DEATHS = [
+    ("ARROW", "killed by an arrow"), ("DART", "killed by a little dart"),
+    ("DARTPOIS", "poisoned by a little dart"), ("ROCK", "killed by a falling rock"),
+    ("BEAR", "killed by a bear trap"), ("PIT", "fell into a pit"),
+    ("SPIKES", "fell into a pit of iron spikes"), ("SPIKEHP", "killed by a fall onto poison spikes"),
+    ("SPIKEPOIS", "poisoned by a fall onto poison spikes"), ("WATER", "killed by contaminated water"),
+    ("JUICE", "killed by an unrefrigerated sip of juice"), ("WRATH", "killed by the wrath of"),
+]
+KD_FIRST = 200
+
+# the ? page: the keys, a line a row of the window
+HELP_FILE = "MHELP"
+HELP = [
+    "Move: the arrows, the keypad, or",
+    "      h j k l y u b n; two arrows held",
+    "      together go diagonally. Into a",
+    "      monster attacks it, into the pet",
+    "      swaps places, into a door opens it",
+    "",
+    "> <  down, up the stairs   Enter: either",
+    ".    rest a turn    s  search a turn",
+    ",    pick up        d  drop",
+    "i    the pack       :  look here",
+    "w    wield          t  throw",
+    "f    fire daggers   z  zap a wand",
+    "W T  wear, take off armour",
+    "P R  put on, remove a ring or amulet",
+    "q    drink -- from a fountain too",
+    "r    read           Z  cast a spell",
+    "p    pay the shopkeeper",
+    "E    write in the dust",
+    "#    a long command: #pray",
+    "\\    what you have discovered",
+    "",
+    "Ctrl+R  draw the screen again",
+    "Esc     quit        ?  this page",
+]
+
+
+def trap_table():
+    out = ["; the traps: a trap's picture is T_TRAP + 4 * its TR_ number"]
+    out += ["CONST TR_%s = %d" % (t[0], i) for i, t in enumerate(TRAPS)]
+    out.append("CONST N_TRAP = %d" % len(TRAPS))
+    out.append("BYTE ARRAY tr_min(%d) = [%s]" % (len(TRAPS), " ".join(str(t[4]) for t in TRAPS)))
+    out.append("; the shops: SH_ numbers, and each one's chance in %d" % sum(s[2] for s in SHOPS))
+    out += ["CONST SH_%s = %d" % (s[0], i) for i, s in enumerate(SHOPS)]
+    out.append("CONST N_SHOP = %d" % len(SHOPS))
+    out.append("CONST SHOP_ODDS = %d" % sum(s[2] for s in SHOPS))
+    out.append("BYTE ARRAY sh_prob(%d) = [%s]" % (len(SHOPS), " ".join(str(s[2]) for s in SHOPS)))
+    out.append("; a death that is not a monster's: killer KD_FIRST + its number")
+    out.append("CONST KD_FIRST = %d" % KD_FIRST)
+    out += ["CONST KD_%s = %d" % (d[0], KD_FIRST + i) for i, d in enumerate(DEATHS)]
+    return out
+
+
+def help_bytes():
+    out = bytearray()
+    for line in HELP:
+        assert len(line) <= 40, line
+        out += line.ljust(40).encode("ascii")
+    return bytes(out)
 
 
 def name_groups():
@@ -551,6 +661,9 @@ def name_groups():
     groups = [("NAME_MON", [c[1] for c in CREATURES]), ("NAME_OBJ", [it[1] for it in ITEMS])]
     groups += [("NAME_" + key, [w for w, _, _ in APPEARANCES[c]])
                for c, key in ((C_POTION, "POTION"), (C_SCROLL, "SCROLL"), (C_WAND, "WAND"), (C_RING, "RING"))]
+    groups += [("NAME_TRAP", [t[1] for t in TRAPS]), ("NAME_GOD", GODS),
+               ("NAME_SHOP", [s[1] for s in SHOPS]), ("NAME_SHK", [k for s in SHOPS for k in s[3]]),
+               ("NAME_DEATH", [d[1] for d in DEATHS])]
     out, k = [], 0
     for const, words in groups:
         out.append((const, k, words))
@@ -568,12 +681,15 @@ def names_bytes():
 
 
 def names_table():
-    out = ["", "; the names are in %s.DAT on YENDOR's drive, NAME_REC bytes a name: a" % NAMES_FILE,
+    out = ["", "; the names are in %s.DAT on MOTT's drive, NAME_REC bytes a name: a" % NAMES_FILE,
            "; length byte and the letters. The creatures' from NAME_MON by type, the",
            "; kinds' from NAME_OBJ, each shuffled class's appearances from its own",
            "CONST NAME_REC = %d" % NAME_REC]
     out += ["CONST %s = %d" % (const, k) for const, k, _ in name_groups()]
     out.append('BYTE ARRAY names_file = "%s"' % (NAMES_FILE.ljust(8) + "DAT"))
+    out.append("; the ? page: %d lines of forty characters in %s.DAT" % (len(HELP), HELP_FILE))
+    out.append("CONST N_HELP = %d" % len(HELP))
+    out.append('BYTE ARRAY help_file = "%s"' % (HELP_FILE.ljust(8) + "DAT"))
     return out
 
 
@@ -583,6 +699,7 @@ def outputs():
     for t in THEMES:
         files[os.path.join(OUT_DIR, t["file"] + ".DAT")] = theme_bytes(t, font)
     files[os.path.join(OUT_DIR, NAMES_FILE + ".DAT")] = names_bytes()
+    files[os.path.join(OUT_DIR, HELP_FILE + ".DAT")] = help_bytes()
     return files
 
 
@@ -653,7 +770,7 @@ def main():
     if "--check" in sys.argv:
         stale = [p for p, b in files.items() if not os.path.exists(p) or open(p, "rb").read() != b]
         if stale:
-            print("  stale: %s -- run python tools/mkyendor.py" % ", ".join(os.path.relpath(p, ROOT) for p in stale))
+            print("  stale: %s -- run python tools/mkmott.py" % ", ".join(os.path.relpath(p, ROOT) for p in stale))
             return 1
         print("ok -- the art table, the %d theme files and the names are current" % len(THEMES))
         return 0

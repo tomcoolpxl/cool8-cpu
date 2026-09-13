@@ -1,12 +1,12 @@
-"""YENDOR on the session VM: the driver the gate and the eye use.
+"""MOTT on the session VM: the driver the gate and the eye use.
 
-`Game` compiles demos/yendor.act behind its art table, makes a flash
-image with the theme files on YENDOR's drive, loads the PRG on a
+`Game` compiles demos/mott.act behind its art table, makes a flash
+image with the theme files on MOTT's drive, loads the PRG on a
 rendering session machine and plays: it taps keys through the keyboard's
 scancodes and reads what the program holds by the compiler's symbol
 table. Run it to look:
 
-    python sim/yendor.py [title|walk|stairs|deep] [role]
+    python sim/mott.py [title|walk|stairs|deep] [role]
 
 title shows the front; walk begins a game and walks the first level;
 stairs goes down and back up; deep pokes the way to each theme. Frames
@@ -19,10 +19,11 @@ sys.path.insert(0, os.path.dirname(__file__))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "tools"))
 import harness as H          # noqa: E402
 
-SOURCE = "demos/yendor.act"
-ART = os.path.join(H.ROOT, "assets", "yendor")
-DATS = [os.path.join(ART, "YTHEME%d.DAT" % i) for i in range(3)]
-NAMES = os.path.join(ART, "YNAMES.DAT")
+SOURCE = "demos/mott.act"
+ART = os.path.join(H.ROOT, "assets", "mott")
+DATS = [os.path.join(ART, "MTHEME%d.DAT" % i) for i in range(3)]
+NAMES = os.path.join(ART, "MNAMES.DAT")
+HELP = os.path.join(ART, "MHELP.DAT")
 # make codes: the cursor keys are E0-prefixed
 LEFT, RIGHT, DOWN, UP = [0xE0, 0x6B], [0xE0, 0x74], [0xE0, 0x72], [0xE0, 0x75]
 KP = {1: [0x69], 2: [0x72], 3: [0x7A], 4: [0x6B], 5: [0x73], 6: [0x74], 7: [0x6C], 8: [0x75], 9: [0x7D]}
@@ -32,39 +33,51 @@ S_LIVE, S_PET, S_ANGRY = 1, 2, 4
 # the pack's letters a to r, as the keys that type them; the command keys
 LETTERS = [0x1C, 0x32, 0x21, 0x23, 0x24, 0x2B, 0x34, 0x33, 0x43, 0x3B, 0x42, 0x4B, 0x3A, 0x31, 0x44, 0x4D, 0x15, 0x2D]
 KEY_I, KEY_D, KEY_W, KEY_T, KEY_P, KEY_Q, KEY_F, KEY_BSLASH = [0x43], [0x23], [0x1D], [0x2C], [0x4D], [0x15], [0x2B], [0x5D]
+KEY_3, KEY_SLASH, KEY_E = [0x26], [0x4A], [0x24]
+# the letters as Set 2 make codes, for typing a line
+SCAN = dict(zip("abcdefghijklmnopqrstuvwxyz",
+                [0x1C, 0x32, 0x21, 0x23, 0x24, 0x2B, 0x34, 0x33, 0x43, 0x3B, 0x42, 0x4B, 0x3A, 0x31, 0x44, 0x4D,
+                 0x15, 0x2D, 0x1B, 0x2C, 0x3C, 0x2A, 0x1D, 0x22, 0x35, 0x1A]))
 OF_BLESS, OF_CURSE, OF_BKNOWN, OF_EKNOWN = 1, 2, 4, 8
 LW, LH = 40, 24
 K_ROCK, K_WALL, K_FLOOR, K_CORR, K_DOORC, K_DOORO, K_DOORWAY, K_UP, K_DOWN = range(9)
-F_LIT, F_SEEN, F_VIS = 32, 64, 128
+K_SDOOR, K_SCORR, K_FOUNTAIN, K_ALTAR = 9, 10, 11, 12       # 12-14 an altar, lawful to chaotic
+F_TRAP, F_LIT, F_SEEN, F_VIS = 16, 32, 64, 128
+TF_SEEN, TF_ONCE = 1, 2
+OF_UNPAID, OF_DEAR, OF_NOCHG = 16, 32, 64
+S_HOSTILE = 8
 # the direction a keypad key steps, as (dx, dy)
 STEP = {8: (0, -1), 9: (1, -1), 6: (1, 0), 3: (1, 1), 2: (0, 1), 1: (-1, 1), 4: (-1, 0), 7: (-1, -1)}
 
 
 def sources():
     """The files that compile the game, or None without the art."""
-    if not os.path.exists(os.path.join(ART, "yendor_art.act")) or not all(os.path.exists(p) for p in DATS + [NAMES]):
+    if not os.path.exists(os.path.join(ART, "mott_art.act")) or not all(os.path.exists(p) for p in DATS + [NAMES, HELP]):
         return None
     return H.act_sources(SOURCE)
 
 
-def flash_image(name="yendor"):
-    """A formatted flash with the theme files on YENDOR's drive."""
+def flash_image(name="mott"):
+    """A formatted flash with the theme files on MOTT's drive, and the
+    strings the build of that name wrote."""
     import cool8disk as disk
     img = os.path.join(H.BUILD, name + ".img")
     disk.make_image(img)
     im = disk.Image(img)
-    vol = disk.Volume(im, disk.YENDOR_VOL)
-    for p in DATS + [NAMES]:
+    vol = disk.Volume(im, disk.MOTT_VOL)
+    for p in DATS + [NAMES, HELP]:
         vol.add(p, os.path.basename(p))
+    if H.act_strings(name):
+        vol.add(H.act_strings(name), "MOTT.STR")
     im.save()
     return img
 
 
 class Game:
-    def __init__(self, render=True, tag="yendor"):
+    def __init__(self, render=True, tag="mott"):
         src = sources()
         if src is None:
-            raise SystemExit("YENDOR: the art is not here -- python tools/mkyendor.py")
+            raise SystemExit("MOTT: the art is not here -- python tools/mkmott.py")
         # where the loader runs it: the cell maps are bound below
         # PAYLOAD_ORG, where a program at $0200 would be
         prg, syms = H.try_build_act(src, tag, org=H.PAYLOAD_ORG)
@@ -113,7 +126,7 @@ class Game:
         return [self.byte("lv", i) for i in range(LW * LH)]
 
     def kind(self, x, y):
-        return self.byte("lv", y * LW + x) & 31
+        return self.byte("lv", y * LW + x) & 15
 
     def hero(self):
         return self.byte("px"), self.byte("py")
@@ -143,21 +156,36 @@ class Game:
         if o:
             t = self.byte("ot", o - 1)
             return (self.byte("o_pic", t) + self.byte("ap", t)) * 4, 16 | bank
-        k = v & 31
+        if v & F_TRAP:
+            tr = self.trap_at(x, y)
+            if tr is not None and tr[3] & TF_SEEN:
+                return c("T_TRAP") + 4 * tr[0], bank
+        k = v & 15
+        if k == K_SCORR:
+            return 0, 0
 
         def wall(ax, ay):
             if not (0 <= ax < LW and 0 <= ay < LH):
                 return 0
-            return 1 if self.kind(ax, ay) in (K_WALL, K_DOORC, K_DOORO, K_DOORWAY) else 0
-        if k == K_WALL:
+            return 1 if self.kind(ax, ay) in (K_WALL, K_DOORC, K_DOORO, K_DOORWAY, K_SDOOR) else 0
+        if k in (K_WALL, K_SDOOR):
             t = c("T_WALL") + 4 * (8 * wall(x, y - 1) + 4 * wall(x, y + 1) + 2 * wall(x - 1, y) + wall(x + 1, y))
         elif k in (K_DOORC, K_DOORO):
             across = (x > 0 and self.kind(x - 1, y) == K_WALL) or (x + 1 < LW and self.kind(x + 1, y) == K_WALL)
             t = c("T_DOOR_%s_%s" % ("CLOSED" if k == K_DOORC else "OPEN", "H" if across else "V"))
         else:
-            t = c({K_FLOOR: "T_FLOOR", K_CORR: "T_CORR", K_DOORWAY: "T_DOORWAY",
-                   K_UP: "T_UP", K_DOWN: "T_DOWN"}[k])
+            t = c({K_FLOOR: "T_FLOOR", K_CORR: "T_CORR", K_DOORWAY: "T_DOORWAY", K_UP: "T_UP",
+                   K_DOWN: "T_DOWN", K_FOUNTAIN: "T_FOUNTAIN"}.get(k, "T_ALTAR"))
         return t, bank
+
+    def traps(self):
+        """The level's traps: (slot, kind, x, y, flags)."""
+        return [(i, self.byte("tt", i), self.byte("tx", i), self.byte("ty", i), self.byte("tf", i))
+                for i in range(8) if self.byte("tt", i) != 255]
+
+    def trap_at(self, x, y):
+        """(kind, x, y, flags) of the trap at a cell, or None."""
+        return next(((k, tx, ty, f) for _i, k, tx, ty, f in self.traps() if (tx, ty) == (x, y)), None)
 
     def wrong_pics(self):
         """The cells in the window whose picture is not what they hold."""
@@ -317,8 +345,8 @@ class Game:
                 nx, ny = x + dx, y + dy
                 if not (0 <= nx < LW and 0 <= ny < LH) or (nx, ny) in prev:
                     continue
-                k, here = lv[ny * LW + nx] & 31, lv[y * LW + x] & 31
-                if k in (K_ROCK, K_WALL) or (nx, ny) in taken:
+                k, here = lv[ny * LW + nx] & 15, lv[y * LW + x] & 15
+                if k in (K_ROCK, K_WALL, K_SDOOR, K_SCORR) or lv[ny * LW + nx] & F_TRAP or (nx, ny) in taken:
                     continue
                 if dx and dy and (k in door or here in door):
                     continue
@@ -353,6 +381,51 @@ class Game:
         path = os.path.join(H.BUILD, name + ".png")
         H.shot(self.m, path)
         return path
+
+    # ------------------------------------------------------ milestone 4
+    def word_poke(self, n, v, i=0):
+        v &= 0xFFFF
+        self.poke(n, v & 255, 2 * i)
+        self.poke(n, v >> 8, 2 * i + 1)
+
+    def clear_traps(self):
+        for i in range(8):
+            self.poke("tt", 255, i)
+        for c in range(LW * LH):
+            self.poke("lv", self.byte("lv", c) & ~F_TRAP & 255, c)
+
+    def put_trap(self, k, x, y, seen=False):
+        i = next(i for i in range(8) if self.byte("tt", i) == 255)
+        for n, v in (("tt", k), ("tx", x), ("ty", y), ("tf", TF_SEEN if seen else 0)):
+            self.poke(n, v, i)
+        c = y * LW + x
+        self.poke("lv", self.byte("lv", c) | F_TRAP, c)
+        return i
+
+    def set_kind(self, x, y, k):
+        c = y * LW + x
+        self.poke("lv", (self.byte("lv", c) & 0xF0) | k, c)
+
+    def type_text(self, s):
+        """Letters typed as the keyboard sends them, shift for capitals."""
+        for ch in s:
+            code = [SCAN[ch.lower()]]
+            (self.shifted if ch.isupper() else self.tap)(code)
+
+    def play(self, keys=(), frames=6, cap=40):
+        """Frames run, --More-- answered, and every message line seen kept."""
+        seen = []
+        for _ in range(cap):
+            m = self.messages()
+            if m not in seen:
+                seen.append(m)
+            if self.text(32, 1, 8) == "--More--":
+                self.tap(SPACE)
+                continue
+            self.m.run_frame(frames)
+            if self.messages() == m and self.text(32, 1, 8) != "--More--":
+                break
+        return " / ".join(seen)
 
 
 def main():
@@ -399,7 +472,7 @@ def main():
         g.clear_monsters()
         g.clear_objs()
         hx, hy = g.hero()
-        kinds = ["LONGSWORD", "HEALING", "IDENTIFY", "WSTRIKING", "RPROTECTION", "GOLD", "PLATEMAIL", "YENDOR",
+        kinds = ["LONGSWORD", "HEALING", "IDENTIFY", "WSTRIKING", "RPROTECTION", "GOLD", "PLATEMAIL", "MOTT",
                  "SLEEPING", "LIFESAVING"]
         spots = [(hx + dx, hy + dy) for dy in (-2, -1, 0, 1, 2) for dx in (-3, -2, -1, 1, 2, 3)
                  if 0 <= hx + dx < LW and 0 <= hy + dy < LH and g.kind(hx + dx, hy + dy) == K_FLOOR
@@ -452,7 +525,7 @@ def main():
         g.poke("px", g.byte("dnx"))
         g.poke("py", g.byte("dny"))
         i = g.byte("dny") * LW + g.byte("dnx")
-        g.poke("lv", K_DOWN | (g.byte("lv", i) & 224), i)
+        g.poke("lv", K_DOWN | (g.byte("lv", i) & 240), i)
         g.shifted(DOT)
         g.m.run_frame(20)
         g.sturdy()
@@ -479,7 +552,7 @@ def main():
             g.poke("py", g.byte("dny"))
             if g.kind(g.byte("dnx"), g.byte("dny")) != K_DOWN:
                 i = g.byte("dny") * LW + g.byte("dnx")
-                g.poke("lv", K_DOWN | (g.byte("lv", i) & 224), i)
+                g.poke("lv", K_DOWN | (g.byte("lv", i) & 240), i)
             g.shifted(DOT)
             g.m.run_frame(20)
             g.sturdy()
@@ -507,6 +580,50 @@ def main():
                 g.tap(KEY_S)
         g.m.run_frame(10)
         print(g.png("yd_tour_grave"))
+    if what == "shop":
+        # down, a level at a time, to the first with a shop; the hero walked
+        # into it, and the room lit round the keeper; a fountain, an altar
+        # and every kind of trap poked into a lit room of the level after
+        for d in range(2, 13):
+            dn = (g.byte("dnx"), g.byte("dny"))
+            g.poke("px", dn[0])
+            g.poke("py", dn[1])
+            g.shifted(DOT)
+            g.m.run_frame(30)
+            g.sturdy()
+            g.clear_monsters(keep_pet=False)
+            if g.byte("shroom") != 255:
+                break
+        print("depth", g.byte("depth"), "shop", g.byte("shroom"), "kind", g.byte("shtype"), "keeper", g.byte("shk"))
+        if g.byte("shroom") != 255:
+            g.put_monster(g.c("M_SHOPKEEPER"), g.byte("spx"), g.byte("spy"), hp=200)
+            g.poke("shk", next(i for i in range(20) if g.byte("mtype", i) == g.c("M_SHOPKEEPER")))
+            door = (g.byte("shdx"), g.byte("shdy"))
+            out = next(((door[0] + dx, door[1] + dy) for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1))
+                        if g.kind(door[0] + dx, door[1] + dy) == K_CORR), None)
+            if out and g.walk_to(out):
+                g.tap(KP[next(k for k, s in STEP.items() if (out[0] + s[0], out[1] + s[1]) == door)])
+                print("   ", g.play())
+            print(g.png("yd_shop"), g.messages(), "hero", g.hero(), "post", (g.byte("spx"), g.byte("spy")),
+                  "monsters", g.monsters())
+            g.walk_to((g.byte("dnx"), g.byte("dny")))
+        hx, hy = g.hero()
+        spots = [(hx + dx, hy + dy) for dy in (-2, -1, 1, 2) for dx in (-4, -2, 0, 2, 4)
+                 if 0 <= hx + dx < LW and 0 <= hy + dy < LH and g.kind(hx + dx, hy + dy) == K_FLOOR]
+        for n, (x, y) in enumerate(spots[:13]):
+            if n == 0:
+                g.set_kind(x, y, K_FOUNTAIN)
+            elif n == 1:
+                g.set_kind(x, y, K_ALTAR + 1)
+            else:
+                g.put_trap(n - 2, x, y, seen=True)
+            g.poke("lv", g.byte("lv", y * LW + x) | F_SEEN | F_VIS, y * LW + x)
+        g.redraw()
+        print(g.png("yd_features"), "wrong pictures", g.wrong_pics()[:4])
+        g.shifted(KEY_SLASH)
+        g.m.run_frame(8)
+        print(g.png("yd_help"))
+        g.tap(SPACE)
     if what == "deep":
         for d in (5, 9):
             g.poke("depth", d - 1)

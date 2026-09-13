@@ -238,4 +238,6 @@ pub enum Item {
 #[derive(Debug, Clone)]
 pub struct Program {
     pub items: Vec<Item>,
+    /// the `#"text"` strings in number order, for `strings_file`
+    pub disc_strings: Vec<Vec<u8>>,
 }

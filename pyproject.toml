@@ -342,10 +342,10 @@ args = ["--check"]
 about = "COOL SWEEPER's drawn art file -- cells, frame, logo, cursor, three themes and six tunes -- against its generator"
 
 [[tool.cool8.jobs.check]]
-id = "yendor"
-run = "tools/mkyendor.py"
+id = "mott"
+run = "tools/mkmott.py"
 args = ["--check"]
-about = "YENDOR's art table and its theme files against the DawnLike sheets they are cut from"
+about = "MOTT's art table, theme files, names and help page against the DawnLike sheets and tables they are made from"
 
 [[tool.cool8.jobs.check]]
 id = "pics"

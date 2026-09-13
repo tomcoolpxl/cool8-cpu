@@ -40,6 +40,7 @@ rust/target/release/coolaction sw/io.act sw/libaction.act game.act -o GAME.BIN
 | `--org $0200` | where the program loads and runs. `$0200` unless told otherwise |
 | `--asm file` | the generated assembly, which `tools/cool8asm.py` also assembles, to the same bytes |
 | `--sym file` | `addr name`, sorted -- a global `foo` is the label `v_foo`, a routine is its own name |
+| `--strings file` | the `#"text"` strings (section 2.1), for the program to read from its drive; no file, and an old one removed, when there are none. `H.act_strings(name)` in `sim/harness.py` finds a build's, and `poe demos` puts a program's beside it as `NAME.STR` |
 | `--assemble file.asm` | the compiler's assembler on its own; the output is the raw image |
 
 **Running it.** On the disc a program is two files: `NAME.PRG`, the
@@ -88,6 +89,15 @@ in `rust/src/wasm.rs` is the same compiler and returns the same PRG.
   separate digits. **`%` is modulo**, never a binary literal.
 - A string `"text"` is the address of a length byte followed by the
   characters, Action!'s layout, and it is a `BYTE POINTER`.
+- **`#"text"` is a string kept out of the image**: in the program it is
+  a number, 0 for the first such text, the same number for the same text
+  again, and the compiler writes the texts to the file `--strings` names
+  -- a `CARD` count, a `CARD` offset from the file's start for each,
+  then each as a length byte and its characters. The program reads a
+  string from wherever it put the file, which is what lets a game keep
+  its messages on its drive and still write them where they are said
+  (`Msg(Str(#"You find a hidden door."))`, MOTT's `Str()` reading
+  `MOTT.STR`), [D110](01-decisions.md#d110--strings-off-the-image-and-routines-that-release-their-own-parameters).
 - There is no statement terminator. Two rules stand in for one:
   **a binary operator that begins a line ends the expression before
   it**, so `x = y` on one line and `*p = 1` on the next do not read as
@@ -131,7 +141,7 @@ what the file holds and an uninitialised global is whatever the loader
 left there. An array bound to an address, `BYTE ARRAY map(960) =
 $0800`, has no storage in the image at all: that is how a program the
 loader runs keeps working arrays below `$1400`, out of its PRG
-([D109](01-decisions.md#d109--room-for-yendor-dead-routines-dropped-low-ram-for-the-payload-names-on-the-disc)). **Declarations may appear anywhere outside a routine**: at
+([D109](01-decisions.md#d109--room-for-mott-dead-routines-dropped-low-ram-for-the-payload-names-on-the-disc)). **Declarations may appear anywhere outside a routine**: at
 the top of the file, or after one -- a declaration cannot be a
 statement, so it ends the routine before it. Action!'s `MODULE` is
 accepted and does the same, and is never required.
@@ -377,7 +387,7 @@ the register allocator, and this pass is what made the measurement
 worth taking again.
 
 **Routines nothing reaches are not emitted.** The library is compiled
-in front of every program, and until YENDOR ran short of memory every
+in front of every program, and until MOTT ran short of memory every
 routine of it went into every PRG -- `Line`'s 495 bytes into a game
 that draws tiles. `generate()` now walks from the entry routine (and
 `_start`'s runtime) through every call, every `@Name` and every name
@@ -412,12 +422,32 @@ Measured on the CoolAction disc, each PRG compiled at `$1400`:
 | SYNTH | 7,027 | 4,731 | 2,296 |
 | TRIANGLES | 4,216 | 2,214 | 2,002 |
 | WAVE | 5,407 | 3,347 | 2,060 |
-| YENDOR | 45,525 | 43,412 | 2,113 |
+| MOTT | 45,525 | 43,412 | 2,113 |
 | the loader stub | 3,543 | 1,049 | 2,494 |
+
+**A routine called from enough places pops its own parameters.** The
+caller pushes them and used to release them after the call, `ADDW SP,#n`:
+three bytes at every call site. A routine whose three bytes a call site
+outweigh the four more an exit costs -- by three bytes at least -- now
+returns through `POPW X / ADDW SP,#n / JMP [X]`, and its call sites carry
+nothing after the `CALL`; everything else keeps the caller's release. It
+is two clocks a call dearer (`JMP [X]` 2 and `POPW` 3 against `RET` 3 and
+the caller's `ADDW` 4 -- 02-isa.md), which is why a helper called from
+one or two places, the kind that sits in a hot loop, is left alone: the
+first version popped everywhere, through a shared `__retN` stub at nine
+clocks a call, and Arkanoid's busiest frame missed its vblank by one. A
+routine named anywhere but in a call -- an `ASM` block's `CALL`, an
+address taken -- always leaves the release to its caller, which is what
+hand-written assembly expects. MOTT 55,270 bytes to 50,811; Arkanoid
+50,280 to 49,709, COOLSW 25,021 to 24,508, COOLTRIS 15,294 to 14,915,
+MSCOOLMN 53,887 to 53,421; the loader stub 1,049 to 1,044.
+`test_calls` holds a routine called six times to popping its own, one
+called once and one an `ASM` block names to the caller's release, and
+all three to the right answers and an even stack.
 
 The loader stub's shrinking is what made room below `$1400` for a
 program's own arrays
-([D109](01-decisions.md#d109--room-for-yendor-dead-routines-dropped-low-ram-for-the-payload-names-on-the-disc)).
+([D109](01-decisions.md#d109--room-for-mott-dead-routines-dropped-low-ram-for-the-payload-names-on-the-disc)).
 `test_library` holds both halves: the eleven routines it names are
 there when a program mentions them, and absent when it does not.
 

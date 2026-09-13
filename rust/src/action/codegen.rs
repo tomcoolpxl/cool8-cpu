@@ -8,8 +8,11 @@
 // local's `[SP+u8]` slot is still found. X and Y are never live across
 // a sub-expression: Y is the address a load or store is about to use,
 // X is MUL's product and the pointer `LEA` hands back. Locals sit in a
-// frame `ADDW SP` opens, parameters above the return address, and a
-// FUNC answers in R0 or R1:R0. docs/15-action.md says the rest.
+// frame `ADDW SP` opens, parameters above the return address -- which
+// the caller releases, or, for a routine called from enough places that
+// it saves bytes, the routine takes off as it returns (`POPW X / ADDW
+// SP / JMP [X]`) -- and a FUNC answers in R0 or R1:R0. docs/15-action.md
+// says the rest.
 
 use super::ast::*;
 use super::token::Span;
@@ -81,53 +84,57 @@ pub struct Codegen {
     loops: Vec<String>,
     runtime: BTreeSet<&'static str>,
     cur_routine: Option<RoutineDecl>,
+    /// the routines that pop their own parameters
+    pops: HashSet<String>,
 }
 
 /// The names a statement refers to that may be routines: calls, `&name`,
-/// and every identifier in an `ASM` block's text.
-fn refs_stmt(s: &Stmt, out: &mut Vec<String>) {
+/// and every identifier in an `ASM` block's text -- or, with `calls`, only
+/// the calls.
+fn refs_stmt(s: &Stmt, out: &mut Vec<String>, calls: bool) {
     match &s.kind {
         StmtKind::Assign { target, value, .. } => {
-            refs_expr(target, out);
-            refs_expr(value, out);
+            refs_expr(target, out, calls);
+            refs_expr(value, out, calls);
         }
         StmtKind::Call { name, args } => {
             out.push(name.clone());
             for a in args {
-                refs_expr(a, out);
+                refs_expr(a, out, calls);
             }
         }
         StmtKind::If { cond, then_branch, else_ifs, else_branch } => {
-            refs_expr(cond, out);
-            then_branch.iter().for_each(|x| refs_stmt(x, out));
+            refs_expr(cond, out, calls);
+            then_branch.iter().for_each(|x| refs_stmt(x, out, calls));
             for (c, b) in else_ifs {
-                refs_expr(c, out);
-                b.iter().for_each(|x| refs_stmt(x, out));
+                refs_expr(c, out, calls);
+                b.iter().for_each(|x| refs_stmt(x, out, calls));
             }
             if let Some(b) = else_branch {
-                b.iter().for_each(|x| refs_stmt(x, out));
+                b.iter().for_each(|x| refs_stmt(x, out, calls));
             }
         }
         StmtKind::While { cond, body } => {
-            refs_expr(cond, out);
-            body.iter().for_each(|x| refs_stmt(x, out));
+            refs_expr(cond, out, calls);
+            body.iter().for_each(|x| refs_stmt(x, out, calls));
         }
         StmtKind::DoLoop { body, until_cond } => {
-            body.iter().for_each(|x| refs_stmt(x, out));
+            body.iter().for_each(|x| refs_stmt(x, out, calls));
             if let Some(c) = until_cond {
-                refs_expr(c, out);
+                refs_expr(c, out, calls);
             }
         }
         StmtKind::For { start, to, step, body, .. } => {
-            refs_expr(start, out);
-            refs_expr(to, out);
+            refs_expr(start, out, calls);
+            refs_expr(to, out, calls);
             if let Some(e) = step {
-                refs_expr(e, out);
+                refs_expr(e, out, calls);
             }
-            body.iter().for_each(|x| refs_stmt(x, out));
+            body.iter().for_each(|x| refs_stmt(x, out, calls));
         }
-        StmtKind::Return(Some(e)) => refs_expr(e, out),
-        StmtKind::Assert { cond, .. } => refs_expr(cond, out),
+        StmtKind::Return(Some(e)) => refs_expr(e, out, calls),
+        StmtKind::Assert { cond, .. } => refs_expr(cond, out, calls),
+        StmtKind::Asm(_) if calls => {}
         StmtKind::Asm(text) => {
             let mut word = String::new();
             for ch in text.chars().chain(std::iter::once(' ')) {
@@ -142,22 +149,37 @@ fn refs_stmt(s: &Stmt, out: &mut Vec<String>) {
     }
 }
 
-fn refs_expr(e: &Expr, out: &mut Vec<String>) {
+fn refs_expr(e: &Expr, out: &mut Vec<String>, calls: bool) {
     match &e.kind {
         ExprKind::Call { name, args } => {
             out.push(name.clone());
             for a in args {
-                refs_expr(a, out);
+                refs_expr(a, out, calls);
             }
         }
+        ExprKind::AddrOf(_) | ExprKind::Variable(_) if calls => {}
         ExprKind::AddrOf(name) | ExprKind::Variable(name) => out.push(name.clone()),
-        ExprKind::FieldAccess { base, .. } => refs_expr(base, out),
-        ExprKind::Deref(x) | ExprKind::Unary { expr: x, .. } => refs_expr(x, out),
+        ExprKind::FieldAccess { base, .. } => refs_expr(base, out, calls),
+        ExprKind::Deref(x) | ExprKind::Unary { expr: x, .. } => refs_expr(x, out, calls),
         ExprKind::Binary { left, right, .. } => {
-            refs_expr(left, out);
-            refs_expr(right, out);
+            refs_expr(left, out, calls);
+            refs_expr(right, out, calls);
         }
         ExprKind::Number(_) | ExprKind::Str(_) | ExprKind::CharLit(_) => {}
+    }
+}
+
+/// The `RETURN`s in a body: each is an exit the routine's code carries.
+fn returns_stmt(s: &Stmt) -> usize {
+    let many = |b: &Vec<Stmt>| b.iter().map(returns_stmt).sum::<usize>();
+    match &s.kind {
+        StmtKind::Return(_) => 1,
+        StmtKind::If { then_branch, else_ifs, else_branch, .. } => {
+            many(then_branch) + else_ifs.iter().map(|(_, b)| many(b)).sum::<usize>()
+                + else_branch.as_ref().map_or(0, many)
+        }
+        StmtKind::While { body, .. } | StmtKind::DoLoop { body, .. } | StmtKind::For { body, .. } => many(body),
+        _ => 0,
     }
 }
 
@@ -182,6 +204,7 @@ impl Codegen {
             strings: Vec::new(),
             loops: Vec::new(),
             runtime: BTreeSet::new(),
+            pops: HashSet::new(),
             cur_routine: None,
         }
     }
@@ -643,6 +666,7 @@ impl Codegen {
         // the runtime helpers it asked for -- is taken back out. A program
         // compiled behind the library carries only the library it uses.
         let live = self.reachable(program, &entry);
+        self.pops = self.callee_pops(program, &live);
         for item in &program.items {
             if let Item::Routine(r) = item {
                 let (lines, strings, runtime) = (self.lines.len(), self.strings.len(), self.runtime.clone());
@@ -685,6 +709,55 @@ impl Codegen {
     /// an expression, `&name`, or the name written in an `ASM` block --
     /// any identifier there that is a routine counts, since the block is
     /// text the compiler does not read.
+    /// Which routines pop their own parameters: those with some, called
+    /// from enough places that three bytes a call site outweigh the four
+    /// more an exit costs -- by at least three -- and named nowhere but in
+    /// calls, since an `ASM` block's `CALL` or an address taken expects the
+    /// caller to release them. A helper called from one or two places keeps
+    /// the caller's release, and its two clocks.
+    fn callee_pops(&self, program: &Program, live: &HashSet<String>) -> HashSet<String> {
+        let mut calls: HashMap<String, usize> = HashMap::new();
+        let mut refs: HashMap<String, usize> = HashMap::new();
+        for item in &program.items {
+            if let Item::Routine(r) = item {
+                if !live.contains(&r.name) {
+                    continue;
+                }
+                let (mut c, mut a) = (Vec::new(), Vec::new());
+                for s in &r.body {
+                    refs_stmt(s, &mut c, true);
+                    refs_stmt(s, &mut a, false);
+                }
+                for n in c {
+                    *calls.entry(n).or_insert(0) += 1;
+                }
+                for n in a {
+                    *refs.entry(n).or_insert(0) += 1;
+                }
+            }
+        }
+        let mut out = HashSet::new();
+        for item in &program.items {
+            if let Item::Routine(r) = item {
+                if !live.contains(&r.name) || r.params.is_empty() {
+                    continue;
+                }
+                let sites = calls.get(&r.name).copied().unwrap_or(0);
+                if refs.get(&r.name).copied().unwrap_or(0) != sites {
+                    continue;
+                }
+                let mut exits: usize = r.body.iter().map(returns_stmt).sum();
+                if !matches!(r.body.last().map(|s| &s.kind), Some(StmtKind::Return(_))) {
+                    exits += 1;
+                }
+                if 3 * sites >= 4 * exits + 3 {
+                    out.insert(r.name.clone());
+                }
+            }
+        }
+        out
+    }
+
     fn reachable(&self, program: &Program, entry: &str) -> HashSet<String> {
         let bodies: HashMap<&str, &RoutineDecl> = program
             .items
@@ -703,7 +776,7 @@ impl Codegen {
             if let Some(r) = bodies.get(name.as_str()) {
                 let mut found = Vec::new();
                 for s in &r.body {
-                    refs_stmt(s, &mut found);
+                    refs_stmt(s, &mut found, false);
                 }
                 for f in found {
                     if bodies.contains_key(f.as_str()) && !live.contains(&f) {
@@ -872,7 +945,17 @@ impl Codegen {
             (None, None) => {}
         }
         self.adjust_sp(self.frame as i64);
-        self.emit("RET");
+        // the caller pushed the parameters; a routine that pops them itself
+        // spends five bytes an exit where each call site spent three, and
+        // two clocks a call more: X is never live across a call
+        let params: usize = r.params.iter().map(|p| p.type_kind.width()).sum();
+        if params == 0 || !self.pops.contains(&r.name) {
+            self.emit("RET");
+        } else {
+            self.emit("POPW    X");
+            self.adjust_sp(params as i64);
+            self.emit("JMP     [X]");
+        }
         Ok(())
     }
 
@@ -1326,7 +1409,10 @@ impl Codegen {
             bytes += w;
         }
         self.emit(&format!("CALL    {}", name));
-        if bytes > 0 {
+        if self.pops.contains(name) {
+            // the routine took its parameters off as it returned
+            self.depth -= bytes;
+        } else if bytes > 0 {
             self.adjust_sp(bytes as i64);
             self.depth -= bytes;
         }

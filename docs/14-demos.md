@@ -19,9 +19,9 @@ that volume until the next `DRIVE`.
 | **0** | `SYSTEM` | **the ROM's**: `BOOT.BIN`, and nothing a user should write |
 | **1** | `COOL8` | **where a cold machine comes up** — the user's, empty |
 | 2–8 | `COOL8` | the user's, formatted and empty |
-| **9** | `YENDOR` | **YENDOR's**: its program and its theme files, too big for the CoolAction disc; its loader is on 11 ([D108](01-decisions.md)) |
+| **9** | `MOTT` | **MOTT's**: its program and its theme files, too big for the CoolAction disc; its loader is on 11 ([D108](01-decisions.md)) |
 | **10** | **`PICTURES`** | **the picture drive**: the `.PIC` files SLIDES shows, a screen of mode 6 each, and beside each the `.RPL` that changes its palette row by row -- §4, `SLIDES` |
-| **11** | **`ACTION`** | **the CoolAction! disc**: every `demos/*.act`, compiled, as a bare `.BIN` — the Demos menu's twin; YENDOR's is only its loader |
+| **11** | **`ACTION`** | **the CoolAction! disc**: every `demos/*.act`, compiled, as a bare `.BIN` — the Demos menu's twin; MOTT's is only its loader |
 | **12** | `BAPPLE` | Bad Apple's stream, capped to this one drive — §4 |
 | **13** | **`DEMOS`** | **the demo disc**: everything written in BASIC, games included |
 | **14** | `SOFTWARE` | the machine-code systems — the four Infocom games and the p-System's loader — each a `.BIN` behind a `.BAS` stub |
@@ -54,7 +54,7 @@ but as two programs: the compiled one tumbles, every frame computed
 |---|---|---|
 | **Demos** | 13 | MAZE, RAINBOW, WAVE, PLASMA, INTRO, BOING, TRIANGLES, MANDEL, COBRA, SYNTH, BENCH, MINIBNCH, BAPPLE, TAIPAN, COOLTRS1, COOLTRS2 |
 | **Software** | 14 | HHGG, ZORK1, PLANET, LGOP, PASCAL |
-| **CoolAction** | 11 | RAINBOW, TRIANGLE, MAZE, PLASMA, WAVE, MANDEL, SYNTH, INTRO, PRIMES — the compiled twins, §4 — COBRA, which shares only its ship and its name with the BASIC's, COBRA2, its camera and sky, and MSCOOLMN, ARKANOID, BLOCKADE, COOLTRIS, COOLSW, YENDOR, KEYTEST and SLIDES, which have no BASIC |
+| **CoolAction** | 11 | RAINBOW, TRIANGLE, MAZE, PLASMA, WAVE, MANDEL, SYNTH, INTRO, PRIMES — the compiled twins, §4 — COBRA, which shares only its ship and its name with the BASIC's, COBRA2, its camera and sky, and MSCOOLMN, ARKANOID, BLOCKADE, COOLTRIS, COOLSW, MOTT, KEYTEST and SLIDES, which have no BASIC |
 
 **Volume 0 is not the user's, and that is the ROM's decision.**
 `sw/boot.asm` walks volume 0's directory for `BOOT.BIN`; it is the 4 KB
@@ -905,7 +905,7 @@ build rather than the user. Rebuild the shipping cut with
 `python tools/mkbadapple.py badapple.mp4` — the stream stops when the
 drive is full, which is the 344 frames — or `--frames N` for fewer;
 the longest cut the free drives allow is `--drives 12,8,7,6,5,4,3,2` -- drive 10 is the
-picture drive now ([D103](01-decisions.md)) and drive 9 YENDOR's ([D108](01-decisions.md)), both claimed, and the planner
+picture drive now ([D103](01-decisions.md)) and drive 9 MOTT's ([D108](01-decisions.md)), both claimed, and the planner
 says so if it is asked for, as it says when the stream outgrows the
 drives it was given -- and it is not in
 the tree because the full build's directory is kept beside the cut,
@@ -1045,7 +1045,7 @@ drive 11 as bare `.BIN`s: RAINBOW, TRIANGLES, MAZE, PLASMA, WAVE,
 MANDEL, SYNTH and INTRO, each a `demos/name.act` beside its
 `demos/name.bas`; COBRA, which was the ninth and is now a program of
 its own, and COBRA2, its camera and sky, the next two sections; and
-KEYTEST, MSCOOLMN, ARKANOID, BLOCKADE, COOLTRIS, COOLSW, YENDOR and SLIDES, which have no BASIC and follow them. **The picture is the contract, not the code.** A port
+KEYTEST, MSCOOLMN, ARKANOID, BLOCKADE, COOLTRIS, COOLSW, MOTT and SLIDES, which have no BASIC and follow them. **The picture is the contract, not the code.** A port
 may do the work any way the language allows -- and mostly does it the
 BASIC's way, because the BASIC's way was measured -- but
 `sim/test_action.py` runs every pair to the same point and requires
@@ -1814,20 +1814,23 @@ on the largest field; the stack. `python sim/coolsw.py play` (or
 `title`, `win`, `boom`, `pause`, with a level of 0, 1 or 2 after it)
 plays it and writes the frames as PNG.
 
-### `YENDOR` — a descent after NetHack, in DawnLike's tiles
+### `MOTT` — a descent after NetHack, in DawnLike's tiles
 
-`demos/yendor.act`, on its own drive: **YENDOR.PRG, its theme files and
-its names are on drive 9**, and only the loader, `YENDOR.BIN`, is on
+`demos/mott.act`, on its own drive: **MOTT.PRG, its theme files, its
+names, its help page and its strings are on drive 9**, and only the loader, `MOTT.BIN`, is on
 drive 11 -- it names drive 9 -- so the game is on the CoolAction menu and
 drive 11, which had 45,568 bytes free, carries 1 KB of it
-([D108](01-decisions.md)). The Amulet of Yendor lies twelve levels down;
+([D108](01-decisions.md)). The Amulet of Mott lies twelve levels down;
 fetch it and climb back to the sun. The game is Rogue's and NetHack's,
-and **it is being built in milestones**, of which the first is done.
+and **it is being built in milestones**. **The name is TTOM backwards**, as
+Rogue's Yendor is Rodney: the game was YENDOR until the owner renamed
+it MOTT, and with it the Amulet, the Wizard, the drive's label and every
+file.
 
 **The tiles are DawnLike**, DragonDePlatino's 16 x 16 tileset drawn for
 NetHack, on DawnBringer's sixteen colours -- CC-BY 4.0, the sheets in
-[`assets/dawnlike/`](../assets/dawnlike/README.md) with their credits,
-and the credit on the title screen. Chosen by the owner over Kenney's
+[`assets/dawnlike/`](../assets/dawnlike/README.md) with their credits
+(the title screen carried them too until the owner took them off). Chosen by the owner over Kenney's
 Micro Roguelike and ink_slime's 8 x 8 sheet (both CC0, both small enough
 to show a whole level at once) and NetHack's own tiles (under the
 NetHack General Public License, and in more colours than a bank has):
@@ -1843,7 +1846,7 @@ top and bottom. **Mode 2's tiles have no transparency**, and every one
 of DawnBringer's sixteen is used somewhere in DawnLike's creatures and
 items (measured over the sheets), so no colour can stand for "floor
 here". A creature or an item is therefore drawn onto the floor by
-`tools/mkyendor.py`, and **each band of the dungeon is a theme of its
+`tools/mkmott.py`, and **each band of the dungeon is a theme of its
 own**: its floor, its walls, its stairs, and every creature and item on
 that floor -- a file of 32,768 bytes, the four pattern banks an
 attribute reaches, streamed from drive 9 into VRAM on the stairs in
@@ -1874,8 +1877,9 @@ a door is never entered or left diagonally; an empty doorway is no bar.
 **The creatures are NetHack's, in DawnLike's pictures.** 45 monsters
 from the newt to the vampire lord, the six forms of the two pets, four
 of the people later milestones need -- shopkeeper, Oracle, watchman,
-priest -- and the Wizard of Yendor: 58, and with the three heroes and
-Platino, 62 of the 64 pictures a creature bank holds. A monster's level,
+priest -- the fountain's water nymph and water demon, and the Wizard of
+Mott: 60, and with the three heroes and Platino, all 64 of the pictures
+a creature bank holds. A monster's level,
 speed, armour class, frequency, difficulty and up to three attacks are
 NetHack 3.6's own, read out of `src/monst.c`, so the ladder of danger is
 the one players know; which DawnLike cell is which creature is named by
@@ -1942,7 +1946,7 @@ water), eight scrolls (identify, enchant weapon, enchant armor, remove
 curse, teleportation, magic mapping, light, fire), six wands (light,
 create monster, striking, digging, magic missile, sleep), six rings
 (protection, regeneration, free action, poison resistance, increase
-damage, teleportation), the amulet of life saving, the Amulet of Yendor
+damage, teleportation), the amulet of life saving, the Amulet of Mott
 and its cheap plastic imitation, and gold. Their generation
 probabilities and base costs are objects.c's -- the costs waiting for the
 shops -- and a level is filled as NetHack's `makelevel()` fills it: gold
@@ -1988,24 +1992,147 @@ blessed +1 quarterstaff, a cloak, an attack wand, two different rings,
 two potions and two scrolls; the Rogue a short sword, six to fifteen
 daggers, +1 leather armour and a potion of sickness.
 
+**Traps and secret doors, as NetHack's `mklev.c` and `trap.c` make
+them.** One door in eight is a secret door, drawn as the wall it sits in,
+and one cell in 35 of the corridors dug after every room is joined is a
+secret passage, drawn as rock; `s` searches the eight cells round the
+hero, finding a secret door or passage one time in seven and a hidden trap
+one in eight, luck pushing the odds as `rnl()` does, and magic mapping
+finds the passages but not the doors. Every room of a level gets a trap
+while a die of 8 less a sixth of the depth comes up 0, eleven of
+NetHack's kinds by `mktrap()`'s choice, each with DawnLike's picture of
+it and hidden until it goes off or is found: an arrow trap (thitu() at
+level 8, a d6), a dart trap (a d3, poisoned one time in six), a falling
+rock trap (2d6, 2 under a hard helmet), a squeaky board (every monster on
+the level wakes), a bear trap (2d4, and four to seven turns held -- a
+diagonal pull always loosens it, a straight one one time in five), a
+sleeping gas trap (from depth 2, up to 25 turns asleep), a pit and from
+depth 5 a spiked pit (two to seven turns climbing out), a trap door
+(down one level, one more each time a d4 comes up 1, never from the
+bottom), a teleportation trap and from depth 5 a level teleporter, which
+throws the hero up to three levels past the current one and is gone
+after. A trap already seen is escaped one time in five, and an arrow,
+dart or rock trap runs out one time in fifteen. Poison is NetHack's
+`poisoned()`: a ring of poison resistance shrugs it off; otherwise one
+time in thirty for a missile, or eight for the spikes, it kills outright,
+and some of the rest take hit points. The gravestone says which: "killed
+by a little dart", "fell into a pit of iron spikes", "poisoned by a fall
+onto poison spikes".
+
+**Fountains**, one room in ten. `q` standing on one asks "Drink from the
+fountain?", and a drink is `drinkfountain()`'s d30: the cool draught
+nine times in 30, tepid water, foul water, contaminated water (a d10, a
+d4 with poison resistance), an endless stream of two to six snakes, a
+water demon, a curse on one thing in five in the pack, the stalking
+image, a sight of every monster on the level, a water nymph, bad breath
+that sends every monster running, the quenched thirst -- and one time in
+three the fountain dries up. The water nymph and the water demon are
+monst.c's too, and fill the creature banks' last two pictures; the nymph
+is generated as NetHack generates her, and steals a thing from the pack
+and teleports away with it, carried until she dies.
+
+**Altars and prayer.** One room in twenty has an altar -- NetHack's is
+one in sixty, and a twelve-level dungeon would show one a game -- lawful,
+neutral or chaotic, and a thing dropped on it shows its curse: "There is
+a black flash as a cursed dagger hits the altar." `#pray` is NetHack's
+`dopray()`, down to its numbers: the heroes' alignments (the human
+Valkyrie and Wizard neutral, the Rogue chaotic) and gods (Tyr, Odin,
+Loki; Ptah, Thoth, Anhur; Issek, Mog, Kos), the alignment record from 10
+and a point a hostile's kill, luck, the prayer timeout from 300 and down
+a turn at a time. A prayer in major trouble -- hit points at 5 or a
+fifth or sixth of the most -- is heard with the timeout under 200, in
+minor trouble -- something cursed worn or wielded -- under 100, and
+otherwise only at 0; three turns of prayer in which, if the god is
+pleased, no monster's blow lands ("starts to attack you, but pulls
+back"); then `pleased()` mending the hit points, uncursing what is
+worn, and with the record high and nothing wrong a golden glow, a blessed
+weapon or every curse lifted -- and the timeout set again by `rnz(350)`.
+Too soon costs three luck and angers the god; an angry god's
+`angrygods()` ranges from displeasure through a lost level, a black glow
+cursing things and a water demon, to the lightning bolt, "killed by the
+wrath of Odin". Attacking a peaceful creature asks first and costs a
+point of alignment; killing one costs six, and luck.
+
+**Elbereth.** `E` writes in the dust with a fingertip -- a line typed at
+the keyboard, up to sixteen letters, added to what is there or wiping it
+out first -- and walking onto an engraving reads it. As NetHack 3.6's
+`onscary()` has it, a hostile beside a hero standing on exactly
+"Elbereth", in any case, runs instead of striking, unless it is human --
+the soldier, the shopkeeper and the town's people -- or peaceful. The
+dust wears as NetHack's does: a monster standing on it rubs out a
+letter a move, the hero's melee three and a throw two, and time one now
+and then, each letter turning into the one below it on NetHack's rubout
+table.
+
+**Shops, as `mkroom.c`, `shknam.c` and `shk.c` run them.** From depth 2,
+while a die of the depth comes up under 3, a room with one door and no
+stairs becomes a shop: a general store, used armor dealership,
+second-hand bookstore, liquor emporium, antique weapons outlet, jewelers
+or quality apparel and accessories by `shknam.c`'s odds, lit, stocked on
+every cell but the row along the door's wall, with a keeper by one of
+the eight first names of its kind -- Asidonhopo, Kalecik, Lahinch -- on
+the post inside the door and 1,030 to 4,000 gold. The keeper greets the
+hero at the door ("Hello, Valkyrie!  Welcome to Asidonhopo's general
+store!"), quotes a thing picked up ("For you, esteemed lady; only 8
+zorkmids for this axe.") at `get_cost()`'s price -- objects.c's cost, ten
+more a point of enchantment, a third more for one thing in four whose
+kind is unknown -- and lists it unpaid in the pack; stands on the post
+while the hero owes and steps aside when not; buys what the hero drops,
+if it is the shop's kind of thing, for half ("Asidonhopo offers 4 gold
+pieces for your axe.  Sell it?"), and bills a potion drunk or a scroll
+read before it is paid for, and a fifth of a wand's cost a zap. `p` pays, a thing at a time while the gold lasts.
+Leaving owing -- out of the door, by teleport or down a hole -- is
+robbery: "You stole 8 zorkmids worth of merchandise.", the keeper angry
+and after the hero, and appeased by the stolen sum paid back, or a
+thousand gold two times in three.
+
+**`?` shows the keys**, a page of `MHELP.DAT` over the map, and the
+title no longer carries the art's credit, at the owner's word -- it
+stays with the sheets in `assets/dawnlike/` and here.
+
+**Where milestone 4 is not NetHack.** Monsters walk round traps rather
+than into them, which spares every trap its monster half. No Keystone
+Kops: the robbed keeper is the punishment. No credit, itemized billing,
+selling to a keeper without gold, or shopkeepers leaving their level.
+The fountain has no wish, no Excalibur and no pools; an altar cannot be
+converted, as there are no corpses to sacrifice; an angry god's minion is
+the water demon, the one demon the game has. `#pray` is the one long
+command so far.
+
 **Memory, measured at the end of milestone 3, and the room made after
 it.** The PRG was 45,525 bytes from `$1400`, its last byte at `$C5D4`,
 leaving 14,635 below `$FF00`; `tools/cool8asm.py --pressure` put 33,804
 of it in routines -- the largest `Read` 1,452, `MakeLevel` 1,274 and
 `Name` 1,050 -- and milestones 4 to 6 were estimated at more than that.
 The owner chose three ways to make room, and all three are in
-([D109](01-decisions.md#d109--room-for-yendor-dead-routines-dropped-low-ram-for-the-payload-names-on-the-disc)): **the compiler drops the routines nothing reaches**, the
+([D109](01-decisions.md#d109--room-for-mott-dead-routines-dropped-low-ram-for-the-payload-names-on-the-disc)): **the compiler drops the routines nothing reaches**, the
 library's `Line`, `Clg` and pixel runs among them, 2,113 bytes; **the
 level's three cell maps**, 2,880 bytes, are bound to `$0800`-`$133F`,
 below the program, in RAM the loader leaves to it and nothing loads
 into; and **the names** of the creatures, the kinds and the
-appearances, 1,323 bytes, are 24-byte records in `YNAMES.DAT` on drive
+appearances, 1,323 bytes, are 24-byte records in `MNAMES.DAT` on drive
 9, read from the flash when a message needs one -- 1,198 saved net of
 the routine that reads them. The PRG is now **39,334 bytes**, its last
 byte at `$ADA5`, with **20,826 free** below `$FF00`: 31,770 in routines,
 4,175 in the messages' own strings, the rest tables and working arrays.
 The special levels' maps go on the disc the same way when milestone 5
 makes them.
+
+**Memory at the end of milestone 4.** Milestone 4 took the PRG from
+39,334 bytes to 55,270, 4,890 short of the top of RAM with two
+milestones to come, and it came back down by three more measures
+([D110](01-decisions.md#d110--strings-off-the-image-and-routines-that-release-their-own-parameters)), after the game's `--pressure` report and the
+suites' own clocks: **the messages left the image** -- the compiler's
+`#"text"`, a string that is a number in the program and a record in
+`MOTT.STR` on drive 9, which a message asks for when it prints; 250 of
+them, 7,404 bytes of file -- **routines pop their own parameters** where
+that saves bytes -- a routine called from enough places spends five
+bytes an exit where every call site spent three -- 4,459 bytes of this
+PRG; and **a level's state beyond its cells is one run of memory**, so
+parking and unparking a level is two copies instead of sixty, 1,373
+bytes. The PRG is **49,438 bytes**, its last byte at `$D51D`, with
+**10,722 free** below `$FF00` for milestones 5 and 6: 44,653 in
+routines, 957 in the short strings still in the image.
 
 **The grave**: when the hit points run out, "You die...", then DawnLike's
 gravestone and who died, what killed them, on which level, at which
@@ -2018,7 +2145,7 @@ experience level, after how many turns and with how much gold.
 | **1 — done** | the themes from drive 9; the title with the three heroes and the credits; Rogue's level; seeing and remembering; doors; stairs; persistence |
 | **2 — done** | monsters and combat by NetHack's numbers, the three roles, experience, the pet, the force bolt, the grave |
 | **3 — done** | the things by NetHack's numbers: the pack, wielding, wearing, gold; potions, scrolls, wands and rings under appearances shuffled each game; blessed, uncursed, cursed; what each does |
-| 4 | shops and their keeper; altars and prayer; fountains; traps and secret doors; Elbereth in the dust |
+| **4 — done** | shops and their keeper; altars and prayer; fountains; traps and secret doors; Elbereth in the dust; `?` |
 | 5 | the special levels: the Oracle, a small Sokoban up from below it, and a cave branch after the Gnomish Mines with a town |
 | 6 | the Amulet on level 12 and the climb back; music by depth and the effects; the Platino sprite hidden, as DawnLike's author asks |
 
@@ -2029,28 +2156,31 @@ Keys: the cursor keys, the keypad or `h j k l y u b n` move, and two
 cursor keys held together go diagonally; a key held repeats after ten
 frames, every third after that; moving into a monster attacks it and
 into the pet changes places; `>` and `<` take the stairs, and Enter the
-stairs the hero stands on; `s`, `.` or keypad 5 waits. NetHack's
-letters for the rest: `i` the pack, `,` picks up, `d` drops, `w` wields,
-`W` wears, `T` takes off, `P` puts on, `R` removes, `q` drinks, `r`
-reads, `z` zaps, `t` throws, `f` fires daggers, `:` looks here, `\`
-lists the discoveries, `Z` casts; a thing asked for is chosen by its
+stairs the hero stands on; `.` rests a turn, `s` or keypad 5 searches
+one. NetHack's letters for the rest: `i` the pack, `,` picks up, `d`
+drops, `w` wields, `W` wears, `T` takes off, `P` puts on, `R` removes,
+`q` drinks (from a fountain too), `r` reads, `z` zaps, `t` throws, `f`
+fires daggers, `:` looks here, `\` lists the discoveries, `Z` casts, `p`
+pays, `E` engraves, `#` takes a long command (`#pray`), `?` shows the
+keys; a thing asked for is chosen by its
 letter from the pack shown over the map, a direction by a movement key,
 and `>` or `<` for down and up. Gold walked over is picked up. Ctrl+R
 draws the screen again; Esc asks whether to quit, and on the title
 restarts the machine.
 
 **Measured**: milestone 1, 13,742 bytes of PRG, the art table included;
-milestone 2, 26,289; milestone 3, 45,525, and **39,334** after the room
-was made. Three theme files of 32,768 bytes and `YNAMES.DAT`, 3,216, on
-drive 9, and the loader of 1,049 on drive 11.
+milestone 2, 26,289; milestone 3, 45,525, and 39,334 after the room
+was made; milestone 4, **49,438**. On drive 9 three theme files of
+32,768 bytes, `MNAMES.DAT` of 11,088 (231 names at 48 bytes), `MHELP.DAT`
+of 920 and `MOTT.STR` of 7,404; the loader of 1,044 on drive 11.
 
-**The gate** (`sim/test_action.py`, on `sim/yendor.py`): the art table
+**The gate** (`sim/test_action.py`, on `sim/mott.py`): the art table
 and theme files what the sheets make; the compiled bytes the same as
 `tools/cool8asm.py`'s; the program at `$1400` with its cell maps at
 `$0800`, outside the PRG; the creature table monst.c's numbers, and the
-creatures' and things' names in `YNAMES.DAT` and not in the PRG;
-YTHEME0.DAT in the pattern banks byte for byte; the title naming
-DawnLike, DragonDePlatino, DawnBringer and the licence, and the palette's
+creatures' and things' names in `MNAMES.DAT` and not in the PRG;
+MTHEME0.DAT in the pattern banks byte for byte; the title saying MOTT and
+no credits, and the palette's
 banks; the hero chosen. The dungeon, with its monsters cleared: level 1's
 monsters all of difficulty 1 and the kitten beside the Valkyrie; one
 stair up under the hero, one down, every floor and corridor reachable,
@@ -2084,10 +2214,22 @@ enchant weapon, enchant armor and magic mapping read; a wand of sleep
 stopping a gnome lord and a wand with no charges; daggers fired and
 landing; an amulet of life saving taking a death; the discoveries; a
 thing left on a level there on coming back; the
-stack; and from the demos disc, YENDOR.PRG and its themes on drive 9,
-only the loader on 11, and `SYS "YENDOR.BIN"` from BASIC finding its
-program and its theme there. `python sim/yendor.py walk` (or `title`,
-`stairs`, `deep`, `fight`, `scene`, `tour`) plays it and writes the
+stack. Milestone 4: a level's parked state one run of memory that fits
+its slot; the traps' names and depths, the gods and the keepers' names on
+disc; `?` from `MHELP.DAT`; an arrow trap shooting, seen and drawn; a
+bear trap holding the hero four to seven diagonal pulls; `s` finding a
+secret door and a hidden pit; a fountain asked for and drunk; a cursed
+dagger's black flash on an altar; `#pray` typed, asked, and Odin mending a
+hero in trouble, then a second prayer too soon costing three luck and the
+god's anger; `E` writing Elbereth and a jackal beside it running without
+a bite; a shop poked round the hero's room: Asidonhopo's welcome, an axe
+quoted at 8 and unpaid, `p` paying for it, the keeper buying it back for
+4, and the hero out of the door owing having stolen 8 zorkmids' worth
+with the keeper angry; a water nymph stealing a potion and carrying it;
+and from the demos disc, MOTT.PRG, its themes, names, help and strings on drive 9,
+only the loader on 11, and `SYS "MOTT.BIN"` from BASIC finding its
+program and its theme there. `python sim/mott.py walk` (or `title`,
+`stairs`, `deep`, `fight`, `scene`, `tour`, `shop`) plays it and writes the
 frames as PNG.
 
 ### `SLIDES` — the old test pictures, as fully as mode 6 can show them

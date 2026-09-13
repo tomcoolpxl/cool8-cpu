@@ -374,6 +374,96 @@ def test_library():
     print()
 
 
+CALLS = r"""
+BYTE ARRAY got(8)
+BYTE n
+
+; called from six places: pops its own parameter
+PROC Put(BYTE v)
+  got(n) = v
+  n += 1
+RETURN
+
+; called from one: the caller releases its parameters
+FUNC CARD Add(CARD a, CARD b)
+RETURN (a + b)
+
+; named in an ASM block too: always the caller's release
+PROC Poked(BYTE v)
+  got(7) = v
+RETURN
+
+PROC Main()
+  CARD s
+  n = 0
+  Put(1)
+  Put(2)
+  Put(3)
+  Put(4)
+  Put(5)
+  s = Add(1000, 234)
+  Put(s - 1200)
+  Poked(9)
+  Poked(9)
+  Poked(9)
+  Poked(9)
+  Poked(9)
+  IF 0 THEN
+    ASM
+        CALL Poked
+    ENDASM
+  FI
+RETURN
+"""
+
+DISC = """
+BYTE ARRAY a(3)
+PROC Main()
+  a(0) = #"first"
+  a(1) = #"second"
+  a(2) = #"first"
+RETURN
+"""
+
+
+def test_calls():
+    print("  who releases a call's parameters, and the strings kept out of the image")
+    prg, syms = H.build_act(CALLS, "act_calls")
+    same_bytes("act_calls", prg)
+    m = H.session()
+    why = H.run_act(m, prg)
+    got = bytes(m.bus.mem[syms["v_got"]:syms["v_got"] + 8])
+    check(why == "halt" and got[:6] == bytes([1, 2, 3, 4, 5, 34]) and got[7] == 9 and m.cpu.sp == 0x0200,
+          "calls: six calls, a FUNC's answer and a routine an ASM block names all right, and the stack even",
+          "%s %s SP $%04X" % (why, got.hex(), m.cpu.sp))
+    text = open(os.path.join(H.BUILD, "act_calls.asm"), encoding="utf-8").read()
+
+    def body(name):
+        return text.split("\n%s:\n" % name)[1].split("\n\n")[0]
+    lines = [l.strip() for l in text.split("\n")]
+    released = {n: any(lines[i] == "CALL    %s" % n and lines[i + 1].startswith("ADDW    SP")
+                       for i in range(len(lines) - 1)) for n in ("Put", "Add", "Poked")}
+    check("JMP     [X]" in body("Put") and not released["Put"],
+          "calls: a routine called from six places pops its parameter itself -- no ADDW SP after its calls", "")
+    check("JMP     [X]" not in body("Add") and released["Add"] and "JMP     [X]" not in body("Poked") and released["Poked"],
+          "calls: one called once, and one an ASM block names, leave the release to the caller", "")
+
+    prg, syms = H.build_act(DISC, "act_disc")
+    s = open(H.act_strings("act_disc"), "rb").read()
+    a = syms["v_a"]
+    m = H.session()
+    H.run_act(m, prg)
+    check(bytes(m.bus.mem[a:a + 3]) == bytes([0, 1, 0]) and b"first" not in prg and b"second" not in prg,
+          "strings: #\"text\" is its number, the same text the same number, and none of it in the image",
+          bytes(m.bus.mem[a:a + 3]).hex())
+    want = bytes([2, 0, 6, 0, 12, 0]) + b"\x05first" + b"\x06second"
+    check(s == want, "strings: the file is a count, an offset each, then each string with its length", s.hex())
+    prg, _ = H.build_act("PROC Main()\nRETURN\n", "act_disc")
+    check(H.act_strings("act_disc") is None,
+          "strings: a program with none writes no file -- and takes back the one an older build left", "")
+    print()
+
+
 HARDWARE = r'''
 ; every routine that touches a register, then the machine is asked
 ; what it saw -- VRAM, the palette, the sprite and sound arrays, the
@@ -2966,8 +3056,8 @@ def test_coolsw():
     print()
 
 
-def test_yendor():
-    """YENDOR, on the machine, as far as its second milestone goes. The
+def test_mott():
+    """MOTT, on the machine, as far as its second milestone goes. The
     dungeon: the theme files streamed from its drive into the pattern
     banks, the title with its credits, Rogue's level -- every room
     reachable, both stairs -- every cell on the screen the picture its byte
@@ -2984,24 +3074,37 @@ def test_yendor():
     the art."""
     import subprocess
     import ioregs
-    import mkyendor as MY
-    import yendor as Y
-    print("  YENDOR")
+    import mkmott as MY
+    import mott as Y
+    print("  MOTT")
     if Y.sources() is None:
-        print("    SKIPPED: the art is not here -- tools/mkyendor.py cuts assets/yendor/ from assets/dawnlike/")
+        print("    SKIPPED: the art is not here -- tools/mkmott.py cuts assets/mott/ from assets/dawnlike/")
         print()
         return
-    r = subprocess.run([sys.executable, os.path.join(H.ROOT, "tools", "mkyendor.py"), "--check"],
+    r = subprocess.run([sys.executable, os.path.join(H.ROOT, "tools", "mkmott.py"), "--check"],
                        capture_output=True, text=True)
-    check(r.returncode == 0, "yendor: the art table and the theme files are what DawnLike's sheets make",
+    check(r.returncode == 0, "mott: the art table and the theme files are what DawnLike's sheets make",
           (r.stdout + r.stderr).strip()[-200:])
-    g = Y.Game(tag="yendor")
-    same_bytes("yendor", g.prg)
+    g = Y.Game(tag="mott")
+    same_bytes("mott", g.prg)
     print("    %d bytes of PRG" % (len(g.prg) - 2))
+    park = [("rx1", 9), ("ry1", 9), ("rx2", 9), ("ry2", 9), ("rgone", 9), ("upx", 1), ("upy", 1), ("dnx", 1),
+            ("dny", 1)] + [(n, 20) for n in ("mtype", "mx", "my", "mhp", "mhpmax", "mlev", "mstat", "mmove", "msl",
+                                            "mflee")] \
+        + [(n, 32) for n in ("ot", "ox", "oy", "oq", "of", "oe")] + [(n, 8) for n in ("tt", "tx", "ty", "tf")] \
+        + [("ex", 3), ("ey", 3), ("etx", 51)] + [(n, 1) for n in ("shroom", "shtype", "shk", "shname", "shdx", "shdy",
+                                                                  "spx", "spy", "shvis")] + [("shgold", 2), ("shrob", 2)]
+    at, runs = g.addr("rx1"), True
+    for n, size in park:
+        runs = runs and g.addr(n) == at
+        at += size
+    check(runs and g.addr("park_end") == at and at - g.addr("rx1") + 960 <= g.c("SLOT_SIZE"),
+          "mott: a level's state beyond its cells is one run of memory, rx1 to park_end, and fits its slot with them",
+          "%d bytes" % (g.addr("park_end") - g.addr("rx1")))
     low = [g.addr(n) for n in ("lv", "mat", "oat")]
     check(g.org == H.PAYLOAD_ORG and low == [H.PAYLOAD_LOW, H.PAYLOAD_LOW + 960, H.PAYLOAD_LOW + 1920]
           and low[2] + 960 <= H.PAYLOAD_ORG,
-          "yendor: compiled at $%04X, the three cell maps below it at $%04X, outside the PRG"
+          "mott: compiled at $%04X, the three cell maps below it at $%04X, outside the PRG"
           % (H.PAYLOAD_ORG, H.PAYLOAD_LOW), " ".join("$%04X" % a for a in low))
     reg = lambda n: g.m.bus.read(ioregs.addr_of(n))   # noqa: E731
     dat = [open(p, "rb").read() for p in Y.DATS]
@@ -3019,33 +3122,33 @@ def test_yendor():
     named = named and all(names[(c("NAME_OBJ") + i) * rec:(c("NAME_OBJ") + i + 1) * rec].rstrip(b"\0")
                           == (chr(len(it[1])) + it[1]).encode() for i, it in enumerate(MY.ITEMS))
     check(table and c("N_MON") == n and named and "v_m_names" not in g.syms and "v_o_names" not in g.syms,
-          "yendor: %d creatures with monst.c's level, speed, armour class, difficulty and flags; "
-          "their names and the things' in YNAMES.DAT, %d bytes a record, not in the PRG" % (n, rec), "")
+          "mott: %d creatures with monst.c's level, speed, armour class, difficulty and flags; "
+          "their names and the things' in MNAMES.DAT, %d bytes a record, not in the PRG" % (n, rec), "")
 
     # the title: the theme from the drive, the words, the credits
     g.m.run_frame(60)
     check(reg("VID_MODE") & 0x0F == 2 and reg("VID_PAT_H") == 0x10 and g.byte("theme") == 0 and patterns() == dat[0],
-          "yendor: mode 2, and YTHEME0.DAT streamed from drive 9 into the four pattern banks",
+          "mott: mode 2, and MTHEME0.DAT streamed from drive 9 into the four pattern banks",
           "MODE %02X theme %d" % (reg("VID_MODE"), g.byte("theme")))
     words = [g.text(0, r, 40) for r in range(30)]
-    check("YENDOR" in words[3] and any("DawnLike by DragonDePlatino" in w for w in words)
-          and any("DawnBringer" in w and "CC-BY 4.0" in w for w in words),
-          "yendor: the title names DawnLike, DragonDePlatino, DawnBringer and the licence", words[25])
+    check("MOTT" in words[3] and not any("DawnLike" in w or "DawnBringer" in w for w in words),
+          "mott: the title says MOTT, and no credits -- the owner took them off; they are in assets/dawnlike/",
+          words[3])
     pal = MY.palette()
     check(g.m.palette()[:16 * len(pal)] == [cc for b in pal for cc in b],
-          "yendor: DawnBringer's sixteen in bank 0, dimmed in bank 1, and the inks", "")
+          "mott: DawnBringer's sixteen in bank 0, dimmed in bank 1, and the inks", "")
     g.tap(Y.DOWN)
     g.m.run_frame(2)
     down = g.byte("role")
     g.tap(Y.UP)
     g.m.run_frame(2)
-    check(down == 1 and g.byte("role") == 0, "yendor: up and down choose the hero", "%d then %d" % (down, g.byte("role")))
+    check(down == 1 and g.byte("role") == 0, "mott: up and down choose the hero", "%d then %d" % (down, g.byte("role")))
 
     # ------------------------------------------------------------ the dungeon
     g.start(0)
     g.m.run_frame(10)
     lv = g.level()
-    kinds = [v & 31 for v in lv]
+    kinds = [v & 15 for v in lv]
     ups = [i for i, k in enumerate(kinds) if k == Y.K_UP]
     downs = [i for i, k in enumerate(kinds) if k == Y.K_DOWN]
     hx, hy = g.hero()
@@ -3055,11 +3158,12 @@ def test_yendor():
     pet = g.pet()
     check(all(cc[9] <= hi and not cc[10] & MY.NOGEN for _t, cc in made) and pet and pet[1] == c("M_KITTEN")
           and max(abs(pet[2] - hx), abs(pet[3] - hy)) == 1,
-          "yendor: level 1's monsters all of difficulty 1, and the Valkyrie's kitten beside her",
+          "mott: level 1's monsters all of difficulty 1, and the Valkyrie's kitten beside her",
           "%s, pet %s" % ([cc[1] for _t, cc in made], pet))
     g.clear_monsters(keep_pet=False)
     g.sturdy()
-    passable = {Y.K_FLOOR, Y.K_CORR, Y.K_DOORC, Y.K_DOORO, Y.K_DOORWAY, Y.K_UP, Y.K_DOWN}
+    passable = {Y.K_FLOOR, Y.K_CORR, Y.K_DOORC, Y.K_DOORO, Y.K_DOORWAY, Y.K_UP, Y.K_DOWN,
+                Y.K_SDOOR, Y.K_SCORR, Y.K_FOUNTAIN, Y.K_ALTAR, Y.K_ALTAR + 1, Y.K_ALTAR + 2}
     reach, todo = {(hx, hy)}, [(hx, hy)]
     while todo:
         x, y = todo.pop()
@@ -3070,21 +3174,21 @@ def test_yendor():
                 todo.append((nx, ny))
     lost = [(i % Y.LW, i // Y.LW) for i, k in enumerate(kinds) if k in passable and (i % Y.LW, i // Y.LW) not in reach]
     check(len(ups) == 1 and len(downs) == 1 and ups[0] == hy * Y.LW + hx and not lost,
-          "yendor: one stair up, where the hero stands, one down, and every floor and corridor reachable",
+          "mott: one stair up, where the hero stands, one down, and every floor and corridor reachable",
           "%d up, %d down, %d cells cut off %s" % (len(ups), len(downs), len(lost), lost[:4]))
     rooms = [(g.byte("rx1", r), g.byte("ry1", r), g.byte("rx2", r), g.byte("ry2", r)) for r in range(9) if not g.byte("rgone", r)]
-    walled = all(kinds[y * Y.LW + x] in (Y.K_WALL, Y.K_DOORC, Y.K_DOORO, Y.K_DOORWAY)
+    walled = all(kinds[y * Y.LW + x] in (Y.K_WALL, Y.K_DOORC, Y.K_DOORO, Y.K_DOORWAY, Y.K_SDOOR)
                  for x1, y1, x2, y2 in rooms for y in range(y1, y2 + 1) for x in range(x1, x2 + 1)
                  if x in (x1, x2) or y in (y1, y2))
     check(len(rooms) >= 7 and walled and all(x2 < Y.LW and y2 < Y.LH for _, _, x2, y2 in rooms),
-          "yendor: seven to nine rooms, each walled all round but for its doors", "%d rooms" % len(rooms))
-    check(not g.wrong_pics(), "yendor: every cell in the window is the picture its byte says",
+          "mott: seven to nine rooms, each walled all round but for its doors", "%d rooms" % len(rooms))
+    check(not g.wrong_pics(), "mott: every cell in the window is the picture its byte says",
           str(g.wrong_pics()[:4]))
     here = [rm for rm in rooms if rm[0] <= hx <= rm[2] and rm[1] <= hy <= rm[3]][0]
     lit = lv[(here[1] + 1) * Y.LW + here[0] + 1] & Y.F_LIT
     whole = all(lv[y * Y.LW + x] & Y.F_VIS for y in range(here[1], here[3] + 1) for x in range(here[0], here[2] + 1))
     check((whole if lit else True) and g.cell_pic(hx, hy)[0] == g.byte("role") * 4,
-          "yendor: a lit room is seen whole from inside it, and the hero stands on the stairs up",
+          "mott: a lit room is seen whole from inside it, and the hero stands on the stairs up",
           "lit %s, whole %s" % (bool(lit), whole))
 
     # a wall does not give, a shut door opens, a door is not taken diagonally
@@ -3092,7 +3196,7 @@ def test_yendor():
     wall = next((d for d, (dx, dy) in Y.STEP.items() if g.kind(hx + dx, hy + dy) in (Y.K_WALL, Y.K_ROCK)), None)
     if wall:
         g.tap(Y.KP[wall])
-    check(g.hero() == (hx, hy) and g.uword("turns") == t0, "yendor: walking into a wall goes nowhere and takes no turn",
+    check(g.hero() == (hx, hy) and g.uword("turns") == t0, "mott: walking into a wall goes nowhere and takes no turn",
           "%s turns %d" % (g.hero(), g.uword("turns") - t0))
     key, (dx, dy) = next((k, s) for k, s in Y.STEP.items()
                          if not (s[0] and s[1]) and g.kind(hx + s[0], hy + s[1]) == Y.K_FLOOR)
@@ -3107,7 +3211,7 @@ def test_yendor():
     g.tap(Y.KP[diag])
     refused = g.hero() == (hx + dx, hy + dy) and "diagonally" in g.messages()
     check(opened and inside and refused,
-          "yendor: walking into a shut door opens it, the next step stands in it, and a door is not left diagonally",
+          "mott: walking into a shut door opens it, the next step stands in it, and a door is not left diagonally",
           "opened %s, in %s, refused %s: %r" % (opened, inside, refused, g.messages()))
 
     # to the stairs down: the way is walked, what is left behind dims
@@ -3115,7 +3219,7 @@ def test_yendor():
     lv = g.level()
     dim = [i for i, v in enumerate(lv) if v & Y.F_SEEN and not v & Y.F_VIS]
     check(g.hero() == (downs[0] % Y.LW, downs[0] // Y.LW) and dim and not g.wrong_pics(),
-          "yendor: walked to the stairs down, the window following, what was left behind remembered and dimmed",
+          "mott: walked to the stairs down, the window following, what was left behind remembered and dimmed",
           "hero %s, %d remembered, wrong pictures %s" % (g.hero(), len(dim), g.wrong_pics()[:3]))
 
     # down and back: the same level and the same monsters, as they were left
@@ -3124,22 +3228,22 @@ def test_yendor():
     g.shifted(Y.DOT)
     g.m.run_frame(10)
     l2 = g.level()
-    on_up = (l2[g.byte("py") * Y.LW + g.byte("px")] & 31) == Y.K_UP
+    on_up = (l2[g.byte("py") * Y.LW + g.byte("px")] & 15) == Y.K_UP
     check(g.byte("depth") == 2 and on_up and not g.wrong_pics(),
-          "yendor: > on the stairs down makes level 2 and puts the hero on its stairs up", g.messages())
+          "mott: > on the stairs down makes level 2 and puts the hero on its stairs up", g.messages())
     g.shifted(Y.COMMA)
     g.m.run_frame(10)
     after = [v & 127 for v in g.level()]
     check(g.byte("depth") == 1 and after == before and g.hero() == (downs[0] % Y.LW, downs[0] // Y.LW)
           and g.monsters() == mons1,
-          "yendor: < goes back up to level 1 exactly as it was left, its monsters too, onto its stairs down",
+          "mott: < goes back up to level 1 exactly as it was left, its monsters too, onto its stairs down",
           "%d cells differ; monsters %s then %s" % (sum(1 for a, b in zip(after, before) if a != b), mons1, g.monsters()))
     g.clear_monsters(keep_pet=False)
     g.walk_to((ups[0] % Y.LW, ups[0] // Y.LW))
     g.tap(Y.ENTER)
     g.m.run_frame(4)
     check(g.byte("depth") == 1 and "no Amulet" in g.messages(),
-          "yendor: the stairs up from level 1 are the way out, and not without the Amulet", g.messages())
+          "mott: the stairs up from level 1 are the way out, and not without the Amulet", g.messages())
 
     # the themes change with depth, the monsters deepen with it, and the
     # last level has no way down
@@ -3150,7 +3254,7 @@ def test_yendor():
         g.poke("px", g.byte("dnx"))
         g.poke("py", g.byte("dny"))
         if g.kind(g.byte("dnx"), g.byte("dny")) != Y.K_DOWN:     # a made level is kept: make sure it has one
-            g.poke("lv", Y.K_DOWN | (g.byte("lv", g.byte("dny") * Y.LW + g.byte("dnx")) & 224),
+            g.poke("lv", Y.K_DOWN | (g.byte("lv", g.byte("dny") * Y.LW + g.byte("dnx")) & 240),
                    g.byte("dny") * Y.LW + g.byte("dnx"))
         g.shifted(Y.DOT)
         g.m.run_frame(20)
@@ -3158,13 +3262,13 @@ def test_yendor():
         shots.append((g.byte("depth"), g.byte("theme"), patterns() == dat[t], not g.wrong_pics()))
         lo, hi = d // 6, (d + 6) // 2
         deep += [(d, MY.CREATURES[t2][1]) for _i, t2, _x, _y, _hp, st in g.monsters()
-                 if not st & Y.S_PET and not lo <= MY.CREATURES[t2][9] <= hi]
-    kinds = [v & 31 for v in g.level()]
+                 if not st & Y.S_PET and t2 != c("M_SHOPKEEPER") and not lo <= MY.CREATURES[t2][9] <= hi]
+    kinds = [v & 15 for v in g.level()]
     check(shots[0] == (5, 1, True, True) and shots[1] == (9, 2, True, True),
-          "yendor: depth 5 brings the caverns' theme and depth 9 the depths', each streamed from the drive", str(shots))
-    check(not deep, "yendor: every monster a deep level makes is of NetHack's difficulty for it", str(deep))
+          "mott: depth 5 brings the caverns' theme and depth 9 the depths', each streamed from the drive", str(shots))
+    check(not deep, "mott: every monster a deep level makes is of NetHack's difficulty for it", str(deep))
     check(shots[2][0] == 12 and Y.K_DOWN not in kinds and Y.K_UP in kinds,
-          "yendor: level 12 has stairs up and none down", str(shots[2]))
+          "mott: level 12 has stairs up and none down", str(shots[2]))
     g.tap(Y.ESC)
     g.m.run_frame(2)
     asked = "Really quit" in g.messages()
@@ -3172,7 +3276,7 @@ def test_yendor():
     back = g.until(lambda: g.byte("phase") == 0 and g.byte("theme") == 0, 200)
     g.m.run_frame(4)                   # the stream is eight frames; the theme is set at its end
     check(asked and back is not None and patterns() == dat[0],
-          "yendor: Esc asks, y leaves for the title, and the halls' theme comes back for it", "phase %d" % g.byte("phase"))
+          "mott: Esc asks, y leaves for the title, and the halls' theme comes back for it", "phase %d" % g.byte("phase"))
 
     # ---------------------------------------------------------- the creatures
     def beside(x, y, free=True):
@@ -3215,14 +3319,14 @@ def test_yendor():
         missed = missed or "You miss the newt." in g.messages()
     check(not g.byte("mat", (hy + dy) * Y.LW + hx + dx) and g.uword("uxp") == xp0 + g.uword("m_xp", c("M_NEWT"))
           and not g.wrong_pics(),
-          "yendor: moving into a monster attacks it, and its kill is worth monst.c's experience",
+          "mott: moving into a monster attacks it, and its kill is worth monst.c's experience",
           "xp %d -> %d: %s" % (xp0, g.uword("uxp"), g.messages()))
 
     # a monster's blows, and the message for each
     hp0 = g.byte("uhp")
     g.put_monster(c("M_SEWERRAT"), hx + dx, hy + dy, hp=200)
     bit = until_msg(["The sewer rat bites!"], Y.KEY_S, 60)
-    check(bit and g.byte("uhp") < hp0, "yendor: a monster beside the hero bites, and the hit points go down",
+    check(bit and g.byte("uhp") < hp0, "mott: a monster beside the hero bites, and the hit points go down",
           "%d -> %d: %s" % (hp0, g.byte("uhp"), g.messages()))
     g.clear_monsters(keep_pet=False)
 
@@ -3235,7 +3339,7 @@ def test_yendor():
     g.put_monster(c("M_NEWT"), hx + dx, hy + dy, hp=1)
     up = until_msg(["Welcome to experience level 2."], Y.KP[key], 40)
     check(up and g.byte("ulev") == 2 and 3 <= g.byte("uhpmax") - max0 <= 11,
-          "yendor: twenty points make experience level 2, with its hit points", "+%d: %s" % (g.byte("uhpmax") - max0, g.messages()))
+          "mott: twenty points make experience level 2, with its hit points", "+%d: %s" % (g.byte("uhpmax") - max0, g.messages()))
     g.clear_monsters(keep_pet=False)
 
     # the pet: it fights what is beside it, and grows on its kills
@@ -3247,7 +3351,7 @@ def test_yendor():
     g.put_monster(c("M_NEWT"), hx + pdx + fdx, hy + pdy + fdy, hp=1)
     killed = until_msg(["is killed"], Y.KEY_S, 60)
     check(killed and g.byte("mhpmax", kitten) > 10,
-          "yendor: the pet fights a monster beside it, kills it, and grows", "%s, max %d" % (g.messages(), g.byte("mhpmax", kitten)))
+          "mott: the pet fights a monster beside it, kills it, and grows", "%s, max %d" % (g.messages(), g.byte("mhpmax", kitten)))
 
     # changing places with the pet, set down beside the hero for it
     g.clear_monsters(keep_pet=True)
@@ -3263,7 +3367,7 @@ def test_yendor():
     # the kitten has its own turn after the change, and may take a step from where it was put
     kd = max(abs(g.byte("mx", kitten) - px0[0]), abs(g.byte("my", kitten) - px0[1]))
     check(g.hero() == (kx, ky) and kd <= 1 and "You swap places with your kitten." in g.messages(),
-          "yendor: moving into the pet changes places with it", "%s, kitten %d from the old place" % (g.messages(), kd))
+          "mott: moving into the pet changes places with it", "%s, kitten %d from the old place" % (g.messages(), kd))
 
     # the pet comes down the stairs when it is beside the hero
     g.clear_monsters(keep_pet=True)
@@ -3280,7 +3384,7 @@ def test_yendor():
     g.m.run_frame(20)
     pet = g.pet()
     check(g.byte("depth") == 2 and pet and pet[1] == c("M_KITTEN") and max(abs(pet[2] - g.byte("px")), abs(pet[3] - g.byte("py"))) == 1,
-          "yendor: the pet beside the hero on the stairs comes down with it", str(pet))
+          "mott: the pet beside the hero on the stairs comes down with it", str(pet))
 
     # the floating eye: struck, its gaze freezes the hero while the turns go by
     g.clear_monsters(keep_pet=False)
@@ -3292,7 +3396,7 @@ def test_yendor():
     frozen = until_msg(["frozen"], Y.KP[key], 60)
     thawed = until_msg(["You can move again."], None, 120) if frozen else False
     check(frozen and thawed and g.uword("turns") - t0 > 2,
-          "yendor: striking a floating eye freezes the hero for turns, and then it can move again",
+          "mott: striking a floating eye freezes the hero for turns, and then it can move again",
           "%d turns: %s" % (g.uword("turns") - t0, g.messages()))
     g.clear_monsters(keep_pet=False)
 
@@ -3302,10 +3406,10 @@ def test_yendor():
     g.poke("uhp", 5)
     for _ in range(31):
         g.tap(Y.KEY_S)
-    check(g.byte("uhp") >= 6, "yendor: hit points mend with the turns", "%d" % g.byte("uhp"))
+    check(g.byte("uhp") >= 6, "mott: hit points mend with the turns", "%d" % g.byte("uhp"))
     words = g.text(0, 28, 40) + g.text(0, 29, 40)
     check("Dlvl:2" in words and "HP:" in words and "Pw:" in words and "AC:6" in words and "Xp:" in words,
-          "yendor: the status lines as NetHack's -- level, experience, time, hit points, power, armour", words)
+          "mott: the status lines as NetHack's -- level, experience, time, hit points, power, armour", words)
 
     # the grave
     g.poke("uhp", 1)
@@ -3323,9 +3427,9 @@ def test_yendor():
     grave = [g.text(0, r, 40) for r in range(30)]
     check(g.byte("phase") == 2 and any("REST IN PEACE" in w for w in grave) and any("killed by a soldier ant" in w for w in grave)
           and any("on dungeon level 2" in w for w in grave),
-          "yendor: death is the grave: killed by a soldier ant, on dungeon level 2", " / ".join(w.strip() for w in grave if w.strip()))
+          "mott: death is the grave: killed by a soldier ant, on dungeon level 2", " / ".join(w.strip() for w in grave if w.strip()))
     g.tap(Y.ENTER)
-    check(g.until(lambda: g.byte("phase") == 0, 200) is not None, "yendor: and Enter goes back to the title", "")
+    check(g.until(lambda: g.byte("phase") == 0, 200) is not None, "mott: and Enter goes back to the title", "")
 
     # the Wizard's force bolt
     g.start(1)
@@ -3336,7 +3440,7 @@ def test_yendor():
     line = next(((k, s) for k, s in Y.STEP.items() if not (s[0] and s[1])
                  and all(g.kind(hx + s[0] * j, hy + s[1] * j) == Y.K_FLOOR for j in (1, 2))), None)
     if line is None:
-        check(False, "yendor: room for the force bolt's test", "no two floor cells in a line from the stairs")
+        check(False, "mott: room for the force bolt's test", "no two floor cells in a line from the stairs")
     else:
         k2, (lx, ly) = line
         tgt = g.put_monster(c("M_JACKAL"), hx + 2 * lx, hy + 2 * ly, hp=250)
@@ -3347,18 +3451,18 @@ def test_yendor():
         g.m.run_frame(4)
         check(g.byte("upw") == pw0 - 5 and "The force bolt hits the jackal." in g.messages()
               and 250 - 24 <= g.byte("mhp", tgt) <= 250 - 2,
-              "yendor: Z casts the Wizard's force bolt: five power, two d12 to the first monster in the line",
+              "mott: Z casts the Wizard's force bolt: five power, two d12 to the first monster in the line",
               "Pw %d -> %d, hp %d: %s" % (pw0, g.byte("upw"), g.byte("mhp", tgt), g.messages()))
 
     # ------------------------------------------------------------- the things
-    from yendor import (KEY_I, KEY_D, KEY_W, KEY_T, KEY_P, KEY_Q, KEY_F, KEY_R, KEY_BSLASH,  # noqa: F401
+    from mott import (KEY_I, KEY_D, KEY_W, KEY_T, KEY_P, KEY_Q, KEY_F, KEY_R, KEY_BSLASH,  # noqa: F401
                         LETTERS, OF_CURSE, OF_BKNOWN)
     o = lambda n: c("O_" + n)   # noqa: E731
     table = all(g.byte("o_class", i) == it[2] and g.byte("o_arg", i) == it[3] and g.byte("o_slot", i) == it[4]
                 and g.byte("o_prob", i) == min(255, it[5]) and g.uword("o_cost", i) == it[6]
                 for i, it in enumerate(MY.ITEMS))
     check(table and c("N_OBJ") == len(MY.ITEMS),
-          "yendor: %d kinds of thing with objects.c's class, number, slot, probability and cost" % len(MY.ITEMS), "")
+          "mott: %d kinds of thing with objects.c's class, number, slot, probability and cost" % len(MY.ITEMS), "")
 
     # the Wizard's own things, all known; the appearances shuffled for the game
     kit = g.pack()
@@ -3368,13 +3472,13 @@ def test_yendor():
     check(g.byte("uwep") == 0 and kinds[0] == o("QUARTERSTAFF") and g.byte("worn", MY.SLOT_CLOAK) == 1
           and g.word("uac") == 9 and len(wand) == 1 and wand[0] in (o("WSTRIKING"), o("WDIGGING"), o("WMISSILE"), o("WSLEEP"))
           and len(rings) == 2 and rings[0] != rings[1] and all(g.byte("known", t) for t in kinds),
-          "yendor: the Wizard starts with a blessed +1 quarterstaff, a cloak, a wand, two rings, potions and scrolls, all known",
+          "mott: the Wizard starts with a blessed +1 quarterstaff, a cloak, a wand, two rings, potions and scrolls, all known",
           "%s, AC %d" % ([MY.ITEMS[t][1] for t in kinds], g.word("uac")))
     shuffled = []
     for first, n in ((o("HEALING"), 7), (o("IDENTIFY"), 8), (o("WLIGHT"), 6), (o("RPROTECTION"), 6)):
         shuffled.append(sorted(g.byte("ap", first + i) for i in range(n)) == list(range(n)))
     check(all(shuffled) and g.byte("ap", o("WATER")) == 7,
-          "yendor: each game shuffles which appearance each potion, scroll, wand and ring wears; water is clear", str(shuffled))
+          "mott: each game shuffles which appearance each potion, scroll, wand and ring wears; water is clear", str(shuffled))
 
     # the pack as NetHack lists it
     g.command(KEY_I)
@@ -3383,7 +3487,7 @@ def test_yendor():
     g.m.run_frame(6)
     check("Weapons" in listing and "a - a blessed +1 quarterstaff (wielded)" in [l.strip() for l in listing]
           and not g.wrong_pics(),
-          "yendor: i lists the pack under its classes, as NetHack does, and the map comes back", " / ".join(listing[:4]))
+          "mott: i lists the pack under its classes, as NetHack does, and the map comes back", " / ".join(listing[:4]))
 
     # a game of the Valkyrie's for the rest
     g.tap(Y.ESC)
@@ -3397,7 +3501,7 @@ def test_yendor():
     kit = [(t, g.byte("ie", k)) for k, t, _q, _f, _e in g.pack()]
     check(kit == [(o("LONGSWORD"), 1), (o("DAGGER"), 0), (o("SMALLSHIELD"), 3)] and g.byte("uwep") == 0
           and g.byte("worn", MY.SLOT_SHIELD) == 2 and g.word("uac") == 6,
-          "yendor: the Valkyrie starts with a +1 long sword in hand, a dagger and a +3 small shield worn: AC 6",
+          "mott: the Valkyrie starts with a +1 long sword in hand, a dagger and a +3 small shield worn: AC 6",
           "%s, AC %d" % (kit, g.word("uac")))
     hx, hy = g.hero()
     key, (dx, dy) = beside(hx, hy)
@@ -3408,7 +3512,7 @@ def test_yendor():
     gold = g.uword("ugold") == 37 and "37 gold pieces." in g.messages() and "$:37" in g.text(0, 29, 40)
     g.tap(Y.KP[10 - key if key in (4, 6) else (2 if key == 8 else 8)])
     hx, hy = g.hero()
-    check(gold, "yendor: gold walked over goes into the purse, and the status line counts it", g.messages())
+    check(gold, "mott: gold walked over goes into the purse, and the status line counts it", g.messages())
     g.put_obj(o("HEALING"), hx, hy)
     g.redraw()
     g.command([0x4C], shift=True)             # :
@@ -3416,12 +3520,12 @@ def test_yendor():
     g.command(Y.COMMA)
     got = [p for p in g.pack() if p[1] == o("HEALING")]
     check(seen and got and not g.objs() and "potion." in g.messages(),
-          "yendor: : says what is here, and , picks it up into the pack", g.messages())
+          "mott: : says what is here, and , picks it up into the pack", g.messages())
     letter = got[0][0] if got else 3
     g.command(KEY_D, letter)
     check(not [p for p in g.pack() if p[1] == o("HEALING")] and [ob for ob in g.objs() if ob[1] == o("HEALING")]
           and "You drop" in g.messages() and not g.wrong_pics(),
-          "yendor: d drops it, and the floor shows it in its appearance's picture", g.messages())
+          "mott: d drops it, and the floor shows it in its appearance's picture", g.messages())
     g.command(Y.COMMA)
 
     # armour worn and taken off; a cursed piece stays on
@@ -3430,12 +3534,12 @@ def test_yendor():
     worn = g.byte("worn", MY.SLOT_BODY) == mail and g.word("uac") == 2
     g.command(KEY_T, mail, shift=True)
     off = g.byte("worn", MY.SLOT_BODY) == 255 and g.word("uac") == 6
-    check(worn and off, "yendor: W wears +1 ring mail for AC 2, and T takes it off again", "worn %s off %s" % (worn, off))
+    check(worn and off, "mott: W wears +1 ring mail for AC 2, and T takes it off again", "worn %s off %s" % (worn, off))
     cursed = g.give(o("LOWBOOTS"), f=OF_CURSE)
     g.command(KEY_W, cursed, shift=True)
     g.command(KEY_T, cursed, shift=True)
     check(g.byte("worn", MY.SLOT_BOOTS) == cursed and "cursed" in g.messages() and g.byte("ifl", cursed) & OF_BKNOWN,
-          "yendor: cursed boots cannot be taken off, and that says they are cursed", g.messages())
+          "mott: cursed boots cannot be taken off, and that says they are cursed", g.messages())
 
     # a cursed weapon welds itself to the hand
     blade = g.give(o("AXE"), f=OF_CURSE)
@@ -3443,7 +3547,7 @@ def test_yendor():
     welded = g.byte("uwep") == blade and "welds itself" in g.messages()
     g.command(KEY_W, 0)
     check(welded and g.byte("uwep") == blade and "welded to your hand" in g.messages(),
-          "yendor: a cursed axe welds itself to the hand, and nothing else can be wielded", g.messages())
+          "mott: a cursed axe welds itself to the hand, and nothing else can be wielded", g.messages())
     g.poke("ifl", OF_BKNOWN, blade)           # uncursed, to go on
     g.command(KEY_W, 0)
 
@@ -3454,7 +3558,7 @@ def test_yendor():
     prot = g.word("uac") == ac0 - 2 and g.byte("known", o("RPROTECTION")) and g.byte("uleft") == ring
     g.command(KEY_R, ring, shift=True)
     check(prot and g.byte("uleft") == 255 and g.word("uac") == ac0,
-          "yendor: P puts on a ring of protection +2 -- AC 4, and its kind known -- and R removes it", g.messages())
+          "mott: P puts on a ring of protection +2 -- AC 4, and its kind known -- and R removes it", g.messages())
 
     # potions: healing heals and becomes known; sleeping sleeps, but not with free action
     g.poke("uhpmax", 30)
@@ -3463,13 +3567,13 @@ def test_yendor():
     unknown = g.byte("known", o("HEALING")) == 0
     g.command(KEY_Q, pot)
     check(unknown and g.byte("uhp") > 5 and g.byte("known", o("HEALING")) and "You feel better." in g.messages(),
-          "yendor: q drinks an unknown potion: healing mends, says so, and is known from then on", g.messages())
+          "mott: q drinks an unknown potion: healing mends, says so, and is known from then on", g.messages())
     fa = g.give(o("RFREEACTION"))
     g.command(KEY_P, fa, shift=True)
     nap = g.give(o("SLEEPING"))
     g.command(KEY_Q, nap)
     check("You yawn." in g.messages() and g.byte("upara") == 0,
-          "yendor: a potion of sleeping only makes a hero with free action yawn", g.messages())
+          "mott: a potion of sleeping only makes a hero with free action yawn", g.messages())
     g.command(KEY_R, g.byte("uleft"), shift=True)
 
     # scrolls: identify, enchant weapon, enchant armour, magic mapping
@@ -3479,22 +3583,22 @@ def test_yendor():
     g.tap([LETTERS[mystery]])
     g.m.run_frame(8)
     check(g.byte("known", o("GAINENERGY")) and "potion of gain energy" in g.messages(),
-          "yendor: r reads identify, and the thing chosen is known", g.messages())
+          "mott: r reads identify, and the thing chosen is known", g.messages())
     en0 = g.byte("ie", g.byte("uwep"))
     sc = g.give(o("ENCHANTWEAPON"))
     g.command(Y.KEY_R, sc)
     check(g.byte("ie", g.byte("uwep")) == en0 + 1 and "glows blue" in g.messages(),
-          "yendor: enchant weapon makes the weapon in hand one better", g.messages())
+          "mott: enchant weapon makes the weapon in hand one better", g.messages())
     ac0 = g.word("uac")
     sc = g.give(o("ENCHANTARMOR"))
     g.command(Y.KEY_R, sc)
     check(g.word("uac") == ac0 - 1 and "glows silver" in g.messages(),
-          "yendor: enchant armor makes a worn piece one better, and the armour class with it", g.messages())
+          "mott: enchant armor makes a worn piece one better, and the armour class with it", g.messages())
     sc = g.give(o("MAGICMAPPING"))
     g.command(Y.KEY_R, sc)
     lv = g.level()
-    check(all(v & Y.F_SEEN for v in lv if v & 31) and "map coalesces" in g.messages(),
-          "yendor: magic mapping shows every corridor and room of the level", g.messages())
+    check(all(v & Y.F_SEEN for v in lv if v & 15) and "map coalesces" in g.messages(),
+          "mott: magic mapping shows every corridor and room of the level", g.messages())
 
     # wands: striking, and the charges run out; sleep stops a monster
     g.clear_monsters(keep_pet=False)
@@ -3511,11 +3615,11 @@ def test_yendor():
         for _ in range(3):
             g.tap(Y.KEY_S)
         check(slept and (g.byte("mx", tgt), g.byte("my", tgt)) == pos,
-              "yendor: z zaps a wand of sleep: the gnome lord in its line sleeps and does not move, a charge gone",
+              "mott: z zaps a wand of sleep: the gnome lord in its line sleeps and does not move, a charge gone",
               "%s: %s" % (g.byte("msl", tgt), g.messages()))
         g.poke("ie", 0, wand)
         g.command(Y.KEY_Z, wand)
-        check("Nothing happens." in g.messages(), "yendor: and a wand with no charges left does nothing", g.messages())
+        check("Nothing happens." in g.messages(), "mott: and a wand with no charges left does nothing", g.messages())
     g.clear_monsters(keep_pet=False)
 
     # the Rogue's daggers are thrown; they come down where they stop
@@ -3527,7 +3631,7 @@ def test_yendor():
         g.command(KEY_F, direction=line[0])
         left = sum(q for _k, t, q, _f, _e in g.pack() if t == o("DAGGER"))
         down = sum(ob[4] for ob in g.objs() if ob[1] == o("DAGGER"))
-        check(left < carried and left + down == carried, "yendor: f fires daggers, and each lands on the floor",
+        check(left < carried and left + down == carried, "mott: f fires daggers, and each lands on the floor",
               "%d of %d left, %d down" % (left, carried, down))
 
     # the amulet of life saving takes a death
@@ -3540,7 +3644,7 @@ def test_yendor():
     g.put_monster(c("M_SOLDIERANT"), hx + dx, hy + dy, hp=250)
     saved = until_msg(["crumbles to dust"], Y.KEY_S, 60)
     check(saved and g.byte("dead") == 0 and g.byte("uamul") == 255 and g.byte("known", o("LIFESAVING")),
-          "yendor: an amulet of life saving takes the death, and crumbles", g.messages())
+          "mott: an amulet of life saving takes the death, and crumbles", g.messages())
     g.clear_monsters(keep_pet=False)
     g.sturdy()
 
@@ -3550,7 +3654,7 @@ def test_yendor():
     g.tap(Y.SPACE)
     g.m.run_frame(6)
     check("potion of healing" in found and "potion of gain energy" in found,
-          "yendor: \\ lists the discoveries", "%r: %s" % (g.text(0, 0, 40), found.strip()[:120]))
+          "mott: \\ lists the discoveries", "%r: %s" % (g.text(0, 0, 40), found.strip()[:120]))
 
     # things stay on their level
     thing = g.put_obj(o("MACE"), g.hero()[0], g.hero()[1])
@@ -3563,13 +3667,271 @@ def test_yendor():
     g.shifted(Y.COMMA)
     g.m.run_frame(20)
     check([ob for ob in g.objs() if ob[1] == o("MACE") and (ob[2], ob[3]) == here[1]],
-          "yendor: a thing left on a level is there when the hero comes back", str(g.objs()))
+          "mott: a thing left on a level is there when the hero comes back", str(g.objs()))
     del thing
 
-    check(0x100 < g.m.cpu.sp <= 0x200, "yendor: the stack is where it should be", "SP $%04X" % g.m.cpu.sp)
+    check(0x100 < g.m.cpu.sp <= 0x200, "mott: the stack is where it should be", "SP $%04X" % g.m.cpu.sp)
     del g
 
-    # the path a person takes: YENDOR.BIN on the CoolAction disc, the program on drive 9
+    # ------------------------------------------------------ milestone 4
+    # a message as one line, however the two rows and --More-- broke it
+    flat = lambda t: " ".join(t.replace("--More--", " ").replace(" | ", " ").replace(" / ", " ").split())   # noqa: E731
+    g = Y.Game(tag="mott4")
+    c = g.c
+    g.start(0)
+    g.m.run_frame(10)
+    g.clear_monsters(keep_pet=False)
+    g.clear_traps()
+    g.clear_objs()
+    g.sturdy()
+    rec = c("NAME_REC")
+    names = open(Y.NAMES, "rb").read()
+    rec_of = lambda k: names[k * rec + 1:k * rec + 1 + names[k * rec]].decode()   # noqa: E731
+    check([rec_of(c("NAME_TRAP") + i) for i in range(c("N_TRAP"))] == [t[1] for t in MY.TRAPS]
+          and [g.byte("tr_min", i) for i in range(c("N_TRAP"))] == [t[4] for t in MY.TRAPS]
+          and rec_of(c("NAME_GOD") + 1) == "Odin" and rec_of(c("NAME_SHK") + 2) == "Asidonhopo",
+          "mott: eleven of NetHack's traps with mktrap()'s depths, the roles' gods and the shopkeepers' names on disc", "")
+
+    def floor_step():
+        hx, hy = g.hero()
+        return next((k for k, (dx, dy) in Y.STEP.items() if not (dx and dy)
+                     and g.kind(hx + dx, hy + dy) == Y.K_FLOOR and g.kind(hx + 2 * dx, hy + 2 * dy) == Y.K_FLOOR
+                     and not g.byte("oat", (hy + dy) * Y.LW + hx + dx)), None)
+
+    # ? shows the keys
+    g.shifted(Y.KEY_SLASH)
+    g.m.run_frame(8)
+    page = g.text(0, 3, 40)
+    g.tap(Y.SPACE)
+    g.m.run_frame(4)
+    check(page.startswith("Move: the arrows") and not g.wrong_pics(), "mott: ? shows the keys from MHELP.DAT, and the map comes back",
+          repr(page))
+
+    # an arrow trap goes off, is seen, and shows
+    k = floor_step()
+    hx, hy = g.hero()
+    dx, dy = Y.STEP[k]
+    g.put_trap(c("TR_ARROW"), hx + dx, hy + dy)
+    g.tap(Y.KP[k])
+    said = g.play()
+    seen = g.trap_at(hx + dx, hy + dy)
+    g.tap(Y.KP[{8: 2, 2: 8, 4: 6, 6: 4}[k]])
+    g.play()
+    check("An arrow shoots out at you!" in said and seen and seen[3] & Y.TF_SEEN
+          and g.cell_pic(hx + dx, hy + dy) == (c("T_TRAP") + 4 * c("TR_ARROW"), 0),
+          "mott: an arrow trap shoots, is seen from then on, and shows its picture", said)
+    g.clear_traps()
+
+    # a bear trap holds the foot
+    g.put_trap(c("TR_BEAR"), hx + dx, hy + dy)
+    g.tap(Y.KP[k])
+    said = g.play()
+    held = g.byte("utrap")
+    tries = 0
+    while g.byte("utrap") and tries < 10:
+        g.tap(Y.KP[9])                 # a diagonal pull always loosens it, as trapmove() has it
+        said += " / " + g.play()
+        tries += 1
+    check("bear trap closes on your foot" in said and 4 <= held <= 7 and tries == held and "caught in a bear trap" in said
+          and g.byte("utrap") == 0,
+          "mott: a bear trap closes, and holds the hero four to seven diagonal pulls",
+          "held %d, %d tries" % (held, tries))
+    g.clear_traps()
+    g.walk_to((hx, hy))
+
+    # searching: a hidden door, a hidden passage, a hidden trap
+    def search_for(pred, cap=90):
+        log = ""
+        for _ in range(cap):
+            if pred():
+                break
+            g.tap(Y.KEY_S)
+            log += " / " + g.play(frames=2, cap=6)
+        return log
+    hx, hy = g.hero()
+    rooms = [(g.byte("rx1", r), g.byte("ry1", r), g.byte("rx2", r), g.byte("ry2", r)) for r in range(9) if not g.byte("rgone", r)]
+    x1, y1, x2, y2 = [rm for rm in rooms if rm[0] <= hx <= rm[2] and rm[1] <= hy <= rm[3]][0]
+    wx, wy = x1 + 1, y1
+    g.poke("px", wx)
+    g.poke("py", wy + 1)
+    g.set_kind(wx, wy + 1, Y.K_FLOOR)
+    g.set_kind(wx, wy, Y.K_SDOOR)
+    g.redraw()
+    log = search_for(lambda: g.kind(wx, wy) == Y.K_DOORC)
+    check(g.kind(wx, wy) == Y.K_DOORC and "You find a hidden door." in log,
+          "mott: s searches, and finds a secret door in the wall beside the hero", log[-80:])
+    g.put_trap(c("TR_PIT"), wx + 1, wy + 1)
+    log = search_for(lambda: g.trap_at(wx + 1, wy + 1)[3] & Y.TF_SEEN)
+    check(g.trap_at(wx + 1, wy + 1)[3] & Y.TF_SEEN and "You find a pit." in log,
+          "mott: and finds a hidden trap, by its name", log[-80:])
+    g.clear_traps()
+
+    # a fountain: q asks, and drinking does one of drinkfountain()'s thirty
+    g.set_kind(wx, wy + 1, Y.K_FOUNTAIN)
+    t0 = g.uword("turns")
+    g.tap(Y.KEY_Q)
+    g.m.run_frame(4)
+    asked = "Drink from the fountain?" in g.messages()
+    g.tap(Y.KEY_Y)
+    said = g.play()
+    fates = ("cool draught", "self-knowledgeable", "water is foul", "contaminated", "snakes pours", "water demon",
+             "no good", "stalking you", "presence of monsters", "feel threatened", "water nymph", "large bubble",
+             "bad breath", "thirst is quenched", "tepid water")
+    check(asked and any(f in said for f in fates) and g.uword("turns") > t0,
+          "mott: q on a fountain asks, and a drink does one of NetHack's fountain's fates", said)
+    g.clear_monsters(keep_pet=False)
+
+    # an altar tells a cursed thing by its black flash
+    g.set_kind(wx, wy + 1, Y.K_ALTAR + 1)
+    for kk, _t, _q, _f, _e in g.pack():
+        if not any(g.byte(s) == kk for s in ("uwep", "uleft", "uright", "uamul")) and \
+                all(g.byte("worn", s) != kk for s in range(7)):
+            pass
+    letter = g.give(c("O_DAGGER"), 1, Y.OF_CURSE, 0)
+    g.command(Y.KEY_D, letter)
+    said = g.messages()
+    flashed = [ob for ob in g.objs() if (ob[2], ob[3]) == (wx, wy + 1) and ob[5] & Y.OF_BKNOWN]
+    check("black flash" in said and flashed, "mott: a cursed thing dropped on an altar shows a black flash, and is known cursed", said)
+
+    # prayer in trouble, then too soon
+    g.poke("uhp", 3)
+    g.poke("uhpmax", 40)
+    g.word_poke("ublesscnt", 0)
+    g.word_poke("urec", 10)
+    g.word_poke("uluck", 0)
+    g.poke("ugangr", 0)
+    g.shifted(Y.KEY_3)
+    g.m.run_frame(4)
+    g.type_text("pray")
+    g.tap(Y.ENTER)
+    g.m.run_frame(4)
+    asked = "sure you want to pray" in g.messages()
+    g.tap(Y.KEY_Y)
+    said = g.play(cap=60)
+    check(asked and "You begin praying to Odin." in said and "You feel much better." in said
+          and g.byte("uhp") == g.byte("uhpmax") and g.uword("ublesscnt") > 0,
+          "mott: #pray in trouble, the timeout run down: Odin mends the hero and the timeout starts again", said)
+    g.sturdy()
+    g.shifted(Y.KEY_3)
+    g.m.run_frame(4)
+    g.type_text("pray")
+    g.tap(Y.ENTER)
+    g.m.run_frame(4)
+    g.tap(Y.KEY_Y)
+    said = g.play(cap=60)
+    check(g.word("uluck") == -3 and g.byte("ugangr") == 1 and "You finish your prayer." in said,
+          "mott: praying again too soon costs three luck and angers the god", said)
+    g.word_poke("uluck", 0)
+    g.poke("ugangr", 0)
+    g.set_kind(wx, wy + 1, Y.K_FLOOR)
+    g.clear_objs()
+
+    # Elbereth in the dust keeps a jackal's teeth off
+    g.shifted(Y.KEY_E)
+    g.m.run_frame(6)
+    g.play(cap=4)
+    g.type_text("Elbereth")
+    g.tap(Y.ENTER)
+    g.play()
+    e = next((i for i in range(3) if (g.byte("ex", i), g.byte("ey", i)) == (wx, wy + 1)), None)
+    text = bytes(g.m.bus.mem[g.addr("etx") + 17 * e + 1:g.addr("etx") + 17 * e + 1 + g.byte("etx", 17 * e)]) if e is not None else b""
+    check(text == b"Elbereth", "mott: E writes Elbereth in the dust where the hero stands", repr(text))
+    j = g.put_monster(c("M_JACKAL"), wx + 1, wy + 1, hp=30)
+    hp0 = g.byte("uhp")
+    fled = 0
+    for _ in range(4):
+        g.m.bus.mem[g.addr("etx") + 17 * e + 1:g.addr("etx") + 17 * e + 9] = b"Elbereth"
+        g.m.bus.mem[g.addr("etx") + 17 * e] = 8
+        g.tap(Y.DOT)
+        g.play(frames=2, cap=6)
+        fled = fled or g.byte("mflee", j)
+    check(g.byte("uhp") == hp0 and fled, "mott: a jackal beside the hero on Elbereth runs and never bites",
+          "hp %d from %d, flee %d" % (g.byte("uhp"), hp0, fled))
+    g.clear_monsters(keep_pet=False)
+
+    # the shop: one poked round the hero's room
+    doors = [(x, y) for y in range(y1, y2 + 1) for x in range(x1, x2 + 1)
+             if (x in (x1, x2) or y in (y1, y2)) and g.kind(x, y) in (Y.K_DOORC, Y.K_DOORO, Y.K_DOORWAY)]
+    out = None
+    for ddx, ddy in doors:
+        nx, ny = ddx - (ddx == x1) + (ddx == x2), ddy - (ddy == y1) + (ddy == y2)
+        if 0 <= nx < Y.LW and 0 <= ny < Y.LH and g.kind(nx, ny) == Y.K_CORR:
+            out = (ddx, ddy, nx, ny)
+            break
+    ddx, ddy, ox_, oy_ = out
+    sx, sy = ddx + (ddx == x1) - (ddx == x2), ddy + (ddy == y1) - (ddy == y2)
+    g.set_kind(ddx, ddy, Y.K_DOORO)
+    for n, v in (("shroom", [r for r in range(9) if (g.byte("rx1", r), g.byte("ry1", r)) == (x1, y1)][0]),
+                 ("shtype", 0), ("shname", 2), ("shdx", ddx), ("shdy", ddy), ("spx", sx), ("spy", sy), ("shvis", 0)):
+        g.poke(n, v)
+    g.word_poke("shgold", 2000)
+    g.word_poke("shrob", 0)
+    g.poke("px", ox_)
+    g.poke("py", oy_)
+    shk = g.put_monster(c("M_SHOPKEEPER"), sx, sy, hp=200)
+    g.poke("shk", shk)
+    ware = next((x, y) for y in range(y1 + 1, y2) for x in range(x1 + 1, x2)
+                if (x, y) != (sx, sy) and abs(x - sx) + abs(y - sy) > 1 and g.kind(x, y) == Y.K_FLOOR)
+    g.put_obj(c("O_AXE"), ware[0], ware[1])
+    g.redraw()
+    step = next(kk for kk, s in Y.STEP.items() if (ox_ + s[0], oy_ + s[1]) == (ddx, ddy))
+    g.tap(Y.KP[step])
+    said = g.play()
+    check("Welcome to Asidonhopo's general store!" in flat(said),
+          "mott: stepping into a shop's door, Asidonhopo welcomes the Valkyrie to the general store", said)
+    g.walk_to(ware)
+    g.tap(Y.COMMA)
+    said = g.play()
+    taken = next((p for p in g.pack() if p[1] == c("O_AXE")), None)
+    check(g.hero() == ware and "only 8 zorkmids for this axe" in flat(said) and taken and taken[3] & Y.OF_UNPAID,
+          "mott: a thing picked up from the shelf is quoted -- NetHack's get_cost() -- and unpaid", said)
+    g.word_poke("ugold", 100)
+    g.tap(Y.KEY_P)
+    said = g.play()
+    taken = next((p for p in g.pack() if p[1] == c("O_AXE")), None)
+    check("You bought an axe for 8 gold pieces." in flat(said) and g.uword("ugold") == 92
+          and not taken[3] & Y.OF_UNPAID and g.uword("shgold") == 2008,
+          "mott: p pays for it, and the gold goes to the keeper", said)
+    g.command(Y.KEY_D, taken[0])
+    said = g.play(cap=4)
+    offered = "axe. Sell it? [yn]" in flat(said)
+    g.tap(Y.KEY_Y)
+    said += " / " + g.play()
+    check(offered and "You sold an axe for 4 gold pieces." in flat(said) and g.uword("ugold") == 96, "mott: dropped in the shop, the keeper offers half, and y sells it", said)
+    g.tap(Y.COMMA)
+    g.play()
+    g.poke("px", ddx)
+    g.poke("py", ddy)
+    g.redraw()
+    back = {8: 2, 2: 8, 4: 6, 6: 4}[step]
+    g.tap(Y.KP[back])
+    said = g.play()
+    taken = next((p for p in g.pack() if p[1] == c("O_AXE")), None)
+    check("You stole 8 zorkmids worth of merchandise." in flat(said) and g.byte("mstat", shk) & Y.S_HOSTILE
+          and not taken[3] & Y.OF_UNPAID and g.uword("shrob") == 8,
+          "mott: out of the door owing, the hero has robbed the shop and the keeper is angry", said)
+    g.clear_monsters(keep_pet=False)
+    g.poke("shroom", 255)
+
+    # a water nymph steals a thing, and carries it
+    hx, hy = g.hero()
+    nb = next((hx + s[0], hy + s[1]) for s in Y.STEP.values() if g.kind(hx + s[0], hy + s[1]) in (Y.K_FLOOR, Y.K_CORR))
+    g.give(c("O_WATER"))
+    n0 = len(g.pack())
+    nym = g.put_monster(c("M_WATERNYMPH"), nb[0], nb[1])
+    said = ""
+    for _ in range(25):
+        if "stole" in said:
+            break
+        g.tap(Y.DOT)
+        said += " / " + g.play(frames=2, cap=6)
+    carried = [ob for ob in g.objs() if ob[2] == 255 and ob[3] == nym]
+    check("stole" in said and len(g.pack()) == n0 - 1 and carried,
+          "mott: a water nymph steals a thing from the pack and runs off holding it", said[-90:])
+    check(0x100 < g.m.cpu.sp <= 0x200, "mott: the stack is where it should be after milestone 4", "SP $%04X" % g.m.cpu.sp)
+    del g
+
+    # the path a person takes: MOTT.BIN on the CoolAction disc, the program on drive 9
     import cool8rsvm as vm
     import cool8disk
     img = os.path.join(H.BUILD, "demos.img")
@@ -3577,13 +3939,14 @@ def test_yendor():
         print("    (the demos disc is not built: poe demos -- the loader's path not run)")
         print()
         return
-    prg, _ = H.build_act(H.act_sources(Y.SOURCE), "yendor_payload", org=H.PAYLOAD_ORG)
+    prg, _ = H.build_act(H.act_sources(Y.SOURCE), "mott_payload", org=H.PAYLOAD_ORG)
     im = cool8disk.Image(img)
-    home, v11 = cool8disk.Volume(im, cool8disk.YENDOR_VOL), cool8disk.Volume(im, cool8disk.ACTION_VOL)
-    check(home.find("YENDOR.PRG") and home.get("YENDOR.PRG") == bytes(prg) and all(home.get(os.path.basename(p)) == d for p, d in zip(Y.DATS, dat))
-          and home.get("YNAMES.DAT") == names
-          and v11.find("YENDOR.BIN") and not v11.find("YENDOR.PRG"),
-          "yendor: the demos disc has YENDOR.PRG and its themes on drive 9, and only YENDOR.BIN on drive 11",
+    home, v11 = cool8disk.Volume(im, cool8disk.MOTT_VOL), cool8disk.Volume(im, cool8disk.ACTION_VOL)
+    check(home.find("MOTT.PRG") and home.get("MOTT.PRG") == bytes(prg) and all(home.get(os.path.basename(p)) == d for p, d in zip(Y.DATS, dat))
+          and home.get("MNAMES.DAT") == names and home.get("MHELP.DAT") == open(Y.HELP, "rb").read()
+          and home.get("MOTT.STR") == open(H.act_strings("mott_payload"), "rb").read()
+          and v11.find("MOTT.BIN") and not v11.find("MOTT.PRG"),
+          "mott: the demos disc has MOTT.PRG and its themes on drive 9, and only MOTT.BIN on drive 11",
           "stale or missing: poe demos")
     code, bsyms = basic_image()
     m = vm.boot(flash_path=img, render=True)
@@ -3591,12 +3954,12 @@ def test_yendor():
         m.run_frame()
     m.settle(bsyms["in_raw.rk0"], bsyms["irhead"], bsyms["irtail"], 80_000_000)
     H.key(m, bsyms, 'DRIVE 11\r')
-    H.key(m, bsyms, 'SYS "YENDOR.BIN"')
+    H.key(m, bsyms, 'SYS "MOTT.BIN"')
     m.key(["\r"])
     m.run_frame(200)
-    title = "".join(chr(m.video.vram[3 * 128 + 2 * (17 + i)] + 32) for i in range(6))
-    check(title == "YENDOR" and bytes(m.video.vram[0x1000:0x9000]) == dat[0],
-          "yendor: SYS \"YENDOR.BIN\" on drive 11 loads the program from drive 9 and it finds its theme there",
+    title = "".join(chr(m.video.vram[3 * 128 + 2 * (18 + i)] + 32) for i in range(4))
+    check(title == "MOTT" and bytes(m.video.vram[0x1000:0x9000]) == dat[0],
+          "mott: SYS \"MOTT.BIN\" on drive 11 loads the program from drive 9 and it finds its theme there",
           repr(title))
     print()
 
@@ -3611,9 +3974,9 @@ def main():
     print("  A2 -- CoolAction! on the machine")
     print()
     only = [a for a in sys.argv[1:] if not a.startswith("--")]    # e.g. `cobra`: just those
-    for t in (test_every_encoding, test_features, test_sieve, test_primes, test_library,
+    for t in (test_every_encoding, test_features, test_sieve, test_primes, test_library, test_calls,
               test_hardware, test_line, test_rainbow, test_cobra, test_cobra2, test_ports, test_keys,
-              test_keytest, test_loader, test_mscoolman, test_arkanoid, test_blockade, test_cooltris, test_coolsw, test_yendor,
+              test_keytest, test_loader, test_mscoolman, test_arkanoid, test_blockade, test_cooltris, test_coolsw, test_mott,
               test_slides, test_refusals):
         if not only or any(o in t.__name__ for o in only):
             t()

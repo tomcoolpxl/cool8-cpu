@@ -1,8 +1,9 @@
-# YENDOR's theme files, which tools/mkdemos.py puts on its drive beside the
+# MOTT's theme files, which tools/mkdemos.py puts on its drive beside the
 # program: four pattern banks each, streamed into VRAM on the stairs; and
 # the names of the creatures and things, a record each.
 # One path a line, relative to the repository root.
-assets/yendor/YTHEME0.DAT
-assets/yendor/YTHEME1.DAT
-assets/yendor/YTHEME2.DAT
-assets/yendor/YNAMES.DAT
+assets/mott/MTHEME0.DAT
+assets/mott/MTHEME1.DAT
+assets/mott/MTHEME2.DAT
+assets/mott/MNAMES.DAT
+assets/mott/MHELP.DAT

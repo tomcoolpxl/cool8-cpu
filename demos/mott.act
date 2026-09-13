@@ -1,19 +1,19 @@
-; YENDOR -- a descent after NetHack, for COOL8, in CoolAction!
+; MOTT -- a descent after NetHack, for COOL8, in CoolAction!
 ;
-; The Amulet of Yendor lies twelve levels down. Fetch it, and climb back
+; The Amulet of Mott lies twelve levels down. Fetch it, and climb back
 ; to the sun. The game is Rogue's and NetHack's -- rooms on a three by
 ; three grid joined by corridors, a map remembered as it is seen, levels
 ; that stay as they were left, monsters by NetHack's own numbers and a pet
 ; at your side -- drawn in DawnLike's tiles, by DragonDePlatino on
-; DawnBringer's palette (CC-BY 4.0), which tools/mkyendor.py cuts from
-; assets/dawnlike/ into assets/yendor/.
+; DawnBringer's palette (CC-BY 4.0), which tools/mkmott.py cuts from
+; assets/dawnlike/ into assets/mott/.
 ;
 ; **A cell of the dungeon is 16 x 16, four tiles**, so the screen shows
 ; twenty cells by thirteen of a level forty by twenty-four, and follows
 ; the hero across it. Mode 2's tiles have no transparency, so a creature
 ; or an item is drawn onto the floor by the generator, and each band of
 ; the dungeon -- its floor, its walls, its stairs -- is a file of four
-; pattern banks on YENDOR's drive, streamed into VRAM on the stairs.
+; pattern banks on MOTT's drive, streamed into VRAM on the stairs.
 ;
 ; **What is in view is in DawnBringer's sixteen; what is remembered is in
 ; the same sixteen dimmed** -- palette bank 0 and 1 -- so the map fades as
@@ -35,20 +35,27 @@
 ; under appearances each game shuffles -- a pink potion, a scroll labeled
 ; ZELGO MER -- until they are used or identified.
 ;
-; Milestones 1 to 3: the dungeon, walking, doors, stairs, what is seen and
+; Milestones 1 to 4: the dungeon, walking, doors, stairs, what is seen and
 ; remembered; the monsters, the fighting, the three heroes, their levels,
-; the pet; the things and what they do. docs/14-demos.md has the plan.
+; the pet; the things and what they do; traps and secret doors, fountains,
+; altars and prayer, Elbereth, shops. docs/14-demos.md has the plan.
+;
+; **Its messages are on its drive**: a #"text" is a number here and a
+; string in MOTT.STR, which the compiler writes and Str() reads, as the
+; names are records in MNAMES.DAT that NameRec() reads (D109, D110).
 ;
 ; Keys: the cursor keys, the keypad or h j k l y u b n move -- two cursor
 ; keys held together go diagonally -- and moving into a monster attacks
 ; it, into the pet changes places; walking into a door opens it; > and <
-; take the stairs, and Enter the stairs you stand on; s or . waits. As in
-; NetHack: i the pack, , picks up, d drops, w wields, W wears, T takes
-; off, P puts on, R removes, q drinks, r reads, z zaps, t throws, f fires
-; daggers, : looks here, \ lists what is known, Z casts the Wizard's force
-; bolt. Ctrl+R draws the screen again; Esc asks to quit.
+; take the stairs, and Enter the stairs you stand on; . rests and s
+; searches. As in NetHack: i the pack, , picks up, d drops, w wields, W
+; wears, T takes off, P puts on, R removes, q drinks, r reads, z zaps, t
+; throws, f fires daggers, : looks here, \ lists what is known, Z casts
+; the Wizard's force bolt, p pays, E engraves, # takes a long command
+; (#pray), ? shows the keys. Ctrl+R draws the screen again; Esc asks to
+; quit.
 
-CONST YDRIVE = 9                     ; YENDOR's drive: its program and its themes
+CONST MDRIVE = 9                     ; MOTT's drive: its program and its themes
 CONST PAT_BASE = $1000               ; the four pattern banks, $1000-$8FFF of VRAM
 CONST SLOT_BASE = $9000              ; a parked level a slot, above them
 CONST SLOT_SIZE = 1536
@@ -63,7 +70,7 @@ CONST VTOP = 2                       ; the tile row the window starts on
 CONST MAXDEPTH = 12
 CONST MAXMON = 20                    ; monsters on a level at once, the pet among them
 
-; a cell's byte: what is there in the low five bits, and three flags
+; a cell's byte: what is there in the low four bits, and four flags
 CONST K_ROCK = 0
 CONST K_WALL = 1
 CONST K_FLOOR = 2
@@ -73,6 +80,11 @@ CONST K_DOORO = 5
 CONST K_DOORWAY = 6
 CONST K_UP = 7
 CONST K_DOWN = 8
+CONST K_SDOOR = 9                    ; a door that looks like the wall until it is found
+CONST K_SCORR = 10                   ; a corridor that looks like rock until it is found
+CONST K_FOUNTAIN = 11
+CONST K_ALTAR = 12                   ; 12 lawful, 13 neutral, 14 chaotic
+CONST F_TRAP = 16                    ; a trap is on the cell: the traps' list says which
 CONST F_LIT = 32                     ; a floor lit, so its room is seen whole
 CONST F_SEEN = 64                    ; seen once, and remembered
 CONST F_VIS = 128                    ; in view now
@@ -90,7 +102,7 @@ CONST OF_CURSE = 2
 CONST OF_BKNOWN = 4                  ; its blessing known
 CONST OF_EKNOWN = 8                  ; its enchantment or charges known
 
-; the palette banks: tools/mkyendor.py's
+; the palette banks: tools/mkmott.py's
 CONST B_VIEW = 0
 CONST B_DIM = 1
 CONST B_WHITE = 2
@@ -143,6 +155,9 @@ CONST KEY_T = $2C
 CONST KEY_W = $1D
 CONST KEY_SEMI = $4C
 CONST KEY_BSLASH = $5D
+CONST KEY_3 = $26
+CONST KEY_SLASH = $4A
+CONST KEY_E = $24
 
 ; the eight directions, 1 north and on clockwise
 BYTE ARRAY dir_dx(9) = [0 0 1 1 1 0 255 255 255]
@@ -164,21 +179,40 @@ BYTE ARRAY r_pet(3) = [M_KITTEN M_KITTEN M_LITTLEDOG]
 ; ($0800-$13FF, D109): not in the PRG, and garbage until MakeLevel or
 ; LoadLevel clears them
 BYTE ARRAY lv(960) = $0800
-BYTE ARRAY rx1(9), ry1(9), rx2(9), ry2(9), rgone(9)
-BYTE upx, upy, dnx, dny
+BYTE ARRAY mat(960) = $0BC0          ; the monster on a cell, plus one; rebuilt, not parked
+BYTE ARRAY oat(960) = $0F80          ; the top thing on a cell, plus one; rebuilt
 BYTE ARRAY made(13)                  ; levels already made, by depth
 CARD ARRAY vis(160)                  ; the cells in view, to fade when they leave it
 BYTE nvis
 
-; the monsters of the level: parallel arrays, parked with it
-BYTE ARRAY mtype(20), mx(20), my(20), mhp(20), mhpmax(20), mlev(20), mstat(20), mmove(20)
-BYTE ARRAY mat(960) = $0BC0          ; the monster on a cell, plus one; rebuilt, not parked
-BYTE ARRAY msl(20)                   ; a monster's turns of sleep, parked with it
+CONST MAXTRAP = 8
+CONST MAXENGR = 3
 
-; the things on the floor, parked with the level: kind (255 none), place,
-; quantity, flags, and enchantment or charges
+; ---- what a level is beyond its cells, parked in its VRAM slot after them
+; as one run of memory, rx1 to park_end: declared here together and in
+; this order, which the gate holds the symbol table to
+; the rooms and the stairs
+BYTE ARRAY rx1(9), ry1(9), rx2(9), ry2(9), rgone(9)
+BYTE upx, upy, dnx, dny
+; the monsters: parallel arrays; a monster's turns of sleep, and of running
+; from the hero -- 255 until it is well again
+BYTE ARRAY mtype(20), mx(20), my(20), mhp(20), mhpmax(20), mlev(20), mstat(20), mmove(20)
+BYTE ARRAY msl(20), mflee(20)
+; the things on the floor: kind (255 none), place, quantity, flags, and
+; enchantment or charges -- or x 255 and y the monster carrying it
 BYTE ARRAY ot(32), ox(32), oy(32), oq(32), of(32), oe(32)
-BYTE ARRAY oat(960) = $0F80          ; the top thing on a cell, plus one; rebuilt
+; the traps: kind (255 none), place, and whether seen and gone off once
+BYTE ARRAY tt(8), tx(8), ty(8), tf(8)
+; what is written in the dust, three a level: the place (255 none), and a
+; length byte and sixteen letters each in etx
+BYTE ARRAY ex(3), ey(3), etx(51)
+; the shop: its room (255 none), kind, keeper's slot and name, the door
+; and the keeper's post inside it, whether the hero has been in, the
+; keeper's gold and what was stolen from it
+BYTE shroom, shtype, shk, shname, shdx, shdy, spx, spy, shvis
+CARD shgold, shrob
+BYTE park_end
+; ---- the end of what is parked
 ; the hero's pack, and what of it is in use
 BYTE ARRAY it(18), iq(18), ifl(18), ie(18)
 BYTE ARRAY worn(7)                   ; the letter worn in each armour slot, 255 none
@@ -193,7 +227,14 @@ BYTE px, py                          ; the hero
 BYTE ulev, uhp, uhpmax, upw, upwmax, upara
 INT uac
 CARD uxp
-BYTE dead, killer                    ; and what did it
+BYTE dead, killer                    ; and what did it: a monster type, or KD_FIRST and on
+BYTE killgod                         ; whose wrath, for KD_WRATH
+; NetHack's alignment, alignment record, luck and prayer timeout
+BYTE ARRAY r_align(3) = [1 1 2]      ; 0 lawful, 1 neutral, 2 chaotic: the human Valkyrie and Wizard, the Rogue
+BYTE ualign, ugangr, upray, ptype
+INT urec, uluck
+CARD ublesscnt
+BYTE utrap, utraptype                ; turns a bear trap or a pit still holds the hero
 BYTE vx, vy                          ; the window's corner on the level
 CARD turns
 BYTE anim, animt                     ; the creatures' frame, and the frames to the next
@@ -307,7 +348,7 @@ RETURN
 
 PROC Palette()
   BYTE b
-  FOR b = 0 TO N_PAL - 1 DO SetPalette(yendor_pal + (b << 5), b << 4, 16) OD
+  FOR b = 0 TO N_PAL - 1 DO SetPalette(mott_pal + (b << 5), b << 4, 16) OD
 RETURN
 
 ; ------------------------------------------------------------- a frame
@@ -418,11 +459,67 @@ PROC Msg(BYTE POINTER s)
   MsgEnd()
 RETURN
 
+; a question printed: y is 1, n or Esc 0; and the key still down is the
+; answer, not a step -- y and n are movement keys too
+FUNC BYTE Answer()
+  BYTE a
+  a = KeyHit(KEY_Y)
+  a = KeyHit(KEY_N)
+  esc = 0
+  a = 0
+  DO
+    Tick()
+    IF KeyHit(KEY_Y) THEN a = 1 FI
+  UNTIL a OR KeyHit(KEY_N) OR esc OD
+  esc = 0
+  rep_c = 4
+  IF a THEN rep_c = 8 FI
+  rep_t = 0
+RETURN (a)
+
+FUNC BYTE YesNo(BYTE POINTER q)
+  Msg(q)
+RETURN (Answer())
+
+PROC Luck(INT n)
+  uluck = uluck + n
+  IF uluck < -10 THEN uluck = -10 FI
+  IF uluck > 10 THEN uluck = 10 FI
+RETURN
+
+; "a " or "an " and a name
+PROC MsgA(BYTE POINTER s)
+  BYTE POINTER q
+  BYTE ch
+  q = s + 1
+  ch = *q
+  IF ch == 'a' OR ch == 'e' OR ch == 'i' OR ch == 'o' OR ch == 'u' THEN MsgS("an ") ELSE MsgS("a ") FI
+  MsgS(s)
+RETURN
+
 ; ------------------------------------------------------------ the dice
 ; NetHack's rnd(n): one to n
 FUNC BYTE Roll(BYTE n)
   IF n == 0 THEN RETURN (0) FI
 RETURN (Rnd(n) + 1)
+
+; NetHack's rnl(x): 0 to x-1, pushed towards 0 by good luck and away by bad
+FUNC BYTE Rnl(BYTE x)
+  INT i, adj, a
+  i = Rnd(x)
+  adj = uluck
+  a = adj
+  IF a < 0 THEN a = -a FI
+  IF x <= 15 THEN
+    a = (a + 1) / 3
+    IF adj < 0 THEN adj = -a ELSE adj = a FI
+  FI
+  IF adj <> 0 AND Rnd(37 + a) <> 0 THEN
+    i = i - adj
+    IF i < 0 THEN i = 0 FI
+    IF i >= x THEN i = x - 1 FI
+  FI
+RETURN (i)
 
 FUNC BYTE Dice(BYTE n, BYTE s)
   BYTE t, i
@@ -436,14 +533,14 @@ FUNC BYTE ThemeOf(BYTE d)
   IF d <= 8 THEN RETURN (1) FI
 RETURN (2)
 
-; a theme's four pattern banks from YENDOR's drive into VRAM, at the
+; a theme's four pattern banks from MOTT's drive into VRAM, at the
 ; flash's own rate: 32,768 bytes in about eight frames. The font is the
 ; same bytes in every theme, so the words on the screen do not flicker
 FUNC BYTE LoadTheme(BYTE t)
   CARD o
   o = t
-  IF DiskFind(YDRIVE, theme_names + o * 11) == 0 THEN RETURN (0) FI
-  DiskOpen(YDRIVE)
+  IF DiskFind(MDRIVE, theme_names + o * 11) == 0 THEN RETURN (0) FI
+  DiskOpen(MDRIVE)
   VRAM_ADDR = PAT_BASE
   VRAM_STEP = 1
   st_n = 32768
@@ -466,24 +563,24 @@ RETURN ((i << 5) + (i << 3) + x)
 
 FUNC BYTE Kind(BYTE x, BYTE y)
   IF x >= LW OR y >= LH THEN RETURN (K_ROCK) FI
-RETURN (lv(Idx(x, y)) & 31)
+RETURN (lv(Idx(x, y)) & 15)
 
 PROC SetKind(BYTE x, BYTE y, BYTE k)
   CARD i
   i = Idx(x, y)
-  lv(i) = (lv(i) & 224) | k
+  lv(i) = (lv(i) & 240) | k
 RETURN
 
-; a wall joins to a wall, and to a door in one
+; a wall joins to a wall, and to a door in one, found or not
 FUNC BYTE WallLike(BYTE x, BYTE y)
   BYTE k
   k = Kind(x, y)
-  IF k == K_WALL OR k == K_DOORC OR k == K_DOORO OR k == K_DOORWAY THEN RETURN (1) FI
+  IF k == K_WALL OR k == K_DOORC OR k == K_DOORO OR k == K_DOORWAY OR k == K_SDOOR THEN RETURN (1) FI
 RETURN (0)
 
-; what a foot can stand on; a shut door is not that
+; what a foot can stand on; a shut door is not that, nor what is hidden
 FUNC BYTE Open(BYTE k)
-  IF k == K_ROCK OR k == K_WALL OR k == K_DOORC THEN RETURN (0) FI
+  IF k == K_ROCK OR k == K_WALL OR k == K_DOORC OR k == K_SDOOR OR k == K_SCORR THEN RETURN (0) FI
 RETURN (1)
 
 ; a door is never entered or left on the diagonal, as NetHack has it;
@@ -496,10 +593,15 @@ FUNC BYTE Diagonal(BYTE x, BYTE y, BYTE nx, BYTE ny)
   IF a == K_DOORO OR a == K_DOORC OR b == K_DOORO OR b == K_DOORC THEN RETURN (0) FI
 RETURN (1)
 
-; a door where a corridor meets a room's wall: half of them an empty
-; doorway, a third shut, the rest standing open
+; a door where a corridor meets a room's wall: one in eight a secret
+; door, as NetHack's dodoor() makes them; of the rest half an empty
+; doorway, a third shut, the others standing open
 PROC Door(BYTE x, BYTE y)
   BYTE r
+  IF Rnd(8) == 0 THEN
+    SetKind(x, y, K_SDOOR)
+    RETURN
+  FI
   r = Rnd(6)
   IF r < 3 THEN
     SetKind(x, y, K_DOORWAY)
@@ -510,8 +612,12 @@ PROC Door(BYTE x, BYTE y)
   FI
 RETURN
 
+BYTE nxcor                           ; digging the corridors beyond the ones that join every room
+
 PROC Dig(BYTE x, BYTE y)
-  IF Kind(x, y) == K_ROCK THEN SetKind(x, y, K_CORR) FI
+  IF Kind(x, y) == K_ROCK THEN
+    IF nxcor AND Rnd(35) == 0 THEN SetKind(x, y, K_SCORR) ELSE SetKind(x, y, K_CORR) FI
+  FI
 RETURN
 
 ; a corridor from a's east side to b's west, b the grid cell to its right:
@@ -613,7 +719,7 @@ FUNC CARD RoomSpot(BYTE r)
   FOR tries = 1 TO 40 DO
     x = rx1(r) + 1 + Rnd(rx2(r) - rx1(r) - 1)
     y = ry1(r) + 1 + Rnd(ry2(r) - ry1(r) - 1)
-    IF Kind(x, y) == K_FLOOR AND mat(Idx(x, y)) == 0 THEN
+    IF lv(Idx(x, y)) & (15 | F_TRAP) == K_FLOOR AND mat(Idx(x, y)) == 0 THEN
       s = x                          ; a shift keeps its left side's width: widen first
       RETURN ((s << 8) | y)
     FI
@@ -634,6 +740,36 @@ PROC Stair(BYTE r, BYTE k)
     dnx = x
     dny = y
   FI
+RETURN
+
+; ------------------------------------------------------------- the traps
+CONST TF_SEEN = 1
+CONST TF_ONCE = 2
+; NetHack's rubouts: a letter wiped becomes the one below it, or ?
+BYTE ARRAY ru_from = "ABCDEFGHIKLMNOPQRTUVWZbdeghjklmnoqwy:;,="
+BYTE ARRAY ru_to = "^P(|||C||||||CFCP|J/V/|cccni||nrccvv.,.-"
+BYTE ARRAY elbereth = "elbereth"
+
+CONST OF_UNPAID = 16                 ; in the pack, the shop's until paid for
+CONST OF_DEAR = 32                   ; one in four of a shop's things: dearer while its kind is unknown
+CONST OF_NOCHG = 64                  ; on a shop's floor, the hero's own
+CONST S_HOSTILE = 8                  ; a peaceful kind of monster made angry
+CARD shdebt                          ; what the hero has used up unpaid, not parked: it is settled or stolen on leaving
+
+FUNC BYTE TrapAt(BYTE x, BYTE y)
+  BYTE i
+  IF x >= LW OR y >= LH THEN RETURN (255) FI
+  IF lv(Idx(x, y)) & F_TRAP == 0 THEN RETURN (255) FI
+  FOR i = 0 TO MAXTRAP - 1 DO
+    IF tt(i) <> 255 AND tx(i) == x AND ty(i) == y THEN RETURN (i) FI
+  OD
+RETURN (255)
+
+PROC DelTrap(BYTE i)
+  CARD c
+  c = Idx(tx(i), ty(i))
+  lv(c) = lv(c) & (255 ^ F_TRAP)
+  tt(i) = 255
 RETURN
 
 ; ------------------------------------------------------------- the objects
@@ -666,7 +802,7 @@ FUNC BYTE PutObj(BYTE t, BYTE q, BYTE f, BYTE e, BYTE x, BYTE y)
       oe(i) = e
       ox(i) = x
       oy(i) = y
-      oat(Idx(x, y)) = i + 1
+      IF x < LW THEN oat(Idx(x, y)) = i + 1 FI
       RETURN (i)
     FI
   OD
@@ -839,25 +975,48 @@ FUNC BYTE InvAdd(BYTE t, BYTE q, BYTE f, BYTE e)
 RETURN (255)
 
 ; ----------------------------------------------------------- the monsters
-; a name from YNAMES.DAT, into nbuf: record k, NAME_REC bytes each, from
-; the page Title found the file on. One buffer, so a name is used before
-; the next is asked for
+; a file on MOTT's drive opened at an offset: the page Title found it on
+PROC FOpen(CARD page, CARD off)
+  CARD lo, at
+  BYTE hi
+  lo = page & 255
+  lo = lo << 8
+  at = lo + off
+  hi = $10 + MDRIVE * 7 + (page >> 8)
+  IF at < lo THEN hi += 1 FI
+  FlashOpen(at, hi)
+RETURN
+
+; a name from MNAMES.DAT, into nbuf: record k, NAME_REC bytes each. One
+; buffer, so a name is used before the next is asked for
 CARD names_page
 BYTE ARRAY nbuf(NAME_REC)
 
 FUNC BYTE POINTER NameRec(CARD k)
-  CARD lo, at
-  BYTE hi
-  lo = names_page & 255
-  lo = lo << 8
-  at = lo + k * NAME_REC
-  hi = $10 + YDRIVE * 7 + (names_page >> 8)
-  IF at < lo THEN hi += 1 FI
-  FlashOpen(at, hi)
+  FOpen(names_page, k * NAME_REC)
   nbuf(0) = FlashByte()
   FlashRead(nbuf + 1, nbuf(0))
   FlashClose()
 RETURN (nbuf)
+
+; a #"text" string from MOTT.STR, the compiler's file of them, into sbuf:
+; its offset from the table at the front, then the string. One buffer, as
+; for the names
+CARD str_page
+BYTE ARRAY sbuf(81)
+BYTE ARRAY str_file = "MOTT    STR"
+
+FUNC BYTE POINTER Str(CARD n)
+  CARD o
+  FOpen(str_page, n + n + 2)
+  o = FlashByte()
+  o = o + FlashByte() * 256
+  FlashClose()
+  FOpen(str_page, o)
+  sbuf(0) = FlashByte()
+  FlashRead(sbuf + 1, sbuf(0))
+  FlashClose()
+RETURN (sbuf)
 
 FUNC BYTE POINTER MonName(BYTE t)
 RETURN (NameRec(NAME_MON + t))
@@ -889,6 +1048,7 @@ FUNC BYTE NewMon(BYTE t, BYTE x, BYTE y)
       mstat(i) = S_LIVE
       mmove(i) = Rnd(12)
       msl(i) = 0
+      mflee(i) = 0
       mx(i) = x
       my(i) = y
       Place(i)
@@ -979,6 +1139,212 @@ FUNC BYTE FindPet()
   OD
 RETURN (255)
 
+; NetHack's mktrap(): a trap somewhere in room g, of a kind no harder than
+; the depth allows, and no trap door on the bottom level
+PROC MkTrap(BYTE g)
+  BYTE i, k
+  CARD s
+  s = RoomSpot(g)
+  IF s == $FFFF THEN RETURN FI
+  FOR i = 0 TO MAXTRAP - 1 DO
+    IF tt(i) == 255 THEN
+      DO
+        k = Rnd(N_TRAP)
+      UNTIL depth >= tr_min(k) AND (k <> TR_TRAPDOOR OR depth < MAXDEPTH) OD
+      tt(i) = k
+      tx(i) = s >> 8
+      ty(i) = s
+      tf(i) = 0
+      s = Idx(tx(i), ty(i))
+      lv(s) = lv(s) | F_TRAP
+      RETURN
+    FI
+  OD
+RETURN
+
+; ---------------------------------------------------------------- shops
+; the doors in room g's walls, the last found into shdx, shdy
+FUNC BYTE Doors(BYTE g)
+  BYTE x, y, k, n
+  n = 0
+  FOR y = ry1(g) TO ry2(g) DO
+    FOR x = rx1(g) TO rx2(g) DO
+      IF x == rx1(g) OR x == rx2(g) OR y == ry1(g) OR y == ry2(g) THEN
+        k = Kind(x, y)
+        IF k == K_DOORC OR k == K_DOORO OR k == K_DOORWAY OR k == K_SDOOR THEN
+          n += 1
+          shdx = x
+          shdy = y
+        FI
+      FI
+    OD
+  OD
+RETURN (n)
+
+; NetHack's mkshop() and stock_room(): a room with one door and no stairs,
+; lit; a kind by shknam.c's odds, a big room no wand shop; the keeper on
+; the post inside the door with 1000 to 4000 gold; a thing on every floor
+; cell but the row along the door's wall, while the level has room for
+PROC MkShop(BYTE u, BYTE d)
+  BYTE g, x, y, r, i, t, c
+  CARD k
+  shroom = 255
+  FOR g = 0 TO 8 DO
+    IF rgone(g) == 0 AND g <> u AND g <> d AND shroom == 255 THEN
+      IF Doors(g) == 1 THEN shroom = g FI
+    FI
+  OD
+  IF shroom == 255 THEN RETURN FI
+  g = shroom
+  Doors(g)
+  k = Kind(shdx, shdy)
+  IF k == K_SDOOR THEN SetKind(shdx, shdy, K_DOORC) FI
+  IF k == K_DOORWAY THEN SetKind(shdx, shdy, K_DOORO) FI
+  spx = shdx
+  spy = shdy
+  IF shdx == rx1(g) THEN spx += 1 FI
+  IF shdx == rx2(g) THEN spx -= 1 FI
+  IF shdy == ry1(g) THEN spy += 1 FI
+  IF shdy == ry2(g) THEN spy -= 1 FI
+  r = Rnd(SHOP_ODDS)
+  shtype = 0
+  WHILE r >= sh_prob(shtype) DO
+    r -= sh_prob(shtype)
+    shtype += 1
+  OD
+  IF shtype == SH_WAND AND (rx2(g) - rx1(g) - 1) * (ry2(g) - ry1(g) - 1) > 20 THEN shtype = SH_GENERAL FI
+  shname = Rnd(8)
+  shvis = 0
+  shrob = 0
+  shgold = 1000 + 30 * Roll(100)
+  shk = NewMon(M_SHOPKEEPER, spx, spy)
+  FOR y = ry1(g) + 1 TO ry2(g) - 1 DO
+    FOR x = rx1(g) + 1 TO rx2(g) - 1 DO
+      IF lv(Idx(x, y)) & F_TRAP == 0 THEN lv(Idx(x, y)) = lv(Idx(x, y)) | F_LIT FI
+      c = 1
+      IF (shdx == rx1(g) AND x == rx1(g) + 1) OR (shdx == rx2(g) AND x == rx2(g) - 1) THEN c = 0 FI
+      IF (shdy == ry1(g) AND y == ry1(g) + 1) OR (shdy == ry2(g) AND y == ry2(g) - 1) THEN c = 0 FI
+      i = 0
+      FOR r = 0 TO MAXOBJ - 1 DO
+        IF ot(r) == 255 THEN i += 1 FI
+      OD
+      IF c AND i > 6 THEN
+        r = Rnd(20)
+        IF shtype == SH_GENERAL THEN
+          t = MkKind()
+        ELSEIF shtype == SH_ARMOR THEN
+          IF r < 18 THEN t = PickKind(C_ARMOR) ELSE t = PickKind(C_WEAPON) FI
+        ELSEIF shtype == SH_SCROLL THEN
+          t = PickKind(C_SCROLL)
+        ELSEIF shtype == SH_POTION THEN
+          t = PickKind(C_POTION)
+        ELSEIF shtype == SH_WEAPON THEN
+          IF r < 18 THEN t = PickKind(C_WEAPON) ELSE t = PickKind(C_ARMOR) FI
+        ELSEIF shtype == SH_RING THEN
+          IF r < 19 THEN t = PickKind(C_RING) ELSE t = O_LIFESAVING FI
+        ELSE
+          t = PickKind(C_WAND)
+          IF r == 18 THEN t = O_GLOVES FI
+          IF r == 19 THEN t = O_CLOAK FI
+        FI
+        Bless(t)
+        IF Rnd(4) == 0 THEN nf = nf | OF_DEAR FI
+        i = PutObj(t, 1, nf, ne, x, y)
+      FI
+    OD
+  OD
+RETURN
+
+FUNC BYTE ShkOk()
+  IF shroom == 255 THEN RETURN (0) FI
+  IF mstat(shk) == 0 OR mtype(shk) <> M_SHOPKEEPER THEN RETURN (0) FI
+RETURN (1)
+
+; the shop's room, its walls and door among it
+FUNC BYTE InShop(BYTE x, BYTE y)
+  IF shroom == 255 THEN RETURN (0) FI
+  IF x < rx1(shroom) OR x > rx2(shroom) OR y < ry1(shroom) OR y > ry2(shroom) THEN RETURN (0) FI
+RETURN (1)
+
+PROC ShkName()
+  MsgS(NameRec(NAME_SHK + shtype * 8 + shname))
+RETURN
+
+; NetHack's get_cost() for one, or set_cost() when the keeper buys:
+; objects.c's cost, ten a point of a weapon's or armour's enchantment,
+; uncursed water nothing; a third more for one in four of a kind not
+; known, a third more again from an angry keeper; half when selling, and
+; a quarter less of that for the same ones
+FUNC CARD Price(BYTE t, BYTE f, BYTE e, BYTE sell)
+  CARD p
+  BYTE c
+  p = o_cost(t)
+  c = o_class(t)
+  IF (c == C_WEAPON OR c == C_ARMOR) AND e > 0 AND e < 128 THEN p = p + e * 10 FI
+  IF t == O_WATER AND f & (OF_BLESS | OF_CURSE) == 0 THEN p = 0 FI
+  IF sell THEN
+    IF known(t) == 0 AND f & OF_DEAR THEN RETURN ((p * 30 / 8 + 5) / 10) FI
+    RETURN ((p * 5 + 5) / 10)
+  FI
+  IF p == 0 THEN p = 5 FI
+  IF known(t) == 0 AND f & OF_DEAR THEN p = (p * 40 / 3 + 5) / 10 FI
+  IF mstat(shk) & S_HOSTILE THEN p = p + (p + 2) / 3 FI
+RETURN (p)
+
+; what the hero owes the shop: the unpaid things and what is used up
+FUNC CARD Bill()
+  BYTE k
+  CARD b
+  b = shdebt
+  FOR k = 0 TO MAXINV - 1 DO
+    IF it(k) <> 255 AND ifl(k) & OF_UNPAID THEN b = b + Price(it(k), ifl(k), ie(k), 0) * iq(k) FI
+  OD
+RETURN (b)
+
+; what the hero owes for a thing used up unpaid
+PROC Owe(CARD p)
+  shdebt = shdebt + p
+  mbl = 0
+  MsgS(Str(#"You owe "))
+  ShkName()
+  MsgC(' ')
+  MsgN(p)
+  MsgS(" zorkmids.")
+  MsgEnd()
+RETURN
+
+; the pack's unpaid things the hero's own, the debt gone
+PROC ClearUnpaid()
+  BYTE k
+  FOR k = 0 TO MAXINV - 1 DO
+    ifl(k) = ifl(k) & (255 ^ (OF_UNPAID | OF_DEAR))
+  OD
+  shdebt = 0
+RETURN
+
+; NetHack's rob_shop(): out of the shop, or off the level, owing; the
+; keeper angry, the things the hero's, and the reckoning kept
+PROC Rob()
+  BYTE k
+  CARD b
+  b = Bill()
+  IF ShkOk() == 0 THEN ClearUnpaid() FI
+  IF b == 0 OR ShkOk() == 0 THEN RETURN FI
+  Msg(Str(#"You escaped the shop without paying!"))
+  mbl = 0
+  MsgS(Str(#"You stole "))
+  MsgN(b)
+  MsgS(Str(#" zorkmids worth of merchandise."))
+  MsgEnd()
+  ClearUnpaid()
+  shrob = shrob + b
+  mstat(shk) = mstat(shk) | S_HOSTILE
+  IF role <> 2 THEN
+    IF ualign == 0 THEN urec -= 1 FI
+    IF ualign == 2 THEN urec += 1 FI
+  FI
+RETURN
+
 ; Rogue's level: nine cells of a three by three grid, most of them a room
 ; and a few only a turn in a corridor; every cell joined to the rest by a
 ; walk from one to a neighbour not yet joined, then a few loops more;
@@ -994,6 +1360,8 @@ PROC MakeLevel()
   OD
   FOR g = 0 TO MAXMON - 1 DO mstat(g) = 0 OD
   FOR g = 0 TO MAXOBJ - 1 DO ot(g) = 255 OD
+  FOR g = 0 TO MAXTRAP - 1 DO tt(g) = 255 OD
+  FOR g = 0 TO MAXENGR - 1 DO ex(g) = 255 OD
   lit = 9
   IF depth > 4 THEN lit = 7 FI
   IF depth > 8 THEN lit = 5 FI
@@ -1048,23 +1416,28 @@ PROC MakeLevel()
       FI
     FI
   OD
+  nxcor = 1
   FOR n = 0 TO Rnd(3) DO
     a = Rnd(9)
     b = Beside(a, Rnd(4))
     IF b <> 255 THEN Join(a, b) FI
   OD
+  nxcor = 0
   DO
     u = Rnd(9)
   UNTIL rgone(u) == 0 OD
   Stair(u, K_UP)
+  d = 255
+  shroom = 255
   IF depth < MAXDEPTH THEN
     DO
       d = Rnd(9)
     UNTIL rgone(d) == 0 AND d <> u OD
     Stair(d, K_DOWN)
   FI
+  IF depth > 1 AND Rnd(depth) < 3 THEN MkShop(u, d) FI
   FOR g = 0 TO 8 DO
-    IF rgone(g) == 0 AND g <> u AND Rnd(3) == 0 THEN
+    IF rgone(g) == 0 AND g <> u AND g <> shroom AND Rnd(3) == 0 THEN
       s = RoomSpot(g)
       IF s <> $FFFF THEN Spawn(s >> 8, s) FI
     FI
@@ -1072,10 +1445,20 @@ PROC MakeLevel()
   ; NetHack's room filling: gold one room in three, and a thing one room
   ; in three with a one in five chance of another after each
   FOR g = 0 TO 8 DO
-    IF rgone(g) == 0 THEN
+    IF rgone(g) == 0 AND g <> shroom THEN
+      k = 8 - depth / 6
+      WHILE Rnd(k) == 0 DO MkTrap(g) OD
       IF Rnd(3) == 0 THEN
         s = RoomSpot(g)
         IF s <> $FFFF THEN MkGold(s >> 8, s) FI
+      FI
+      IF Rnd(10) == 0 THEN
+        s = RoomSpot(g)
+        IF s <> $FFFF THEN SetKind(s >> 8, s, K_FOUNTAIN) FI
+      FI
+      IF Rnd(20) == 0 THEN
+        s = RoomSpot(g)
+        IF s <> $FFFF THEN SetKind(s >> 8, s, K_ALTAR + Rnd(3)) FI
       FI
       IF Rnd(3) == 0 THEN
         DO
@@ -1107,30 +1490,11 @@ RETURN
 
 PROC SaveLevel()
   CARD s
+  Rob()
   IF nvis THEN ForgetView() FI
   s = Slot(depth)
   VWrite(s, lv, NCELL)
-  VWrite(s + 960, rx1, 9)
-  VWrite(s + 969, ry1, 9)
-  VWrite(s + 978, rx2, 9)
-  VWrite(s + 987, ry2, 9)
-  VWrite(s + 996, rgone, 9)
-  VWrite(s + 1005, &upx, 4)
-  VWrite(s + 1009, mtype, MAXMON)
-  VWrite(s + 1029, mx, MAXMON)
-  VWrite(s + 1049, my, MAXMON)
-  VWrite(s + 1069, mhp, MAXMON)
-  VWrite(s + 1089, mhpmax, MAXMON)
-  VWrite(s + 1109, mlev, MAXMON)
-  VWrite(s + 1129, mstat, MAXMON)
-  VWrite(s + 1149, mmove, MAXMON)
-  VWrite(s + 1169, ot, MAXOBJ)
-  VWrite(s + 1201, ox, MAXOBJ)
-  VWrite(s + 1233, oy, MAXOBJ)
-  VWrite(s + 1265, oq, MAXOBJ)
-  VWrite(s + 1297, of, MAXOBJ)
-  VWrite(s + 1329, oe, MAXOBJ)
-  VWrite(s + 1361, msl, MAXMON)
+  VWrite(s + NCELL, rx1, &park_end - rx1)
 RETURN
 
 PROC LoadLevel()
@@ -1138,27 +1502,7 @@ PROC LoadLevel()
   BYTE m
   s = Slot(depth)
   VRead(s, lv, NCELL)
-  VRead(s + 960, rx1, 9)
-  VRead(s + 969, ry1, 9)
-  VRead(s + 978, rx2, 9)
-  VRead(s + 987, ry2, 9)
-  VRead(s + 996, rgone, 9)
-  VRead(s + 1005, &upx, 4)
-  VRead(s + 1009, mtype, MAXMON)
-  VRead(s + 1029, mx, MAXMON)
-  VRead(s + 1049, my, MAXMON)
-  VRead(s + 1069, mhp, MAXMON)
-  VRead(s + 1089, mhpmax, MAXMON)
-  VRead(s + 1109, mlev, MAXMON)
-  VRead(s + 1129, mstat, MAXMON)
-  VRead(s + 1149, mmove, MAXMON)
-  VRead(s + 1169, ot, MAXOBJ)
-  VRead(s + 1201, ox, MAXOBJ)
-  VRead(s + 1233, oy, MAXOBJ)
-  VRead(s + 1265, oq, MAXOBJ)
-  VRead(s + 1297, of, MAXOBJ)
-  VRead(s + 1329, oe, MAXOBJ)
-  VRead(s + 1361, msl, MAXMON)
+  VRead(s + NCELL, rx1, &park_end - rx1)
   FOR i = 0 TO NCELL - 1 DO
     mat(i) = 0
     oat(i) = 0
@@ -1167,7 +1511,7 @@ PROC LoadLevel()
     IF mstat(m) THEN Place(m) FI
   OD
   FOR m = 0 TO MAXOBJ - 1 DO
-    IF ot(m) <> 255 THEN oat(Idx(ox(m), oy(m))) = m + 1 FI
+    IF ot(m) <> 255 AND ox(m) < LW THEN oat(Idx(ox(m), oy(m))) = m + 1 FI
   OD
 RETURN
 
@@ -1204,8 +1548,21 @@ PROC DrawCell(BYTE x, BYTE y)
     Pic(col, row, (o_pic(t) + ap(t)) << 2, 16 | a)
     RETURN
   FI
-  k = c & 31
-  IF k == K_WALL THEN
+  IF c & F_TRAP THEN
+    m = TrapAt(x, y)
+    IF m <> 255 THEN
+      IF tf(m) & TF_SEEN THEN
+        Pic(col, row, T_TRAP + (tt(m) << 2), a)
+        RETURN
+      FI
+    FI
+  FI
+  k = c & 15
+  IF k == K_SCORR THEN
+    Blank(col, row)
+    RETURN
+  FI
+  IF k == K_WALL OR k == K_SDOOR THEN
     m = (WallLike(x, y - 1) << 3) | (WallLike(x, y + 1) << 2) | (WallLike(x - 1, y) << 1) | WallLike(x + 1, y)
     t = T_WALL + (m << 2)
   ELSEIF k == K_FLOOR THEN
@@ -1218,6 +1575,10 @@ PROC DrawCell(BYTE x, BYTE y)
     t = T_UP
   ELSEIF k == K_DOWN THEN
     t = T_DOWN
+  ELSEIF k == K_FOUNTAIN THEN
+    t = T_FOUNTAIN
+  ELSEIF k >= K_ALTAR THEN
+    t = T_ALTAR
   ELSEIF Kind(x - 1, y) == K_WALL OR Kind(x + 1, y) == K_WALL THEN
     t = T_DOOR_CLOSED_H
     IF k == K_DOORO THEN t = T_DOOR_OPEN_H FI
@@ -1433,7 +1794,7 @@ PROC LevelUp()
   upwmax += g
   upw += g
   mbl = 0
-  MsgS("Welcome to experience level ")
+  MsgS(Str(#"Welcome to experience level "))
   MsgN(ulev)
   MsgC('.')
   MsgEnd()
@@ -1448,7 +1809,7 @@ PROC LoseLevel()
   BYTE g
   IF ulev <= 1 THEN RETURN FI
   mbl = 0
-  MsgS("Goodbye level ")
+  MsgS(Str(#"Goodbye level "))
   MsgN(ulev)
   MsgC('.')
   MsgEnd()
@@ -1486,9 +1847,9 @@ PROC HurtHero(BYTE d, BYTE t)
   FI
   IF uamul <> 255 THEN
     IF it(uamul) == O_LIFESAVING THEN
-      Msg("But wait... Your medallion begins to glow!")
-      Msg("You feel much better!")
-      Msg("The medallion crumbles to dust!")
+      Msg(Str(#"But wait... Your medallion begins to glow!"))
+      Msg(Str(#"You feel much better!"))
+      Msg(Str(#"The medallion crumbles to dust!"))
       known(O_LIFESAVING) = 1
       InvDel(uamul, 1)
       uhp = uhpmax
@@ -1507,6 +1868,10 @@ RETURN
 
 ; "The jackal", "the jackal", or "It" and "it" for one out of sight
 PROC MsgMon(BYTE i, BYTE cap)
+  IF i == shk AND ShkOk() AND lv(Idx(mx(i), my(i))) & F_VIS THEN
+    ShkName()
+    RETURN
+  FI
   IF lv(Idx(mx(i), my(i))) & F_VIS THEN
     IF cap THEN MsgS("The ") ELSE MsgS("the ") FI
     MsgS(MonName(mtype(i)))
@@ -1518,6 +1883,14 @@ PROC MsgMon(BYTE i, BYTE cap)
 RETURN
 
 PROC Remove(BYTE i)
+  BYTE k
+  FOR k = 0 TO MAXOBJ - 1 DO          ; what it carried falls where it was
+    IF ot(k) <> 255 AND ox(k) == 255 AND oy(k) == i THEN
+      ox(k) = mx(i)
+      oy(k) = my(i)
+      oat(Idx(mx(i), my(i))) = k + 1
+    FI
+  OD
   Unplace(i)
   mstat(i) = 0
   DrawCell(mx(i), my(i))
@@ -1540,7 +1913,7 @@ PROC PetGrow(BYTE p, BYTE vl)
     mbl = 0
     MsgS("Your ")
     MsgS(MonName(t))
-    MsgS(" grows up into a ")
+    MsgS(Str(#" grows up into a "))
     mtype(p) = t + 1
     MsgS(MonName(t + 1))
     MsgC('.')
@@ -1563,11 +1936,21 @@ FUNC BYTE HurtMon(BYTE i, BYTE d)
   MsgMon(i, 0)
   MsgC('!')
   MsgEnd()
+  IF m_flag(t) & MF_PEACE AND mstat(i) & S_HOSTILE == 0 THEN
+    urec -= 6
+    IF ualign <> 2 THEN
+      Msg(Str(#"You murderer!"))
+      Luck(-2)
+    FI
+    IF Rnd(2) THEN Luck(-1) FI
+  FI
   Remove(i)
+  IF i == shk AND t == M_SHOPKEEPER THEN ClearUnpaid() FI
   IF Rnd(6) == 0 THEN
     MkObj(mx(i), my(i))
     DrawCell(mx(i), my(i))
   FI
+  IF urec < 10 + turns / 200 THEN urec += 1 FI
   GainXP(m_xp(t))
 RETURN (1)
 
@@ -1584,18 +1967,18 @@ PROC Passive(BYTE i)
   s = m_att(o + 2)
   IF fx == E_PLYS THEN
     IF Wearing(O_RFREEACTION) THEN
-      Msg("You momentarily stiffen.")
+      Msg(Str(#"You momentarily stiffen."))
     ELSEIF upara == 0 THEN
-      Msg("You are frozen by its gaze!")
+      Msg(Str(#"You are frozen by its gaze!"))
       upara = Dice(mlev(i) + 1, 10)
     FI
   ELSEIF fx == E_ACID THEN
     IF Rnd(2) == 0 THEN
-      Msg("You are splashed by acid!")
+      Msg(Str(#"You are splashed by acid!"))
       HurtHero(Dice(mlev(i) + 1, s), t)
     FI
   ELSEIF fx == E_STUN THEN
-    Msg("You are stung!")
+    Msg(Str(#"You are stung!"))
     HurtHero(Dice(mlev(i) + 1, s), t)
   FI
 RETURN
@@ -1605,6 +1988,7 @@ RETURN
 PROC HeroAttack(BYTE i)
   INT tmp, en, d
   BYTE t, sides
+  WipeEngr(px, py, 3)
   t = mtype(i)
   sides = 2                          ; bare hands
   en = 0
@@ -1638,11 +2022,11 @@ PROC Verb(BYTE kind)
   ELSEIF kind == A_STNG THEN
     MsgS(" stings!")
   ELSEIF kind == A_TUCH THEN
-    MsgS(" touches you!")
+    MsgS(Str(#" touches you!"))
   ELSEIF kind == A_BUTT THEN
     MsgS(" butts!")
   ELSEIF kind == A_HUGS THEN
-    MsgS(" squeezes you!")
+    MsgS(Str(#" squeezes you!"))
   ELSEIF kind == A_KICK THEN
     MsgS(" kicks!")
   ELSE
@@ -1650,11 +2034,54 @@ PROC Verb(BYTE kind)
   FI
 RETURN
 
+; NetHack's steal(): a thing not worn, the whole of it, into the thief's
+; hands -- a thing on the level's list at x 255, y the thief -- and the
+; thief away elsewhere on the level, running
+PROC Steal(BYTE i)
+  BYTE k, n, j
+  n = 0
+  FOR k = 0 TO MAXINV - 1 DO
+    IF it(k) <> 255 AND IsWorn(k) == 0 THEN n += 1 FI
+  OD
+  mbl = 0
+  MsgMon(i, 1)
+  IF n == 0 THEN
+    MsgS(Str(#" tries to rob you, but there is nothing to steal!"))
+    MsgEnd()
+    mflee(i) = 255
+    RETURN
+  FI
+  n = Rnd(n)
+  FOR k = 0 TO MAXINV - 1 DO
+    IF it(k) <> 255 AND IsWorn(k) == 0 THEN
+      IF n == 0 THEN
+        MsgS(Str(#" stole "))
+        InvName(k)
+        MsgC('.')
+        MsgEnd()
+        j = PutObj(it(k), iq(k), ifl(k), ie(k), 255, i)
+        InvDel(k, iq(k))
+        MonTeleport(i)
+        mflee(i) = 255
+        RETURN
+      FI
+      n -= 1
+    FI
+  OD
+RETURN
+
 ; a monster strikes the hero: NetHack's mattacku(), each attack in turn
 PROC MonAttack(BYTE i)
   BYTE t, a, kind, fx, n, s, d
   INT tmp
   CARD o
+  IF upray AND ptype == 3 THEN
+    mbl = 0
+    MsgMon(i, 1)
+    MsgS(Str(#" starts to attack you, but pulls back."))
+    MsgEnd()
+    RETURN
+  FI
   t = mtype(i)
   FOR a = 0 TO 2 DO
     o = t
@@ -1673,19 +2100,22 @@ PROC MonAttack(BYTE i)
         d = Dice(n, s)
         IF fx == E_POIS AND Rnd(8) == 0 THEN
           IF Wearing(O_RPOISONRES) THEN
-            Msg("The poison doesn't seem to affect you.")
+            Msg(Str(#"The poison doesn't seem to affect you."))
           ELSE
-            Msg("It was poisoned!")
+            Msg(Str(#"It was poisoned!"))
             d += Roll(6)
           FI
         ELSEIF fx == E_SLEE AND Rnd(3) == 0 AND upara == 0 AND Wearing(O_RFREEACTION) == 0 THEN
-          Msg("You are put to sleep!")
+          Msg(Str(#"You are put to sleep!"))
           upara = Roll(10)
         ELSEIF fx == E_DRLI AND Rnd(3) == 0 THEN
           LoseLevel()
+        ELSEIF fx == E_SITM THEN
+          Steal(i)
+          RETURN
         ELSEIF fx == E_SGLD AND ugold > 0 THEN
           ugold = ugold / 2
-          Msg("Your purse feels lighter.")
+          Msg(Str(#"Your purse feels lighter."))
           MonTeleport(i)
           HurtHero(d, t)
           RETURN
@@ -1733,7 +2163,7 @@ PROC MonHitsMon(BYTE ag, BYTE df)
         IF d >= mhp(df) THEN
           IF seen THEN
             MsgMon(df, 1)
-            MsgS(" is killed!")
+            MsgS(Str(#" is killed!"))
             MsgEnd()
           FI
           Remove(df)
@@ -1756,6 +2186,65 @@ PROC MonHitsMon(BYTE ag, BYTE df)
   OD
 RETURN
 
+; ----------------------------------------------------------- engravings
+
+FUNC BYTE EngrAt(BYTE x, BYTE y)
+  BYTE e
+  FOR e = 0 TO MAXENGR - 1 DO
+    IF ex(e) == x AND ey(e) == y THEN RETURN (e) FI
+  OD
+RETURN (255)
+
+; NetHack's wipe_engr_at() for dust: cnt letters rubbed out at random, and
+; the engraving gone when nothing is left of it
+PROC WipeEngr(BYTE x, BYTE y, BYTE cnt)
+  BYTE e, n, p, ch, j
+  CARD at
+  e = EngrAt(x, y)
+  IF e == 255 THEN RETURN FI
+  at = e * 17
+  n = etx(at)
+  WHILE cnt > 0 DO
+    cnt -= 1
+    p = at + 1 + Rnd(n)
+    ch = etx(p)
+    IF ch <> ' ' THEN
+      IF ch == '?' OR ch == '.' OR ch == ',' OR ch == '-' OR ch == '|' OR ch == '_' THEN
+        etx(p) = ' '
+      ELSE
+        etx(p) = '?'
+        IF Rnd(4) THEN
+          FOR j = 1 TO ru_from(0) DO
+            IF ru_from(j) == ch THEN etx(p) = ru_to(j) FI
+          OD
+        FI
+      FI
+    FI
+  OD
+  FOR p = 1 TO n DO
+    IF etx(at + p) <> ' ' THEN RETURN FI
+  OD
+  ex(e) = 255
+RETURN
+
+; NetHack 3.6's onscary() for Elbereth: the hero standing on it, exactly
+; that and nothing more, before a monster that is not a human -- the
+; soldier and the town's people, who come last -- nor peaceful
+FUNC BYTE Scary(BYTE i)
+  BYTE e, j, ch, t
+  CARD at
+  t = mtype(i)
+  IF t == M_SOLDIER OR t >= M_SHOPKEEPER THEN RETURN (0) FI
+  e = EngrAt(px, py)
+  IF e == 255 THEN RETURN (0) FI
+  at = e * 17
+  IF etx(at) <> 8 THEN RETURN (0) FI
+  FOR j = 1 TO 8 DO
+    ch = etx(at + j) | $20
+    IF ch <> elbereth(j) THEN RETURN (0) FI
+  OD
+RETURN (1)
+
 ; ------------------------------------------------------- monsters moving
 FUNC BYTE Dist(BYTE ax, BYTE ay, BYTE bx, BYTE by)
   BYTE dx, dy
@@ -1767,7 +2256,7 @@ RETURN (dy)
 ; a monster's step towards (tx, ty): of the eight cells, the free one
 ; nearest, if it is nearer than where it stands; a shut door opened by a
 ; monster with hands, which is its move
-PROC StepToward(BYTE i, BYTE tx, BYTE ty)
+FUNC BYTE StepToward(BYTE i, BYTE tx, BYTE ty, BYTE away)
   BYTE d, k, nx, ny, best, bx, by, kind, x, y
   INT dx, dy, bd, dd
   x = mx(i)
@@ -1785,13 +2274,13 @@ PROC StepToward(BYTE i, BYTE tx, BYTE ty)
     ny = y + dir_dy(k)
     IF nx < LW AND ny < LH THEN
       kind = Kind(nx, ny)
-      IF (Open(kind) OR kind == K_DOORC) AND MonAt(nx, ny) == 0 AND (nx <> px OR ny <> py) AND Diagonal(x, y, nx, ny) THEN
+      IF (Open(kind) OR kind == K_DOORC) AND MonAt(nx, ny) == 0 AND (nx <> px OR ny <> py) AND Diagonal(x, y, nx, ny) AND lv(Idx(nx, ny)) & F_TRAP == 0 THEN
         dx = nx
         dx = dx - tx
         dy = ny
         dy = dy - ty
         dd = dx * dx + dy * dy
-        IF dd < bd THEN
+        IF (away == 0 AND dd < bd) OR (away AND dd > bd) THEN
           bd = dd
           best = k
           bx = nx
@@ -1800,12 +2289,12 @@ PROC StepToward(BYTE i, BYTE tx, BYTE ty)
       FI
     FI
   OD
-  IF best == 0 THEN RETURN FI
+  IF best == 0 THEN RETURN (0) FI
   IF Kind(bx, by) == K_DOORC THEN
-    IF m_flag(mtype(i)) & MF_NOHANDS THEN RETURN FI
+    IF m_flag(mtype(i)) & MF_NOHANDS THEN RETURN (0) FI
     SetKind(bx, by, K_DOORO)
     DrawCell(bx, by)
-    RETURN
+    RETURN (1)
   FI
   Unplace(i)
   mx(i) = bx
@@ -1813,7 +2302,7 @@ PROC StepToward(BYTE i, BYTE tx, BYTE ty)
   Place(i)
   DrawCell(x, y)
   DrawCell(bx, by)
-RETURN
+RETURN (1)
 
 ; the pet: at a hostile beside it that it is not afraid of -- nothing two
 ; levels above it -- else back to the hero, and about the hero when near
@@ -1831,10 +2320,26 @@ PROC PetAct(BYTE i)
   OD
   IF Dist(mx(i), my(i), px, py) > 2 OR Rnd(3) == 0 THEN
     IF Dist(mx(i), my(i), px, py) <= 2 THEN
-      StepToward(i, mx(i) + Rnd(3) - 1, my(i) + Rnd(3) - 1)
+      j = StepToward(i, mx(i) + Rnd(3) - 1, my(i) + Rnd(3) - 1, 0)
     ELSE
-      StepToward(i, px, py)
+      j = StepToward(i, px, py, 0)
     FI
+  FI
+RETURN
+
+; the peaceful shopkeeper, NetHack's shk_move(): to the post inside the
+; door while the hero in the shop owes, off it to let the hero by when
+; not, and back to it when the hero is outside
+PROC ShkAct(BYTE i)
+  BYTE g, b
+  IF i <> shk THEN RETURN FI
+  g = shroom
+  IF InShop(px, py) AND Bill() == 0 THEN
+    IF mx(i) == spx AND my(i) == spy AND Dist(px, py, spx, spy) <= 2 THEN
+      b = StepToward(i, (rx1(g) + rx2(g)) / 2, (ry1(g) + ry2(g)) / 2, 0)
+    FI
+  ELSEIF mx(i) <> spx OR my(i) <> spy THEN
+    b = StepToward(i, spx, spy, 0)
   FI
 RETURN
 
@@ -1842,7 +2347,7 @@ RETURN
 ; it, towards the hero if it sees it -- anything the hero sees, sees the
 ; hero -- and otherwise wandering
 PROC MonAct(BYTE i)
-  BYTE t, p
+  BYTE t, p, near, sc
   IF msl(i) THEN
     msl(i) -= 1
     RETURN
@@ -1852,8 +2357,31 @@ PROC MonAct(BYTE i)
     PetAct(i)
     RETURN
   FI
-  IF m_spd(t) == 0 OR m_flag(t) & MF_PEACE THEN RETURN FI
-  IF Dist(mx(i), my(i), px, py) == 1 AND Diagonal(mx(i), my(i), px, py) THEN
+  IF m_flag(t) & MF_PEACE AND mstat(i) & S_HOSTILE == 0 THEN
+    IF t == M_SHOPKEEPER AND ShkOk() THEN ShkAct(i) FI
+    RETURN
+  FI
+  IF m_spd(t) == 0 THEN RETURN FI
+  WipeEngr(mx(i), my(i), 1)
+  near = 0
+  IF Dist(mx(i), my(i), px, py) == 1 AND Diagonal(mx(i), my(i), px, py) THEN near = 1 FI
+  sc = 0
+  IF near AND Scary(i) THEN
+    sc = 1
+    IF mflee(i) == 0 THEN
+      IF Rnd(7) THEN mflee(i) = Roll(10) ELSE mflee(i) = Roll(100) FI
+    FI
+  FI
+  IF mflee(i) THEN
+    IF mflee(i) == 255 THEN
+      IF mhp(i) == mhpmax(i) AND Rnd(25) == 0 THEN mflee(i) = 0 FI
+    ELSE
+      mflee(i) -= 1
+    FI
+    IF StepToward(i, px, py, 1) == 0 AND near AND sc == 0 THEN MonAttack(i) FI
+    RETURN
+  FI
+  IF near AND sc == 0 THEN
     MonAttack(i)
     RETURN
   FI
@@ -1867,9 +2395,9 @@ PROC MonAct(BYTE i)
     FI
   FI
   IF lv(Idx(mx(i), my(i))) & F_VIS THEN
-    StepToward(i, px, py)
+    p = StepToward(i, px, py, 0)
   ELSEIF Rnd(2) == 0 THEN
-    StepToward(i, mx(i) + Rnd(5) - 2, my(i) + Rnd(5) - 2)
+    p = StepToward(i, mx(i) + Rnd(5) - 2, my(i) + Rnd(5) - 2, 0)
   FI
 RETURN
 
@@ -1915,6 +2443,11 @@ RETURN
 PROC EndTurn()
   BYTE f
   turns += 1
+  IF ublesscnt THEN ublesscnt -= 1 FI
+  IF Rnd(82) == 0 THEN WipeEngr(px, py, Roll(3)) FI
+  IF uluck <> 0 AND (turns % 600 == 0 OR (ugangr AND turns % 300 == 0)) THEN
+    IF uluck < 0 THEN uluck = uluck + 1 ELSE uluck = uluck - 1 FI
+  FI
   Mend()
   MonTurns()
   Status()
@@ -1924,7 +2457,7 @@ PROC EndTurn()
     MonTurns()
     Status()
     FOR f = 1 TO 6 DO Tick() OD
-    IF upara == 0 THEN Msg("You can move again.") FI
+    IF upara == 0 THEN Msg(Str(#"You can move again.")) FI
   OD
 RETURN
 
@@ -1938,7 +2471,7 @@ PROC EnterLevel(BYTE down)
   IF t <> theme THEN
     FOR r = VTOP TO VTOP + 25 DO ClearRow(r) OD
     IF LoadTheme(t) == 0 THEN
-      Msg("The theme file is not on drive 9.")
+      Msg(Str(#"The theme file is not on drive 9."))
       RETURN
     FI
   FI
@@ -2016,7 +2549,7 @@ RETURN
 
 PROC Descend()
   IF Kind(px, py) <> K_DOWN THEN
-    Msg("You can't go down here.")
+    Msg(Str(#"You can't go down here."))
     RETURN
   FI
   TakePet()
@@ -2027,11 +2560,11 @@ RETURN
 
 PROC Ascend()
   IF Kind(px, py) <> K_UP THEN
-    Msg("You can't go up here.")
+    Msg(Str(#"You can't go up here."))
     RETURN
   FI
   IF depth == 1 THEN
-    Msg("The way out. You have no Amulet yet.")
+    Msg(Str(#"The way out. You have no Amulet yet."))
     RETURN
   FI
   TakePet()
@@ -2077,7 +2610,7 @@ PROC Name(BYTE t, BYTE q, BYTE f, BYTE e, BYTE art)
   c = o_class(t)
   IF c == C_GOLD THEN
     MsgN(q)
-    MsgS(" gold piece")
+    MsgS(Str(#" gold piece"))
     IF q <> 1 THEN MsgC('s') FI
     RETURN
   FI
@@ -2158,12 +2691,12 @@ PROC Name(BYTE t, BYTE q, BYTE f, BYTE e, BYTE art)
       MsgS(" ring")
     FI
   ELSEIF t == O_LIFESAVING THEN
-    IF known(t) THEN MsgS("amulet of life saving") ELSE MsgS("spherical amulet") FI
+    IF known(t) THEN MsgS(Str(#"amulet of life saving")) ELSE MsgS(Str(#"spherical amulet")) FI
   ELSE
-    IF t == O_FAKEYENDOR AND known(t) THEN
-      MsgS("plastic imitation Amulet")
+    IF t == O_FAKEMOTT AND known(t) THEN
+      MsgS(Str(#"plastic imitation Amulet"))
     ELSE
-      MsgS("Amulet of Yendor")
+      MsgS(Str(#"Amulet of Mott"))
     FI
     IF art AND q == 1 THEN MsgIns(at, "the ") FI
     RETURN
@@ -2189,20 +2722,143 @@ RETURN (0)
 ; a pack letter's name, and what is being done with it
 PROC InvName(BYTE k)
   Name(it(k), iq(k), ifl(k), ie(k), 1)
-  IF uwep == k THEN MsgS(" (wielded)") FI
+  IF uwep == k THEN MsgS(Str(#" (wielded)")) FI
+  IF ifl(k) & OF_UNPAID THEN
+    MsgS(" (unpaid, ")
+    MsgN(Price(it(k), ifl(k), ie(k), 0) * iq(k))
+    MsgS(" zorkmids)")
+  FI
   IF uleft == k THEN
-    MsgS(" (left hand)")
+    MsgS(Str(#" (left hand)"))
   ELSEIF uright == k THEN
-    MsgS(" (right hand)")
+    MsgS(Str(#" (right hand)"))
   ELSEIF IsWorn(k) THEN
     MsgS(" (worn)")
   FI
 RETURN
 
+; the hero stepped from (ox, oy): into the shop, and the keeper greets;
+; onto its door owing, and is asked to pay; out of it owing, and has robbed
+PROC RoleWord()
+  IF role == 0 THEN
+    MsgS("Valkyrie")
+  ELSEIF role == 1 THEN
+    MsgS("Wizard")
+  ELSE
+    MsgS("Rogue")
+  FI
+RETURN
+
+PROC ShopWord()
+  ShkName()
+  MsgS("'s ")
+  MsgS(NameRec(NAME_SHOP + shtype))
+RETURN
+
+PROC ShopMove(BYTE ox, BYTE oy)
+  BYTE was, now
+  IF ShkOk() == 0 THEN RETURN FI
+  was = InShop(ox, oy)
+  now = InShop(px, py)
+  mbl = 0
+  IF now AND was == 0 THEN
+    IF mstat(shk) & S_HOSTILE THEN
+      MsgS("\"So, ")
+      RoleWord()
+      MsgS(Str(#", you dare return to "))
+      ShopWord()
+      MsgS("?!\"")
+    ELSE
+      MsgS("\"Hello, ")
+      RoleWord()
+      MsgS("!  Welcome")
+      IF shvis THEN MsgS(" again") FI
+      MsgS(" to ")
+      ShopWord()
+      MsgS("!\"")
+      shvis = 1
+    FI
+    MsgEnd()
+  ELSEIF now AND px == shdx AND py == shdy AND Bill() THEN
+    MsgC('"')
+    RoleWord()
+    MsgS(Str(#"!  Please pay before leaving.\""))
+    MsgEnd()
+  ELSEIF was AND now == 0 THEN
+    Rob()
+  FI
+RETURN
+
+; a thing on the shop's floor that the keeper will buy
+FUNC BYTE Saleable(BYTE t)
+  BYTE c
+  c = o_class(t)
+  IF shtype == SH_GENERAL THEN RETURN (1) FI
+  IF shtype == SH_ARMOR OR shtype == SH_WEAPON THEN
+    IF c <= C_ARMOR THEN RETURN (1) FI
+  ELSEIF shtype == SH_SCROLL THEN
+    IF c == C_SCROLL THEN RETURN (1) FI
+  ELSEIF shtype == SH_POTION THEN
+    IF c == C_POTION THEN RETURN (1) FI
+  ELSEIF shtype == SH_RING THEN
+    IF c == C_RING OR c == C_AMULET THEN RETURN (1) FI
+  ELSEIF c == C_WAND OR t == O_GLOVES OR t == O_CLOAK THEN
+    RETURN (1)
+  FI
+RETURN (0)
+
+; a thing dropped on the shop's floor, NetHack's sellobj(): back on the
+; shelf if it was unpaid; otherwise offered for, or not wanted
+PROC Sell(BYTE j)
+  CARD offer
+  IF of(j) & OF_UNPAID THEN
+    of(j) = of(j) & (255 ^ OF_UNPAID)
+    RETURN
+  FI
+  of(j) = of(j) | OF_NOCHG
+  IF mstat(shk) & S_HOSTILE OR ot(j) == O_GOLD THEN RETURN FI
+  offer = Price(ot(j), of(j), oe(j), 1) * oq(j)
+  mbl = 0
+  ShkName()
+  IF Saleable(ot(j)) == 0 OR offer == 0 THEN
+    MsgS(Str(#" seems uninterested."))
+    MsgEnd()
+    RETURN
+  FI
+  IF shgold == 0 THEN
+    MsgS(Str(#" cannot pay you at present."))
+    MsgEnd()
+    RETURN
+  FI
+  IF offer > shgold THEN offer = shgold FI
+  MsgS(" offers ")
+  MsgN(offer)
+  MsgS(Str(#" gold pieces for your "))
+  Name(ot(j), oq(j), 0, oe(j), 0)
+  MsgS(Str(#".  Sell it? [yn] (n)"))
+  MsgEnd()
+  IF Answer() THEN
+    MsgClear()
+    ugold = ugold + offer
+    shgold = shgold - offer
+    of(j) = of(j) & (255 ^ OF_NOCHG)
+    mbl = 0
+    MsgS("You sold ")
+    Name(ot(j), oq(j), 0, oe(j), 1)
+    MsgS(" for ")
+    MsgN(offer)
+    MsgS(Str(#" gold pieces."))
+    MsgEnd()
+    Status()
+  FI
+RETURN
+
 ; the hero set down somewhere on the level, at random
 PROC Teleport()
-  BYTE r
+  BYTE r, ox, oy
   CARD s
+  ox = px
+  oy = py
   DO
     r = Rnd(9)
   UNTIL rgone(r) == 0 OD
@@ -2214,6 +2870,7 @@ PROC Teleport()
   r = Aim()
   See()
   DrawView()
+  ShopMove(ox, oy)
 RETURN
 
 ; what is here: gold is taken up as it is walked over, as NetHack's
@@ -2228,11 +2885,21 @@ PROC LookHere()
     ugold += oq(i - 1)
     mbl = 0
     MsgN(oq(i - 1))
-    MsgS(" gold pieces.")
+    MsgS(Str(#" gold pieces."))
     MsgEnd()
     TakeObj(i - 1)
     i = oat(c)
   OD
+  k = EngrAt(px, py)
+  IF k <> 255 THEN
+    Msg(Str(#"Something is written here in the dust."))
+    mbl = 0
+    MsgS(Str(#"You read: \""))
+    c = k * 17
+    FOR n = 1 TO etx(c) DO MsgC(etx(c + n)) OD
+    MsgS("\".")
+    MsgEnd()
+  FI
   n = 0
   FOR k = 0 TO MAXOBJ - 1 DO
     IF ot(k) <> 255 AND ox(k) == px AND oy(k) == py THEN n += 1 FI
@@ -2240,12 +2907,212 @@ PROC LookHere()
   IF n == 1 THEN
     k = oat(c) - 1
     mbl = 0
-    MsgS("You see here ")
+    MsgS(Str(#"You see here "))
     Name(ot(k), oq(k), of(k), oe(k), 1)
     MsgC('.')
     MsgEnd()
   ELSEIF n > 1 THEN
-    Msg("There are several objects here.")
+    Msg(Str(#"There are several objects here."))
+  FI
+RETURN
+
+; ------------------------------------------------------------ the traps
+PROC Found(BYTE x, BYTE y)
+  lv(Idx(x, y)) = lv(Idx(x, y)) | F_SEEN
+  DrawCell(x, y)
+RETURN
+
+; NetHack's dosearch0(): each cell round the hero, a secret door or passage
+; found one time in seven and a trap one in eight, luck helping
+PROC Search()
+  BYTE dx, dy, x, y, k, i
+  FOR dy = 0 TO 2 DO
+    FOR dx = 0 TO 2 DO
+      x = px + dx - 1
+      y = py + dy - 1
+      IF (dx <> 1 OR dy <> 1) AND x < LW AND y < LH THEN
+        k = Kind(x, y)
+        IF k == K_SDOOR THEN
+          IF Rnl(7) == 0 THEN
+            SetKind(x, y, K_DOORC)
+            Found(x, y)
+            Msg(Str(#"You find a hidden door."))
+          FI
+        ELSEIF k == K_SCORR THEN
+          IF Rnl(7) == 0 THEN
+            SetKind(x, y, K_CORR)
+            Found(x, y)
+            Msg(Str(#"You find a hidden passage."))
+          FI
+        ELSE
+          i = TrapAt(x, y)
+          IF i <> 255 THEN
+            IF tf(i) & TF_SEEN == 0 AND Rnl(8) == 0 THEN
+              tf(i) = tf(i) | TF_SEEN
+              Found(x, y)
+              mbl = 0
+              MsgS("You find ")
+              MsgA(NameRec(NAME_TRAP + tt(i)))
+              MsgC('.')
+              MsgEnd()
+            FI
+          FI
+        FI
+      FI
+    OD
+  OD
+RETURN
+
+; NetHack's thitu(): a trap's missile against the armour class
+FUNC BYTE HitU(BYTE tlev, BYTE dam, BYTE POINTER what, BYTE kd)
+  INT t, r
+  t = uac + tlev
+  r = Roll(20)
+  mbl = 0
+  IF t <= r THEN
+    MsgS(Str(#"You are almost hit by "))
+    MsgS(what)
+    MsgC('.')
+    MsgEnd()
+    RETURN (0)
+  FI
+  MsgS(Str(#"You are hit by "))
+  MsgS(what)
+  IF dam < 5 THEN MsgC('.') ELSE MsgC('!') FI
+  MsgEnd()
+  HurtHero(dam, kd)
+RETURN (1)
+
+; NetHack's poisoned(): nothing with poison resistance; else one time in
+; `fatal` (and twenty more for a missile) death, sometimes hit points,
+; otherwise the strength or constitution it would have taken
+PROC Poisoned(BYTE POINTER said, BYTE kd, BYTE kdeath, BYTE fatal, BYTE thrown)
+  BYTE i
+  Msg(said)
+  IF Wearing(O_RPOISONRES) THEN
+    Msg(Str(#"The poison doesn't seem to affect you."))
+    RETURN
+  FI
+  i = Rnd(fatal + thrown * 20)
+  IF i == 0 THEN
+    Msg(Str(#"The poison was deadly..."))
+    HurtHero(255, kdeath)
+  ELSEIF i > 5 THEN
+    IF thrown THEN HurtHero(Roll(6), kd) ELSE HurtHero(6 + Rnd(10), kd) FI
+  ELSEIF thrown THEN
+    Msg(Str(#"You feel very sick!"))
+  ELSE
+    Msg(Str(#"You feel weaker!"))
+  FI
+RETURN
+
+; down to another level through a hole in the floor, the pet beside the
+; hero coming along
+PROC FallTo(BYTE d)
+  TakePet()
+  SaveLevel()
+  depth = d
+  EnterLevel(2)
+RETURN
+
+; the trap under the hero goes off: NetHack's dotrap() for these eleven.
+; One already seen is escaped one time in five; an arrow, dart or rock
+; trap that has gone off runs out one time in fifteen
+PROC Spring()
+  BYTE i, k, n, f
+  i = TrapAt(px, py)
+  IF i == 255 THEN RETURN FI
+  k = tt(i)
+  f = tf(i)
+  IF f & TF_SEEN AND Rnd(5) == 0 THEN
+    mbl = 0
+    MsgS(Str(#"You escape "))
+    MsgA(NameRec(NAME_TRAP + k))
+    MsgC('.')
+    MsgEnd()
+    RETURN
+  FI
+  IF k <= TR_ROCK AND f & TF_ONCE AND f & TF_SEEN AND Rnd(15) == 0 THEN
+    IF k == TR_ARROW THEN
+      Msg(Str(#"You hear a loud click!"))
+    ELSEIF k == TR_DART THEN
+      Msg(Str(#"You hear a soft click."))
+    ELSE
+      Msg(Str(#"A trap door in the ceiling opens, but nothing falls out!"))
+    FI
+    DelTrap(i)
+    RETURN
+  FI
+  tf(i) = f | TF_SEEN | TF_ONCE
+  IF k == TR_ARROW THEN
+    Msg(Str(#"An arrow shoots out at you!"))
+    n = HitU(8, Roll(6), "an arrow", KD_ARROW)
+  ELSEIF k == TR_DART THEN
+    Msg(Str(#"A little dart shoots out at you!"))
+    IF HitU(7, Roll(3), "a little dart", KD_DART) AND Rnd(6) == 0 AND dead == 0 THEN
+      Poisoned("The dart was poisoned!", KD_DART, KD_DARTPOIS, 10, 1)
+    FI
+  ELSEIF k == TR_ROCK THEN
+    Msg(Str(#"A trap door in the ceiling opens and a rock falls on your head!"))
+    n = Dice(2, 6)
+    IF worn(SLOT_HELM) <> 255 THEN
+      Msg(Str(#"Fortunately, you are wearing a hard helmet."))
+      n = 2
+    FI
+    HurtHero(n, KD_ROCK)
+  ELSEIF k == TR_SQUEAKY THEN
+    Msg(Str(#"A board beneath you squeaks loudly."))
+    FOR n = 0 TO MAXMON - 1 DO msl(n) = 0 OD
+  ELSEIF k == TR_BEAR THEN
+    Msg(Str(#"A bear trap closes on your foot!"))
+    utrap = 4 + Rnd(4)
+    utraptype = TR_BEAR
+    HurtHero(Dice(2, 4), KD_BEAR)
+  ELSEIF k == TR_SLEEPGAS THEN
+    Msg(Str(#"A cloud of gas puts you to sleep!"))
+    upara = Roll(25)
+  ELSEIF k <= TR_SPIKEDPIT THEN
+    Msg(Str(#"You fall into a pit!"))
+    utrap = 2 + Rnd(6)
+    utraptype = TR_PIT
+    IF k == TR_PIT THEN
+      HurtHero(Roll(6), KD_PIT)
+    ELSE
+      Msg(Str(#"You land on a set of sharp iron spikes!"))
+      IF Rnd(6) == 0 THEN Poisoned("The spikes were poisoned!", KD_SPIKEHP, KD_SPIKEPOIS, 8, 0) FI
+      IF dead == 0 THEN HurtHero(Roll(10), KD_SPIKES) FI
+    FI
+  ELSEIF k == TR_TRAPDOOR THEN
+    Msg(Str(#"A trap door opens up under you!"))
+    n = depth + 1
+    WHILE Rnd(4) == 0 AND n < MAXDEPTH DO n += 1 OD
+    mbl = 0
+    IF n > depth + 1 THEN
+      MsgS(Str(#"You fall down a "))
+      IF n > depth + 3 THEN MsgS("very ") FI
+      IF n > depth + 2 THEN MsgS("deep ") FI
+      MsgS("shaft!")
+    ELSE
+      MsgS(Str(#"You fall through..."))
+    FI
+    MsgEnd()
+    FallTo(n)
+  ELSEIF k == TR_TELEPORT THEN
+    Teleport()
+  ELSE
+    Msg(Str(#"You are momentarily blinded by a flash of light."))
+    DelTrap(i)
+    n = Rnd(depth + 2) + 1
+    IF n >= depth THEN n += 1 FI
+    IF n > MAXDEPTH THEN
+      n = MAXDEPTH
+      IF depth == MAXDEPTH THEN n -= Roll(3) FI
+    FI
+    IF n == depth THEN
+      Msg(Str(#"You shudder for a moment."))
+    ELSE
+      FallTo(n)
+    FI
   FI
 RETURN
 
@@ -2259,22 +3126,53 @@ PROC Stride(BYTE d)
   IF nx >= LW OR ny >= LH THEN RETURN FI
   k = Kind(nx, ny)
   IF Diagonal(px, py, nx, ny) == 0 THEN
-    Msg("You can't move diagonally through a door.")
+    Msg(Str(#"You can't move diagonally through a door."))
     RETURN
   FI
   m = MonAt(nx, ny)
   IF m THEN
     m -= 1
     IF mstat(m) & S_PET == 0 THEN
+      IF m_flag(mtype(m)) & MF_PEACE AND mstat(m) & S_HOSTILE == 0 THEN
+        mbl = 0
+        MsgS(Str(#"Really attack "))
+        MsgMon(m, 0)
+        MsgS("? [yn] (n)")
+        MsgEnd()
+        IF Answer() == 0 THEN
+          MsgClear()
+          RETURN
+        FI
+        MsgClear()
+        mstat(m) = mstat(m) | S_HOSTILE
+        urec -= 1
+        IF m == shk AND ShkOk() THEN
+          mbl = 0
+          ShkName()
+          MsgS(Str(#" gets angry!"))
+          MsgEnd()
+        FI
+      FI
       HeroAttack(m)
       EndTurn()
       RETURN
     FI
     swap = 1                         ; not m itself: the pet's slot may be 0
   FI
+  IF utrap THEN                      ; NetHack's trapmove()
+    IF utraptype == TR_BEAR THEN
+      Msg(Str(#"You are caught in a bear trap."))
+      IF d % 2 == 0 OR Rnd(5) == 0 THEN utrap -= 1 FI
+    ELSE
+      utrap -= 1
+      IF utrap THEN Msg(Str(#"You are still in a pit.")) ELSE Msg(Str(#"You crawl to the edge of the pit.")) FI
+    FI
+    EndTurn()
+    RETURN
+  FI
   IF k == K_DOORC THEN
     SetKind(nx, ny, K_DOORO)
-    Msg("The door opens.")
+    Msg(Str(#"The door opens."))
     DrawCell(nx, ny)
     EndTurn()
     RETURN
@@ -2290,7 +3188,7 @@ PROC Stride(BYTE d)
     my(m) = oy
     Place(m)
     mbl = 0
-    MsgS("You swap places with your ")
+    MsgS(Str(#"You swap places with your "))
     MsgS(MonName(mtype(m)))
     MsgC('.')
     MsgEnd()
@@ -2303,7 +3201,9 @@ PROC Stride(BYTE d)
     DrawCell(ox, oy)
     DrawCell(px, py)
   FI
+  ShopMove(ox, oy)
   LookHere()
+  Spring()
   EndTurn()
 RETURN
 
@@ -2384,6 +3284,76 @@ FUNC BYTE AskDir()
   esc = 0
 RETURN (0)
 
+; a line typed at the keyboard into lb, a length byte and the letters,
+; up to `max`: letters by the keyboard's own map, shift for capitals, the
+; backspace, Enter to end and Esc to give up (0)
+BYTE ARRAY lb(21)
+CONST KEY_BACK = $66
+
+FUNC BYTE GetLine(BYTE POINTER prompt, BYTE max)
+  BYTE c, ch, i, n, done
+  MsgClear()
+  Text(0, 0, prompt, B_YELLOW)
+  FOR c = 1 TO 127 DO i = KeyHit(c) OD
+  lb(0) = 0
+  done = 0
+  esc = 0
+  DO
+    n = lb(0)
+    Text(0, 1, lb, B_WHITE)
+    Text(n, 1, "_ ", B_YELLOW)
+    Tick()
+    FOR c = 1 TO 127 DO
+      ch = kb_map(c)
+      IF ch AND KeyHit(c) THEN
+        IF ch == 13 THEN
+          done = 1
+        ELSEIF c == KEY_BACK THEN
+          IF lb(0) THEN lb(0) = lb(0) - 1 FI
+        ELSEIF ch >= 32 AND lb(0) < max THEN
+          IF Shifted() THEN
+            IF ch >= 'a' AND ch <= 'z' THEN
+              ch = ch & $DF
+            ELSE
+              i = 0
+              WHILE kb_shift(i) DO
+                IF kb_shift(i) == ch THEN
+                  ch = kb_shift(i + 1)
+                  EXIT
+                FI
+                i += 2
+              OD
+            FI
+          FI
+          lb(0) = lb(0) + 1
+          lb(lb(0)) = ch
+        FI
+      FI
+    OD
+  UNTIL done OR esc OD
+  MsgClear()
+  rep_c = Held()
+  rep_t = 0
+  IF esc THEN
+    esc = 0
+    RETURN (0)
+  FI
+RETURN (1)
+
+; lb against a word, capitals as small letters, all of lb a prefix of it
+FUNC BYTE Typed(BYTE POINTER w)
+  BYTE i, ch
+  BYTE POINTER q
+  IF lb(0) == 0 OR lb(0) > *w THEN RETURN (0) FI
+  q = w
+  FOR i = 1 TO lb(0) DO
+    q += 1
+    ch = lb(i)
+    IF ch >= 'A' AND ch <= 'Z' THEN ch = ch | $20 FI
+    IF ch <> *q THEN RETURN (0) FI
+  OD
+RETURN (1)
+
 ; ------------------------------------------------------------- the pack
 FUNC BYTE Passes(BYTE k, BYTE mask, BYTE mode)
   IF it(k) == 255 THEN RETURN (0) FI
@@ -2447,7 +3417,7 @@ FUNC BYTE Menu(BYTE POINTER prompt, BYTE mask, BYTE mode)
   OD
   pick = 255
   IF n == 0 THEN
-    Text(0, VTOP, "You don't have anything for that.", B_WHITE)
+    Text(0, VTOP, Str(#"You don't have anything for that."), B_WHITE)
   FI
   FOR k = 0 TO MAXINV - 1 DO
     c = KeyHit(letter_sc(k))
@@ -2484,7 +3454,7 @@ PROC Discoveries()
   BYTE t, row, d
   MsgClear()
   FOR row = VTOP TO VTOP + 25 DO ClearRow(row) OD
-  Text(0, 0, "Discoveries", B_YELLOW)
+  Text(0, 0, Str(#"Discoveries"), B_YELLOW)
   row = VTOP
   FOR t = O_HEALING TO O_RTELEPORT DO
     IF known(t) AND row < VTOP + 26 THEN
@@ -2497,7 +3467,7 @@ PROC Discoveries()
       row += 1
     FI
   OD
-  IF row == VTOP THEN Text(1, VTOP, "You haven't discovered anything yet.", B_WHITE) FI
+  IF row == VTOP THEN Text(1, VTOP, Str(#"You haven't discovered anything yet."), B_WHITE) FI
   d = KeyHit(KEY_SPACE)
   esc = 0
   DO
@@ -2519,7 +3489,7 @@ PROC LightRoom(BYTE on)
       FOR x = px - 2 TO px + 2 DO
         IF x < LW AND y < LH THEN
           i = Idx(x, y)
-          IF lv(i) & 31 <> K_ROCK THEN lv(i) = lv(i) | F_SEEN FI
+          IF lv(i) & 15 <> K_ROCK THEN lv(i) = lv(i) | F_SEEN FI
         FI
       OD
     OD
@@ -2533,14 +3503,14 @@ PROC LightRoom(BYTE on)
   FI
   See()
   DrawView()
-  IF on THEN Msg("A lit field surrounds you!") ELSE Msg("Darkness surrounds you.") FI
+  IF on THEN Msg(Str(#"A lit field surrounds you!")) ELSE Msg(Str(#"Darkness surrounds you.")) FI
 RETURN
 
 PROC PickUp()
-  BYTE i, k
+  BYTE i, k, f
   i = oat(Idx(px, py))
   IF i == 0 THEN
-    Msg("There is nothing here to pick up.")
+    Msg(Str(#"There is nothing here to pick up."))
     RETURN
   FI
   i -= 1
@@ -2548,12 +3518,39 @@ PROC PickUp()
     ugold += oq(i)
     mbl = 0
     MsgN(oq(i))
-    MsgS(" gold pieces.")
+    MsgS(Str(#" gold pieces."))
     MsgEnd()
   ELSE
-    k = InvAdd(ot(i), oq(i), of(i), oe(i))
+    f = of(i) & (255 ^ OF_NOCHG)
+    IF ShkOk() AND InShop(px, py) AND of(i) & OF_NOCHG == 0 THEN
+      f = f | OF_UNPAID
+      mbl = 0
+      MsgS("\"For you, ")
+      IF mstat(shk) & S_HOSTILE THEN
+        MsgS("scum")
+      ELSE
+        k = Rnd(4)
+        IF k == 0 THEN
+          MsgS("good")
+        ELSEIF k == 1 THEN
+          MsgS("honored")
+        ELSEIF k == 2 THEN
+          MsgS(Str(#"most gracious"))
+        ELSE
+          MsgS("esteemed")
+        FI
+        IF role == 0 THEN MsgS(" lady") ELSE MsgS(" sir") FI
+      FI
+      MsgS("; only ")
+      MsgN(Price(ot(i), f, oe(i), 0))
+      IF oq(i) > 1 THEN MsgS(Str(#" zorkmids per ")) ELSE MsgS(Str(#" zorkmids for this ")) FI
+      Name(ot(i), 1, 0, oe(i), 0)
+      MsgS(".\"")
+      MsgEnd()
+    FI
+    k = InvAdd(ot(i), oq(i), f, oe(i))
     IF k == 255 THEN
-      Msg("You have too many things to carry more.")
+      Msg(Str(#"You have too many things to carry more."))
       RETURN
     FI
     mbl = 0
@@ -2572,32 +3569,50 @@ PROC Welded(BYTE k)
   mbl = 0
   MsgS("Your ")
   Name(it(k), 1, 0, 0, 0)
-  MsgS(" is welded to your hand!")
+  MsgS(Str(#" is welded to your hand!"))
   MsgEnd()
 RETURN
 
 PROC Drop()
-  BYTE k
-  k = Menu("What do you want to drop?", $7F, 0)
+  BYTE k, j
+  k = Menu(Str(#"What do you want to drop?"), $7F, 0)
   IF k == 255 THEN RETURN FI
   IF IsWorn(k) THEN
-    Msg("You cannot drop something you are wearing.")
+    Msg(Str(#"You cannot drop something you are wearing."))
     RETURN
   FI
   IF uwep == k AND ifl(k) & OF_CURSE THEN
     Welded(k)
     RETURN
   FI
-  IF PutObj(it(k), iq(k), ifl(k), ie(k), px, py) == 255 THEN
-    Msg("There is no room to drop anything here.")
+  j = PutObj(it(k), iq(k), ifl(k), ie(k), px, py)
+  IF j == 255 THEN
+    Msg(Str(#"There is no room to drop anything here."))
     RETURN
   FI
   mbl = 0
-  MsgS("You drop ")
-  Name(it(k), iq(k), ifl(k), ie(k), 1)
-  MsgC('.')
+  IF Kind(px, py) >= K_ALTAR THEN   ; NetHack's doaltarobj(): the curse shown
+    IF ifl(k) & OF_BLESS THEN
+      MsgS(Str(#"There is an amber flash as "))
+    ELSEIF ifl(k) & OF_CURSE THEN
+      MsgS(Str(#"There is a black flash as "))
+    FI
+    Name(it(k), iq(k), ifl(k), ie(k), 1)
+    IF ifl(k) & (OF_BLESS | OF_CURSE) THEN
+      MsgS(Str(#" hits the altar."))
+    ELSE
+      IF mb(0) >= 'a' THEN mb(0) = mb(0) & $DF FI
+      MsgS(Str(#" lands on the altar."))
+    FI
+    of(j) = of(j) | OF_BKNOWN
+  ELSE
+    MsgS("You drop ")
+    Name(it(k), iq(k), ifl(k), ie(k), 1)
+    MsgC('.')
+  FI
   MsgEnd()
   InvDel(k, iq(k))
+  IF ShkOk() AND InShop(px, py) AND (px <> shdx OR py <> shdy) THEN Sell(j) FI
   EndTurn()
 RETURN
 
@@ -2610,7 +3625,7 @@ PROC Wield()
       RETURN
     FI
   FI
-  k = Menu("What do you want to wield?", 1, 1)
+  k = Menu(Str(#"What do you want to wield?"), 1, 1)
   IF k == 255 THEN RETURN FI
   uwep = k
   mbl = 0
@@ -2621,7 +3636,7 @@ PROC Wield()
   MsgEnd()
   IF ifl(k) & OF_CURSE THEN
     ifl(k) = ifl(k) | OF_BKNOWN
-    Msg("It welds itself to your hand!")
+    Msg(Str(#"It welds itself to your hand!"))
   FI
   EndTurn()
 RETURN
@@ -2630,15 +3645,15 @@ RETURN
 ; enchantment learnt by wearing it and its curse by trying to take it off
 PROC Wear()
   BYTE k, s
-  k = Menu("What do you want to wear?", 2, 1)
+  k = Menu(Str(#"What do you want to wear?"), 2, 1)
   IF k == 255 THEN RETURN FI
   s = o_slot(it(k))
   IF worn(s) <> 255 THEN
-    Msg("You are already wearing one of those.")
+    Msg(Str(#"You are already wearing one of those."))
     RETURN
   FI
   IF s == SLOT_BODY AND worn(SLOT_CLOAK) <> 255 THEN
-    Msg("You are wearing a cloak over it.")
+    Msg(Str(#"You are wearing a cloak over it."))
     RETURN
   FI
   IF uwep == k THEN uwep = 255 FI
@@ -2646,7 +3661,7 @@ PROC Wear()
   ifl(k) = ifl(k) | OF_EKNOWN
   CalcAC()
   mbl = 0
-  MsgS("You are now wearing ")
+  MsgS(Str(#"You are now wearing "))
   Name(it(k), 1, ifl(k), ie(k), 1)
   MsgC('.')
   MsgEnd()
@@ -2655,22 +3670,22 @@ RETURN
 
 PROC TakeOff()
   BYTE k, s
-  k = Menu("What do you want to take off?", 2, 2)
+  k = Menu(Str(#"What do you want to take off?"), 2, 2)
   IF k == 255 THEN RETURN FI
   s = o_slot(it(k))
   IF s == SLOT_BODY AND worn(SLOT_CLOAK) <> 255 THEN
-    Msg("You are wearing a cloak over it.")
+    Msg(Str(#"You are wearing a cloak over it."))
     RETURN
   FI
   IF ifl(k) & OF_CURSE THEN
     ifl(k) = ifl(k) | OF_BKNOWN
-    Msg("You can't. It is cursed.")
+    Msg(Str(#"You can't. It is cursed."))
     RETURN
   FI
   worn(s) = 255
   CalcAC()
   mbl = 0
-  MsgS("You were wearing ")
+  MsgS(Str(#"You were wearing "))
   Name(it(k), 1, ifl(k), ie(k), 1)
   MsgC('.')
   MsgEnd()
@@ -2681,13 +3696,13 @@ RETURN
 ; the neck. A ring of protection shows itself in the armour class
 PROC PutOn()
   BYTE k, t
-  k = Menu("What do you want to put on?", 96, 1)
+  k = Menu(Str(#"What do you want to put on?"), 96, 1)
   IF k == 255 THEN RETURN FI
   t = it(k)
   IF uwep == k THEN uwep = 255 FI
   IF o_class(t) == C_AMULET THEN
     IF uamul <> 255 THEN
-      Msg("You are already wearing an amulet.")
+      Msg(Str(#"You are already wearing an amulet."))
       RETURN
     FI
     uamul = k
@@ -2696,7 +3711,7 @@ PROC PutOn()
   ELSEIF uright == 255 THEN
     uright = k
   ELSE
-    Msg("You are already wearing two rings.")
+    Msg(Str(#"You are already wearing two rings."))
     RETURN
   FI
   IF t == O_RPROTECTION THEN
@@ -2715,11 +3730,11 @@ RETURN
 
 PROC TakeRing()
   BYTE k
-  k = Menu("What do you want to remove?", 96, 2)
+  k = Menu(Str(#"What do you want to remove?"), 96, 2)
   IF k == 255 THEN RETURN FI
   IF ifl(k) & OF_CURSE THEN
     ifl(k) = ifl(k) | OF_BKNOWN
-    Msg("It won't come off!")
+    Msg(Str(#"It won't come off!"))
     RETURN
   FI
   IF uleft == k THEN uleft = 255 FI
@@ -2727,7 +3742,7 @@ PROC TakeRing()
   IF uamul == k THEN uamul = 255 FI
   CalcAC()
   mbl = 0
-  MsgS("You were wearing ")
+  MsgS(Str(#"You were wearing "))
   Name(it(k), 1, ifl(k), ie(k), 1)
   MsgC('.')
   MsgEnd()
@@ -2753,26 +3768,128 @@ FUNC INT Sign(BYTE f)
   IF f & OF_CURSE THEN RETURN (-1) FI
 RETURN (0)
 
+; ------------------------------------------------------------ fountains
+; a monster of type t beside the hero, awake; 1 if there was room
+FUNC BYTE SpawnNear(BYTE t)
+  BYTE d, i
+  d = FreeNear(px, py)
+  IF d == 0 THEN RETURN (0) FI
+  i = NewMon(t, px + dir_dx(d), py + dir_dy(d))
+  IF i == 255 THEN RETURN (0) FI
+  DrawCell(mx(i), my(i))
+RETURN (1)
+
+; every monster on the level shown where it is until a key, as NetHack's
+; monster detection does
+PROC DetectMonsters()
+  BYTE i, n
+  n = 0
+  FOR i = 0 TO MAXMON - 1 DO
+    IF mstat(i) THEN
+      n += 1
+      IF mx(i) >= vx AND mx(i) < vx + VW AND my(i) >= vy AND my(i) < vy + VH THEN
+        Pic((mx(i) - vx) << 1, VTOP + ((my(i) - vy) << 1), (3 + mtype(i)) << 2, (2 + anim) << 4)
+      FI
+    FI
+  OD
+  IF n == 0 THEN
+    Msg(Str(#"You feel threatened."))
+    RETURN
+  FI
+  Msg(Str(#"You sense the presence of monsters."))
+  msgrow = 2
+  More()
+  DrawView()
+RETURN
+
+; NetHack's drinkfountain(), fate by a thirty-sided die, less the magic
+; fountain, the wish and the pools the game has not; one time in three
+; the fountain dries up after
+PROC DrinkFountain()
+  BYTE fate, i, n
+  fate = Roll(30)
+  IF fate < 10 THEN
+    Msg(Str(#"The cool draught refreshes you."))
+  ELSEIF fate == 19 THEN
+    Msg(Str(#"You feel self-knowledgeable..."))
+    Msg(Str(#"The feeling subsides."))
+  ELSEIF fate == 20 THEN
+    Msg(Str(#"The water is foul!  You gag and vomit."))
+  ELSEIF fate == 21 THEN
+    Msg(Str(#"The water is contaminated!"))
+    IF Wearing(O_RPOISONRES) THEN
+      Msg(Str(#"Perhaps it is runoff from the nearby slime mold farm."))
+      HurtHero(Roll(4), KD_JUICE)
+    ELSE
+      HurtHero(Roll(10), KD_WATER)
+    FI
+  ELSEIF fate == 22 THEN
+    Msg(Str(#"An endless stream of snakes pours forth!"))
+    n = 2 + Rnd(5)
+    FOR i = 1 TO n DO fate = SpawnNear(M_SNAKE) OD
+  ELSEIF fate == 23 THEN
+    IF SpawnNear(M_WATERDEMON) THEN Msg(Str(#"You unleash a water demon!")) FI
+  ELSEIF fate == 24 THEN
+    Msg(Str(#"This water's no good!"))
+    FOR i = 0 TO MAXINV - 1 DO
+      IF it(i) <> 255 AND Rnd(5) == 0 THEN ifl(i) = (ifl(i) & (255 ^ OF_BLESS)) | OF_CURSE FI
+    OD
+  ELSEIF fate == 25 THEN
+    Msg(Str(#"You see an image of someone stalking you."))
+    Msg(Str(#"But it disappears."))
+  ELSEIF fate == 26 THEN
+    DetectMonsters()
+  ELSEIF fate <= 28 THEN
+    IF SpawnNear(M_WATERNYMPH) THEN
+      Msg(Str(#"You attract a water nymph!"))
+    ELSE
+      Msg(Str(#"A large bubble rises to the surface and pops."))
+    FI
+  ELSEIF fate == 29 THEN
+    Msg(Str(#"This water gives you bad breath!"))
+    FOR i = 0 TO MAXMON - 1 DO
+      IF mstat(i) THEN mflee(i) = 255 FI
+    OD
+  ELSEIF fate == 30 THEN
+    Msg(Str(#"Your thirst is quenched."))
+  ELSE
+    Msg(Str(#"This tepid water is tasteless."))
+  FI
+  IF Rnd(3) == 0 AND Kind(px, py) == K_FOUNTAIN THEN
+    Msg(Str(#"The fountain dries up!"))
+    SetKind(px, py, K_FLOOR)
+  FI
+RETURN
+
 ; a potion, as NetHack's peffects() has it, cut to these eight; one whose
 ; drinking says what it was becomes known
 PROC Quaff()
   BYTE k, t, f, h
   INT s
-  k = Menu("What do you want to drink?", 4, 0)
+  IF Kind(px, py) == K_FOUNTAIN THEN
+    IF YesNo(Str(#"Drink from the fountain? [yn] (n)")) THEN
+      MsgClear()
+      DrinkFountain()
+      EndTurn()
+      RETURN
+    FI
+  FI
+  k = Menu(Str(#"What do you want to drink?"), 4, 0)
   IF k == 255 THEN RETURN FI
   t = it(k)
   f = ifl(k)
   s = Sign(f)
+  IF f & OF_UNPAID AND ShkOk() THEN Owe(Price(t, f, ie(k), 0)) FI
   InvDel(k, 1)
   IF t == O_HEALING THEN
     Know(t)
-    Msg("You feel better.")
+    Msg(Str(#"You feel better."))
     h = 1
     IF s < 0 THEN h = 0 FI
     Heal(Dice(6 + 2 * s, 4), h)
   ELSEIF t == O_EXTRAHEALING THEN
     Know(t)
-    Msg("You feel much better.")
+    Msg(Str(#"You feel much better."))
     h = 2
     IF s > 0 THEN h = 5 FI
     IF s < 0 THEN h = 0 FI
@@ -2781,15 +3898,15 @@ PROC Quaff()
     Know(t)
     IF s < 0 THEN
       IF depth > 1 THEN
-        Msg("You rise up, through the ceiling!")
+        Msg(Str(#"You rise up, through the ceiling!"))
         SaveLevel()
         depth -= 1
         EnterLevel(2)
       ELSE
-        Msg("You have an uneasy feeling.")
+        Msg(Str(#"You have an uneasy feeling."))
       FI
     ELSEIF ulev < 12 THEN
-      Msg("You feel more experienced.")
+      Msg(Str(#"You feel more experienced."))
       uxp = NeedXP(ulev)
       LevelUp()
     FI
@@ -2797,11 +3914,11 @@ PROC Quaff()
     Know(t)
     h = Dice(2 + s, 6)
     IF s < 0 THEN
-      Msg("You feel lackluster.")
+      Msg(Str(#"You feel lackluster."))
       IF upwmax > h THEN upwmax -= h ELSE upwmax = 0 FI
       IF upw > upwmax THEN upw = upwmax FI
     ELSE
-      Msg("Magical energies course through your body.")
+      Msg(Str(#"Magical energies course through your body."))
       IF upwmax < 240 THEN upwmax += h FI
       upw = upwmax
     FI
@@ -2810,28 +3927,28 @@ PROC Quaff()
     IF Wearing(O_RFREEACTION) THEN
       Msg("You yawn.")
     ELSE
-      Msg("You suddenly fall asleep.")
+      Msg(Str(#"You suddenly fall asleep."))
       upara = Roll(10 - 4 * s)
     FI
   ELSEIF t == O_SICKNESS THEN
     Know(t)
-    Msg("Yecch! This stuff tastes like poison.")
+    Msg(Str(#"Yecch! This stuff tastes like poison."))
     IF Wearing(O_RPOISONRES) THEN
-      Msg("(But in fact it was mildly stale fruit juice.)")
+      Msg(Str(#"(But in fact it was mildly stale fruit juice.)"))
     ELSE
       HurtSelf(Roll(10 - 5 * s))
     FI
   ELSEIF t == O_FRUITJUICE THEN
-    Msg("This tastes like slime mold juice.")
+    Msg(Str(#"This tastes like slime mold juice."))
   ELSE
     Know(t)
     IF s > 0 THEN
-      Msg("You feel full of awe.")
+      Msg(Str(#"You feel full of awe."))
     ELSEIF s < 0 THEN
-      Msg("This burns!")
+      Msg(Str(#"This burns!"))
       HurtSelf(Roll(6))
     ELSE
-      Msg("This tastes like water.")
+      Msg(Str(#"This tastes like water."))
     FI
   FI
   EndTurn()
@@ -2857,11 +3974,12 @@ PROC Read()
   BYTE k, t, f, j, ev
   INT s
   CARD c
-  k = Menu("What do you want to read?", 8, 0)
+  k = Menu(Str(#"What do you want to read?"), 8, 0)
   IF k == 255 THEN RETURN FI
   t = it(k)
   f = ifl(k)
   s = Sign(f)
+  IF f & OF_UNPAID AND ShkOk() THEN Owe(Price(t, f, ie(k), 0)) FI
   InvDel(k, 1)
   IF t == O_IDENTIFY THEN
     Know(t)
@@ -2869,9 +3987,9 @@ PROC Read()
       FOR j = 0 TO MAXINV - 1 DO
         IF it(j) <> 255 THEN IdentifyOne(j) FI
       OD
-      Msg("You identify everything you carry.")
+      Msg(Str(#"You identify everything you carry."))
     ELSE
-      j = Menu("This is an identify scroll. Identify what?", $7F, 0)
+      j = Menu(Str(#"This is an identify scroll. Identify what?"), $7F, 0)
       IF j <> 255 THEN
         IdentifyOne(j)
         mbl = 0
@@ -2884,7 +4002,7 @@ PROC Read()
     FI
   ELSEIF t == O_ENCHANTWEAPON THEN
     IF uwep == 255 THEN
-      Msg("Your hands twitch.")
+      Msg(Str(#"Your hands twitch."))
     ELSE
       Know(t)
       ev = 0
@@ -2892,13 +4010,13 @@ PROC Read()
       MsgS("Your ")
       Name(it(uwep), 1, 0, 0, 0)
       IF s < 0 THEN
-        MsgS(" glows black for a moment.")
+        MsgS(Str(#" glows black for a moment."))
         ie(uwep) = ie(uwep) - 1
       ELSEIF Signed(ie(uwep)) > 5 AND Rnd(3) THEN
-        MsgS(" violently glows blue, then evaporates.")
+        MsgS(Str(#" violently glows blue, then evaporates."))
         ev = 1
       ELSE
-        MsgS(" glows blue for a moment.")
+        MsgS(Str(#" glows blue for a moment."))
         ie(uwep) = ie(uwep) + 1
         IF s > 0 THEN ie(uwep) = ie(uwep) + Rnd(2) FI
         ifl(uwep) = ifl(uwep) & (255 ^ OF_CURSE)
@@ -2909,7 +4027,7 @@ PROC Read()
   ELSEIF t == O_ENCHANTARMOR THEN
     j = RandomWorn()
     IF j == 255 THEN
-      Msg("Your skin glows then fades.")
+      Msg(Str(#"Your skin glows then fades."))
     ELSE
       Know(t)
       ev = 0
@@ -2917,13 +4035,13 @@ PROC Read()
       MsgS("Your ")
       Name(it(j), 1, 0, 0, 0)
       IF s < 0 THEN
-        MsgS(" glows black for a moment.")
+        MsgS(Str(#" glows black for a moment."))
         ie(j) = ie(j) - 1
       ELSEIF Signed(ie(j)) > 3 AND Rnd(3) THEN
-        MsgS(" violently glows silver, then evaporates.")
+        MsgS(Str(#" violently glows silver, then evaporates."))
         ev = 1
       ELSE
-        MsgS(" glows silver for a moment.")
+        MsgS(Str(#" glows silver for a moment."))
         ie(j) = ie(j) + 1
         IF s > 0 THEN ie(j) = ie(j) + Rnd(2) FI
         ifl(j) = ifl(j) & (255 ^ OF_CURSE)
@@ -2934,9 +4052,9 @@ PROC Read()
     FI
   ELSEIF t == O_REMOVECURSE THEN
     IF s < 0 THEN
-      Msg("You feel like you need some help.")
+      Msg(Str(#"You feel like you need some help."))
     ELSE
-      Msg("You feel like someone is helping you.")
+      Msg(Str(#"You feel like someone is helping you."))
       FOR j = 0 TO MAXINV - 1 DO
         IF it(j) <> 255 THEN
           IF s > 0 OR IsWorn(j) OR uwep == j THEN ifl(j) = ifl(j) & (255 ^ OF_CURSE) FI
@@ -2946,45 +4064,50 @@ PROC Read()
   ELSEIF t == O_TELEPORT THEN
     Know(t)
     IF s < 0 AND depth < MAXDEPTH THEN
-      Msg("You feel very disoriented for a moment.")
+      Msg(Str(#"You feel very disoriented for a moment."))
       TakePet()
       SaveLevel()
       depth += 1
       EnterLevel(2)
     ELSE
       Teleport()
-      Msg("You feel disoriented for a moment.")
+      Msg(Str(#"You feel disoriented for a moment."))
     FI
   ELSEIF t == O_MAGICMAPPING THEN
     IF s < 0 THEN
-      Msg("Unfortunately, you can't grasp the details.")
+      Msg(Str(#"Unfortunately, you can't grasp the details."))
     ELSE
       Know(t)
       FOR c = 0 TO NCELL - 1 DO
-        IF lv(c) & 31 <> K_ROCK THEN lv(c) = lv(c) | F_SEEN FI
+        j = lv(c) & 15
+        IF j == K_SCORR THEN
+          lv(c) = lv(c) & 240 | K_CORR
+          j = K_CORR
+        FI
+        IF j <> K_ROCK THEN lv(c) = lv(c) | F_SEEN FI
       OD
       DrawView()
-      Msg("A map coalesces in your mind!")
+      Msg(Str(#"A map coalesces in your mind!"))
     FI
   ELSEIF t == O_LIGHT THEN
     Know(t)
     IF s < 0 THEN LightRoom(0) ELSE LightRoom(1) FI
   ELSE
     Know(t)
-    Msg("The scroll erupts in a tower of flame!")
+    Msg(Str(#"The scroll erupts in a tower of flame!"))
     FOR j = 0 TO MAXMON - 1 DO
       IF mstat(j) THEN
         IF mstat(j) & S_PET == 0 AND Dist(mx(j), my(j), px, py) <= 1 THEN
           mbl = 0
           MsgMon(j, 1)
-          MsgS(" is burnt!")
+          MsgS(Str(#" is burnt!"))
           MsgEnd()
           ev = HurtMon(j, Dice(3 + s, 4))
         FI
       FI
     OD
     IF s <= 0 THEN
-      Msg("The flames burn you.")
+      Msg(Str(#"The flames burn you."))
       HurtSelf(Roll(4))
     FI
   FI
@@ -2997,18 +4120,19 @@ RETURN
 ; rock and walls, or down through the floor to the level below
 PROC Zap()
   BYTE k, t, d, n, x, y, m, kind, r
-  k = Menu("What do you want to zap?", 16, 0)
+  k = Menu(Str(#"What do you want to zap?"), 16, 0)
   IF k == 255 THEN RETURN FI
   t = it(k)
   IF ie(k) == 0 THEN
-    Msg("Nothing happens.")
+    Msg(Str(#"Nothing happens."))
     EndTurn()
     RETURN
   FI
   ie(k) = ie(k) - 1
+  IF ifl(k) & OF_UNPAID AND ShkOk() THEN Owe(o_cost(t) / 5) FI
   d = 0
   IF o_slot(t) <> D_NODIR THEN
-    Msg("In what direction?")
+    Msg(Str(#"In what direction?"))
     d = AskDir()
     IF d == 0 THEN RETURN FI
   FI
@@ -3024,16 +4148,16 @@ PROC Zap()
     FI
   ELSEIF d > 8 THEN
     IF t <> O_WDIGGING THEN
-      Msg("The bugs on the floor stop moving!")
+      Msg(Str(#"The bugs on the floor stop moving!"))
     ELSEIF d == 10 THEN
       Know(t)
-      Msg("You loosen a rock from the ceiling. It falls on your head!")
+      Msg(Str(#"You loosen a rock from the ceiling. It falls on your head!"))
       HurtSelf(Roll(6))
     ELSEIF depth >= MAXDEPTH THEN
-      Msg("The floor here is too hard to dig in.")
+      Msg(Str(#"The floor here is too hard to dig in."))
     ELSE
       Know(t)
-      Msg("You dig a hole through the floor. You fall through...")
+      Msg(Str(#"You dig a hole through the floor. You fall through..."))
       TakePet()
       SaveLevel()
       depth += 1
@@ -3048,9 +4172,9 @@ PROC Zap()
       IF x >= LW OR y >= LH THEN EXIT FI
       IF t == O_WDIGGING THEN
         kind = Kind(x, y)
-        IF kind == K_WALL OR kind == K_ROCK THEN
+        IF kind == K_WALL OR kind == K_ROCK OR kind == K_SCORR THEN
           SetKind(x, y, K_CORR)
-        ELSEIF kind == K_DOORC OR kind == K_DOORO THEN
+        ELSEIF kind == K_DOORC OR kind == K_DOORO OR kind == K_SDOOR THEN
           SetKind(x, y, K_DOORWAY)
         FI
         lv(Idx(x, y)) = lv(Idx(x, y)) | F_SEEN
@@ -3062,11 +4186,11 @@ PROC Zap()
           Know(t)
           mbl = 0
           IF t == O_WSTRIKING THEN
-            MsgS("The wand hits ")
+            MsgS(Str(#"The wand hits "))
           ELSEIF t == O_WMISSILE THEN
-            MsgS("The magic missile hits ")
+            MsgS(Str(#"The magic missile hits "))
           ELSE
-            MsgS("The sleep ray hits ")
+            MsgS(Str(#"The sleep ray hits "))
           FI
           MsgMon(m, 0)
           MsgC('.')
@@ -3086,7 +4210,7 @@ PROC Zap()
       Know(t)
       See()
       DrawView()
-      Msg("You dig through the rock.")
+      Msg(Str(#"You dig through the rock."))
     FI
   FI
   EndTurn()
@@ -3147,18 +4271,27 @@ PROC Fly(BYTE k, BYTE d)
       EXIT
     FI
   OD
+  IF ShkOk() THEN
+    IF f & OF_UNPAID THEN
+      IF InShop(lx, ly) == 0 THEN Owe(Price(t, f, e, 0)) FI
+    ELSEIF InShop(lx, ly) THEN
+      f = f | OF_NOCHG
+    FI
+    f = f & (255 ^ OF_UNPAID)
+  FI
   IF PutObj(t, 1, f, e, lx, ly) <> 255 THEN DrawCell(lx, ly) FI
 RETURN
 
 PROC Throw()
   BYTE k, d
-  k = Menu("What do you want to throw?", $7F, 1)
+  WipeEngr(px, py, 2)
+  k = Menu(Str(#"What do you want to throw?"), $7F, 1)
   IF k == 255 THEN RETURN FI
   IF uwep == k AND ifl(k) & OF_CURSE THEN
     Welded(k)
     RETURN
   FI
-  Msg("In what direction?")
+  Msg(Str(#"In what direction?"))
   d = AskDir()
   IF d == 0 OR d > 8 THEN RETURN FI
   Fly(k, d)
@@ -3177,10 +4310,10 @@ RETURN (255)
 PROC Fire()
   BYTE k, d, n, shots
   IF FindDagger() == 255 THEN
-    Msg("You have no daggers to fire.")
+    Msg(Str(#"You have no daggers to fire."))
     RETURN
   FI
-  Msg("In what direction?")
+  Msg(Str(#"In what direction?"))
   d = AskDir()
   IF d == 0 OR d > 8 THEN RETURN FI
   shots = 1
@@ -3267,14 +4400,14 @@ RETURN
 PROC Cast()
   BYTE d, x, y, n, m
   IF role <> 1 THEN
-    Msg("You don't know any spells.")
+    Msg(Str(#"You don't know any spells."))
     RETURN
   FI
   IF upw < 5 THEN
-    Msg("You don't have enough energy.")
+    Msg(Str(#"You don't have enough energy."))
     RETURN
   FI
-  Msg("In what direction?")
+  Msg(Str(#"In what direction?"))
   d = AskDir()
   IF d == 0 THEN RETURN FI
   upw -= 5
@@ -3287,7 +4420,7 @@ PROC Cast()
     m = MonAt(x, y)
     IF m THEN
       mbl = 0
-      MsgS("The force bolt hits ")
+      MsgS(Str(#"The force bolt hits "))
       MsgMon(m - 1, 0)
       MsgC('.')
       MsgEnd()
@@ -3296,7 +4429,379 @@ PROC Cast()
       RETURN
     FI
   OD
-  Msg("The force bolt fizzles.")
+  Msg(Str(#"The force bolt fizzles."))
+  EndTurn()
+RETURN
+
+; ---------------------------------------------------------------- prayer
+PROC GodName(BYTE g)
+  MsgS(NameRec(NAME_GOD + role * 3 + g))
+RETURN
+
+; the altar the hero stands on, as 0 lawful 1 neutral 2 chaotic, or 255
+FUNC BYTE OnAltar()
+  BYTE k
+  k = Kind(px, py)
+  IF k >= K_ALTAR THEN RETURN (k - K_ALTAR) FI
+RETURN (255)
+
+; NetHack's in_trouble() for what the game has: hit points low (major),
+; a cursed weapon welded with no hand free (major), anything cursed worn
+; (minor)
+CONST TROUBLE_HIT = 7
+CONST TROUBLE_HANDS = 2
+CONST TROUBLE_CURSED = 254           ; -2, as a byte
+
+FUNC BYTE CursedIn(BYTE k)
+  IF k == 255 THEN RETURN (0) FI
+RETURN (ifl(k) & OF_CURSE)
+
+; worst_cursed_item(): the weapon if a ring is on the right hand or it
+; needs both, then gloves, shield, cloak, armour, helm, boots, the amulet,
+; the rings, the weapon; 255 for none
+FUNC BYTE WorstCursed()
+  IF CursedIn(uwep) AND (uright <> 255 OR it(uwep) == O_TWOHANDED) THEN RETURN (uwep) FI
+  IF CursedIn(worn(SLOT_GLOVES)) THEN RETURN (worn(SLOT_GLOVES)) FI
+  IF CursedIn(worn(SLOT_SHIELD)) THEN RETURN (worn(SLOT_SHIELD)) FI
+  IF CursedIn(worn(SLOT_CLOAK)) THEN RETURN (worn(SLOT_CLOAK)) FI
+  IF CursedIn(worn(SLOT_BODY)) THEN RETURN (worn(SLOT_BODY)) FI
+  IF CursedIn(worn(SLOT_HELM)) THEN RETURN (worn(SLOT_HELM)) FI
+  IF CursedIn(worn(SLOT_BOOTS)) THEN RETURN (worn(SLOT_BOOTS)) FI
+  IF CursedIn(uamul) THEN RETURN (uamul) FI
+  IF CursedIn(uleft) THEN RETURN (uleft) FI
+  IF CursedIn(uright) THEN RETURN (uright) FI
+  IF CursedIn(uwep) THEN RETURN (uwep) FI
+RETURN (255)
+
+FUNC BYTE Trouble()
+  CARD lim, h
+  BYTE div
+  h = uhpmax
+  lim = ulev
+  lim = lim * 15
+  IF h > lim THEN h = lim FI
+  div = 5
+  IF ulev >= 6 THEN div = 6 FI
+  lim = uhp
+  IF uhp <= 5 OR lim * div <= h THEN RETURN (TROUBLE_HIT) FI
+  IF CursedIn(uwep) AND (it(uwep) == O_TWOHANDED OR CursedIn(worn(SLOT_SHIELD))) THEN RETURN (TROUBLE_HANDS) FI
+  IF WorstCursed() <> 255 THEN RETURN (TROUBLE_CURSED) FI
+RETURN (0)
+
+; "Your long sword softly glows amber.", and it is uncursed
+PROC Glows(BYTE k)
+  mbl = 0
+  IF k == uleft THEN
+    MsgS(Str(#"Your left ring"))
+  ELSEIF k == uright THEN
+    MsgS(Str(#"Your right ring"))
+  ELSE
+    MsgS("Your ")
+    Name(it(k), 1, 0, 0, 0)
+  FI
+  MsgS(Str(#" softly glows amber."))
+  MsgEnd()
+  ifl(k) = (ifl(k) & (255 ^ OF_CURSE)) | OF_BKNOWN
+RETURN
+
+; fix_worst_trouble()
+PROC FixTrouble(BYTE tr)
+  IF tr == TROUBLE_HIT THEN
+    Msg(Str(#"You feel much better."))
+    IF uhpmax < ulev * 5 + 11 THEN uhpmax += Roll(5) FI
+    IF uhpmax <= 5 THEN uhpmax = 6 FI
+    uhp = uhpmax
+  ELSEIF tr == TROUBLE_HANDS THEN
+    Glows(uwep)
+  ELSEIF tr == TROUBLE_CURSED THEN
+    Glows(WorstCursed())
+  FI
+RETURN
+
+; NetHack's rnz(): a timeout around i, spread wide both ways
+FUNC CARD Rnz(CARD i)
+  CARD t
+  BYTE n
+  t = 1000 + Rnd(1000)
+  n = 1
+  WHILE n < 5 AND Rnd(4) == 0 DO n += 1 OD
+  t = t * n
+  IF Rnd(2) THEN RETURN (i * (t / 100) / 10) FI
+RETURN (i * 100 / (t / 10))
+
+PROC GodVoice(BYTE g)
+  BYTE v
+  mbl = 0
+  MsgS(Str(#"The voice of "))
+  GodName(g)
+  v = Rnd(4)
+  IF v == 0 THEN
+    MsgS(Str(#" booms out:"))
+  ELSEIF v == 1 THEN
+    MsgS(Str(#" thunders:"))
+  ELSEIF v == 2 THEN
+    MsgS(Str(#" rings out:"))
+  ELSE
+    MsgS(" booms:")
+  FI
+  MsgEnd()
+RETURN
+
+PROC Displeased(BYTE g)
+  mbl = 0
+  MsgS(Str(#"You feel that "))
+  GodName(g)
+  MsgS(Str(#" is displeased."))
+  MsgEnd()
+RETURN
+
+; NetHack's angrygods()
+PROC AngryGods(BYTE g)
+  INT anger, l
+  BYTE r, k, i, d
+  l = -uluck
+  IF g <> ualign THEN
+    IF uluck > 0 THEN l = -uluck / 3 FI
+    anger = urec / 2 + l
+  ELSE
+    IF uluck > 0 OR urec >= 4 THEN l = -uluck / 3 FI
+    anger = 3 * ugangr + l
+  FI
+  IF anger < 1 THEN anger = 1 FI
+  IF anger > 15 THEN anger = 15 FI
+  r = Rnd(anger)
+  IF r < 2 THEN
+    Displeased(g)
+  ELSEIF r < 4 THEN
+    GodVoice(g)
+    IF urec < 0 AND g == ualign THEN
+      Msg(Str(#"\"Thou hast strayed from the path, mortal.\""))
+    ELSE
+      Msg(Str(#"\"Thou art arrogant, mortal.\""))
+    FI
+    Msg(Str(#"\"Thou must relearn thy lessons!\""))
+    LoseLevel()
+  ELSEIF r < 7 THEN
+    GodVoice(g)
+    Msg(Str(#"\"Thou hast angered me.\""))
+    Msg(Str(#"A black glow surrounds you."))
+    FOR i = 1 TO Roll(6) DO
+      k = Rnd(MAXINV)
+      IF it(k) <> 255 THEN
+        IF ifl(k) & OF_BLESS THEN ifl(k) = ifl(k) & (255 ^ OF_BLESS) ELSE ifl(k) = ifl(k) | OF_CURSE FI
+      FI
+    OD
+  ELSEIF r < 9 THEN
+    GodVoice(g)
+    Msg(Str(#"\"Thou durst call upon me?\""))
+    Msg(Str(#"\"Then die, mortal!\""))
+    d = FreeNear(px, py)
+    IF d THEN
+      i = NewMon(M_WATERDEMON, px + dir_dx(d), py + dir_dy(d))
+      DrawCell(px + dir_dx(d), py + dir_dy(d))
+    FI
+  ELSE
+    GodVoice(g)
+    Msg(Str(#"\"Thou hast angered me.\""))
+    Msg(Str(#"Suddenly, a bolt of lightning strikes you!"))
+    Msg(Str(#"You fry to a crisp."))
+    killgod = g
+    HurtHero(255, KD_WRATH)
+  FI
+  ublesscnt = Rnz(300)
+RETURN
+
+PROC GodsUpset(BYTE g)
+  IF g == ualign THEN
+    ugangr += 1
+  ELSEIF ugangr THEN
+    ugangr -= 1
+  FI
+  AngryGods(g)
+RETURN
+
+; NetHack's pleased()
+PROC Pleased(BYTE g, BYTE ptrouble)
+  BYTE tr, pat, act, n, k
+  INT pl
+  tr = Trouble()
+  pat = 0
+  mbl = 0
+  MsgS(Str(#"You feel that "))
+  GodName(g)
+  IF urec >= 14 THEN
+    MsgS(Str(#" is well-pleased."))
+  ELSEIF urec >= 4 THEN
+    MsgS(Str(#" is pleased."))
+  ELSE
+    MsgS(Str(#" is satisfied."))
+  FI
+  MsgEnd()
+  IF OnAltar() <> 255 AND g <> ualign THEN
+    urec -= 1
+    RETURN
+  FI
+  IF urec < 2 AND (tr == 0 OR tr == TROUBLE_CURSED) THEN urec += 1 FI
+  IF tr == 0 AND urec >= 14 THEN
+    IF ptrouble == 0 THEN pat = 1 FI
+  ELSE
+    pl = uluck
+    IF pl < -1 THEN pl = -1 FI
+    IF OnAltar() <> 255 THEN pl = pl + 3 ELSE pl = pl + 2 FI
+    act = Rnd(pl) + 1
+    IF OnAltar() == 255 AND act > 3 THEN act = 3 FI
+    IF urec < 4 THEN
+      act = 0
+      IF urec > 0 OR Rnl(2) == 0 THEN act = 1 FI
+    FI
+    IF act >= 5 THEN pat = 1 FI
+    IF act >= 4 THEN
+      n = 0
+      WHILE tr <> 0 AND n < 10 DO
+        FixTrouble(tr)
+        tr = Trouble()
+        n += 1
+      OD
+    ELSEIF act >= 2 THEN
+      IF act == 3 THEN
+        FixTrouble(tr)
+        tr = Trouble()
+      FI
+      n = 0
+      WHILE (tr == TROUBLE_HIT OR tr == TROUBLE_HANDS) AND n < 10 DO
+        FixTrouble(tr)
+        tr = Trouble()
+        n += 1
+      OD
+    ELSEIF act == 1 AND (tr == TROUBLE_HIT OR tr == TROUBLE_HANDS) THEN
+      FixTrouble(tr)
+    FI
+  FI
+  IF pat THEN
+    n = Rnd((uluck + 6) >> 1)
+    IF n == 1 AND uwep <> 255 THEN
+      IF ifl(uwep) & OF_CURSE THEN
+        Glows(uwep)
+      ELSEIF ifl(uwep) & OF_BLESS == 0 THEN
+        mbl = 0
+        MsgS("Your ")
+        Name(it(uwep), 1, 0, 0, 0)
+        MsgS(Str(#" softly glows with a light blue aura."))
+        MsgEnd()
+        ifl(uwep) = ifl(uwep) | OF_BLESS | OF_BKNOWN
+      FI
+    ELSEIF n == 2 THEN
+      Msg(Str(#"You are surrounded by a golden glow."))
+      IF uhpmax < 245 THEN uhpmax += 5 FI
+      uhp = uhpmax
+      IF uluck < 0 THEN uluck = 0 FI
+    ELSEIF n == 4 THEN
+      Msg(Str(#"You are surrounded by a light blue aura."))
+      FOR k = 0 TO MAXINV - 1 DO
+        IF CursedIn(k) AND it(k) <> 255 THEN Glows(k) FI
+      OD
+    FI
+  FI
+  ublesscnt = Rnz(350)
+RETURN
+
+; #pray: NetHack's can_pray(), three turns of prayer -- in which a god who
+; is pleased keeps every monster's blow off -- and prayer_done()
+PROC Pray()
+  BYTE g, tr, al
+  INT a
+  IF YesNo(Str(#"Are you sure you want to pray? [yn] (n)")) == 0 THEN
+    MsgClear()
+    RETURN
+  FI
+  g = OnAltar()
+  al = g
+  IF g == 255 THEN g = ualign FI
+  tr = Trouble()
+  mbl = 0
+  MsgS(Str(#"You begin praying to "))
+  GodName(g)
+  MsgC('.')
+  MsgEnd()
+  a = urec
+  IF ualign <> g THEN
+    IF ualign <> 1 AND ualign + g == 2 THEN a = -urec ELSE a = urec / 2 FI
+  FI
+  IF (tr == TROUBLE_HIT OR tr == TROUBLE_HANDS) AND ublesscnt > 200 THEN
+    ptype = 0
+  ELSEIF tr == TROUBLE_CURSED AND ublesscnt > 100 THEN
+    ptype = 0
+  ELSEIF tr == 0 AND ublesscnt > 0 THEN
+    ptype = 0
+  ELSEIF uluck < 0 OR ugangr OR a < 0 THEN
+    ptype = 1
+  ELSEIF al <> 255 AND al <> ualign THEN
+    ptype = 2
+  ELSE
+    ptype = 3
+    Msg(Str(#"You are surrounded by a shimmering light."))
+  FI
+  upray = 3
+  WHILE upray AND dead == 0 DO
+    EndTurn()
+    upray -= 1
+  OD
+  IF dead THEN RETURN FI
+  Msg(Str(#"You finish your prayer."))
+  IF ptype == 0 THEN
+    ublesscnt += Rnz(250)
+    Luck(-3)
+    GodsUpset(ualign)
+  ELSEIF ptype == 1 THEN
+    AngryGods(ualign)
+  ELSE
+    Pleased(g, tr)
+  FI
+  Status()
+RETURN
+
+; E: NetHack's engraving, with the finger in the dust -- added to what is
+; there, or wiping it out first
+PROC Engrave()
+  BYTE k, e, i, n
+  CARD at
+  k = Kind(px, py)
+  IF k >= K_ALTAR THEN
+    Msg(Str(#"You make a motion towards the altar with your fingers."))
+    RETURN
+  FI
+  IF k <> K_FLOOR AND k <> K_CORR AND k <> K_DOORWAY THEN
+    Msg(Str(#"You can't write on the floor here."))
+    RETURN
+  FI
+  Msg(Str(#"You write in the dust with your fingertip."))
+  e = EngrAt(px, py)
+  IF e <> 255 THEN
+    IF YesNo(Str(#"Do you want to add to the current engraving? [yn]")) == 0 THEN
+      Msg(Str(#"You wipe out the message that was written in the dust here."))
+      ex(e) = 255
+      e = 255
+    FI
+  FI
+  IF GetLine(Str(#"What do you want to write in the dust here?"), 16) == 0 THEN RETURN FI
+  IF lb(0) == 0 THEN RETURN FI
+  IF e == 255 THEN
+    e = 0
+    FOR i = 0 TO MAXENGR - 1 DO
+      IF ex(i) == 255 THEN e = i FI
+    OD
+    etx(e * 17) = 0
+  FI
+  at = e * 17
+  ex(e) = px
+  ey(e) = py
+  FOR i = 1 TO lb(0) DO
+    n = etx(at)
+    IF n < 16 THEN
+      etx(at + n + 1) = lb(i)
+      etx(at) = n + 1
+    FI
+  OD
   EndTurn()
 RETURN
 
@@ -3319,13 +4824,13 @@ RETURN
 PROC Die()
   BYTE ch, k
   BYTE POINTER n, q
-  Msg("You die...")
+  Msg(Str(#"You die..."))
   More()
   phase = 2
   ClearScreen()
   Pic(19, 5, T_GRAVE, B_VIEW)
   mbl = 0
-  MsgS("REST IN PEACE")
+  MsgS(Str(#"REST IN PEACE"))
   Centre(9, B_WHITE)
   IF role == 0 THEN
     MsgS("Valkyrie")
@@ -3335,23 +4840,26 @@ PROC Die()
     MsgS("Rogue")
   FI
   Centre(11, B_YELLOW)
-  MsgS("killed by ")
-  n = MonName(killer)
-  q = n + 1
-  ch = *q
-  IF killer == M_ORACLE OR killer == M_WIZARDOFYENDOR THEN
-    MsgS("the ")
-  ELSEIF ch == 'a' OR ch == 'e' OR ch == 'i' OR ch == 'o' OR ch == 'u' THEN
-    MsgS("an ")
+  IF killer >= KD_FIRST THEN
+    MsgS(NameRec(NAME_DEATH + killer - KD_FIRST))
+    IF killer == KD_WRATH THEN
+      MsgC(' ')
+      MsgS(NameRec(NAME_GOD + killgod))
+    FI
   ELSE
-    MsgS("a ")
+    MsgS(Str(#"killed by "))
+    IF killer == M_ORACLE OR killer == M_WIZARDOFMOTT THEN
+      MsgS("the ")
+      MsgS(MonName(killer))
+    ELSE
+      MsgA(MonName(killer))
+    FI
   FI
-  MsgS(n)
   Centre(13, B_WHITE)
-  MsgS("on dungeon level ")
+  MsgS(Str(#"on dungeon level "))
   MsgN(depth)
   Centre(14, B_WHITE)
-  MsgS("at experience level ")
+  MsgS(Str(#"at experience level "))
   MsgN(ulev)
   Centre(16, B_GREY)
   MsgS("after ")
@@ -3360,9 +4868,9 @@ PROC Die()
   Centre(17, B_GREY)
   MsgS("with ")
   MsgN(ugold)
-  MsgS(" pieces of gold")
+  MsgS(Str(#" pieces of gold"))
   Centre(18, B_GREY)
-  Text(9, 24, "Enter: back to the title", B_GREY)
+  Text(9, 24, Str(#"Enter: back to the title"), B_GREY)
   k = KeyHit(KEY_ENTER)
   DO
     Tick()
@@ -3370,16 +4878,160 @@ PROC Die()
   esc = 0
 RETURN
 
-; ------------------------------------------------------------- the play
-FUNC BYTE Quit()
-  Msg("Really quit? [yn]")
+; NetHack's ?: the keys, a page of MHELP.DAT over the map
+PROC Help()
+  BYTE r, c, d
+  CARD a
+  MsgClear()
+  FOR r = VTOP TO VTOP + 25 DO ClearRow(r) OD
+  Text(0, 0, Str(#"MOTT -- the keys"), B_YELLOW)
+  IF DiskFind(MDRIVE, help_file) THEN
+    DiskOpen(MDRIVE)
+    FOR r = 0 TO N_HELP - 1 DO
+      a = r + VTOP + 1                 ; a shift keeps its left side's width: widen first
+      VRAM_ADDR = a << 7
+      VRAM_STEP = 1
+      FOR c = 1 TO 40 DO
+        VRAM_DATA = FlashByte() - FONT_FIRST
+        VRAM_DATA = B_WHITE
+      OD
+    OD
+    FlashClose()
+  FI
+  d = KeyHit(KEY_SPACE)
   esc = 0
   DO
     Tick()
-    IF KeyHit(KEY_Y) THEN RETURN (1) FI
-    IF KeyHit(KEY_N) THEN EXIT FI
-  UNTIL esc OD
+  UNTIL KeyHit(KEY_SPACE) OR KeyHit(KEY_ENTER) OR esc OD
   esc = 0
+  FOR r = VTOP TO VTOP + 25 DO ClearRow(r) OD
+  DrawView()
+RETURN
+
+; # and a long command, as NetHack's extended commands: #pray
+PROC Extended()
+  IF GetLine("#", 12) == 0 THEN RETURN FI
+  IF Typed("pray") THEN
+    Pray()
+  ELSE
+    mbl = 0
+    MsgS(lb)
+    MsgS(Str(#": unknown extended command."))
+    MsgEnd()
+  FI
+RETURN
+
+; p: NetHack's dopay() -- each unpaid thing bought while the gold lasts,
+; the debt first; an angry keeper paid what was stolen, or a thousand
+PROC Pay()
+  BYTE k
+  CARD c
+  IF ShkOk() == 0 OR InShop(px, py) == 0 THEN
+    Msg(Str(#"There appears to be no shopkeeper here to receive your payment."))
+    RETURN
+  FI
+  mbl = 0
+  IF mstat(shk) & S_HOSTILE THEN
+    IF shrob THEN
+      IF ugold < shrob / 2 THEN
+        MsgS(Str(#"Unfortunately, "))
+        ShkName()
+        MsgS(Str(#" doesn't look satisfied."))
+      ELSE
+        c = shrob
+        IF ugold < c THEN c = ugold FI
+        ugold = ugold - c
+        shgold = shgold + c
+        MsgS(Str(#"You compensate "))
+        ShkName()
+        MsgS(Str(#" for the losses, and are forgiven."))
+        shrob = 0
+        mstat(shk) = mstat(shk) & (255 ^ S_HOSTILE)
+      FI
+    ELSE
+      ShkName()
+      MsgS(Str(#" is after blood, not money!"))
+      MsgEnd()
+      IF ugold < 1000 THEN
+        MsgS(Str(#"Besides, you don't have enough to interest "))
+        ShkName()
+        MsgC('.')
+      ELSE
+        ugold = ugold - 1000
+        shgold = shgold + 1000
+        MsgS(Str(#"You try to appease "))
+        ShkName()
+        MsgS(Str(#" by giving 1000 gold pieces."))
+        MsgEnd()
+        IF Rnd(3) THEN
+          ShkName()
+          MsgS(Str(#" calms down."))
+          mstat(shk) = mstat(shk) & (255 ^ S_HOSTILE)
+        ELSE
+          MsgS("But ")
+          ShkName()
+          MsgS(Str(#" is as angry as ever."))
+        FI
+      FI
+    FI
+    MsgEnd()
+    Status()
+    RETURN
+  FI
+  IF Bill() == 0 THEN
+    MsgS(Str(#"You do not owe "))
+    ShkName()
+    MsgS(" anything.")
+    MsgEnd()
+    RETURN
+  FI
+  IF shdebt THEN
+    IF ugold < shdebt THEN
+      Msg(Str(#"You don't have gold enough to pay what you owe."))
+      RETURN
+    FI
+    ugold = ugold - shdebt
+    shgold = shgold + shdebt
+    MsgS("You pay ")
+    MsgN(shdebt)
+    MsgS(Str(#" gold pieces for what you used."))
+    MsgEnd()
+    shdebt = 0
+  FI
+  FOR k = 0 TO MAXINV - 1 DO
+    IF it(k) <> 255 AND ifl(k) & OF_UNPAID THEN
+      c = Price(it(k), ifl(k), ie(k), 0) * iq(k)
+      mbl = 0
+      IF ugold < c THEN
+        MsgS(Str(#"You don't have gold enough to pay for "))
+        Name(it(k), iq(k), ifl(k), ie(k), 1)
+        MsgC('.')
+        MsgEnd()
+        Status()
+        RETURN
+      FI
+      ugold = ugold - c
+      shgold = shgold + c
+      ifl(k) = ifl(k) & (255 ^ (OF_UNPAID | OF_DEAR))
+      MsgS("You bought ")
+      Name(it(k), iq(k), ifl(k), ie(k), 1)
+      MsgS(" for ")
+      MsgN(c)
+      MsgS(Str(#" gold pieces."))
+      MsgEnd()
+    FI
+  OD
+  mbl = 0
+  MsgS(Str(#"\"Thank you for shopping in "))
+  ShopWord()
+  MsgS("!\"")
+  MsgEnd()
+  Status()
+RETURN
+
+; ------------------------------------------------------------- the play
+FUNC BYTE Quit()
+  IF YesNo(Str(#"Really quit? [yn] (n)")) THEN RETURN (1) FI
   MsgClear()
 RETURN (0)
 
@@ -3402,6 +5054,13 @@ PROC Play()
   upw = r_pw(role)
   upwmax = upw
   upara = 0
+  ualign = r_align(role)
+  urec = 10
+  uluck = 0
+  ublesscnt = 300
+  ugangr = 0
+  upray = 0
+  utrap = 0
   carry(0) = 255
   msgrow = 0
   mbl = 0
@@ -3414,7 +5073,7 @@ PROC Play()
     IF i <> 255 THEN mstat(i) = S_LIVE | S_PET FI
     DrawCell(px + dir_dx(d), py + dir_dy(d))
   FI
-  Msg("Welcome to the Dungeons of Yendor!")
+  Msg(Str(#"Welcome to the Dungeons of Mott!"))
   DO
     Tick()
     loops += 1
@@ -3449,6 +5108,7 @@ PROC Play()
     FI
     IF KeyHit(KEY_S) OR KeyHit(KP5) THEN
       MsgClear()
+      Search()
       EndTurn()
     FI
     IF KeyHit(KEY_Z) THEN
@@ -3479,10 +5139,16 @@ PROC Play()
       MsgClear()
       IF Shifted() THEN TakeOff() ELSE Throw() FI
     FI
-    IF KeyHit(KEY_P) AND Shifted() THEN
+    IF KeyHit(KEY_P) THEN
       MsgClear()
-      PutOn()
+      IF Shifted() THEN PutOn() ELSE Pay() FI
     FI
+    IF KeyHit(KEY_3) AND Shifted() THEN Extended() FI
+    IF KeyHit(KEY_E) AND Shifted() THEN
+      MsgClear()
+      Engrave()
+    FI
+    IF KeyHit(KEY_SLASH) AND Shifted() THEN Help() FI
     IF KeyHit(KEY_Q) THEN
       MsgClear()
       Quaff()
@@ -3499,7 +5165,7 @@ PROC Play()
     IF wantport AND dead == 0 THEN
       wantport = 0
       MsgClear()
-      Msg("You feel a wrenching sensation.")
+      Msg(Str(#"You feel a wrenching sensation."))
       Teleport()
     FI
     IF KeyHit(KEY_ENTER) THEN
@@ -3532,21 +5198,20 @@ PROC Title()
   ClearScreen()
   go = 1
   IF theme <> 0 THEN go = LoadTheme(0) FI
-  IF DiskFind(YDRIVE, names_file) THEN names_page = disk_page ELSE go = 0 FI
+  IF DiskFind(MDRIVE, names_file) THEN names_page = disk_page ELSE go = 0 FI
+  IF DiskFind(MDRIVE, str_file) THEN str_page = disk_page ELSE go = 0 FI
   IF go == 0 THEN
-    Text(1, 14, "YENDOR's files are not all on drive 9.", B_RED)
+    Text(1, 14, "MOTT's files are not all on drive 9.", B_RED)
     DO
       Tick()
     UNTIL esc OD
     RETURN
   FI
-  Text(17, 3, "YENDOR", B_YELLOW)
-  Text(1, 5, "The Amulet of Yendor lies twelve levels", B_GREY)
-  Text(1, 6, "down. Fetch it, and climb back to the", B_GREY)
+  Text(18, 3, "MOTT", B_YELLOW)
+  Text(1, 5, Str(#"The Amulet of Mott lies twelve levels"), B_GREY)
+  Text(1, 6, Str(#"down. Fetch it, and climb back to the"), B_GREY)
   Text(1, 7, "sun.", B_GREY)
-  Text(5, 20, "up, down: choose   Enter: begin", B_GREY)
-  Text(3, 25, "Tiles: DawnLike by DragonDePlatino", B_CYAN)
-  Text(3, 26, "Palette: DawnBringer    CC-BY 4.0", B_CYAN)
+  Text(5, 20, Str(#"up, down: choose   Enter: begin"), B_GREY)
   TitleRoles(role)
   go = KeyHit(KEY_ENTER)
   go = KeyHit(KEY_SPACE)

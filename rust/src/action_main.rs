@@ -14,6 +14,7 @@ fn print_usage() {
          \x20 --org <hex/dec>   Origin address in RAM (default: $0200 for ~63.25 KB standalone RAM)\n\
          \x20 --asm <out.asm>   Emit generated COOL8 assembly\n\
          \x20 --sym <out.sym>   Emit symbol table\n\
+         \x20 --strings <file>  Write the #\"text\" strings, for the program to read from its drive\n\
          \x20 --assemble        Assemble COOL8 assembly text instead; the output is the raw image"
     );
 }
@@ -65,6 +66,7 @@ fn main() {
     let mut output_file: Option<String> = None;
     let mut asm_file: Option<String> = None;
     let mut sym_file: Option<String> = None;
+    let mut strings_path: Option<String> = None;
     let mut org: u16 = 0x0200; // Standalone by default ($0200)
     let mut assemble = false;
 
@@ -117,6 +119,14 @@ fn main() {
                     exit(1);
                 }
                 sym_file = Some(args[i].clone());
+            }
+            "--strings" => {
+                i += 1;
+                if i >= args.len() {
+                    eprintln!("Missing argument for --strings");
+                    exit(1);
+                }
+                strings_path = Some(args[i].clone());
             }
             "-h" | "--help" => {
                 print_usage();
@@ -184,6 +194,16 @@ fn main() {
     if let Some(p) = asm_file {
         if let Err(e) = fs::write(&p, &result.asm_text) {
             eprintln!("Cannot write assembly to '{}': {}", p, e);
+        }
+    }
+
+    // written, or removed, so a program that no longer has strings leaves no stale file
+    if let Some(p) = strings_path {
+        if result.strings.is_empty() {
+            let _ = fs::remove_file(&p);
+        } else if let Err(e) = fs::write(&p, &result.strings) {
+            eprintln!("Cannot write strings to '{}': {}", p, e);
+            exit(1);
         }
     }
 

@@ -46,6 +46,8 @@ pub enum TokenKind {
     // Literals
     Number(i64),
     Str(String),
+    /// `#"text"`: a string kept out of the image, which is its number
+    DiscStr(String),
     CharLit(u8),
     Ident(String),
 

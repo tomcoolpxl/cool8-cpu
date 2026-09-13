@@ -6729,7 +6729,7 @@ eight to twelve of a line's eight; the art compressed in the PRG, which
 at a third of its size still would not fit beside the code; a data file
 wider than the filesystem allows.
 
-## D108 -- YENDOR: DawnLike drawn onto each theme's floor, and a drive of its own
+## D108 -- MOTT: DawnLike drawn onto each theme's floor, and a drive of its own
 
 **The owner asked for a game after NetHack, with real tiles in place of
 letters and far less memory**, and chose, from pick lists, after looking
@@ -6738,6 +6738,10 @@ back up, three roles, a pet, unidentified items, shops, altars and
 prayer, traps and secret doors, fountains, Elbereth, a cave branch with a
 town, the Oracle, a small Sokoban, music by depth, and floors that change
 with depth. [14-demos.md](14-demos.md) has the game and its milestones.
+It was called YENDOR, after Rogue's Amulet, until the owner renamed it
+MOTT -- TTOM backwards, as Yendor is Rodney -- during milestone 4;
+the Amulet and the Wizard took the name, and so did the drive and the
+files.
 
 **A creature cannot be laid over the floor on the screen.** Mode 2's
 tiles have no transparent index, and DawnLike's creature and item sheets
@@ -6765,8 +6769,8 @@ ways round it were weighed:
 
 **A drive of its own, because the CoolAction disc is full.** Drive 11 had
 45,568 bytes free; three theme files are 98 KB before the program and the
-special levels' themes. **Drive 9 is claimed for YENDOR**
-(`cool8disk.YENDOR_VOL`, in `CLAIMED`): its PRG and its `.disc` files go
+special levels' themes. **Drive 9 is claimed for MOTT**
+(`cool8disk.MOTT_VOL`, in `CLAIMED`): its PRG and its `.disc` files go
 there, and `tools/mkdemos.py`'s `HOMES` puts only the 3,545-byte loader on
 drive 11, with drive 9 in its tail, so the game stays on the CoolAction
 menu without a fourth menu. The owner chose that over a menu of its own.
@@ -6784,9 +6788,9 @@ once and needed no theme files, and which the owner turned down for
 DawnLike's detail; NetHack's own tiles, copyleft and in more than a
 bank's colours; making room on drive 11 by moving other programs off it.
 
-## D109 -- Room for YENDOR: dead routines dropped, low RAM for the payload, names on the disc
+## D109 -- Room for MOTT: dead routines dropped, low RAM for the payload, names on the disc
 
-**At the end of its milestone 3 YENDOR's PRG was 45,525 bytes from
+**At the end of its milestone 3 MOTT's PRG was 45,525 bytes from
 `$1400`, leaving 14,635 below `$FF00`, and milestones 4 to 6 were
 estimated at more.** Measured with `tools/cool8asm.py --pressure`:
 33,804 bytes in routines, 2,880 in the level's three cell maps, 1,323
@@ -6799,7 +6803,7 @@ from the entry through calls, `@Name`s and the identifiers in `ASM`
 blocks, and a routine the walk does not reach is generated -- so it is
 still checked -- and then truncated from the output with its strings.
 Every program on the disc lost 1.7 to 3.0 KB
-([15-action.md §4a](15-action.md) has the table); YENDOR 2,113. Globals
+([15-action.md §4a](15-action.md) has the table); MOTT 2,113. Globals
 are kept: dropping unused tables is a further step, not taken.
 `test_library` now compiles the library behind a program that names its
 routines in an `ASM` block, and checks a program that names none
@@ -6819,12 +6823,12 @@ writes it. A program uses it by binding an array to an address,
 `$1400`, and `test_loader` checks the same. **This changes the loader's
 contract, not the machine's memory map**: BASIC's map is untouched, and
 `PAYLOAD_ORG` stays `$1400`, so every PRG on the disc is where it was.
-YENDOR binds its three cell maps there (2,880 bytes), clears them in
+MOTT binds its three cell maps there (2,880 bytes), clears them in
 `MakeLevel` and `LoadLevel` before reading them, and its driver and gate
 compile it at `$1400`, where the loader runs it, instead of at `$0200`,
 where the maps would be under the program.
 
-**3. Names on the disc.** `tools/mkyendor.py` writes `YNAMES.DAT`, 134
+**3. Names on the disc.** `tools/mkmott.py` writes `MNAMES.DAT`, 134
 records of 24 bytes -- a length byte and the letters, the longest name
 23 -- in the order creatures, kinds, then each shuffled class's
 appearances, with a `NAME_` constant for where each group starts. The
@@ -6838,7 +6842,7 @@ would turn every message into a number, and the headroom does not need
 it yet. The special levels' maps will be files the same way when
 milestone 5 brings them.
 
-**Measured after all three: YENDOR's PRG is 39,334 bytes, its last byte
+**Measured after all three: MOTT's PRG is 39,334 bytes, its last byte
 at `$ADA5`, with 20,826 free below `$FF00`.**
 
 **Rejected**: moving the payload's origin down to the stub's end, which
@@ -6848,3 +6852,50 @@ interrupt or a returning `Main` would jump into; fixed-width records
 with an offset table instead, which puts back in the PRG a part of what
 the file took out.
 
+## D110 -- Strings off the image, and routines that release their own parameters
+
+**MOTT's milestone 4 took the PRG from 39,334 bytes to 55,270, 4,890
+short of the top of RAM with two milestones still to come.** Measured as
+it grew, with `tools/cool8asm.py --pressure`: at 49,036 bytes 6,006 were
+string literals, and at 55,270 its 2,157 `CALL`s carried 1,786 `ADDW SP`
+releases behind them -- 5,358 bytes of call-site bookkeeping. Two
+changes to the compiler and one to the game took it to 49,438.
+
+**1. `#"text"`: a string that is a number in the program and a record in
+a file** (15-action.md section 2.1). D109 left the messages in the source
+as literals because moving them by hand would turn every message into a
+number. A literal the compiler takes out itself keeps the message where
+it is said, `Msg(Str(#"You find a hidden door."))`, and writes the text
+to a strings file -- a count, an offset each, the strings -- that
+`tools/mkdemos.py` puts on the program's drive as `NAME.STR` and a driver
+puts on its flash. MOTT's `Str()` opens it at the offset in the table and
+reads the one string into a buffer, as `NameRec()` does the names. 197
+literals of ten characters or more handed straight to a printing routine
+were converted by a script, 250 strings in all now, 7,404 bytes of file;
+the literals under ten characters, 957 bytes, stay. **Rejected**: the
+messages numbered by hand in a table (unreadable, and a second place to
+edit each); compressing them in the image (a decoder, and still in RAM).
+
+**2. A routine called from enough places pops its own parameters**
+(15-action.md section 4a). The first version made every routine do it
+through a shared `__retN: POPW X / ADDW SP / PUSHW X / RET`, nine clocks
+a call dearer, and the full suite's timing gates caught it: Arkanoid ran
+599 frames of play in 600 vblanks. Inline, `POPW X / ADDW SP / JMP [X]`,
+it is two clocks dearer, and Arkanoid still missed one -- its profile
+puts 24 % of the frame to work on average, so the miss is one heavy frame
+tipped over. So the choice is per routine: only where three bytes a call
+site outweigh four more an exit by three, which leaves the one- and
+two-caller helpers of a hot loop exactly as they were, and never for a
+routine an `ASM` block or an address names, since hand-written code
+releases what it pushed. Arkanoid holds every frame again; MOTT lost
+4,459 bytes and every other program on the disc a little.
+
+**3. A level's state is one run of memory** (14-demos.md, MOTT). The
+arrays and scalars a level parks beyond its cells are declared together,
+`rx1` to `park_end`, and parked and unparked with one copy each where
+there were sixty calls, 1,373 bytes. It relies on the compiler laying
+globals out in declaration order, which it does, and the gate holds the
+symbol table to it: every one in its place, and the whole inside a slot.
+
+**Measured after all three**: MOTT's PRG 49,438 bytes, its last byte at
+`$D51D`, 10,722 free below `$FF00`.

@@ -462,6 +462,7 @@ def try_build_act(source, name, org=0x0200):
     stem = os.path.join(BUILD, name)
     r = subprocess.run([_act_exe()] + paths + ["-o", stem + ".bin",
                         "--asm", stem + ".asm", "--sym", stem + ".sym",
+                        "--strings", stem + ".str",
                         "--org", "$%04X" % org],
                        capture_output=True, text=True)
     if r.returncode != 0:
@@ -475,6 +476,14 @@ def try_build_act(source, name, org=0x0200):
             if sym:
                 syms[sym] = int(addr, 16)
     return prg, syms
+
+
+def act_strings(name):
+    """The `#"text"` strings file of the build `name`, or None when the
+    program has none (15-action.md section 2.1): the file the program
+    reads from its drive, which the disc and a driver's flash put there."""
+    p = os.path.join(BUILD, name + ".str")
+    return p if os.path.exists(p) else None
 
 
 def build_act(source, name, org=0x0200):

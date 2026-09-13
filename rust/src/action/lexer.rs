@@ -115,6 +115,15 @@ impl<'a> Lexer<'a> {
             if ch == '"' {
                 return self.lex_string(span);
             }
+            // `#"text"`: its number, and the text for the strings file
+            if ch == '#' && self.peek_next() == Some('"') {
+                self.advance();
+                let tok = self.lex_string(span)?;
+                if let TokenKind::Str(s) = tok.kind {
+                    return Ok(Token { kind: TokenKind::DiscStr(s), span: tok.span, bol: tok.bol });
+                }
+                return Ok(tok);
+            }
 
             // Char literals
             if ch == '\'' {

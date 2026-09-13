@@ -18,6 +18,8 @@ pub struct Parser<'a> {
     previous: Token,
     user_types: HashSet<String>,
     consts: HashMap<String, i64>,
+    /// the `#"text"` strings, each numbered by its first appearance
+    disc: Vec<Vec<u8>>,
 }
 
 fn err_at(span: &Span, msg: &str) -> String {
@@ -35,6 +37,7 @@ impl<'a> Parser<'a> {
             previous,
             user_types: HashSet::new(),
             consts: HashMap::new(),
+            disc: Vec::new(),
         })
     }
 
@@ -95,7 +98,7 @@ impl<'a> Parser<'a> {
         while !self.check(&TokenKind::Eof) {
             items.extend(self.parse_item()?);
         }
-        Ok(Program { items })
+        Ok(Program { items, disc_strings: self.disc.clone() })
     }
 
     fn parse_item(&mut self) -> Result<Vec<Item>, String> {
@@ -712,6 +715,21 @@ impl<'a> Parser<'a> {
             TokenKind::CharLit(b) => {
                 self.advance()?;
                 Ok(Expr { kind: ExprKind::CharLit(b), span })
+            }
+            TokenKind::DiscStr(s) => {
+                self.advance()?;
+                let bytes = s.into_bytes();
+                if bytes.len() > 255 {
+                    return Err(err_at(&span, "a #\"string\" is at most 255 characters"));
+                }
+                let n = match self.disc.iter().position(|d| *d == bytes) {
+                    Some(n) => n,
+                    None => {
+                        self.disc.push(bytes);
+                        self.disc.len() - 1
+                    }
+                };
+                Ok(Expr { kind: ExprKind::Number(n as i64), span })
             }
             TokenKind::Ident(name) => {
                 self.advance()?;

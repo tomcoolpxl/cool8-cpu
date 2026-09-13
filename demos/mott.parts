@@ -1,4 +1,4 @@
-# YENDOR compiles behind its art table, which tools/mkyendor.py cuts from
+# MOTT compiles behind its art table, which tools/mkmott.py cuts from
 # DawnLike's sheets in assets/dawnlike/. One path a line, relative to the
 # repository root.
-assets/yendor/yendor_art.act
+assets/mott/mott_art.act

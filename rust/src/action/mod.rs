@@ -21,6 +21,30 @@ pub struct CompileResult {
     pub symbols: HashMap<String, u16>,
     /// Branches the assembler had to grow (docs/08-assembler.md).
     pub relaxed: usize,
+    /// The `#"text"` strings, as the file a program reads them from; empty
+    /// when the program has none.
+    pub strings: Vec<u8>,
+}
+
+/// The strings file: a CARD count, a CARD offset from the file's start for
+/// each string, then each string as a length byte and its characters.
+pub fn strings_file(strings: &[Vec<u8>]) -> Vec<u8> {
+    if strings.is_empty() {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    let n = strings.len();
+    out.extend_from_slice(&(n as u16).to_le_bytes());
+    let mut at = 2 + 2 * n;
+    for s in strings {
+        out.extend_from_slice(&(at as u16).to_le_bytes());
+        at += 1 + s.len();
+    }
+    for s in strings {
+        out.push(s.len() as u8);
+        out.extend_from_slice(s);
+    }
+    out
 }
 
 /// Compile CoolAction! source. `org` is where the program loads; the
@@ -51,5 +75,6 @@ pub fn compile(source: &str, org: u16) -> Result<CompileResult, String> {
         prg,
         symbols,
         relaxed: assembler.relaxed,
+        strings: strings_file(&program.disc_strings),
     })
 }

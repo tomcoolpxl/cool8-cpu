@@ -80,9 +80,9 @@ def actions():
 # **A program too big for the CoolAction disc lives on a drive of its own**
 # (docs/14-demos.md): its PRG and its .disc files go there, and only its
 # loader, which is 1 KB and names that drive, goes on drive 11 -- so it
-# is still on the CoolAction menu. YENDOR's four theme files alone are
+# is still on the CoolAction menu. MOTT's four theme files alone are
 # twice what drive 11 had left.
-HOMES = {"YENDOR": disk.YENDOR_VOL}
+HOMES = {"MOTT": disk.MOTT_VOL}
 
 
 def discname(f):
@@ -292,6 +292,11 @@ def main():
         vol11.add(p, nm + ".BIN")
         print("  compiled %-16s %6d bytes at $%04X -> drive %d as %s.PRG, with %s.BIN on drive %d to load it"
               % (f, len(prg) - 2, H.PAYLOAD_ORG, home, nm, nm, disk.ACTION_VOL))
+        # its #"text" strings, which it reads from its own drive
+        strs = H.act_strings("disc_" + nm.lower())
+        if strs:
+            volh.add(strs, nm + ".STR")
+            print("    and %s.STR, its strings, beside it" % nm)
         # the files a program reads from its own drive beside it --
         # Arkanoid's tiles and patterns, which it streams from the flash
         # into VRAM -- as its .disc manifest names them
