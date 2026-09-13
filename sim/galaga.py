@@ -269,6 +269,40 @@ class Game:
         return path
 
 
+def sound_check():
+    """A new game's start theme as voices 0-2 play it, frame by frame, against
+    tools/galaga_sound.py's rendering: (frames compared, frames that differ,
+    the first difference)."""
+    import galaga_sound as S
+    g = Game(tag="gal_sound", render=False)
+    g.m.run_frame(20)
+    g.tap(SPACE)
+    g.until(lambda: g.byte("snd_on", 0x0B), 60)
+    want = S.render(0x0B, chain=False)
+    seen = []
+    for f in range(len(want[0]) + 4):
+        g.m.run_frame(1)
+        snd = g.m.sound()
+        seen.append([(snd[8 * v] | (snd[8 * v + 1] << 8), snd[8 * v + 4] & 15, snd[8 * v + 5] & 0x40) for v in range(3)])
+    # the machine is a frame or two behind the stream's start: align on the first note
+    rows = [[(0 if hz is None else min(65535, round(S.target_increment(hz))), 0 if hz is None else vol)
+             for (_, hz, vol) in (want[v][f] for v in range(3))] for f in range(len(want[0]))]
+    best = None
+    for lag in range(0, 4):
+        bad = []
+        for f, row in enumerate(rows):
+            got = seen[f + lag]
+            for v in range(3):
+                inc, vol = row[v]
+                ginc, gvol, on = got[v]
+                if (vol and (ginc, gvol) != (inc, vol)) or (not vol and on and gvol):
+                    bad.append((f, v, row[v], got[v]))
+        if best is None or len(bad) < len(best[1]):
+            best = (lag, bad)
+    lag, bad = best
+    return len(rows), len(bad), lag, bad[:3]
+
+
 def compare_flights(g, stage, frames):
     """The game's flights of a stage from its first frame, each object held
     to tools/galaga_paths.py's machine flying it from the frame the game
@@ -417,6 +451,9 @@ def main():
         for obj, why in bad:
             print("obj %02X: %s" % (obj, why))
         print("%d objects fly the reference's path exactly, frame for frame; %d do not" % (same, len(bad)))
+    elif what == "sound":
+        # the start theme on voices 0-2 against the rendered streams
+        print(sound_check())
     elif what == "split":
         log = g.split()
         print("%d commits; lines %s" % (len(log), sorted(set(ln for ln, _, _ in log))))

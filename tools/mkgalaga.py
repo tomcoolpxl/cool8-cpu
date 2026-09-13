@@ -614,6 +614,68 @@ def flights():
                 atk_capture=reloc(P.LABEL_ADDR["db_0454"]), rogue=reloc(P.LABEL_ADDR["db_fltv_rogefgter"]))
 
 
+# ------------------------------------------------------------------ sound
+# The arcade's sounds, as its sound CPU plays them: tools/galaga_sound.py
+# runs a tick-exact model of the driver over the ROM's own note streams
+# (checked against the sound ROM's CRC) and puts each sound on 60 Hz
+# frames. Here each is a stream of changes on the voices it owns: a byte
+# whose bits 0-2 say which voices' increments change and bits 4-6 which
+# volumes (bit 7 the end), the new increments then the new volumes, then
+# the frames until the next change -- an envelope's step being one byte.
+# The game mixes them the driver's way -- the sounds in its fixed order, a
+# later one's voice winning -- with the tunes on voices 0-2 and the
+# effects on 3-5. Not carried: the coin (08) and the first-place name
+# entry (0C, and its tail 16); the other places' tune (10) is.
+TUNES = (0x07, 0x09, 0x0A, 0x0B, 0x0D, 0x0E, 0x10, 0x11, 0x14)
+DROPPED = (0x08, 0x0C, 0x16)
+SND_ORDER = (0x00, 0x13, 0x0F, 0x03, 0x02, 0x04, 0x01, 0x12, 0x05, 0x06, 0x09, 0x07,
+             0x11, 0x0D, 0x0E, 0x14, 0x15, 0x0A, 0x0B, 0x10)
+
+
+def sounds():
+    import galaga_sound as S
+    blob, offs, v0, nv = [], [], [], []
+    for sid in range(len(S.SND_PARMS)):
+        _, n, first = S.SND_PARMS[sid]
+        offs.append(len(blob))
+        v0.append(first)
+        nv.append(n)
+        if sid in DROPPED:
+            blob += [0x80]
+            continue
+        r = S.render(sid, chain=False)
+        frames = len(r[0])
+        inc = [None] * 3
+        vol = [None] * 3
+        recs = []
+        for f in range(frames):
+            mask, incs, vols = 0, [], []
+            for v in range(first, first + n):
+                _, hz, vl = r[v][f]
+                i = 0 if hz is None else min(65535, round(S.target_increment(hz)))
+                vl = 0 if hz is None else vl
+                if i != inc[v]:
+                    inc[v] = i
+                    mask |= 1 << v
+                    incs += [i & 255, i >> 8]
+                if vl != vol[v]:
+                    vol[v] = vl
+                    mask |= 16 << v
+                    vols.append(vl)
+            if mask:
+                recs.append((f, mask, incs + vols))
+        for k, (f, mask, data) in enumerate(recs):
+            gap = (recs[k + 1][0] if k + 1 < len(recs) else frames) - f
+            while gap > 255:                   # a long hold: empty records carry it
+                blob += [mask, *data, 255]
+                gap -= 255
+                mask, data = 0, []
+            blob += [mask, *data, gap]
+        blob += [0x80]                         # the end: its voices fall silent
+    return dict(blob=blob, offs=offs, v0=v0, nv=nv, loop=[1 if sid in S.LOOP_IDS or sid == 0 else 0
+                                                        for sid in range(len(S.SND_PARMS))])
+
+
 # ------------------------------------------------------------------ build
 class Dat:
     def __init__(self):
@@ -642,7 +704,7 @@ def build():
     bds = [backdrop(b) for b in BACKDROPS]
     for k, (_, rows) in enumerate(bds):
         dat.add("BD%d" % k, pack_band(rows))
-    return dict(fl=flights(), pats=pats, common=common, ncommon=ncommon, fimgs=imgs, fblob=fblob, foffs=foffs, bds=bds,
+    return dict(snd=sounds(), fl=flights(), pats=pats, common=common, ncommon=ncommon, fimgs=imgs, fblob=fblob, foffs=foffs, bds=bds,
                 shot=shot[0], arts=arts, ablob=ablob, aoffs=aoffs,
                 font=font(t), dat=dat, sheet=s)
 
@@ -746,6 +808,22 @@ def act(o):
     arr(w, "CARD ARRAY st_woff(%d)" % STAGES, fl["woffs"])
     arr(w, "BYTE ARRAY st_kind(%d)" % STAGES, fl["kinds"])
     arr(w, "BYTE ARRAY st_parm(%d)" % len(fl["parms"]), fl["parms"], per=10)
+    w("")
+    sd = o["snd"]
+    w("; the arcade's sounds, rendered by tools/galaga_sound.py: for each, its")
+    w("; stream's offset, first voice, voices, and whether it loops; a stream is")
+    w("; records of a mask -- bits 0-2 the voices whose increments follow, 4-6")
+    w("; those whose volumes follow them, 7 the end -- then the frames to the next")
+    w("CONST NSND = %d" % len(sd["offs"]))
+    arr(w, "BYTE ARRAY snd_data(%d)" % len(sd["blob"]), sd["blob"], per=24)
+    arr(w, "CARD ARRAY snd_start(%d)" % len(sd["offs"]), sd["offs"])
+    arr(w, "BYTE ARRAY snd_v0(%d)" % len(sd["v0"]), sd["v0"])
+    arr(w, "BYTE ARRAY snd_nv(%d)" % len(sd["nv"]), sd["nv"])
+    arr(w, "BYTE ARRAY snd_loops(%d)" % len(sd["loop"]), sd["loop"])
+    w("; the driver's order, a later sound's voice winning, and each's group:")
+    w("; 0 the effects, on voices 3-5, 1 the tunes, on 0-2")
+    arr(w, "BYTE ARRAY snd_order(%d)" % len(SND_ORDER), SND_ORDER, fmt="$%02X")
+    arr(w, "BYTE ARRAY snd_tune(%d)" % len(sd["offs"]), [1 if i in TUNES else 0 for i in range(len(sd["offs"]))])
     w("")
     w("; the fighter's shot: one sprite, its 3 x 8 in columns 2-4")
     w("CONST P_SHOT = %d" % o["shot"])

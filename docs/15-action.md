@@ -259,6 +259,68 @@ operators, no signed bytes, no arrays of records, no `TRACE` (the
 plan named one; the machine has no channel for it), and nothing that
 allocates. Interrupts are reachable from `ASM` and nothing more.
 
+### 2.8 What the games have asked for
+
+A list, not a plan: what writing the arcade ports -- Ms. Cool-Man,
+Arkanoid, COOL SWEEPER, MOTT and GALAGA -- kept wanting, each with the
+cost it had where it was felt. Ordered by what it cost, bugs first.
+
+**Cost bugs.**
+
+- **Width that silently truncates.** A byte with a constant is a byte, and
+  a shift keeps its left side's width (section 2.6), so nothing warns when
+  a byte expression overflows into a wider target. GALAGA hit it three
+  times in one session: `PIX_X = x + FX` drew every star at field x 208
+  and up in the left-hand panel; `col_x(0) - LAG` wrapped to 248 at full
+  expansion and made every covering test answer "nothing here"; and
+  `(a >> 1) << 8` was a byte and put a column's X in the low byte. Ms.
+  Cool-Man's first frame had every cell in row 0 from `row << 7`. Either
+  a warning where a byte expression can overflow into a wider left side,
+  or C's promotion of mixed arithmetic with a constant to sixteen bits.
+- **No cast.** `CARD(x)` and `INT(x)` do not exist, so every widening is a
+  temporary: `w = a` then `w << 8`, all through GALAGA's flight code.
+- **No signed byte.** A formation offset is a signed byte kept in a `BYTE`
+  and sign-extended by hand -- `w = oy`, `IF oy & $80 THEN w = w - 256` --
+  in three places of GALAGA's flight code.
+
+**Cost size and clarity.**
+
+- **Arrays of records.** GALAGA's flyer is 24 parallel arrays (`fl_x`,
+  `fl_y`, `fl_a4`...), its explosions 7, its formation slots 7, its stars 4;
+  Arkanoid's balls, beams and enemies are the same shape. `Flyer ARRAY
+  fl(6)` with `fl(k).x` would be the largest single simplification in
+  every port.
+- **Indexing through a pointer.** `s(i)` on a `BYTE POINTER` and `pal(i)`
+  on a `CARD POINTER` are errors, so a string or a table passed in is walked
+  (`s += 1`, `*s`).
+- **Arrays local to a routine**, even small initialised ones; today every
+  table is global.
+- **Forward references.** A routine or a `CONST` must be declared above its
+  first use, so a program is ordered by dependency rather than by topic:
+  GALAGA's sound section had to move above its formation section because
+  the formation starts the formation pulse.
+- **A `SELECT` or `CASE`.** GALAGA's flight interpreter dispatches sixteen
+  command tokens through an `ELSEIF` chain; a jump table would be smaller
+  and a constant cost.
+
+**Cost clocks, or checks nobody makes.**
+
+- **Parameters and locals by name inside `ASM`.** A block cannot name a
+  local (section 2.5), so every assembly routine takes its arguments in
+  globals: GALAGA's `DrawDelta` reads `dd_ptr`, `dd_x`, `dd_y`, `dd_erase`,
+  `dd_fx` and `dd_lim`, set by the routine that calls it.
+- **Loop variables in registers** -- section 5's next step, which GALAGA's
+  profiles name again.
+- **A layout assertion at compile time.** GALAGA keeps its backdrop's copy
+  at `$DF80`, above the PRG, and only its gate checks that the program ends
+  below it. A compile-time `ASSERT` on a symbol's address would make that
+  the compiler's job.
+
+**Outside the language.** The assembler's `CLR` is `SUB Rd,Rd` and sets
+the carry (02-isa.md section 4.9.1), which put a carried `ADC` 256 pixels
+off in GALAGA's band restore; and `sim/dbg.py`'s profile lists a `CONST`
+equate as a code label where its value equals an address.
+
 ---
 
 ## 3. The calling convention and the code model

@@ -1764,6 +1764,12 @@ def test_galaga():
           "%d characters shot for %d points; %d pixels differ: %s" % (on0 - on1, got, len(bad), bad[:4]))
     del g
 
+    # the sound: a new game's start theme on voices 0-2, frame for frame as
+    # tools/galaga_sound.py renders it from the arcade's sound CPU
+    n, nbad, lag, first = G.sound_check()
+    check(n > 400 and nbad == 0, "galaga: the start theme plays the arcade's notes, frame for frame",
+          "%d of %d frames differ (lag %d): %s" % (nbad, n, lag, first))
+
     # the backdrop's own eight colours written on the row above the band,
     # the arcade's back at the vertical blank, and nothing else; and the
     # work of the frames the waves fly in

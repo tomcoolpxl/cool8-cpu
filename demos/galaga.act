@@ -107,6 +107,151 @@ PROC Stream(CARD off, BYTE hi, CARD vaddr, CARD n)
   FlashClose()
 RETURN
 
+; ---------------------------------------------------------------- sound
+; The arcade's sounds are streams tools/galaga_sound.py rendered from its
+; sound CPU's driver: each frame every sound playing moves on through its
+; stream, then the voices are mixed the driver's way -- the sounds in its
+; fixed order, a later one's voice winning, a silent one taking nothing --
+; the tunes onto voices 0-2 and the effects onto 3-5, and a voice written
+; only when it changes. Voice 6 is the fighter's explosion, noise, which
+; the arcade's 54XX makes and no stream carries.
+CONST S_PULSE = $00
+CONST S_BOSS = $01
+CONST S_GOEI = $02
+CONST S_ZAKO = $03
+CONST S_BOSSHIT = $04
+CONST S_START = $0B
+CONST S_CHALLENGE = $0D
+CONST S_RESULTS = $0E
+CONST S_SHOT = $0F
+CONST S_DIVE = $13
+CONST S_PERFECT = $14
+CONST S_BADGE = $15
+CONST S_EXTEND = $0A
+
+BYTE ARRAY snd_on(NSND), snd_wait(NSND)
+CARD ARRAY snd_p(NSND)
+CARD ARRAY snd_inc(69)               ; each sound's three voices as it holds them
+BYTE ARRAY snd_vol(69)
+CARD ARRAY mix_inc(6)
+BYTE ARRAY mix_vol(6)
+CARD ARRAY hw_inc(8)
+BYTE ARRAY hw_vol(8)
+BYTE boom_snd                        ; the fighter's explosion: frames of noise left
+
+PROC PlaySound(BYTE id)
+  BYTE v
+  CARD b
+  b = id
+  b = b * 3
+  snd_on(id) = 1
+  snd_p(id) = snd_start(id)
+  snd_wait(id) = 1
+  FOR v = 0 TO 2 DO
+    snd_inc(b + v) = 0
+    snd_vol(b + v) = 0
+  OD
+RETURN
+
+PROC StopSound(BYTE id)
+  snd_on(id) = 0
+RETURN
+
+PROC SoundsOff()
+  BYTE i
+  FOR i = 0 TO NSND - 1 DO snd_on(i) = 0 OD
+  boom_snd = 0
+RETURN
+
+; SndAdvance(id): a frame of one sound's stream
+PROC SndAdvance(BYTE id)
+  BYTE mask, v, n
+  CARD p, w, b
+  b = id
+  b = b * 3
+  snd_wait(id) -= 1
+  n = 0
+  WHILE snd_wait(id) == 0 DO
+    p = snd_p(id)
+    mask = snd_data(p)
+    IF mask & $80 THEN
+      n += 1
+      IF snd_loops(id) == 0 OR n > 1 THEN
+        snd_on(id) = 0
+        RETURN
+      FI
+      p = snd_start(id)
+      mask = snd_data(p)
+    FI
+    p += 1
+    FOR v = 0 TO 2 DO
+      IF mask & (1 << v) THEN
+        w = snd_data(p + 1)
+        snd_inc(b + v) = (w << 8) | snd_data(p)
+        p += 2
+      FI
+    OD
+    FOR v = 0 TO 2 DO
+      IF mask & (16 << v) THEN
+        snd_vol(b + v) = snd_data(p)
+        p += 1
+      FI
+    OD
+    snd_wait(id) = snd_data(p)
+    snd_p(id) = p + 1
+  OD
+RETURN
+
+PROC Voice(BYTE hv, CARD inc, BYTE vol, BYTE noise)
+  IF inc != hw_inc(hv) OR vol != hw_vol(hv) THEN
+    hw_inc(hv) = inc
+    hw_vol(hv) = vol
+    IF vol THEN Sound(hv, inc, vol, noise) ELSE Silence(hv) FI
+  FI
+RETURN
+
+PROC SoundFrame()
+  BYTE i, id, v, g, last
+  CARD b
+  FOR v = 0 TO 5 DO
+    mix_inc(v) = 0
+    mix_vol(v) = 0
+  OD
+  FOR i = 0 TO 19 DO
+    id = snd_order(i)
+    IF snd_on(id) THEN
+      SndAdvance(id)
+      IF snd_on(id) THEN
+        IF snd_tune(id) THEN g = 0 ELSE g = 3 FI
+        b = id
+        b = b * 3
+        last = snd_v0(id) + snd_nv(id) - 1
+        FOR v = snd_v0(id) TO last DO
+          IF snd_vol(b + v) THEN
+            mix_inc(g + v) = snd_inc(b + v)
+            mix_vol(g + v) = snd_vol(b + v)
+          FI
+        OD
+      FI
+    FI
+  OD
+  FOR v = 0 TO 5 DO Voice(v, mix_inc(v), mix_vol(v), 0) OD
+  IF boom_snd THEN
+    boom_snd -= 1
+    Voice(6, 180 + boom_snd * 6, boom_snd / 6, 1)
+  ELSE
+    Voice(6, 0, 0, 1)
+  FI
+RETURN
+
+; TuneOn: whether a tune is playing, which what waits for one asks
+FUNC BYTE TuneOn()
+  BYTE i
+  FOR i = 0 TO NSND - 1 DO
+    IF snd_on(i) AND snd_tune(i) THEN RETURN (1) FI
+  OD
+RETURN (0)
+
 ; ------------------------------------------------------------ the bitmap
 ; DrawDelta: one of fm_delta's lists, a run being y + 2, x + 1, n and n
 ; colours, and 0 the end, drawn from the screen's (dd_x, dd_y) -- which
@@ -454,6 +599,7 @@ PROC Sway()
     sway_dir = 0
     breathing = 1
     br_cnt = 0
+    PlaySound(S_PULSE)
     RETURN
   FI
   IF sway == 32 THEN sway_dir = 1 FI
@@ -756,7 +902,7 @@ RETURN
 ; the bitmap draws low on the field uses the last eight. The band's
 ; pixels are also kept in RAM, two to a byte as the bitmap holds them,
 ; for what draws over it to ask and to put back.
-CONST BD_RAM = $D000                 ; the band's copy: BAND_H x 112 bytes, above the PRG
+CONST BD_RAM = $DF80                 ; the band's copy: BAND_H x 112 bytes, the top of RAM below the I/O page
 BYTE ARRAY bd_ram(8064) = BD_RAM
 CARD ARRAY bd_d(4) = [D_BD0 D_BD1 D_BD2 D_BD3]
 BYTE ARRAY bd_dh(4) = [DH_BD0 DH_BD1 DH_BD2 DH_BD3]
@@ -1513,7 +1659,15 @@ PROC ShootSlot(BYTE i)
     sl_kind(i) = FM_BOSS_HIT6
     sl_fr(i) = FM_BOSS_HIT6 + flap
     FmDraw(sl_fr(i), 0, sl_x(i), sl_y(i), 0)
+    PlaySound(S_BOSSHIT)
     RETURN
+  FI
+  IF sl_kind(i) == FM_ZAKO6 THEN
+    PlaySound(S_ZAKO)
+  ELSEIF sl_kind(i) == FM_GOEI6 THEN
+    PlaySound(S_GOEI)
+  ELSE
+    PlaySound(S_BOSS)
   FI
   sl_on(i) = 0
   AddScore(RestPoints(sl_kind(i)))
@@ -1544,14 +1698,18 @@ PROC ShootFlyer(BYTE k)
   IF fl_char(k) == F_BOSS THEN
     fl_char(k) = F_BOSS_HIT
     IF slot != 255 THEN sl_kind(slot) = FM_BOSS_HIT6 FI
+    PlaySound(S_BOSSHIT)
     RETURN
   FI
   IF fl_char(k) == F_ZAKO THEN
     pts = 10
+    PlaySound(S_ZAKO)
   ELSEIF fl_char(k) == F_GOEI THEN
     pts = 16
+    PlaySound(S_GOEI)
   ELSE
     pts = 40
+    PlaySound(S_BOSS)
   FI
   AddScore(pts)
   Boom(A_EBOOM0, N_EBOOM, fl_sx(k) + 8, fl_sy(k) + 8)
@@ -1569,6 +1727,7 @@ PROC Fire()
   BYTE i
   FOR i = 0 TO NSHOT - 1 DO
     IF sh_on(i) == 0 THEN
+      PlaySound(S_SHOT)
       sh_on(i) = 1
       sh_x(i) = fx + 4
       sh_y(i) = FIGHTER_Y - 6
@@ -1735,6 +1894,7 @@ RETURN
 PROC Frame1()
   WaitVBlank()
   KeyPoll()
+  SoundFrame()
   loops += 1
 RETURN
 
@@ -1795,7 +1955,16 @@ PROC StageIntro()
     LoadBackdrop(level_bd)
   FI
   Panel()
+  StopSound(S_PULSE)
+  IF stage == 1 THEN
+    ; a new game: the start theme under PLAYER 1, then the stage
+    PlaySound(S_START)
+    FieldText("PLAYER 1", 0, C_CYAN)
+    WHILE TuneOn() DO Idle() OD
+    FieldTextOff()
+  FI
   IF st_kind((stage - 1) % STAGES) THEN
+    PlaySound(S_CHALLENGE)
     FieldText("CHALLENGING STAGE", 0, C_CYAN)
   ELSE
     FieldText("STAGE", stage, C_CYAN)
@@ -1861,9 +2030,11 @@ PROC Title()
   Text(0, 210, "EMCEE FLESHER CC-BY. PLANET G. FISET", C_BLUE)
   Text(0, 220, "NASA-JPL-CALTECH-SWRI-MSSS. ZWONKY CC0", C_BLUE)
   Text(0, 230, "QUANTISET CC0. D. COOK CC-BY", C_BLUE)
+  SoundsOff()
   DO
     WaitVBlank()
     KeyPoll()
+    SoundFrame()
     IF KeyHit(KEY_SPACE) THEN EXIT FI
     IF KeyHit(KEY_ESC) THEN
       quit = 1
