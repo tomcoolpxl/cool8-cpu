@@ -32,7 +32,7 @@ CONST SAFE = 8
 ; for each level its own eight, as PAL_DATA takes them -- the high byte first
 BYTE ARRAY bd_pal(64) = [
   $00 $05 $00 $19 $00 $3C $01 $6E $02 $BF $05 $DF $0A $EF $0D $FF
-  $02 $23 $03 $45 $00 $58 $04 $82 $0A $C2 $0F $FF $00 $00 $00 $00
+  $00 $58 $0A $C2 $02 $23 $03 $45 $04 $82 $0F $FF $03 $AE $00 $00
   $0B $85 $08 $44 $0A $75 $09 $54 $0A $65 $00 $00 $00 $00 $00 $00
   $05 $06 $05 $5A $0F $44 $0F $A5 $0F $E4 $0F $FF $00 $00 $00 $00
 ]

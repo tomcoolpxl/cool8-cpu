@@ -31,5 +31,11 @@ OpenGameArt on 13 September 2026, with the owner's consent:
 | `backdrops/rocky-far-mountains_0.png` | [Rocky desert landscape (layered, looping)](https://opengameart.org/content/rocky-desert-landscape-layered-looping), from Quantiset's [Mars background](https://opengameart.org/content/mars-background-pixel-art) (CC0) | Emcee Flesher | CC0 |
 | `backdrops/stars-and-planet-alt2_0.png`, `backdrops/planet-only-alt2-alpha.png` | [Space Junkyard Environment](https://opengameart.org/content/super-dead-space-gunner-merc-redux-space-junkyard-environment) | Emcee Flesher; the planet an enhanced image by Gabriel Fiset (CC-BY) based on images courtesy of NASA/JPL-Caltech/SwRI/MSSS; the nebula after Daniel Cook (CC-BY) | [CC-BY 4.0](https://creativecommons.org/licenses/by/4.0/) |
 
+`tools/mkgalaga.py` crops each to a band of 224 x 72 (the Mars layer
+after an exact fifth, the gold giant after an exact half), puts it in
+sixteen colours, and makes one change to the pixels, which the owner
+allowed: the band's first sixteen rows are dithered into black, so it
+rises out of the sky.
+
 The credits the two attribution licences ask for are shown in the game
 and in [docs/14-demos.md](../../docs/14-demos.md).

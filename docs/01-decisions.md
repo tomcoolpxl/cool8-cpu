@@ -7068,7 +7068,10 @@ compare matches the line counter's low byte, so it also fires 256 lines
 higher and that first match is let go. The machine's palette log holds
 it to raw line 334 and line 480 exactly. The band's pixels are kept in
 RAM at `$D000` as the bitmap holds them, for the stars to stay behind
-and for what draws over the band to put back. **Rejected**: a fade from
-space over the band's first rows, the split stepping the eight through a
-quarter, a half and three quarters -- at twelve bits it drew stripes --
-in favour of windows of the art with dark space along their top.
+and for what draws over the band to put back. The band rises out of the sky
+through its first sixteen rows dithered into black on a 4 x 4 Bayer
+matrix -- a change to the art's pixels the owner allowed. **Rejected**:
+the same fade done by the split, stepping the eight through a quarter, a
+half and three quarters of their brightness, which at twelve bits drew
+stripes; and hunting each picture for a window already dark along its
+top, which found them for two of the four.

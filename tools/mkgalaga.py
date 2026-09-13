@@ -392,16 +392,19 @@ GLYPHS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ-%.!@# "
 # the palette's own, so the stars, the bombs, the explosions and the beam
 # look the same over it, and whose last eight are the band's: the game's
 # raster split writes them a row above the band and puts the arcade's
-# back at the vertical blank. Each window is chosen with dark space along
-# its top, so the band rises out of the sky rather than starting on a
+# back at the vertical blank. **The one change made to the art's pixels**,
+# by the owner's leave: the band's first FADE rows are dithered into black
+# on a 4 x 4 Bayer matrix, a sixteenth more of each row kept than the row
+# above, so the horizon rises out of the sky rather than starting on a
 # line.
-BAND_Y, BAND_H = 168, 72
+BAND_Y, BAND_H, FADE = 168, 72, 16
+BAYER = [[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]]
 BACKDROPS = [
     # file, reduction, and the band's top-left in the reduced picture
     ("chikyuu_16_edge_0.png", 1, 16, 146),
-    ("green_nebula_arne16_-_512x512_0.png", 1, 240, 366),
-    ("rocky-far-mountains_0.png", 5, 16, 44),
-    ("planet-only-alt2-alpha.png", 2, -16, 36),
+    ("green_nebula_arne16_-_512x512_0.png", 1, 70, 150),
+    ("rocky-far-mountains_0.png", 5, 16, 32),
+    ("planet-only-alt2-alpha.png", 2, -16, 22),
 ]
 
 
@@ -458,6 +461,10 @@ def backdrop(entry):
                 cache[v] = min(range(16), key=lambda k: (sum((p - q) ** 2 for p, q in zip(c, rgbs[k])), k))
             o.append(cache[v])
         out.append(o)
+    for y in range(FADE):
+        for x in range(224):
+            if BAYER[y % 4][x % 4] >= y * 16 // FADE:
+                out[y][x] = 0
     return pal, out
 
 
