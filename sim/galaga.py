@@ -512,8 +512,11 @@ def main():
         g.until(lambda: g.byte("ftr_dead") == 0, 400)
         print("back in play: lives", g.byte("lives"), "fx", g.word("fx"))
     elif what == "challenge":
-        g.goto_stage(3)
-        g.autopilot(2400, until=lambda: g.byte("stage") != 3 or "HITS" in "")
+        n = int(sys.argv[2]) if len(sys.argv) > 2 else 3
+        g.goto_stage(n)
+        g.m.run_frame(90)
+        print(g.png("gal_challenge%d" % n))
+        g.autopilot(2400, until=lambda: g.byte("stage") != n)
         print("stage now", g.byte("stage"), "hits", g.byte("ch_hits"), "score", g.uword("score10") * 10)
     elif what == "split":
         log = g.split()

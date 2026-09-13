@@ -1826,20 +1826,30 @@ def test_galaga():
           "busiest %d clocks of %d; %s" % (max(costs), G.FRAME, p.report(top=6)))
     print("    work per frame over 160 frames of waves: mean %d, busiest %d clocks" % (sum(costs) // len(costs), max(costs)))
 
-    # the first challenging stage played by the autopilot: its hits tallied
-    # and paid a hundred each (or ten thousand for all forty) after it
+    # the third challenging stage played by the autopilot: the dragonflies'
+    # patterns streamed over the butterfly's and the captured fighter's for
+    # it, its hits tallied and paid a hundred each (or ten thousand for all
+    # forty) after it, and the patterns put back
     c = G.Game(tag="galaga4", render=False)
     c.start()
-    c.goto_stage(3)
+    c.goto_stage(11)
+    art = A.build()
+    blocks = {name: (off, n) for name, off, n in art["dat"].blocks}
+    dat = bytes(art["dat"].data)
+    swap = 0x9600 + c.c("P_SWAP") * 128
+    off, n = blocks["SW_DRAGONFLY"]
+    swapped = bytes(c.m.video.vram[swap:swap + n]) == dat[off:off + n]
     c.autopilot(2400, until=lambda: c.byte("launching") == 0 and not any(c.byte("fl_state", k) for k in range(6))
                 and c.byte("booms") == 0)
     hits, before = c.byte("ch_hits"), c.uword("score10")
-    c.until(lambda: c.byte("stage") == 4, 900)
+    c.until(lambda: c.byte("stage") == 12, 900)
     paid = (c.uword("score10") - before) * 10
-    check(c.byte("stage") == 4 and hits > 0 and paid == (10000 if hits == 40 else 100 * hits),
-          "galaga: a challenging stage tallies its hits and pays for them before the next",
-          "stage %d, %d hits, %d paid" % (c.byte("stage"), hits, paid))
-    print("    challenging stage 3 by the autopilot: %d hits" % hits)
+    m = c.c("N_SWAP") * 128
+    back = bytes(c.m.video.vram[swap:swap + m]) == dat[blocks["SPR"][0] + c.c("P_SWAP") * 128:][:m]
+    check(swapped and back and c.byte("stage") == 12 and hits > 0 and paid == (10000 if hits == 40 else 100 * hits),
+          "galaga: a challenging stage flies its own creature, pays for its hits, and gives the patterns back",
+          "swapped %s, back %s, stage %d, %d hits, %d paid" % (swapped, back, c.byte("stage"), hits, paid))
+    print("    challenging stage 11 by the autopilot: %d hits" % hits)
     del c
 
     # something flying into the fighter: both destroyed, the fighter's

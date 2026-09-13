@@ -162,7 +162,16 @@ ROWS = {
     "scorpion": 6, "bosconian": 7, "galaxian": 8, "dragonfly": 9, "enterprise": 11,
 }
 FLAPS = ("boss", "boss_hit", "goei", "zako")
-COMMON = ("fighter", "captured", "boss", "boss_hit", "goei", "zako")
+# the butterfly's and the captured fighter's patterns last: a challenging
+# stage past the second has no use for either -- its butterflies' places
+# fly its own creature -- and that creature is streamed over them for it
+COMMON = ("fighter", "boss", "boss_hit", "zako", "goei", "captured")
+SWAPPED = ("goei", "captured")
+# the creatures of the challenging stages past the bee's and the
+# butterfly's: sprite codes $68 and $58 with colour sets 2 and 5 in the
+# disassembly's d_290E -- blue, white and red; cyan, red and orange, which
+# are the sheet's dragonfly's and scorpion's own
+SPECIALS = ("dragonfly", "scorpion")
 
 
 def grid_cell(s, col, row):
@@ -857,6 +866,23 @@ def build():
     shot = pats.find(box_image(s, SHOT[0] - 2, SHOT[1], 8, 8))
     assert shot[1] == 0
     ncommon = len(pats.pats)
+    # the butterfly's and captured fighter's patterns: one run, used by nothing else
+    used = {}
+    for name, quads in common:
+        for pf, _, _ in quads:
+            if pf is not None:
+                used.setdefault(pf[0], set()).add(name)
+    capt = sorted(n for n, who in used.items() if who & set(SWAPPED))
+    p_swap, n_swap = capt[0], len(capt)
+    assert capt == list(range(p_swap, p_swap + n_swap)) and all(used[n] <= set(SWAPPED) for n in capt)
+    specials, sp_blobs = [], []
+    for name in SPECIALS:
+        sp = Patterns()
+        frames = sprite_set(s, (name,), sp)
+        assert len(sp.pats) <= n_swap, "%s needs %d patterns, the swapped ones are %d" % (name, len(sp.pats), n_swap)
+        specials += [(nm, [(None if pf is None else (pf[0] + p_swap, pf[1]), x, y) for pf, x, y in quads])
+                     for nm, quads in frames]
+        sp_blobs.append((name, sp.pats))
     arts, ablob, aoffs = bitmap_art(s)
     imgs, fblob, foffs = formation(s)
     dat = Dat()
@@ -864,10 +890,16 @@ def build():
     for q in pats.pats:
         blob += double(q)
     dat.add("SPR", blob)
+    for name, sp in sp_blobs:
+        b = []
+        for q in sp:
+            b += double(q)
+        dat.add("SW_" + name.upper(), b)
     bds = [backdrop(b) for b in BACKDROPS]
     for k, (_, rows) in enumerate(bds):
         dat.add("BD%d" % k, pack_band(rows))
-    return dict(mus=music(), snd=sounds(), fl=flights(), pats=pats, common=common, ncommon=ncommon, fimgs=imgs, fblob=fblob, foffs=foffs, bds=bds,
+    return dict(mus=music(), snd=sounds(), fl=flights(), pats=pats, common=common, ncommon=ncommon,
+                specials=specials, p_swap=p_swap, n_swap=n_swap, fimgs=imgs, fblob=fblob, foffs=foffs, bds=bds,
                 shot=shot[0], arts=arts, ablob=ablob, aoffs=aoffs,
                 font=font(t), dat=dat, sheet=s)
 
@@ -911,8 +943,9 @@ def act(o):
             bp += [v >> 8, v & 255]
     arr(w, "BYTE ARRAY bd_pal(%d)" % len(bp), bp, fmt="$%02X")
     w("")
+    frames = o["common"] + o["specials"]
     names = []
-    for n, _ in o["common"]:
+    for n, _ in frames:
         if n not in names:
             names.append(n)
     w("; the sprite frames: each character's first frame, then four sprites a")
@@ -921,10 +954,14 @@ def act(o):
     first = 0
     for n in names:
         w("CONST F_%s = %d" % (n.upper(), first))
-        first += sum(1 for m, _ in o["common"] if m == n)
+        first += sum(1 for m, _ in frames if m == n)
     w("CONST SPR_PATS = %d" % len(o["pats"].pats))
+    w("; the butterfly's and the captured fighter's patterns, which a challenging")
+    w("; stage's creature (SW_ blocks) takes over; its frames come last")
+    w("CONST P_SWAP = %d" % o["p_swap"])
+    w("CONST N_SWAP = %d" % o["n_swap"])
     qp, qf, qx, qy = [], [], [], []
-    for _, quads in o["common"]:
+    for _, quads in frames:
         for pf, x, y in quads:
             qp.append(255 if pf is None else pf[0])
             qf.append(0 if pf is None else pf[1])

@@ -1600,6 +1600,10 @@ RETURN
 
 ; Launch(k, obj, raw, tok): f_2916's l_2974 -- an object onto its path at
 ; its start, mirrored and from the second start by the token's bit 6
+; the creature of each challenging stage: bees, butterflies, and the two
+; whose patterns are streamed over the butterfly's for the stage
+BYTE ARRAY ch_char(4) = [F_ZAKO F_GOEI F_DRAGONFLY F_SCORPION]
+
 PROC Launch(BYTE k, BYTE obj, BYTE raw, BYTE tok)
   BYTE i, d
   CARD w
@@ -1622,6 +1626,9 @@ PROC Launch(BYTE k, BYTE obj, BYTE raw, BYTE tok)
   fl_ctrl(k) = 0
   IF obj < $08 THEN
     fl_char(k) = F_CAPTURED
+  ELSEIF st_kind((stage - 1) % STAGES) AND (obj < $30 OR obj >= $40) THEN
+    ; a challenging stage's own creature, in every place but the bosses'
+    fl_char(k) = ch_char(((stage - 1) >> 2) & 3)
   ELSEIF obj < $30 THEN
     fl_char(k) = F_ZAKO
   ELSEIF obj < $38 THEN
@@ -2178,6 +2185,9 @@ PROC StageIntro()
     FieldTextOff()
   FI
   IF st_kind((stage - 1) % STAGES) THEN
+    i = ((stage - 1) >> 2) & 3
+    IF i == 2 THEN Stream(D_SW_DRAGONFLY, DH_SW_DRAGONFLY, SPR_BASE + (P_SWAP << 7), N_SW_DRAGONFLY) FI
+    IF i == 3 THEN Stream(D_SW_SCORPION, DH_SW_SCORPION, SPR_BASE + (P_SWAP << 7), N_SW_SCORPION) FI
     PlaySound(S_CHALLENGE)
     FieldText("CHALLENGING STAGE", 0, C_CYAN)
   ELSE
@@ -2273,7 +2283,11 @@ PROC Play()
     ShowScore()
     IF game_over THEN EXIT FI
     IF StageDone() AND ftr_dead == 0 THEN
-      IF st_kind((stage - 1) % STAGES) THEN Results() FI
+      IF st_kind((stage - 1) % STAGES) THEN
+        Results()
+        ; the butterfly's and the captured fighter's patterns back
+        Stream(D_SPR + (P_SWAP << 7), DH_SPR, SPR_BASE + (P_SWAP << 7), N_SWAP << 7)
+      FI
       stage += 1
       StageIntro()
       StageStart()
