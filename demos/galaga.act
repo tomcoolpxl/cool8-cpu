@@ -3211,29 +3211,30 @@ PROC Play()
   SoundsOff()
 RETURN
 
-; Title: the arcade's attract words and its score table, the backdrops'
-; credits their licences ask for, and the space bar to start
+; Title: the arcade's attract words and its score table, and the space bar
+; to start
 PROC Title()
   BYTE t
   Clg(0)
   SpritesOff()
   Hud()
-  Text(FX + 88, 24, "GALAGA", C_CYAN)
-  Text(FX + 56, 48, "-- SCORE --", C_CYAN)
-  Text(FX + 8, 72, "BEE", C_YELLOW)
-  Text(FX + 104, 72, "50   100", C_CYAN)
-  Text(FX + 8, 92, "BUTTERFLY", C_RED)
-  Text(FX + 104, 92, "80   160", C_CYAN)
-  Text(FX + 8, 112, "BOSS", C_GREEN)
-  Text(FX + 104, 112, "150  400", C_CYAN)
-  Text(FX + 72, 132, "IN FORMATION", C_WHITE)
-  Text(FX + 72, 142, "AND DIVING", C_WHITE)
-  Text(FX + 48, 156, "PUSH SPACE KEY", C_WHITE)
-  Text(0, 184, "@ 1981 NAMCO LTD.", C_WHITE)
-  Text(0, 200, "BACKDROPS ARTHCARVALHO OGA-BY", C_BLUE)
-  Text(0, 210, "EMCEE FLESHER CC-BY. PLANET G. FISET", C_BLUE)
-  Text(0, 220, "NASA-JPL-CALTECH-SWRI-MSSS. ZWONKY CC0", C_BLUE)
-  Text(0, 230, "QUANTISET CC0. D. COOK CC-BY", C_BLUE)
+  ; everything centred on the field: the name, the score table with each
+  ; character beside its points, what the two columns are, the key, and
+  ; Namco's line at the foot
+  Text(FX + 88, 28, "GALAGA", C_CYAN)
+  Text(FX + 68, 56, "-- SCORE --", C_CYAN)
+  FmDraw(FM_ZAKO6, 0, 20, 80, 0)
+  Text(FX + 44, 84, "BEE", C_YELLOW)
+  Text(FX + 140, 84, " 50  100", C_CYAN)
+  FmDraw(FM_GOEI6, 0, 20, 104, 0)
+  Text(FX + 44, 108, "BUTTERFLY", C_RED)
+  Text(FX + 140, 108, " 80  160", C_CYAN)
+  FmDraw(FM_BOSS6, 0, 20, 128, 0)
+  Text(FX + 44, 132, "BOSS", C_GREEN)
+  Text(FX + 140, 132, "150  400", C_CYAN)
+  Text(FX + 16, 156, "IN FORMATION  AND DIVING", C_WHITE)
+  Text(FX + 56, 188, "PUSH SPACE KEY", C_WHITE)
+  Text(FX + 44, 220, "@ 1981 NAMCO LTD.", C_WHITE)
   SoundsOff()
   DO
     WaitVBlank()

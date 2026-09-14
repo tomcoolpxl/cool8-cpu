@@ -1841,8 +1841,7 @@ disassembly through two reference models, `tools/galaga_paths.py` and
 of the sound CPU's driver over the sound ROM's own streams. `poe check`
 holds the generated files to all of it. The backdrops are OpenGameArt's,
 cropped and quantised and faded into the black by a dither
-(`assets/galaga/README.md` has each one's author and licence, and the
-title screen names them): the Earth for stages 1-4, a nebula for 5-8, a
+(`assets/galaga/README.md` has each one's author and licence): the Earth for stages 1-4, a nebula for 5-8, a
 red ridge for 9-12 and a gold planet for 13-16.
 
 **Mode 4, and the formation in the bitmap** ([D113](01-decisions.md)).
