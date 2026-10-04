@@ -1873,7 +1873,11 @@ arcade's dragonflies and scorpions -- streamed over the butterfly's
 patterns for the stage -- pay 1,000 or 1,500 for a whole wave of eight,
 a hundred a hit after, and 10,000 for all forty. After GAME OVER come the
 arcade's results, as its screens' sheet lays them out: the rockets
-fired, the hits, and the hit-miss ratio to a tenth of a percent.
+fired, the hits, and the hit-miss ratio to a tenth of a percent; and a
+score good enough for the best five is put in it with three initials the
+player picks, left and right turning a letter and space taking it, as
+ENTER YOUR INITIALS does. The title turns between what the enemies are
+worth and that table, six seconds each, as the arcade's attract does.
 
 **What differs, and why.** Six flyers where the arcade has twelve: a
 wave waits for a slot, and stage 1's dives begin at frame 1,327 rather
@@ -1890,8 +1894,8 @@ the fighter spins free, comes down beside the player's and flies with it
 as the dual fighter, firing a rocket from each ship until one of them is
 hit. **Not there yet**: a boss shot on its way home with a fighter it
 has just taken (that fighter is lost rather than freed), the bonus bee's
-transformations (their creatures' patterns have no room in VRAM), the
-name entry, and a second player.
+transformations (their creatures' patterns have no room in VRAM), and a
+second player.
 
 **The sound** is the arcade's effects and jingles, each rendered frame by
 frame from the driver's model and mixed in the driver's order -- tunes
@@ -1916,12 +1920,13 @@ explosion over the backdrop put back, and a fighter after READY; a
 capture -- the beam in its blues, the fighter taken, FIGHTER CAPTURED,
 the red fighter in its place, the bitmap exact once the beam is gone --
 and the rescue after it: the boss shot as it dives with the fighter, the
-pair firing together, and one of them lost leaving the other; P
+pair firing together, and one of them lost leaving the other; a score
+into the best five with its initials, and the title turning to them; P
 pausing and going on; the last fighter lost and the results; then
 the path a person takes -- the real ROM booting the demos disc, `DRIVE
 11` and `SYS "GALAGA.BIN"`, the title up, space, and stage 1. `python
 sim/galaga.py play` (or `levels`, `attack`, `challenge n`, `death`,
-`results`, `capture`, `rescue`, `profile [stage frames]`) plays it and writes the frames as PNG;
+`results`, `capture`, `rescue`, `names`, `profile [stage frames]`) plays it and writes the frames as PNG;
 `flights`, `dives stage frames [x [every]]`, `bitmap`, `shoot`, `split`
 and `sound` are the comparisons the gate makes; `sizes` says where the
 program's bytes are.

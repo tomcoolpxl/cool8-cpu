@@ -839,6 +839,32 @@ def main():
         for i in range(3):
             g.spared_frame()
         print(g.png("gal_rescue_pair"))
+    elif what == "names":
+        # a game over with a score for the table: the initials picked, the
+        # table shown, and the title turning between its two pages
+        g.poke("lives", 0)
+        g.pokew("score10", 3456)
+        g.pokew("shots", 120)
+        g.pokew("hits", 77)
+        g.until(lambda: g.byte("ftr_on"), 900)
+        g.at_rest()
+        g.drop_on_fighter()
+        g.until(lambda: g.byte("game_over"), 900)
+        g.m.run_frame(300)
+        print(g.png("gal_names_entry"), "letters so far")
+        for n, key in ((2, RIGHT), (1, SPACE), (4, RIGHT), (1, SPACE), (1, SPACE)):
+            for _ in range(n):
+                g.tap(key)
+                g.m.run_frame(4)
+        g.m.run_frame(60)
+        print(g.png("gal_names_table"), "table",
+              [(g.uword("hi_sc", i) * 10, "".join(chr(g.byte("hi_nm", i * 3 + j)) for j in range(3)))
+               for i in range(5)])
+        g.until(lambda: g.byte("quit") or g.uword("loops") > 0, 400)
+        g.m.run_frame(260)
+        print(g.png("gal_names_title0"))
+        g.m.run_frame(380)
+        print(g.png("gal_names_title1"))
     elif what == "results":
         # the game given up to the last fighter: GAME OVER and the results
         g.poke("lives", 0)

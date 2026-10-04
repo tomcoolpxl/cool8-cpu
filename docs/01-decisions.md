@@ -7238,3 +7238,23 @@ down and fly as a pair that fires two rockets sixteen pixels apart; then
 a bomb on the right ship leaves the left one flying with the same number
 of fighters in hand. PRG 55,591 bytes before, 56,618 after, of the 60,160
 the disc's origin leaves.
+
+## D118 -- GALAGA's best five, and the title that turns
+
+The arcade keeps five scores with three initials each and asks a player
+good enough for the table to pick its own; this does the same. The table
+is in the program (five scores in tens and fifteen letters, Namco's own
+N.N to begin with), the entry comes after the results -- left and right
+turn a letter through A-Z and the full stop, space takes it, and the
+letter being picked flashes -- and the score at the top becomes the HIGH
+SCORE the panel shows. The title now turns between the two attract pages,
+what the enemies are worth and the best five, six seconds each, instead
+of standing on one. Nothing is written to the disc: the table lives as
+long as the machine is on, as the arcade's does.
+
+**Measured**: the gate ends a game with a score for the table, takes the
+three letters space offers, and finds the score first in it with its
+initials, the high score following it, and the title's second page up.
+PRG 56,628 bytes before, 57,844 after, of the 60,160 the disc's origin
+leaves -- 2,316 to spare, and the bonus bee still wants VRAM rather than
+program (D115).

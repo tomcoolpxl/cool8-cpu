@@ -3247,6 +3247,98 @@ PROC Results()
   FieldTextOff()
 RETURN
 
+; ------------------------------------------------------- the best five
+; The arcade's table: five scores with three initials each, and after a
+; game good enough for it the player picks its own, a letter at a time
+; with the stick and the fire button, as the arcade's ENTER YOUR INITIALS
+; does. Namco's own default initials are N.N.
+CARD ARRAY hi_sc(5) = [2000 1500 1000 700 500]
+BYTE ARRAY hi_nm(15) = ['N' '.' 'N' 'N' '.' 'N' 'N' '.' 'N' 'N' '.' 'N' 'N' '.' 'N']
+
+; HiRow(i, y, c): the i'th of the table at row y
+PROC HiRow(BYTE i, BYTE y, BYTE c)
+  BYTE j
+  CARD x
+  x = i * 3
+  Number(FX + 48, y, hi_sc(i), 6, c)
+  Text(FX + 96, y, "0", c)
+  txtbuf(0) = 3
+  FOR j = 1 TO 3 DO txtbuf(j) = hi_nm(x + j - 1) OD
+  Text(FX + 144, y, txtbuf, c)
+RETURN
+
+PROC HiTable(BYTE top)
+  Text(FX + 48, top, "SCORE", C_CYAN)
+  Text(FX + 144, top, "NAME", C_CYAN)
+  Text(FX + 8, top + 24, "1ST", C_WHITE)
+  Text(FX + 8, top + 42, "2ND", C_WHITE)
+  Text(FX + 8, top + 60, "3RD", C_WHITE)
+  Text(FX + 8, top + 78, "4TH", C_WHITE)
+  Text(FX + 8, top + 96, "5TH", C_WHITE)
+  HiRow(0, top + 24, C_YELLOW)
+  HiRow(1, top + 42, C_YELLOW)
+  HiRow(2, top + 60, C_YELLOW)
+  HiRow(3, top + 78, C_YELLOW)
+  HiRow(4, top + 96, C_YELLOW)
+RETURN
+
+; NameEntry: a score good enough for the table put in it, and its three
+; initials picked -- left and right turn a letter, space takes it
+PROC NameEntry()
+  BYTE r, i, j, p, v, t, fl
+  CARD x
+  r = 5
+  FOR i = 0 TO 4 DO
+    IF r == 5 AND score10 > hi_sc(i) THEN r = i FI
+  OD
+  IF r == 5 THEN RETURN FI
+  i = 4
+  WHILE i > r DO
+    hi_sc(i) = hi_sc(i - 1)
+    x = i * 3
+    FOR j = 0 TO 2 DO hi_nm(x + j) = hi_nm(x + j - 3) OD
+    i -= 1
+  OD
+  hi_sc(r) = score10
+  x = r * 3
+  FOR j = 0 TO 2 DO hi_nm(x + j) = 'A' OD
+  Fill(FX, 0, FW, 240)
+  Text(FX + 16, 24, "ENTER YOUR INITIALS !", C_RED)
+  HiTable(64)
+  p = 0
+  v = 0
+  t = 0
+  fl = 0
+  DO
+    Frame1()
+    IF KeyHit(KEY_LEFT) THEN
+      IF v THEN v -= 1 ELSE v = 26 FI
+    FI
+    IF KeyHit(KEY_RIGHT) THEN
+      IF v == 26 THEN v = 0 ELSE v += 1 FI
+    FI
+    IF v == 26 THEN hi_nm(x + p) = '.' ELSE hi_nm(x + p) = 'A' + v FI
+    IF KeyHit(KEY_SPACE) THEN
+      p += 1
+      v = 0
+      IF p == 3 THEN EXIT FI
+    FI
+    IF KeyHit(KEY_ESC) THEN EXIT FI
+    t += 1
+    IF t == 0 THEN EXIT FI             ; a little over four seconds a letter
+    fl += 1
+    i = r + r + r
+    IF fl & 8 THEN
+      HiRow(r, 88 + r * 18, C_WHITE)
+    ELSE
+      Fill(FX + 144, 88 + r * 18, 24, 8)
+    FI
+  OD
+  HiRow(r, 88 + r * 18, C_YELLOW)
+  IF hi_sc(0) > hi10 THEN hi10 = hi_sc(0) FI
+  FOR i = 1 TO 180 DO Frame1() OD
+RETURN
+
 ; Finale: the arcade's results after GAME OVER -- the field emptied, the
 ; rockets fired, the hits and the ratio of the two to a tenth of a percent
 PROC Finale()
@@ -3274,7 +3366,8 @@ PROC Finale()
   Text(FX + 168, 176, ".", C_WHITE)
   Number(FX + 176, 176, r % 10, 1, C_WHITE)
   Text(FX + 192, 176, "%", C_WHITE)
-  FOR r = 1 TO 300 DO Frame1() OD
+  FOR r = 1 TO 240 DO Frame1() OD
+  NameEntry()
 RETURN
 
 PROC Play()
@@ -3351,11 +3444,15 @@ RETURN
 
 ; Title: the arcade's attract words and its score table, and the space bar
 ; to start
-PROC Title()
-  BYTE t
+; TitlePage(n): the attract's two -- what the enemies are worth, and the
+; best five
+PROC TitlePage(BYTE n)
   Clg(0)
-  SpritesOff()
   Hud()
+  IF n THEN
+    Text(FX + 64, 28, "-- BEST 5 --", C_RED)
+    HiTable(56)
+  ELSE
   ; everything centred on the field: the name, the score table with each
   ; character beside its points, what the two columns are, the key, and
   ; Namco's line at the foot
@@ -3371,9 +3468,19 @@ PROC Title()
   Text(FX + 44, 132, "BOSS", C_GREEN)
   Text(FX + 140, 132, "150  400", C_CYAN)
   Text(FX + 16, 156, "IN FORMATION  AND DIVING", C_WHITE)
+  FI
   Text(FX + 56, 188, "PUSH SPACE KEY", C_WHITE)
   Text(FX + 44, 220, "@ 1981 NAMCO LTD.", C_WHITE)
+RETURN
+
+PROC Title()
+  BYTE t, page
+  CARD n
+  SpritesOff()
   SoundsOff()
+  page = 0
+  n = 0
+  TitlePage(page)
   DO
     WaitVBlank()
     KeyPoll()
@@ -3382,6 +3489,12 @@ PROC Title()
     IF KeyHit(KEY_ESC) THEN
       quit = 1
       EXIT
+    FI
+    n += 1
+    IF n == 360 THEN
+      n = 0
+      page = 1 - page
+      TitlePage(page)
     FI
   OD
   SpritesOn(15)
@@ -3405,7 +3518,7 @@ PROC Main()
   FOR i = 0 TO 31 DO SpriteHide(i) OD
   SpritesOn(15)
   IrqOn()
-  hi10 = 2000
+  hi10 = hi_sc(0)
   DO
     Title()
     IF quit THEN EXIT FI

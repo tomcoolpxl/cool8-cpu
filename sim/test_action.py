@@ -1977,6 +1977,7 @@ def test_galaga():
     g.poke("lives", 0)
     g.pokew("shots", 40)
     g.pokew("hits", 29)
+    g.pokew("score10", 3456)                            # a score for the table below
     g.until(lambda: g.byte("ftr_on"), 900)
     g.at_rest()
     g.drop_on_fighter()
@@ -1988,6 +1989,28 @@ def test_galaga():
     check(over is not None and red > 40 and white > 20,
           "galaga: the last fighter lost, GAME OVER and the results on the field",
           "game over after %s frames, %d red pixels in -RESULTS-, %d white in 72.5" % (over, red, white))
+
+    # and after them the table: a score good enough goes in with the
+    # initials the player picks (space takes the A it offers), the high
+    # score follows it, and the title turns to BEST 5
+    score = g.uword("score10")
+    g.until(lambda: g.uword("hi_sc") == score, 900)      # the entry screen, the score in the table
+    for _ in range(3):
+        g.tap(G.SPACE)
+        g.m.run_frame(6)
+    g.until(lambda: g.uword("hi10") == score, 400)       # the three taken, the table standing
+    table = [(g.uword("hi_sc", i), "".join(chr(g.byte("hi_nm", i * 3 + j)) for j in range(3))) for i in range(5)]
+    first = table[0] == (score, "AAA")
+    best = 0
+    for _ in range(60):                                  # the title, turning to its second page
+        g.m.run_frame(20)
+        best = sum(g.pixel(fx0 + x, 28 + y) == 2 for x in range(60, 160) for y in range(8))
+        if best > 30:
+            break
+    check(first and table[1][0] == 2000 and g.uword("hi10") == score and best > 30,
+          "galaga: a score good enough goes into the best five with its initials, and the title shows them",
+          "table %s, high score %d, %d red pixels in -- BEST 5 --" % (table[:2], g.uword("hi10"), best))
+    print("    the best five: %s" % (table[:2],))
     del g
 
     # the path a person takes: the real ROM booting the demos disc, DRIVE
