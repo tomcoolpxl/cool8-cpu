@@ -7300,3 +7300,21 @@ that could only be a pair still pays. **Measured**: the gate plays stage 5
 to the bee's arming, sees it away as the scorpion, split, and shot for
 1,320 -- two at 160 and the 1,000 the scorpions pay. PRG 58,027 bytes
 before, 59,483 after, of the 60,160 the disc's origin leaves.
+
+## D120 -- GALAGA's backdrops are gone: the arcade's field is black
+
+The four horizons were this port's own idea, not the arcade's, and the
+owner's verdict on them was that they are a distraction. They are out:
+no band, no raster palette split, no copy of the band in VRAM, no
+`BandPixel` for the stars and the explosions to ask, and the pictures and
+their credits are deleted (D113 and D119 describe what they were). The
+field is the arcade's black with its stars, and what the bitmap draws
+over it is put back as black.
+
+**What it gives back.** VRAM: the band's copy was 3,584 bytes and the
+patterns now end at $F100 with 3,840 free -- the bonus bee's creatures
+(D119) keep their room, and there is space for a second set should
+anything want one. Program: 919 bytes, and the frames are cheaper, since
+nothing reads a backdrop byte through the VRAM port to restore a pixel.
+The raster interrupt is gone with it, so the only interrupt the game
+takes is none at all. PRG 59,483 bytes before, 58,564 after.

@@ -1697,8 +1697,8 @@ def test_galaga():
     exactly where the program says, breathing and flapping, and a volley
     into it leaving nothing behind; the dives, the escorts, the bombs and
     continuous bombing held frame by frame to tools/galaga_dives.py; the
-    backdrop's raster split; every frame's work inside its frame. Skips,
-    loudly, without the art."""
+    capture, the rescue and the bonus bee; every frame's work inside its
+    frame. Skips, loudly, without the art."""
     import subprocess
     import ioregs
     import galaga as G
@@ -1745,7 +1745,7 @@ def test_galaga():
         if bad:
             break
     check(g.byte("breathing") and not bad and g.byte("br_cnt") != 0,
-          "galaga: the formation breathes and flaps over the backdrop without a pixel left behind",
+          "galaga: the formation breathes and flaps without a pixel left behind",
           "%d pixels differ: %s, breath at %02X" % (len(bad), bad[:4], g.byte("br_cnt")))
 
     # a volley into it: each hit scored and exploded, and when the
@@ -1813,23 +1813,9 @@ def test_galaga():
           % (len(base), len(seen - base - vib), drums))
     del h
 
-    # the backdrop's own eight colours written on the row above the band,
-    # the arcade's back at the vertical blank, and nothing else; and the
-    # work of the frames the waves fly in
+    # the work of the frames the waves fly in
     g = G.Game(tag="galaga2")
     g.start()
-    by = g.c("BAND_Y")
-    band = [(g.byte("bd_pal", 2 * i) << 8) | g.byte("bd_pal", 2 * i + 1) for i in range(8)]
-    top = [g.uword("gal_pal", i) for i in range(g.c("SAFE"), 16)]
-    log = g.split(3)
-    lines = {}
-    for ln, e, v in log:
-        lines.setdefault(ln, []).append((e, v))
-    want = {2 * by - 2: list(zip(range(8, 16), band)), 480: list(zip(range(8, 16), top))}
-    check(set(lines) == set(want) and all(lines[ln] == want[ln] * (len(lines[ln]) // 8) for ln in want)
-          and len(log) >= 32,
-          "galaga: the band's colours from the row above it, the arcade's from the vertical blank",
-          "lines %s, %d commits" % (sorted(lines), len(log)))
     costs, (work, p) = g.frame_work(160)
     check(max(costs) < G.FRAME, "galaga: every frame's work inside its frame, the waves flying",
           "busiest %d clocks of %d; %s" % (max(costs), G.FRAME, p.report(top=6)))
@@ -1893,7 +1879,7 @@ def test_galaga():
     del d
 
     # something flying into the fighter: both destroyed, the fighter's
-    # explosion over the backdrop put back from its copy to the pixel, and a
+    # explosion put back to the pixel, and a
     # fighter from the panel after READY once nothing flies. While waves
     # come in only their transients can ram it, so the launcher is stopped
     # first and the flyer is an attacker
@@ -2011,7 +1997,7 @@ def test_galaga():
     bad = g.bitmap_diff()
     back = g.until(lambda: g.byte("ftr_dead") == 0, 1200)
     check(k is not None and dead == 1 and not bad and back is not None and g.byte("lives") == lives - 1,
-          "galaga: a crash destroys both, the explosion over the backdrop leaves nothing, and a fighter comes back",
+          "galaga: a crash destroys both, its explosion leaves nothing behind, and a fighter comes back",
           "dead %d, %d pixels differ %s, back %s, lives %d of %d" % (dead, len(bad), bad[:3], back, g.byte("lives"), lives))
 
     # the last fighter lost: GAME OVER, then the results -- the rockets

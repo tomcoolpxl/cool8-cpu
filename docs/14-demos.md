@@ -1821,11 +1821,13 @@ plays it and writes the frames as PNG.
 them -- the entry waves on the arcade's own paths, the formation's sway
 and breathing, the dives, the boss's escorts, the bombs, three
 challenging stages with their own creatures and their tally -- in four
-levels of four stages, each level with a backdrop across the field's
-foot and a tune of its own, and after stage 16 round the four again.
-A hobby port for the machine's owner, with no users. **The sprites, the
-font and the sounds are the arcade's**; the backdrops and the levels'
-tunes are not, and are said to be not.
+levels of four stages, each level with a tune of its own, and after
+stage 16 round the four again. A hobby port for the machine's owner,
+with no users. **The sprites, the font and the sounds are the arcade's**;
+the levels' tunes are not, and are said to be not. The field is the
+arcade's black with its stars: four levels once had a horizon along the
+foot, cut from published pixel art, and at the owner's word they were
+taken out again ([D120](01-decisions.md)).
 
 **Where it comes from.** `tools/mkgalaga.py` reads the four sheets in
 `assets/galaga/` -- BlazorGalaga's copies of The Spriters Resource's
@@ -1833,16 +1835,13 @@ arcade rips: the general sprites, an older cut of them, the rotations,
 the screens' text -- and writes `galaga_art.act` (`demos/galaga.parts`)
 and **GALAGA.DAT**, which the game reads from its own drive
 (`demos/galaga.disc`): the sprite patterns it streams into VRAM, the
-challenging stages' creatures, the four backdrops' bands, and the
-stages' waves and the levels' tunes it loads when it wants them. The
+challenging stages' creatures, the bonus bee's three, and the stages'
+waves and the levels' tunes it loads when it wants them. The
 flights, the attack and the stage tables come from the hackbar/galaga
 disassembly through two reference models, `tools/galaga_paths.py` and
 `tools/galaga_dives.py`; the sounds from `tools/galaga_sound.py`, a model
 of the sound CPU's driver over the sound ROM's own streams. `poe check`
-holds the generated files to all of it. The backdrops are OpenGameArt's,
-cropped to 32 rows and quantised and faded into the black by a dither
-(`assets/galaga/README.md` has each one's author and licence): the Earth for stages 1-4, a nebula for 5-8, a
-red ridge for 9-12 and a gold planet for 13-16.
+holds the generated files to all of it.
 
 **Mode 4, and the formation in the bitmap** ([D113](01-decisions.md)).
 Forty characters in rows of ten are more sprites than a line has, so a
@@ -1851,9 +1850,7 @@ pixel writes only the pixels that change, from lists the generator
 makes for every frame and every move. What flies is sprites: the
 fighter, two rockets, six flyers of four descriptors each, and the
 bombs. Explosions and score pop-ups are pictures drawn into the bitmap
-and put back. The backdrop's band, the bottom 64 rows, has its own
-eight colours by a raster split, and a copy of it in VRAM to put back
-from. The field is the arcade's 224 columns in the middle of the 320,
+and put back. The field is the arcade's 224 columns in the middle of the 320,
 its 256 rows pressed into 240 below the formation's lowest reach.
 
 **The motion is the arcade's** ([D114](01-decisions.md)): a port of the
@@ -1884,8 +1881,7 @@ wave waits for a slot, and stage 1's dives begin at frame 1,327 rather
 than 895. The sprites are 32: six flyers and two bombs spend them, and a
 bomb or a dive with none left is not made -- on stage 16 some forty in a
 minute. **The capture is the arcade's** ([D116](01-decisions.md)): the
-boss's tractor beam, the sheet's own, grows a row at a time over the
-backdrop, holds, and takes a fighter under it up, spinning, turning red;
+boss's tractor beam, the sheet's own, grows a row at a time, holds, and takes a fighter under it up, spinning, turning red;
 FIGHTER CAPTURED; and the red fighter goes home with its boss into the
 place above it, dives with it, and is worth 500 there and 1,000 in the
 air -- and **the rescue is the arcade's too** ([D117](01-decisions.md)):
@@ -1914,12 +1910,12 @@ held to the reference machine frame by frame, all home; the formation
 breathing and flapping without a pixel of the bitmap other than the
 program's state says; a volley scored, its explosions leaving nothing,
 20,000 bringing a fighter; the start theme's notes frame for frame; the
-level's tune and drums; the raster split's lines; every frame's work
+level's tune and drums; every frame's work
 inside its frame; challenging stage 11's creature, tally and payment;
 **stage 1's attack held to `tools/galaga_dives.py` frame by frame for
 3,000 frames** -- every flyer and every bomb, down to continuous bombing
 -- and stage 16's the same wherever the sprites allow; a crash, the
-explosion over the backdrop put back, and a fighter after READY; a
+explosion put back, and a fighter after READY; a
 capture -- the beam in its blues, the fighter taken, FIGHTER CAPTURED,
 the red fighter in its place, the bitmap exact once the beam is gone --
 and the rescue after it: the boss shot as it dives with the fighter, the
@@ -1933,8 +1929,8 @@ the path a person takes -- the real ROM booting the demos disc, `DRIVE
 sim/galaga.py play` (or `levels`, `attack`, `challenge n`, `death`,
 `results`, `capture`, `rescue`, `homeshot`, `names`, `bonus [stage]`,
 `profile [stage frames]`) plays it and writes the frames as PNG;
-`flights`, `dives stage frames [x [every]]`, `bitmap`, `shoot`, `split`
-and `sound` are the comparisons the gate makes; `sizes` says where the
+`flights`, `dives stage frames [x [every]]`, `bitmap`, `shoot` and
+`sound` are the comparisons the gate makes; `sizes` says where the
 program's bytes are.
 
 Keys: the cursor keys or Z and X move, space fires, P pauses, Esc

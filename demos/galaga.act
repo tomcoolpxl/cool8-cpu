@@ -44,8 +44,7 @@ CONST KEY_SPACE = $29
 CONST KEY_ESC = $76
 CONST KEY_P = $4D
 
-; colours: tools/mkgalaga.py's order -- 0-7 are the ones the bitmap uses
-; low on the field, which a backdrop's raster split leaves alone
+; colours: tools/mkgalaga.py's order, the arcade's own fifteen
 CONST C_WHITE = 1
 CONST C_RED = 2
 CONST C_YELLOW = 3
@@ -61,7 +60,7 @@ CONST SP_SHOT = 4                    ; two
 
 ; --------------------------------------------------------------- the game
 CARD loops                           ; frames of play the loop has run, for the gate
-BYTE level_bd                        ; the backdrop showing, 0-3
+BYTE level                           ; the four stages' level, 0-3: its tune and its bonus-bee creature
 BYTE mo_level                        ; the bonus bee's creature in VRAM, 255 none
 BYTE tx_y                            ; a text in the field the stars keep out of: its row, 0 none
 INT fx                               ; the fighter's top-left on the field
@@ -502,17 +501,15 @@ PROC DrawDelta()
         SUB  R2,#1
         BNE  .spix
         BRA  .slow
-; putting back: every pixel of the list gets what is under it -- black
-; above the band, the backdrop's copy in it, read through the VRAM port
+; putting back: every pixel of the list gets what is under it, which is
+; the black of space
 .rest:  LD   R0,[Y+]
         BEQ  .done
         ADD  R0,R1
         ST   [v_PIX_Y_L],R0
-        ST   [v_rs_row],R0
         LD   R0,[Y+]
         LD   R2,[v_dd_fx]
         ADD  R0,R2
-        ST   [v_rs_fx],R0            ; the field's x
         ADD  R0,#c_FX
         ST   [v_PIX_X_L],R0
         MOV  R0,#0                   ; not CLR, which is SUB and sets the carry
@@ -520,48 +517,10 @@ PROC DrawDelta()
         ST   [v_PIX_X_H],R0
         LD   R2,[Y+]
         ADDW Y,R2                    ; its colours are not wanted
-        LD   R0,[v_rs_row]
-        CMP  R0,#c_BAND_Y
-        BCS  .rband
         CLR  R0
 .rz:    ST   [X],R0
         SUB  R2,#1
         BNE  .rz
-        BRA  .rest
-.rband: PUSH R1
-        SUB  R0,#c_BAND_Y
-        MOV  R3,#112
-        MUL  R0,R3                   ; X: the band row's first byte in the copy
-        ADDW X,#c_BD_VRAM
-        LD   R0,[v_rs_fx]
-        MOV  R3,R0
-        SHR  R3
-        ADDW X,R3
-        MOV  R3,XL
-        ST   [v_VRAM_ADDR_L],R3
-        MOV  R3,XH
-        ST   [v_VRAM_ADDR_H],R3
-        AND  R0,#1                   ; R0 1 on a pixel in a byte's low nibble
-        LD   R3,[v_VRAM_DATA]        ; the byte, and the port on to the next
-.rb:    MOV  R1,R3
-        TST  R0
-        BNE  .rlo
-        SWAP R1
-        AND  R1,#$0F
-        ST   [v_PIX_DATA],R1
-        MOV  R0,#1
-        SUB  R2,#1
-        BNE  .rb
-        BRA  .rend
-.rlo:   AND  R1,#$0F
-        ST   [v_PIX_DATA],R1
-        CLR  R0
-        SUB  R2,#1
-        BEQ  .rend
-        LD   R3,[v_VRAM_DATA]
-        BRA  .rb
-.rend:  POP  R1
-        LDW  X,#v_PIX_DATA
         BRA  .rest
 .done:
   ENDASM
@@ -1054,11 +1013,7 @@ PROC StarsDraw()
     st_y(i) = y
     IF (i & 1) == phase THEN
       x = st_x(i)
-      IF y >= BAND_Y THEN
-        show = BandPixel(x, y) == 0      ; behind the horizon
-      ELSE
-        show = y + LAG < top OR y >= bot OR Covered(x, y) == 0
-      FI
+      show = y + LAG < top OR y >= bot OR Covered(x, y) == 0
       IF show AND booms THEN show = InBoom(x, y) == 0 FI
       IF show AND cap_ph == 2 AND y >= BEAM_Y AND y < BEAM_Y + BEAM_H THEN
         show = x < cap_x - 32 OR x >= cap_x + 14
@@ -1075,131 +1030,6 @@ PROC StarsDraw()
       FI
     FI
   OD
-RETURN
-
-; ---------------------------------------------------------- the backdrop
-; A level's horizon is a band of BAND_H rows along the bottom of the
-; field, in sixteen colours whose first SAFE are the arcade's and whose
-; last eight are the band's own. The raster interrupt writes those eight
-; a row above the band and the vertical blank puts the arcade's back, so
-; the formation above keeps its colours and the band has its own; nothing
-; the bitmap draws low on the field uses the last eight. The band's
-; pixels are also kept in RAM, two to a byte as the bitmap holds them,
-; for what draws over it to ask and to put back.
-CARD ARRAY bd_d(4) = [D_BD0 D_BD1 D_BD2 D_BD3]
-BYTE ARRAY bd_dh(4) = [DH_BD0 DH_BD1 DH_BD2 DH_BD3]
-BYTE ARRAY isr_top(16), isr_band(16) ; entries SAFE-15, as PAL_DATA takes them: high, low
-BYTE isr_seen
-
-; BandPixel(x, y): the backdrop's colour at the field's (x, y), y in the band
-FUNC BYTE BandPixel(BYTE x, BYTE y)
-  CARD a
-  BYTE b
-  a = y - BAND_Y
-  a = (a << 7) - (a << 4) + (x >> 1)   ; 112 a row
-  VRAM_ADDR = BD_VRAM + a
-  b = VRAM_DATA
-  IF x & 1 THEN RETURN (b & $0F) FI
-RETURN (b >> 4)
-
-; Irq: the vector's handler. The raster compare matches the line counter's
-; low byte, so it fires twice a frame -- at the raw line 256 above the
-; band's too -- and the first is let go.
-PROC Irq()
-  ASM
-        PUSH R0
-        PUSH R1
-        PUSHW Y
-        LD   R0,[v_VID_IRQ]
-        BTST R0,#$02
-        BEQ  .rast
-        MOV  R1,#$32                 ; the blank acknowledged, both kept enabled
-        ST   [v_VID_IRQ],R1
-        CLR  R1
-        ST   [v_isr_seen],R1
-        LDW  Y,#v_isr_top
-        BRA  .pal
-.rast:  BTST R0,#$01
-        BEQ  .out
-        MOV  R1,#$31
-        ST   [v_VID_IRQ],R1
-        LD   R1,[v_isr_seen]
-        BNE  .band
-        MOV  R1,#1
-        ST   [v_isr_seen],R1
-        BRA  .out
-.band:  LDW  Y,#v_isr_band
-.pal:   MOV  R0,#c_SAFE
-        ST   [v_PAL_IDX],R0
-        MOV  R1,#16
-.l:     LD   R0,[Y+]
-        ST   [v_PAL_DATA],R0
-        SUB  R1,#1
-        BNE  .l
-.out:   POPW Y
-        POP  R1
-        POP  R0
-        RETI
-  ENDASM
-RETURN
-
-PROC IrqOn()
-  BYTE i, j
-  CARD v
-  ; both halves the arcade's until a backdrop is loaded: the title has none
-  j = 0
-  FOR i = SAFE TO 15 DO
-    v = gal_pal(i)
-    isr_top(j) = v >> 8
-    isr_top(j + 1) = v
-    isr_band(j) = v >> 8
-    isr_band(j + 1) = v
-    j += 2
-  OD
-  TakeKeys()                         ; its DI, once, before this
-  ASM
-        DI
-        LDW  X,#Irq
-        STW  [$FFFC],X
-  ENDASM
-  VID_RCMP = ((BAND_Y - 1) << 1) & 255
-  VID_IRQ = $33
-  ASM
-        EI
-  ENDASM
-RETURN
-
-; PalSplit(k): the two halves the handler writes -- the arcade's last
-; eight, and level k's
-PROC PalSplit(BYTE k)
-  BYTE i, j
-  CARD v, a
-  j = 0
-  FOR i = SAFE TO 15 DO
-    v = gal_pal(i)
-    isr_top(j) = v >> 8
-    isr_top(j + 1) = v
-    j += 2
-  OD
-  a = k
-  a = a << 4
-  FOR i = 0 TO 15 DO isr_band(i) = bd_pal(a + i) OD
-RETURN
-
-; LoadBackdrop(k): level k's band from the data file into RAM, then into
-; the bitmap row by row, and its colours to the handler
-PROC LoadBackdrop(BYTE k)
-  BYTE r
-  CARD off, v
-  VRAM_STEP = 1
-  Stream(bd_d(k), bd_dh(k), BD_VRAM, BAND_H * 112)
-  off = bd_d(k)
-  FOR r = 0 TO BAND_H - 1 DO
-    v = BAND_Y + r
-    Stream(off, bd_dh(k), (v << 7) + (v << 5) + (FX >> 1), 112)
-    off += 112
-  OD
-  PalSplit(k)
 RETURN
 
 ; --------------------------------------------------------------- flights
@@ -2243,13 +2073,7 @@ PROC BeamRow(BYTE i, BYTE draw)
       PIX_Y = y
       c = ((b >> 6) + bm_ph) % 3 + BEAM_C
       FOR m = 1 TO b & $3F DO
-        IF draw THEN
-          PIX_DATA = c
-        ELSEIF y >= BAND_Y THEN
-          PIX_DATA = BandPixel(x, y)
-        ELSE
-          PIX_DATA = 0
-        FI
+        IF draw THEN PIX_DATA = c ELSE PIX_DATA = 0 FI
         x += 1
       OD
     OD
@@ -3286,7 +3110,7 @@ PROC StageStart()
   ch_hits = 0
   FOR i = 0 TO 4 DO ch_kills(i) = 0 OD
   Positions()
-  MusicStart(level_bd)
+  MusicStart(level)
 RETURN
 
 ; StageDone: nothing left of the stage -- the launcher finished, nothing
@@ -3318,11 +3142,7 @@ RETURN
 ; "STAGE n" for two seconds
 PROC StageIntro()
   BYTE i, lv
-  lv = ((stage - 1) / 4) % 4
-  IF lv != level_bd THEN
-    level_bd = lv
-    LoadBackdrop(level_bd)
-  FI
+  level = ((stage - 1) / 4) % 4
   ; whichever of the bonus bee's three this level flies
   i = (stage >> 2) % 3
   IF i != mo_level THEN
@@ -3543,8 +3363,7 @@ PROC Play()
   BYTE i
   Clg(0)
   Hud()
-  level_bd = 0
-  LoadBackdrop(0)
+  level = 0
   StarsInit()
   fx = 104
   stage = 1
@@ -3688,7 +3507,6 @@ PROC Main()
   SetPalette(gal_pal, 240, 16)
   FOR i = 0 TO 31 DO SpriteHide(i) OD
   SpritesOn(15)
-  IrqOn()
   hi10 = hi_sc(0)
   DO
     Title()

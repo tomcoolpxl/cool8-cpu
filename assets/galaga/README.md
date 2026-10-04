@@ -18,24 +18,10 @@ because the site itself stands behind a bot check:
 `tools/mkgalaga.py` cuts everything the game draws from these; the only
 change it makes to a pixel is the machine's, 24-bit colour to 12.
 
-## The backdrops
+## The backdrops, which are gone
 
-Each level has a horizon along the bottom of the field, cut from
-published pixel art -- the arcade has none. Downloaded from
-OpenGameArt on 13 September 2026, with the owner's consent:
-
-| file | work | author | licence |
-|---|---|---|---|
-| `backdrops/chikyuu_16_edge_0.png` | [Planet Orbit Background](https://opengameart.org/content/planet-orbit-background) | ArthCarvalho | [OGA-BY 3.0](https://opengameart.org/content/oga-by-30-faq) |
-| `backdrops/green_nebula_arne16_-_512x512_0.png` | [Nebula Arne16](https://opengameart.org/content/nebula-arne16), an Arne16 edit of Screaming Brain Studios' Green Nebula 4 | zwonky | CC0 |
-| `backdrops/rocky-far-mountains_0.png` | [Rocky desert landscape (layered, looping)](https://opengameart.org/content/rocky-desert-landscape-layered-looping), from Quantiset's [Mars background](https://opengameart.org/content/mars-background-pixel-art) (CC0) | Emcee Flesher | CC0 |
-| `backdrops/stars-and-planet-alt2_0.png`, `backdrops/planet-only-alt2-alpha.png` | [Space Junkyard Environment](https://opengameart.org/content/super-dead-space-gunner-merc-redux-space-junkyard-environment) | Emcee Flesher; the planet an enhanced image by Gabriel Fiset (CC-BY) based on images courtesy of NASA/JPL-Caltech/SwRI/MSSS; the nebula after Daniel Cook (CC-BY) | [CC-BY 4.0](https://creativecommons.org/licenses/by/4.0/) |
-
-`tools/mkgalaga.py` crops each to a band of 224 x 72 (the Mars layer
-after an exact fifth, the gold giant after an exact half), puts it in
-sixteen colours, and makes one change to the pixels, which the owner
-allowed: the band's first sixteen rows are dithered into black, so it
-rises out of the sky.
-
-The credits the two attribution licences ask for are shown in the game
-and in [docs/14-demos.md](../../docs/14-demos.md).
+Each level once had a horizon along the bottom of the field, cut from
+published pixel art. The arcade has none, and at the owner's word they
+were taken out again (D120): the field is the arcade's black with its
+stars. The pictures were deleted with them, and nothing here needs a
+credit any more.

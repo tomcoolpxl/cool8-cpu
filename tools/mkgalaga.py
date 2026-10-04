@@ -122,11 +122,11 @@ def show_colours(name):
 # Index 0 is black and transparent, and the order is this program's: the
 # first eight are the colours anything drawn into the bitmap low on the
 # field uses -- the stars, the bombs, the explosions, the beam, the score
-# -- and the last eight are the ones a level's backdrop may take over
+# -- the arcade's own fifteen
 # below its raster split, so the split rewrites one run of eight entries.
 PROM = [0xDEDEDE, 0xFF0000, 0xFFFF00, 0x00FFDE, 0x00B8DE, 0x0068DE, 0xFF9700,
         0xFFB800, 0xFF00DE, 0xB8B8DE, 0xDE4700, 0x00FF00, 0x9700DE, 0x0000DE, 0x009797]
-SAFE = 8                                # indices 0-7 survive the split
+SAFE = 8                                # the first eight, which the art keeps to
 # sheet colours that are not the PROM's, and the entry each is drawn with
 ALIAS = {0xFFFFFF: 0xDEDEDE, 0xB800DE: 0x9700DE}
 
@@ -173,9 +173,9 @@ SWAPPED = ("goei", "captured")
 # are the sheet's dragonfly's and scorpion's own
 SPECIALS = ("dragonfly", "scorpion")
 # the bonus bee's three transformations, by f_1A80's colour 4, 5 and 6:
-# the sheet's galaxian flagship, scorpion and bosconian, which the band
-# gave room for (D119) -- one of them resident at a time, in the patterns
-# above the common ones, streamed in for the level that flies it
+# the sheet's galaxian flagship, scorpion and bosconian -- one of them
+# resident at a time, in the patterns above the common ones, streamed in
+# for the level that flies it
 MORPHS = ("galaxian", "scorpion", "bosconian")
 
 
@@ -398,103 +398,11 @@ def font(t):
 GLYPHS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ-%.!@# "
 
 
-# -------------------------------------------------------------- backdrops
-# A level's horizon: a band along the bottom of the field, cut from the
-# published art in assets/galaga/backdrops/ (README.md there credits it)
-# at one pixel to one -- after an exact integer reduction where the art
-# was drawn large -- and put into sixteen colours whose first eight are
-# the palette's own, so the stars, the bombs, the explosions and the beam
-# look the same over it, and whose last eight are the band's: the game's
-# raster split writes them a row above the band and puts the arcade's
-# back at the vertical blank. **The one change made to the art's pixels**,
-# by the owner's leave: the band's first FADE rows are dithered into black
-# on a 4 x 4 Bayer matrix, a sixteenth more of each row kept than the row
-# above, so the horizon rises out of the sky rather than starting on a
-# line.
-BAND_Y, BAND_H, FADE = 208, 32, 8
-BAYER = [[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]]
-BACKDROPS = [
-    # file, reduction, and the band's top-left in the reduced picture
-    ("chikyuu_16_edge_0.png", 1, 16, 170),
-    ("green_nebula_arne16_-_512x512_0.png", 1, 70, 174),
-    ("rocky-far-mountains_0.png", 5, 16, 56),
-    ("planet-only-alt2-alpha.png", 2, -16, 42),
-]
-
-
-def rgb_of(v):
-    return ((v >> 8) & 15, (v >> 4) & 15, v & 15)
-
-
-def backdrop(entry):
-    """(sixteen 12-bit colours, BAND_H rows of 224 indices) for a level."""
-    from PIL import Image
-    fn, red, x0, y0 = entry
-    im = Image.open(os.path.join(ART, "backdrops", fn)).convert("RGBA")
-    if red > 1:
-        assert im.width % red == 0 and im.height % red == 0, fn
-        im = im.resize((im.width // red, im.height // red), Image.NEAREST)
-    px = im.load()
-    band = []
-    counts = {}
-    for y in range(BAND_H):
-        row = []
-        for x in range(224):
-            # beyond the picture's edge is black space
-            inside = 0 <= x0 + x < im.width and 0 <= y0 + y < im.height
-            r, g, b, a = px[x0 + x, y0 + y] if inside else (0, 0, 0, 0)
-            v = 0 if a < 128 else q4((r << 16) | (g << 8) | b)
-            row.append(v)
-            counts[v] = counts.get(v, 0) + 1
-        band.append(row)
-    fixed = PAL[:SAFE]
-    free = [[rgb_of(v), n] for v, n in counts.items() if v not in fixed]
-    # the closest two, weighted, merged until eight are left
-    while len(free) > 16 - SAFE:
-        best = None
-        for i in range(len(free)):
-            for j in range(i + 1, len(free)):
-                (a, na), (b, nb) = free[i], free[j]
-                d = sum((p - q) ** 2 for p, q in zip(a, b)) * na * nb / (na + nb)
-                if best is None or d < best[0]:
-                    best = (d, i, j)
-        _, i, j = best
-        (a, na), (b, nb) = free[i], free[j]
-        free[i] = [tuple((p * na + q * nb) / (na + nb) for p, q in zip(a, b)), na + nb]
-        del free[j]
-    pal = list(fixed) + [(round(c[0]) << 8) | (round(c[1]) << 4) | round(c[2]) for c, _ in free]
-    pal += [0] * (16 - len(pal))
-    rgbs = [rgb_of(v) for v in pal]
-    cache = {}
-    out = []
-    for row in band:
-        o = []
-        for v in row:
-            if v not in cache:
-                c = rgb_of(v)
-                cache[v] = min(range(16), key=lambda k: (sum((p - q) ** 2 for p, q in zip(c, rgbs[k])), k))
-            o.append(cache[v])
-        out.append(o)
-    for y in range(FADE):
-        for x in range(224):
-            if BAYER[y % 4][x % 4] >= y * 16 // FADE:
-                out[y][x] = 0
-    return pal, out
-
-
-def pack_band(rows):
-    """The band as the bitmap holds it: two pixels a byte, the left high."""
-    out = []
-    for r in rows:
-        out += [(r[x] << 4) | r[x + 1] for x in range(0, 224, 2)]
-    return out
-
-
 # ------------------------------------------------------------- bitmap art
 # The other pictures drawn into the bitmap: each is one list from nothing,
 # its top-left the box's, in fm_delta's format -- so putting back what
 # was under exactly the pixels it wrote clears it. Every colour in them
-# is one of the first SAFE, which is what lets them cross the backdrop.
+# is one of the first SAFE.
 # The explosions are the arcade's double-size sprites, 32 x 32, found on
 # the sheet as the shapes along its top: the fighter's four from x 147,
 # an enemy's five from x 300; a box is centred on its shape.
@@ -963,9 +871,6 @@ def build():
         for q in mp:
             b += double(q)
         dat.add("MO_" + name.upper(), b)
-    bds = [backdrop(b) for b in BACKDROPS]
-    for k, (_, rows) in enumerate(bds):
-        dat.add("BD%d" % k, pack_band(rows))
     # the stages' waves and the levels' tunes: one of each is wanted at a
     # time, so the game loads it from here rather than holding them all
     mus, fl = music(), flights()
@@ -977,7 +882,7 @@ def build():
     dat.add("MUSIC", mblob)
     return dict(mus=mus, moffs=moffs + [len(mblob)], snd=sounds(), fl=fl, pats=pats, common=common, ncommon=ncommon,
                 specials=specials, p_swap=p_swap, n_swap=n_swap,
-                morphs=morphs, p_morph=p_morph, n_morph=n_morph, fimgs=imgs, fblob=fblob, foffs=foffs, bds=bds,
+                morphs=morphs, p_morph=p_morph, n_morph=n_morph, fimgs=imgs, fblob=fblob, foffs=foffs,
                 shot=shot[0], bomb=bomb[0], beam=beam(s), arts=arts, ablob=ablob, aoffs=aoffs,
                 font=font(t), dat=dat, sheet=s)
 
@@ -1005,21 +910,9 @@ def act(o):
     w("; the colour PROM, black first: the sprite bank and the bitmap's bank 0")
     arr(w, "CARD ARRAY gal_pal(16)", PAL, fmt="$%03X")
     w("")
-    w("; the levels' backdrops: a band of %d rows from row %d, in GALAGA.DAT's" % (BAND_H, BAND_Y))
-    w("; BD blocks, and its palette -- the first %d the arcade's, the rest the band's" % SAFE)
     spr_end = 0x9600 + (len(o["pats"].pats) + o["n_morph"]) * 128
-    assert spr_end + BAND_H * 112 <= 0x10000, "the band's copy does not fit VRAM above the sprites"
-    w("; the band's copy is kept in VRAM right above the sprite patterns")
-    w("CONST BD_VRAM = $%04X" % spr_end)
-    w("CONST BAND_Y = %d" % BAND_Y)
-    w("CONST BAND_H = %d" % BAND_H)
+    assert spr_end <= 0x10000, "the sprite patterns do not fit VRAM"
     w("CONST SAFE = %d" % SAFE)
-    w("; for each level its own eight, as PAL_DATA takes them -- the high byte first")
-    bp = []
-    for pal, _ in o["bds"]:
-        for v in pal[SAFE:]:
-            bp += [v >> 8, v & 255]
-    arr(w, "BYTE ARRAY bd_pal(%d)" % len(bp), bp, fmt="$%02X")
     w("")
     frames = o["common"] + o["specials"] + o["morphs"]
     names = []
@@ -1246,23 +1139,6 @@ def preview(o):
             for x in range(8):
                 put(2 + i * 9 + x, 130 + y, i)
     im.save(PREVIEW)
-    bands_preview(o)
-
-
-def bands_preview(o):
-    """The four backdrops as the band shows them, one under another."""
-    from PIL import Image
-    S = 3
-    im = Image.new("RGB", (224 * S, (BAND_H + 4) * S * len(o["bds"])), (24, 24, 40))
-    px = im.load()
-    for k, (pal, rows) in enumerate(o["bds"]):
-        for y, row in enumerate(rows):
-            for x, v in enumerate(row):
-                c = rgb_of(pal[v])
-                for a in range(S):
-                    for b in range(S):
-                        px[x * S + a, (k * (BAND_H + 4) + y) * S + b] = (c[0] * 17, c[1] * 17, c[2] * 17)
-    im.save(os.path.join(ART, "preview_backdrops.png"))
 
 
 def check(o, s):

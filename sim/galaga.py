@@ -10,9 +10,8 @@ table. Run it to look:
     python sim/galaga.py [MODE]
 
 MODE is play, which writes frames to sim/build/gal_*.png; levels, a
-frame of each backdrop; bitmap, which holds the bitmap to the program's
-state as the formation breathes; split, the raster lines the palette is
-written on; shoot [apart|trace], a volley into the formation -- trace
+a frame of each level; bitmap, which holds the bitmap to the program's
+state as the formation breathes; shoot [apart|trace], a volley into the formation -- trace
 checks every frame for a pixel strayed outside a live explosion; or
 profile, which measures the work in every frame -- the clocks that are
 not WaitVBlank's -- and says where the busiest frame's went.
@@ -252,23 +251,16 @@ class Game:
     def bitmap_diff(self):
         """The field's pixels that are not what the program's own state says
         should be there -- each character at rest drawn where its slot says
-        it is drawn, each star it says is lit, and the band's backdrop as
-        its copy in VRAM holds it -- as (x, y, have, want); an empty list is
-        a bitmap no list left a pixel behind in. VRAM and the arrays are read
-        once each: the client's reads are a round trip apiece."""
+        it is drawn and each star it says is lit -- as (x, y, have, want);
+        an empty list is a bitmap no list left a pixel behind in. VRAM and
+        the arrays are read once each: the client's reads are a round trip
+        apiece."""
         import mkgalaga as A
         if not hasattr(self, "_fimgs"):
             s = A.Sheet("sprites")
             self._fimgs = [A.grid_cell(s, c, A.ROWS[n]) for n, c in A.FORMATION]
         fx, fw = self.c("FX"), self.c("FW")
         want = [[0] * fw for _ in range(240)]
-        by, bh = self.c("BAND_Y"), self.c("BAND_H")
-        bram = self.m.video.vram[self.c("BD_VRAM"):self.c("BD_VRAM") + bh * 112]
-        for y in range(bh):
-            row = want[by + y]
-            for x in range(224):
-                b = bram[y * 112 + (x >> 1)]
-                row[x] = b >> 4 if x % 2 == 0 else b & 15
         ns = self.c("NSLOT")
         on, fr, sx, sy = (self.array(n, ns) for n in ("sl_on", "sl_fr", "sl_x", "sl_y"))
         for i in range(ns):
@@ -509,13 +501,6 @@ class Game:
             if until and until():
                 break
         return out
-
-    def split(self, frames=3):
-        """Which raw raster lines the palette's last eight were written on,
-        and with what, over so many frames: [(line, entry, $0RGB)]."""
-        self.m.pal_log_start()
-        self.m.run_frame(frames)
-        return [(ln, e, v) for _, ln, e, v in self.m.pal_log()]
 
     def png(self, name):
         path = os.path.join(H.BUILD, name + ".png")
@@ -974,10 +959,6 @@ def main():
         print(g.png("gal_challenge%d" % n))
         g.autopilot(2400, until=lambda: g.byte("stage") != n)
         print("stage now", g.byte("stage"), "hits", g.byte("ch_hits"), "score", g.uword("score10") * 10)
-    elif what == "split":
-        log = g.split()
-        print("%d commits; lines %s" % (len(log), sorted(set(ln for ln, _, _ in log))))
-        print(log[:20])
     elif what == "bitmap":
         for i in range(12):
             g.m.run_frame(37)

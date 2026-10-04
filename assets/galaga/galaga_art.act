@@ -21,22 +21,10 @@ CONST N_MO_SCORPION = 3584
 CONST D_MO_BOSCONIAN = 33024
 CONST DH_MO_BOSCONIAN = 0
 CONST N_MO_BOSCONIAN = 3072
-CONST D_BD0 = 36096
-CONST DH_BD0 = 0
-CONST N_BD0 = 3584
-CONST D_BD1 = 39680
-CONST DH_BD1 = 0
-CONST N_BD1 = 3584
-CONST D_BD2 = 43264
-CONST DH_BD2 = 0
-CONST N_BD2 = 3584
-CONST D_BD3 = 46848
-CONST DH_BD3 = 0
-CONST N_BD3 = 3584
-CONST D_WAVES = 50432
+CONST D_WAVES = 36096
 CONST DH_WAVES = 0
 CONST N_WAVES = 1580
-CONST D_MUSIC = 52012
+CONST D_MUSIC = 37676
 CONST DH_MUSIC = 0
 CONST N_MUSIC = 2019
 
@@ -45,20 +33,7 @@ CARD ARRAY gal_pal(16) = [
   $000 $DDD $F00 $FF0 $0FD $0BD $06D $F90 $FB0 $F0D $BBD $D40 $0F0 $90D $00D $099
 ]
 
-; the levels' backdrops: a band of 32 rows from row 208, in GALAGA.DAT's
-; BD blocks, and its palette -- the first 8 the arcade's, the rest the band's
-; the band's copy is kept in VRAM right above the sprite patterns
-CONST BD_VRAM = $F100
-CONST BAND_Y = 208
-CONST BAND_H = 32
 CONST SAFE = 8
-; for each level its own eight, as PAL_DATA takes them -- the high byte first
-BYTE ARRAY bd_pal(64) = [
-  $00 $19 $00 $3C $00 $5E $02 $BF $05 $DF $0C $FF $0A $EF $02 $7F
-  $00 $58 $0A $C2 $04 $82 $03 $45 $02 $23 $00 $00 $00 $00 $00 $00
-  $0B $85 $0A $75 $08 $44 $09 $54 $0A $65 $00 $00 $00 $00 $00 $00
-  $05 $06 $0F $E4 $0F $FF $0F $A5 $0F $44 $05 $5A $00 $00 $00 $00
-]
 
 ; the sprite frames: each character's first frame, then four sprites a
 ; frame -- the pattern (255 none), descriptor byte 6's flips for it, and
