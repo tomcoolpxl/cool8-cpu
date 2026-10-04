@@ -1972,6 +1972,26 @@ def test_galaga():
     print("    shot on the way home: the fighter back at frame %s, in hand %s" % (hv.get("back"), h.byte("lives")))
     del h
 
+    # the bonus bee on stage 5: armed with few enemies left (its threshold
+    # raised here so it comes at once), away as the level's own creature --
+    # the sheet's scorpion, in the room the band gave up -- splitting on its
+    # path, and the ones that flew worth their 160 each and the trio's 1000
+    h = G.Game(tag="galaga9", render=False)
+    h.start()
+    h.goto_stage(5)
+    h.pokew("fx", 104)
+    for _ in range(2500):
+        h.spared_frame()
+        if h.byte("dv_on"):
+            break
+    bv, worth = h.bonus_bee()
+    check(set(bv) >= {"armed", "flying", "split", "paid"} and worth >= 1000 + 160
+          and h.byte("bb_fr") == h.c("F_M_SCORPION"),
+          "galaga: the bonus bee goes as the level's own creature, splits, and pays the trio's bonus",
+          "events %s, worth %d, frames %s" % (bv, worth, h.c("F_M_SCORPION")))
+    print("    the bonus bee: away at frame %s, split at %s, worth %d" % (bv.get("flying"), bv.get("split"), worth))
+    del h
+
     # P holds everything and P again lets it go
     f0 = g.uword("stage_frames")
     g.tap([0x4D])

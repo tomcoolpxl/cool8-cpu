@@ -1840,7 +1840,7 @@ disassembly through two reference models, `tools/galaga_paths.py` and
 `tools/galaga_dives.py`; the sounds from `tools/galaga_sound.py`, a model
 of the sound CPU's driver over the sound ROM's own streams. `poe check`
 holds the generated files to all of it. The backdrops are OpenGameArt's,
-cropped and quantised and faded into the black by a dither
+cropped to 32 rows and quantised and faded into the black by a dither
 (`assets/galaga/README.md` has each one's author and licence): the Earth for stages 1-4, a nebula for 5-8, a
 red ridge for 9-12 and a gold planet for 13-16.
 
@@ -1894,8 +1894,11 @@ the fighter spins free, comes down beside the player's and flies with it
 as the dual fighter, firing a rocket from each ship until one of them is
 hit; a boss shot while it carries a fighter it has just taken gives that
 one back the same way, and with no fighter in play it comes down as the
-player's. **Not there yet**: the bonus bee's transformations (their
-creatures' patterns have no room in VRAM) and a second player.
+player's. **The bonus bee transforms** ([D119](01-decisions.md)): with
+few enemies left one at rest is armed and goes as the level's own
+creature -- the sheet's scorpion from stage 4, bosconian from 8, galaxian
+flagship from 12 -- splitting into three on its path, and the three
+together pay 1,000, 2,000 or 3,000. **Not there yet**: a second player.
 
 **The sound** is the arcade's effects and jingles, each rendered frame by
 frame from the driver's model and mixed in the driver's order -- tunes
@@ -1921,13 +1924,14 @@ capture -- the beam in its blues, the fighter taken, FIGHTER CAPTURED,
 the red fighter in its place, the bitmap exact once the beam is gone --
 and the rescue after it: the boss shot as it dives with the fighter, the
 pair firing together, one of them lost leaving the other, and a boss
-shot carrying a fighter home giving it back for no fighter; a score
+shot carrying a fighter home giving it back for no fighter; the bonus
+bee away as its level's creature, split, and paid for; a score
 into the best five with its initials, and the title turning to them; P
 pausing and going on; the last fighter lost and the results; then
 the path a person takes -- the real ROM booting the demos disc, `DRIVE
 11` and `SYS "GALAGA.BIN"`, the title up, space, and stage 1. `python
 sim/galaga.py play` (or `levels`, `attack`, `challenge n`, `death`,
-`results`, `capture`, `rescue`, `homeshot`, `names`,
+`results`, `capture`, `rescue`, `homeshot`, `names`, `bonus [stage]`,
 `profile [stage frames]`) plays it and writes the frames as PNG;
 `flights`, `dives stage frames [x [every]]`, `bitmap`, `shoot`, `split`
 and `sound` are the comparisons the gate makes; `sizes` says where the

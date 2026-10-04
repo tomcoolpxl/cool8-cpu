@@ -7267,3 +7267,36 @@ initials, the high score following it, and the title's second page up.
 PRG 56,628 bytes before, 57,844 after, of the 60,160 the disc's origin
 leaves -- 2,316 to spare, and the bonus bee still wants VRAM rather than
 program (D115).
+
+## D119 -- GALAGA's band gives half its rows back, and the bonus bee transforms
+
+**The one thing that stood between the port and f_1A80 was VRAM.** Each of
+the bonus bee's three creatures -- the sheet's galaxian flagship, scorpion
+and bosconian, the ones the arcade turns a bee into from stage 4 -- wants
+24 to 28 patterns, and after the bitmap, the 154 common patterns and the
+backdrop band's copy there were 256 bytes left (D115). The three choices
+were to share the fighter's and captured fighter's rotation frames (idle
+except during a capture, but then the two features lock each other out),
+to fly a creature with fewer rotation frames, or to give the band fewer
+rows. **The owner chose the band**: 64 rows to 32, which frees 3,584 bytes
+-- room for the largest of the three -- and the crops were raised sixteen
+rows so that each horizon still falls inside the band. The backdrops now
+read as a horizon at the field's foot rather than a quarter of the screen,
+and the patterns end at $F100 with the band's copy filling to $FEFF
+exactly.
+
+**f_1A80 as the ROM has it**: while fewer than ten enemies are left one at
+rest is armed (and kept out of every other sortie's choice), and 64 frames
+later it goes down the path its colour names, which carries two F2 tokens;
+each spawns a clone on a transient id with a slot of its own, flying the
+pointer that follows the token. The three are worth 160 each and the last
+of them the trio's bonus -- 3,000, 1,000 or 2,000 by the creature -- with
+the arcade's own score pop-up where it died. The level's creature is
+streamed into the freed room when the backdrop changes.
+
+**Where the sprites run out**, a clone is not made, as a bomb or a dive is
+not made (D115): the bonus then counts only the ones that flew, so a trio
+that could only be a pair still pays. **Measured**: the gate plays stage 5
+to the bee's arming, sees it away as the scorpion, split, and shot for
+1,320 -- two at 160 and the 1,000 the scorpions pay. PRG 58,027 bytes
+before, 59,483 after, of the 60,160 the disc's origin leaves.

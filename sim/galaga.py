@@ -450,6 +450,38 @@ class Game:
                 break
         return out
 
+    def bonus_bee(self, frames=1500, seen=None):
+        """The bonus bee armed at once (its threshold raised), through its
+        transformation into the level's creature and the ones it splits
+        into, to all of them shot: {event: stage frame} for armed, flying,
+        split and paid, and the score they were worth. The shooting waits
+        until the path's splits are done, as a player would."""
+        n = self.c("NFLY")
+        self.poke("bb_lim", 60)
+        out, worth, before, flew = {}, 0, self.uword("score10"), None
+        for f in range(frames):
+            self.spared_frame()
+            fr, key = self.byte("bb_fr"), None
+            flying = [k for k in range(n) if self.byte("fl_state", k) and self.byte("fl_char", k) == fr]
+            if self.byte("bb_tmr") and "armed" not in out:
+                key = "armed"
+            elif flying and "flying" not in out:
+                key, flew = "flying", f
+            elif len(flying) >= 2 and "split" not in out:
+                key = "split"
+            elif flew is not None and f > flew + 90 and flying and f % 2 == 0:
+                self.shoot_flyer(flying[0])         # taken one at a time
+            elif flew is not None and not self.byte("bb_left") and "paid" not in out:
+                key = "paid"
+                worth = (self.uword("score10") - before) * 10
+            if key:
+                out[key] = self.uword("stage_frames")
+                if seen:
+                    seen(key)
+            if "paid" in out:
+                break
+        return out, worth
+
     def attack(self, frames, until=None, spare=False, each=None):
         """What flies and falls after each of so many frames of play, from
         wherever the game is: [(stage frame, dives on, fighter's state,
@@ -906,6 +938,17 @@ def main():
         ev = g.home_shot(seen=lambda k: print(k, g.uword("stage_frames"), g.png("gal_homeshot_" + k)))
         print(ev, "dead", g.byte("ftr_dead"), "dual", g.byte("dual"), "lives", g.byte("lives"), "was", lives,
               "fx", g.word("fx"), "captured at rest", [i for i in range(4) if g.byte("sl_on", i)])
+    elif what == "bonus":
+        # the bonus bee on a stage of the level whose creature it flies
+        n = int(sys.argv[2]) if len(sys.argv) > 2 else 5
+        g.goto_stage(n)
+        g.pokew("fx", 104)
+        for _ in range(2500):
+            g.spared_frame()
+            if g.byte("dv_on"):
+                break
+        ev, worth = g.bonus_bee(seen=lambda k: print(k, g.uword("stage_frames"), g.png("gal_bonus_" + k)))
+        print(ev, "worth", worth, "frames", g.uword("stage_frames"))
     elif what == "results":
         # the game given up to the last fighter: GAME OVER and the results
         g.poke("lives", 0)

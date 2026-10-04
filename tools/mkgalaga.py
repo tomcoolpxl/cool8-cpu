@@ -172,6 +172,11 @@ SWAPPED = ("goei", "captured")
 # disassembly's d_290E -- blue, white and red; cyan, red and orange, which
 # are the sheet's dragonfly's and scorpion's own
 SPECIALS = ("dragonfly", "scorpion")
+# the bonus bee's three transformations, by f_1A80's colour 4, 5 and 6:
+# the sheet's galaxian flagship, scorpion and bosconian, which the band
+# gave room for (D119) -- one of them resident at a time, in the patterns
+# above the common ones, streamed in for the level that flies it
+MORPHS = ("galaxian", "scorpion", "bosconian")
 
 
 def grid_cell(s, col, row):
@@ -406,14 +411,14 @@ GLYPHS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ-%.!@# "
 # on a 4 x 4 Bayer matrix, a sixteenth more of each row kept than the row
 # above, so the horizon rises out of the sky rather than starting on a
 # line.
-BAND_Y, BAND_H, FADE = 176, 64, 16
+BAND_Y, BAND_H, FADE = 208, 32, 8
 BAYER = [[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]]
 BACKDROPS = [
     # file, reduction, and the band's top-left in the reduced picture
-    ("chikyuu_16_edge_0.png", 1, 16, 154),
-    ("green_nebula_arne16_-_512x512_0.png", 1, 70, 158),
-    ("rocky-far-mountains_0.png", 5, 16, 40),
-    ("planet-only-alt2-alpha.png", 2, -16, 26),
+    ("chikyuu_16_edge_0.png", 1, 16, 170),
+    ("green_nebula_arne16_-_512x512_0.png", 1, 70, 174),
+    ("rocky-far-mountains_0.png", 5, 16, 56),
+    ("planet-only-alt2-alpha.png", 2, -16, 42),
 ]
 
 
@@ -671,7 +676,8 @@ def flights():
                 origins=list(P.DB_FMTN_HPOS_ORIG), hdrs=hdrs, atk_yllw=reloc(P.LABEL_ADDR["db_flv_atk_yllw"]),
                 atk_red=reloc(P.LABEL_ADDR["db_flv_atk_red"]), atk_boss=reloc(P.LABEL_ADDR["db_flv_0411"]),
                 atk_capture=reloc(P.LABEL_ADDR["db_0454"]), rogue=reloc(P.LABEL_ADDR["db_fltv_rogefgter"]),
-                cboss=reloc(P.LABEL_ADDR["db_flv_cboss"]))
+                cboss=reloc(P.LABEL_ADDR["db_flv_cboss"]),
+                morph=[reloc(P.LABEL_ADDR[n]) for n in ("db_04EA", "db_0473", "db_04AB")])
 
 
 # ------------------------------------------------------------------ sound
@@ -932,6 +938,14 @@ def build():
         specials += [(nm, [(None if pf is None else (pf[0] + p_swap, pf[1]), x, y) for pf, x, y in quads])
                      for nm, quads in frames]
         sp_blobs.append((name, sp.pats))
+    morphs, mo_blobs, p_morph, n_morph = [], [], len(pats.pats), 0
+    for name in MORPHS:
+        mp = Patterns()
+        frames = sprite_set(s, (name,), mp)
+        n_morph = max(n_morph, len(mp.pats))
+        morphs += [("m_" + nm, [(None if pf is None else (pf[0] + p_morph, pf[1]), x, y) for pf, x, y in quads])
+                   for nm, quads in frames]
+        mo_blobs.append((name, mp.pats))
     arts, ablob, aoffs = bitmap_art(s)
     imgs, fblob, foffs = formation(s)
     dat = Dat()
@@ -944,6 +958,11 @@ def build():
         for q in sp:
             b += double(q)
         dat.add("SW_" + name.upper(), b)
+    for name, mp in mo_blobs:
+        b = []
+        for q in mp:
+            b += double(q)
+        dat.add("MO_" + name.upper(), b)
     bds = [backdrop(b) for b in BACKDROPS]
     for k, (_, rows) in enumerate(bds):
         dat.add("BD%d" % k, pack_band(rows))
@@ -957,7 +976,8 @@ def build():
         mblob += stream
     dat.add("MUSIC", mblob)
     return dict(mus=mus, moffs=moffs + [len(mblob)], snd=sounds(), fl=fl, pats=pats, common=common, ncommon=ncommon,
-                specials=specials, p_swap=p_swap, n_swap=n_swap, fimgs=imgs, fblob=fblob, foffs=foffs, bds=bds,
+                specials=specials, p_swap=p_swap, n_swap=n_swap,
+                morphs=morphs, p_morph=p_morph, n_morph=n_morph, fimgs=imgs, fblob=fblob, foffs=foffs, bds=bds,
                 shot=shot[0], bomb=bomb[0], beam=beam(s), arts=arts, ablob=ablob, aoffs=aoffs,
                 font=font(t), dat=dat, sheet=s)
 
@@ -987,7 +1007,7 @@ def act(o):
     w("")
     w("; the levels' backdrops: a band of %d rows from row %d, in GALAGA.DAT's" % (BAND_H, BAND_Y))
     w("; BD blocks, and its palette -- the first %d the arcade's, the rest the band's" % SAFE)
-    spr_end = 0x9600 + len(o["pats"].pats) * 128
+    spr_end = 0x9600 + (len(o["pats"].pats) + o["n_morph"]) * 128
     assert spr_end + BAND_H * 112 <= 0x10000, "the band's copy does not fit VRAM above the sprites"
     w("; the band's copy is kept in VRAM right above the sprite patterns")
     w("CONST BD_VRAM = $%04X" % spr_end)
@@ -1001,7 +1021,7 @@ def act(o):
             bp += [v >> 8, v & 255]
     arr(w, "BYTE ARRAY bd_pal(%d)" % len(bp), bp, fmt="$%02X")
     w("")
-    frames = o["common"] + o["specials"]
+    frames = o["common"] + o["specials"] + o["morphs"]
     names = []
     for n, _ in frames:
         if n not in names:
@@ -1018,6 +1038,10 @@ def act(o):
     w("; stage's creature (SW_ blocks) takes over; its frames come last")
     w("CONST P_SWAP = %d" % o["p_swap"])
     w("CONST N_SWAP = %d" % o["n_swap"])
+    w("; the room the band gave up, for whichever of the bonus bee's three")
+    w("; transformations the level flies (MO_ blocks)")
+    w("CONST P_MORPH = %d" % o["p_morph"])
+    w("CONST N_MORPH = %d" % o["n_morph"])
     qp, qf, qx, qy = [], [], [], []
     for _, quads in frames:
         for pf, x, y in quads:
@@ -1055,6 +1079,10 @@ def act(o):
     arr(w, "BYTE ARRAY fl_start(%d)" % len(fl["start_bytes"]), fl["start_bytes"], fmt="$%02X")
     for k in ("atk_yllw", "atk_red", "atk_boss", "atk_capture", "rogue", "cboss"):
         w("CONST FL_%s = %d" % (k.upper(), fl[k]))
+    w("; d_1B5F: the paths the bonus bee's three fly, by its colour 4, 5, 6;")
+    w("; and d_1B59's bonus in tens for the third of a trio shot")
+    arr(w, "CARD ARRAY fl_morph(3)", fl["morph"])
+    arr(w, "CARD ARRAY mo_bonus(3)", [300, 100, 200])
     w("; the formation's origins as the arcade holds them: ten columns' sprite X,")
     w("; six rows' raw bytes (Y as Yint >> 1)")
     arr(w, "BYTE ARRAY fm_orig(16)", fl["origins"], fmt="$%02X")

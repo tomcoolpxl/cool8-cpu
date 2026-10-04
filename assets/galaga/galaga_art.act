@@ -12,22 +12,31 @@ CONST N_SW_DRAGONFLY = 3072
 CONST D_SW_SCORPION = 22784
 CONST DH_SW_SCORPION = 0
 CONST N_SW_SCORPION = 3584
-CONST D_BD0 = 26368
+CONST D_MO_GALAXIAN = 26368
+CONST DH_MO_GALAXIAN = 0
+CONST N_MO_GALAXIAN = 3072
+CONST D_MO_SCORPION = 29440
+CONST DH_MO_SCORPION = 0
+CONST N_MO_SCORPION = 3584
+CONST D_MO_BOSCONIAN = 33024
+CONST DH_MO_BOSCONIAN = 0
+CONST N_MO_BOSCONIAN = 3072
+CONST D_BD0 = 36096
 CONST DH_BD0 = 0
-CONST N_BD0 = 7168
-CONST D_BD1 = 33536
+CONST N_BD0 = 3584
+CONST D_BD1 = 39680
 CONST DH_BD1 = 0
-CONST N_BD1 = 7168
-CONST D_BD2 = 40704
+CONST N_BD1 = 3584
+CONST D_BD2 = 43264
 CONST DH_BD2 = 0
-CONST N_BD2 = 7168
-CONST D_BD3 = 47872
+CONST N_BD2 = 3584
+CONST D_BD3 = 46848
 CONST DH_BD3 = 0
-CONST N_BD3 = 7168
-CONST D_WAVES = 55040
+CONST N_BD3 = 3584
+CONST D_WAVES = 50432
 CONST DH_WAVES = 0
 CONST N_WAVES = 1580
-CONST D_MUSIC = 56620
+CONST D_MUSIC = 52012
 CONST DH_MUSIC = 0
 CONST N_MUSIC = 2019
 
@@ -36,19 +45,19 @@ CARD ARRAY gal_pal(16) = [
   $000 $DDD $F00 $FF0 $0FD $0BD $06D $F90 $FB0 $F0D $BBD $D40 $0F0 $90D $00D $099
 ]
 
-; the levels' backdrops: a band of 64 rows from row 176, in GALAGA.DAT's
+; the levels' backdrops: a band of 32 rows from row 208, in GALAGA.DAT's
 ; BD blocks, and its palette -- the first 8 the arcade's, the rest the band's
 ; the band's copy is kept in VRAM right above the sprite patterns
-CONST BD_VRAM = $E300
-CONST BAND_Y = 176
-CONST BAND_H = 64
+CONST BD_VRAM = $F100
+CONST BAND_Y = 208
+CONST BAND_H = 32
 CONST SAFE = 8
 ; for each level its own eight, as PAL_DATA takes them -- the high byte first
 BYTE ARRAY bd_pal(64) = [
-  $00 $05 $00 $19 $00 $3C $01 $6E $02 $BF $05 $DF $0A $EF $0D $FF
-  $00 $58 $0A $C2 $04 $82 $03 $45 $02 $23 $0F $FF $03 $AE $00 $00
-  $0B $85 $08 $44 $0A $75 $09 $54 $0A $65 $00 $00 $00 $00 $00 $00
-  $05 $06 $05 $5A $0F $44 $0F $A5 $0F $E4 $0F $FF $00 $00 $00 $00
+  $00 $19 $00 $3C $00 $5E $02 $BF $05 $DF $0C $FF $0A $EF $02 $7F
+  $00 $58 $0A $C2 $04 $82 $03 $45 $02 $23 $00 $00 $00 $00 $00 $00
+  $0B $85 $0A $75 $08 $44 $09 $54 $0A $65 $00 $00 $00 $00 $00 $00
+  $05 $06 $0F $E4 $0F $FF $0F $A5 $0F $44 $05 $5A $00 $00 $00 $00
 ]
 
 ; the sprite frames: each character's first frame, then four sprites a
@@ -62,12 +71,19 @@ CONST F_GOEI = 31
 CONST F_CAPTURED = 39
 CONST F_DRAGONFLY = 46
 CONST F_SCORPION = 53
+CONST F_M_GALAXIAN = 60
+CONST F_M_SCORPION = 67
+CONST F_M_BOSCONIAN = 74
 CONST SPR_PATS = 154
 ; the butterfly's and the captured fighter's patterns, which a challenging
 ; stage's creature (SW_ blocks) takes over; its frames come last
 CONST P_SWAP = 102
 CONST N_SWAP = 50
-BYTE ARRAY spr_qp(240) = [
+; the room the band gave up, for whichever of the bonus bee's three
+; transformations the level flies (MO_ blocks)
+CONST P_MORPH = 154
+CONST N_MORPH = 28
+BYTE ARRAY spr_qp(324) = [
   0 1 0 1 2 3 4 5 6 7 8 9 10 11 12 13
   14 15 16 17 18 19 20 21 22 22 23 23 24 25 24 25
   26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 41
@@ -83,8 +99,14 @@ BYTE ARRAY spr_qp(240) = [
   108 109 110 111 112 113 114 115 116 117 118 119 120 121 122 123
   124 124 125 125 102 103 104 105 106 107 108 109 110 111 112 113
   114 115 116 117 118 119 120 121 122 123 124 125 126 127 128 129
+  154 155 154 155 156 157 158 159 160 161 162 163 164 165 166 167
+  168 169 170 171 172 173 174 175 176 176 177 177 154 155 156 157
+  158 159 160 161 162 163 164 165 166 167 168 169 170 171 172 173
+  174 175 176 177 178 179 180 181 154 155 154 155 156 157 158 159
+  160 161 162 163 164 165 166 167 168 169 170 171 172 173 174 175
+  176 176 177 177
 ]
-BYTE ARRAY spr_qf(240) = [
+BYTE ARRAY spr_qf(324) = [
   $00 $00 $80 $80 $00 $00 $00 $00 $00 $00 $00 $00 $00 $00 $00 $00
   $00 $00 $00 $00 $00 $00 $00 $00 $00 $40 $00 $40 $00 $00 $80 $80
   $00 $00 $00 $00 $00 $00 $00 $00 $00 $00 $00 $00 $00 $00 $00 $00
@@ -100,8 +122,14 @@ BYTE ARRAY spr_qf(240) = [
   $00 $00 $00 $00 $00 $00 $00 $00 $00 $00 $00 $00 $00 $00 $00 $00
   $00 $40 $00 $40 $00 $00 $00 $00 $00 $00 $00 $00 $00 $00 $00 $00
   $00 $00 $00 $00 $00 $00 $00 $00 $00 $00 $00 $00 $00 $00 $00 $00
+  $00 $00 $80 $80 $00 $00 $00 $00 $00 $00 $00 $00 $00 $00 $00 $00
+  $00 $00 $00 $00 $00 $00 $00 $00 $00 $40 $00 $40 $00 $00 $00 $00
+  $00 $00 $00 $00 $00 $00 $00 $00 $00 $00 $00 $00 $00 $00 $00 $00
+  $00 $00 $00 $00 $00 $00 $00 $00 $00 $00 $80 $80 $00 $00 $00 $00
+  $00 $00 $00 $00 $00 $00 $00 $00 $00 $00 $00 $00 $00 $00 $00 $00
+  $00 $40 $00 $40
 ]
-BYTE ARRAY spr_qx(240) = [
+BYTE ARRAY spr_qx(324) = [
   0 8 0 8 0 8 0 8 0 8 0 8 0 8 0 8
   0 8 0 8 0 8 0 8 0 7 0 7 0 8 0 8
   0 8 0 8 0 8 0 8 0 8 0 8 0 8 0 8
@@ -117,8 +145,14 @@ BYTE ARRAY spr_qx(240) = [
   0 8 0 8 0 8 0 8 0 8 0 8 0 8 0 8
   0 7 0 7 0 8 0 8 0 8 0 8 0 8 0 8
   0 8 0 8 0 8 0 8 0 8 0 8 0 8 0 8
+  0 8 0 8 0 8 0 8 0 8 0 8 0 8 0 8
+  0 8 0 8 0 8 0 8 0 7 0 7 0 8 0 8
+  0 8 0 8 0 8 0 8 0 8 0 8 0 8 0 8
+  0 8 0 8 0 8 0 8 0 8 0 8 0 8 0 8
+  0 8 0 8 0 8 0 8 0 8 0 8 0 8 0 8
+  0 7 0 7
 ]
-BYTE ARRAY spr_qy(240) = [
+BYTE ARRAY spr_qy(324) = [
   0 0 7 7 0 0 8 8 0 0 8 8 0 0 8 8
   0 0 8 8 0 0 8 8 0 0 8 8 1 1 8 8
   0 0 8 8 0 0 8 8 0 0 8 8 0 0 8 8
@@ -134,6 +168,12 @@ BYTE ARRAY spr_qy(240) = [
   0 0 8 8 0 0 8 8 0 0 8 8 0 0 8 8
   0 0 8 8 0 0 8 8 0 0 8 8 0 0 8 8
   0 0 8 8 0 0 8 8 0 0 8 8 0 0 8 8
+  0 0 7 7 0 0 8 8 0 0 8 8 0 0 8 8
+  0 0 8 8 0 0 8 8 0 0 8 8 0 0 8 8
+  0 0 8 8 0 0 8 8 0 0 8 8 0 0 8 8
+  0 0 8 8 0 0 8 8 0 0 7 7 0 0 8 8
+  0 0 8 8 0 0 8 8 0 0 8 8 0 0 8 8
+  0 0 8 8
 ]
 
 ; the formation's frames, in the bitmap: for each, 6 offsets into
@@ -611,6 +651,14 @@ CONST FL_ATK_BOSS = 981
 CONST FL_ATK_CAPTURE = 1048
 CONST FL_ROGUE = 1032
 CONST FL_CBOSS = 1071
+; d_1B5F: the paths the bonus bee's three fly, by its colour 4, 5, 6;
+; and d_1B59's bonus in tens for the third of a trio shot
+CARD ARRAY fl_morph(3) = [
+  1198 1079 1135
+]
+CARD ARRAY mo_bonus(3) = [
+  300 100 200
+]
 ; the formation's origins as the arcade holds them: ten columns' sprite X,
 ; six rows' raw bytes (Y as Yint >> 1)
 BYTE ARRAY fm_orig(16) = [

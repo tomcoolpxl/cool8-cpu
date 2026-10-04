@@ -62,6 +62,7 @@ CONST SP_SHOT = 4                    ; two
 ; --------------------------------------------------------------- the game
 CARD loops                           ; frames of play the loop has run, for the gate
 BYTE level_bd                        ; the backdrop showing, 0-3
+BYTE mo_level                        ; the bonus bee's creature in VRAM, 255 none
 BYTE tx_y                            ; a text in the field the stars keep out of: its row, 0 none
 INT fx                               ; the fighter's top-left on the field
 CONST FIGHTER_Y = 224
@@ -281,6 +282,7 @@ CONST S_BEAM = $05
 CONST S_TRACTOR = $06
 CONST S_CAPTURED = $09
 CONST S_RESCUE = $11
+CONST S_BONUS = $12
 
 BYTE ARRAY snd_on(NSND), snd_wait(NSND)
 CARD ARRAY snd_p(NSND)
@@ -1264,6 +1266,11 @@ BYTE dual, rs_ph, rs_x, rs_code, rs_ctrl, rs_sp, rs_slot
 BYTE rs_alone                        ; the player has no fighter: this one becomes it
 CARD rs_y9
 BYTE bomb_flags                      ; the mask a sortie is given, by the stage and the enemies left
+; the bonus bee (f_1A80): the one armed while few are left, which goes as
+; the level's own creature and splits into three (the path's F2 tokens).
+; Its frames are whichever of the three is streamed in for the level.
+BYTE bb_on, bb_obj, bb_tmr, bb_left, bb_fr, bb_art, bb_lim
+CARD bb_path, bb_bonus
 
 ; the launcher, f_2916, on the stage's waves loaded from the WAVES block
 BYTE ARRAY st_wv(WAVES_MAX)
@@ -1545,6 +1552,51 @@ FUNC CARD Word(CARD p)
   w = fl_rom(p + 1)
 RETURN ((w << 8) | fl_rom(p))
 
+; FlyerOf(obj): the slot flying that object, 255 none
+FUNC BYTE FlyerOf(BYTE obj)
+  BYTE k
+  FOR k = 0 TO NFLY - 1 DO
+    IF fl_state(k) AND fl_obj(k) == obj THEN RETURN (k) FI
+  OD
+RETURN (255)
+
+; Clone(k, path): case_097B -- the bonus bee splitting, a transient id and
+; a slot of its own taking the flyer's place and heading down its own path
+PROC Clone(BYTE k, CARD path)
+  BYTE o, j, n
+  o = 255
+  FOR n = $38 TO $3E DO
+    IF (n & 1) == 0 AND o == 255 AND FlyerOf(n) == 255 THEN o = n FI
+  OD
+  j = 255
+  IF o != 255 THEN j = FreeFlyer() FI
+  IF j == 255 THEN
+    ; no id or no sprites for it: one fewer of the trio to shoot for its
+    ; bonus, since this one never flew
+    IF bb_left AND fl_char(k) == bb_fr THEN bb_left -= 1 FI
+    RETURN
+  FI
+  fl_y(j) = fl_y(k)
+  fl_x(j) = fl_x(k)
+  fl_a4(j) = fl_a4(k)
+  fl_a5(j) = fl_a5(k)
+  fl_dl(j) = fl_dl(k)
+  fl_fl(j) = fl_fl(k)
+  fl_be(j) = fl_be(k)
+  fl_bf(j) = fl_bf(k)
+  fl_char(j) = fl_char(k)
+  fl_code(j) = fl_code(k)
+  fl_ctrl(j) = fl_ctrl(k)
+  fl_p(j) = path
+  fl_vo(j) = 1
+  fl_ve(j) = 2
+  fl_n(j) = 1
+  fl_obj(j) = o
+  fl_state(j) = 9
+  fl_on(j) = 1
+  FlyPosn(j)
+RETURN
+
 ; FlyStep(k): f_08D3 for one slot, a frame of its path
 PROC FlyStep(BYTE k)
   BYTE t, st, consume, a, e, d, dl, v, q, o, l, obj
@@ -1653,7 +1705,8 @@ PROC FlyStep(BYTE k)
         p += 9
         EXIT
       ELSEIF t == $F2 THEN
-        p += 3                       ; the clone: not yet
+        Clone(k, Word(p + 1))
+        p += 3
       ELSEIF t == $F1 THEN
         a = fm_orig(10 + obj_row(obj >> 1)) + $20
         w = a
@@ -1914,6 +1967,43 @@ BYTE ARRAY dv_tm(3), dv_rl(3), pool_o(4)
 BYTE ARRAY boss_sc(4)                ; each boss's worth shot flying, in tens: 40, 80 or 160 by its escorts
 BYTE ARRAY boss_b(4) = [$32 $36 $34 $30]
 
+; BonusBee: f_1A80 -- with few enemies left one at rest is armed, and
+; after sixty-four frames it goes as the level's own creature, splitting
+; into three on the way (Clone). The three together are worth the trio's
+; bonus.
+PROC BonusBee()
+  BYTE o, k
+  IF bb_on == 0 OR en_nbr >= bb_lim THEN RETURN FI
+  IF bb_tmr == 0 THEN
+    FOR o = $08 TO $5E DO
+      IF (o & 1) == 0 AND (o < $30 OR o >= $40) AND bb_tmr == 0 THEN
+        IF RestAt(o) THEN
+          bb_tmr = $C0
+          bb_obj = o
+        FI
+      FI
+    OD
+    RETURN
+  FI
+  bb_tmr += 1
+  IF bb_tmr THEN
+    IF RestAt(bb_obj) == 0 THEN bb_on = 0 FI
+    RETURN
+  FI
+  IF ftr_on == 0 THEN
+    bb_tmr = $E0                     ; it waits for a fighter to be in play
+    RETURN
+  FI
+  bb_on = 0
+  IF RestAt(bb_obj) == 0 THEN RETURN FI
+  PlaySound(S_BONUS)
+  bb_left = 3                        ; itself and the two it splits into
+  Dive(bb_obj, bb_path, (bb_obj & 2) << 6)
+  k = FlyerOf(bb_obj)
+  IF k != 255 THEN fl_char(k) = bb_fr FI
+  bb_obj = 1
+RETURN
+
 ; Params: f_0857, every frame
 PROC Params()
   BYTE tens, i
@@ -1932,12 +2022,18 @@ PROC Params()
   dv_rl(2) = dv_bee(sp(3) * 3 + i)
 RETURN
 
-FUNC BYTE Resting(BYTE obj)
+FUNC BYTE RestAt(BYTE obj)
   BYTE slot
   slot = obj_slot(obj >> 1)
   IF slot == 255 THEN RETURN (0) FI
   IF sl_wait(slot) THEN RETURN (0) FI
 RETURN (sl_on(slot))
+
+; Resting(obj): at rest and free to be sent -- the bonus bee, while it is
+; armed, is kept out of every other choice (l_0E08)
+FUNC BYTE Resting(BYTE obj)
+  IF obj == bb_obj AND bb_tmr THEN RETURN (0) FI
+RETURN (RestAt(obj))
 
 ; FreeFlyer: the first slot not flying and whose sprites no bomb has
 FUNC BYTE FreeFlyer()
@@ -2276,6 +2372,7 @@ PROC Launcher()
       launching = 0
       nest_inh = 1
       dv_on = 1
+      bb_on = 1
     FI
     RETURN
   FI
@@ -2306,6 +2403,7 @@ RETURN
 PROC FlyFrame()
   BYTE k
   frm += 1
+  BonusBee()
   Params()
   Launcher()
   IF breathing AND frm & 3 == 0 THEN
@@ -2632,6 +2730,9 @@ PROC ShootFlyer(BYTE k)
   ELSEIF fl_char(k) == F_CAPTURED THEN
     pts = 50
     PlaySound(S_BOSS)
+  ELSEIF fl_char(k) == bb_fr THEN
+    pts = 8                          ; the bonus bee's colours are worth a butterfly's
+    PlaySound(S_GOEI)
   ELSE
     pts = 8
     PlaySound(S_GOEI)
@@ -2646,6 +2747,14 @@ PROC ShootFlyer(BYTE k)
       IF pts == 80 THEN w = A_P800 FI
       IF pts == 160 THEN w = A_P1600 FI
       Popup(w, fl_sx(k) + 8, fl_sy(k) + 8)
+    FI
+  FI
+  ; the third of a trio brings the bonus the arcade pays for it
+  IF fl_char(k) == bb_fr AND bb_left THEN
+    bb_left -= 1
+    IF bb_left == 0 THEN
+      pts = pts + bb_bonus
+      Popup(bb_art, fl_sx(k) + 8, fl_sy(k) + 8)
     FI
   FI
   AddScore(pts)
@@ -3141,6 +3250,26 @@ PROC StageStart()
     boss_sc(i) = 40
   OD
   dv_on = 0
+  ; the bonus bee: from stage 4, and not on a challenging stage
+  bb_lim = 0
+  IF st_kind(k) == 0 AND stage >= 4 THEN bb_lim = 10 FI
+  bb_on = 0
+  bb_tmr = 0
+  bb_obj = 1
+  bb_left = 0
+  i = (stage >> 2) % 3
+  bb_path = fl_morph(i)
+  bb_bonus = mo_bonus(i)
+  IF i == 0 THEN
+    bb_fr = F_M_GALAXIAN
+    bb_art = A_P3000
+  ELSEIF i == 1 THEN
+    bb_fr = F_M_SCORPION
+    bb_art = A_P1000
+  ELSE
+    bb_fr = F_M_BOSCONIAN
+    bb_art = A_P2000
+  FI
   cflag = 0
   cobj = 1
   wingm = 0
@@ -3193,6 +3322,14 @@ PROC StageIntro()
   IF lv != level_bd THEN
     level_bd = lv
     LoadBackdrop(level_bd)
+  FI
+  ; whichever of the bonus bee's three this level flies
+  i = (stage >> 2) % 3
+  IF i != mo_level THEN
+    mo_level = i
+    IF i == 0 THEN Stream(D_MO_GALAXIAN, DH_MO_GALAXIAN, SPR_BASE + (P_MORPH << 7), N_MO_GALAXIAN) FI
+    IF i == 1 THEN Stream(D_MO_SCORPION, DH_MO_SCORPION, SPR_BASE + (P_MORPH << 7), N_MO_SCORPION) FI
+    IF i == 2 THEN Stream(D_MO_BOSCONIAN, DH_MO_BOSCONIAN, SPR_BASE + (P_MORPH << 7), N_MO_BOSCONIAN) FI
   FI
   Panel()
   StopSound(S_PULSE)
@@ -3546,6 +3683,7 @@ PROC Main()
   FI
   Stream(D_SPR, DH_SPR, SPR_BASE, N_SPR)
   mus_level = 255
+  mo_level = 255
   SetPalette(gal_pal, 0, 16)
   SetPalette(gal_pal, 240, 16)
   FOR i = 0 TO 31 DO SpriteHide(i) OD
