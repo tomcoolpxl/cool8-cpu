@@ -7239,6 +7239,15 @@ a bomb on the right ship leaves the left one flying with the same number
 of fighters in hand. PRG 55,591 bytes before, 56,618 after, of the 60,160
 the disc's origin leaves.
 
+**A boss shot while it carries a fighter home** -- the one it has just
+taken, before that fighter has reached the formation -- hands it back by
+the same routine. There is no fighter of the player's for it to join
+then, so it comes down as the player's own (the ROM's l_2075 does the
+same, by the ship sprite's code), and the fighter the capture would have
+cost is not lost. The gate captures a fighter, shoots the boss on its way
+home, and sees the fighter come back with the same number in hand and
+nothing left in the formation's top row.
+
 ## D118 -- GALAGA's best five, and the title that turns
 
 The arcade keeps five scores with three initials each and asks a player

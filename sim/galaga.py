@@ -421,6 +421,35 @@ class Game:
                 break
         return out
 
+    def home_shot(self, frames=3000, seen=None):
+        """The capture boss shot while it flies home with the fighter it has
+        just taken: the fighter is given back and comes down as the player's.
+        {event: stage frame} for carried, shot, spin, down and back."""
+        out = {}
+        for f in range(frames):
+            self.spared_frame(catch=True)
+            k, key = self.byte("cap_k"), None
+            carried = self.byte("cap_home") == 2 and self.byte("fl_state", k) == 9
+            if carried and "carried" not in out:
+                key = "carried"
+            if carried and not self.byte("gt", 1) and not self.byte("rs_ph") and f % 3 == 0:
+                self.shoot_flyer(k)                 # twice: a boss takes two
+                if "shot" not in out:
+                    key = "shot"
+            if self.byte("rs_ph") == 1 and "spin" not in out:
+                key = "spin"
+            elif self.byte("rs_ph") == 2 and "down" not in out:
+                key = "down"
+            elif "down" in out and self.byte("ftr_dead") == 0 and "back" not in out:
+                key = "back"
+            if key:
+                out[key] = self.uword("stage_frames")
+                if seen:
+                    seen(key)
+            if "back" in out:
+                break
+        return out
+
     def attack(self, frames, until=None, spare=False, each=None):
         """What flies and falls after each of so many frames of play, from
         wherever the game is: [(stage frame, dives on, fighter's state,
@@ -865,6 +894,18 @@ def main():
         print(g.png("gal_names_title0"))
         g.m.run_frame(380)
         print(g.png("gal_names_title1"))
+    elif what == "homeshot":
+        # the capture boss shot as it carries the fighter home
+        g.pokew("fx", 104)
+        lives = None
+        for f in range(6000):
+            g.spared_frame(catch=True)
+            if g.byte("cap_home") == 2:
+                lives = g.byte("lives")
+                break
+        ev = g.home_shot(seen=lambda k: print(k, g.uword("stage_frames"), g.png("gal_homeshot_" + k)))
+        print(ev, "dead", g.byte("ftr_dead"), "dual", g.byte("dual"), "lives", g.byte("lives"), "was", lives,
+              "fx", g.word("fx"), "captured at rest", [i for i in range(4) if g.byte("sl_on", i)])
     elif what == "results":
         # the game given up to the last fighter: GAME OVER and the results
         g.poke("lives", 0)

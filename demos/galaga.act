@@ -1261,6 +1261,7 @@ BYTE ftr_code, ftr_ctrl
 ; The second ship has a flyer slot's four sprites, kept as a bomb keeps
 ; them.
 BYTE dual, rs_ph, rs_x, rs_code, rs_ctrl, rs_sp, rs_slot
+BYTE rs_alone                        ; the player has no fighter: this one becomes it
 CARD rs_y9
 BYTE bomb_flags                      ; the mask a sortie is given, by the stage and the enemies left
 
@@ -2505,24 +2506,37 @@ FUNC BYTE RsSpin()
   rs_ctrl = c
 RETURN (0)
 
-; Rescue(j): flyer j, the captured fighter, taken out of the flights and
-; given a slot's sprites of its own to come back in
-PROC Rescue(BYTE j)
+; RescueFrom(x, y9, code, ctrl): a fighter given back where its boss was
+; shot, with a slot's sprites of its own to come back in
+FUNC BYTE RescueFrom(BYTE x, CARD y9, BYTE code, BYTE ctrl)
   BYTE k
-  IF dual OR rs_ph OR ftr_dead OR ftr_on == 0 THEN RETURN FI
-  rs_x = fl_x8(j)
-  rs_y9 = fl_y9(j)
-  rs_code = fl_code(j)
-  rs_ctrl = fl_ctrl(j)
-  FlyFree(j)
+  IF dual OR rs_ph THEN RETURN (0) FI
   k = FreeFlyer()
-  IF k == 255 THEN RETURN FI
+  IF k == 255 THEN RETURN (0) FI
+  rs_x = x
+  rs_y9 = y9
+  rs_code = code
+  rs_ctrl = ctrl
   rs_slot = k
   rs_sp = SP_FLY + (k << 2)
   fl_bm(k) = 15                      ; the second ship's, until it is gone
   rs_ph = 1
+  rs_alone = 0
   gt(1) = 2
   PlaySound(S_RESCUE)
+RETURN (1)
+
+; Rescue(j): flyer j, the captured fighter, taken out of the flights
+PROC Rescue(BYTE j)
+  BYTE x, code, ctrl
+  CARD y9
+  IF dual OR rs_ph OR ftr_dead OR ftr_on == 0 THEN RETURN FI
+  x = fl_x8(j)
+  y9 = fl_y9(j)
+  code = fl_code(j)
+  ctrl = fl_ctrl(j)
+  FlyFree(j)
+  IF RescueFrom(x, y9, code, ctrl) THEN FI
 RETURN
 
 ; Rescued: f_2000 -- the fighter spinning where its boss was shot, then
@@ -2541,9 +2555,22 @@ PROC Rescued()
     ELSEIF rs_y9 != $129 THEN
       rs_y9 += 1
     FI
-    IF fx > $60 THEN fx -= 1 ELSEIF fx < $60 THEN fx += 1 FI
-    IF rs_y9 == $129 AND rs_x == $80 AND fx == $60 THEN
-      dual = 1
+    IF rs_alone == 0 THEN
+      IF fx > $60 THEN fx -= 1 ELSEIF fx < $60 THEN fx += 1 FI
+    FI
+    IF rs_y9 == $129 AND rs_x == $80 AND (rs_alone OR fx == $60) THEN
+      IF rs_alone THEN
+        ; there was no fighter for it to join: it is the fighter now
+        rs_alone = 0
+        fl_bm(rs_slot) = 0
+        HideChar(rs_sp)
+        fx = $80 - 17
+        ftr_dead = 0
+        ftr_code = 6
+        ftr_ctrl = 0
+      ELSE
+        dual = 1
+      FI
       rs_ph = 0
       ftr_on = 1
       StopSound(S_RESCUE)
@@ -2720,7 +2747,7 @@ PROC Fighter()
   BYTE fr
   IF ftr_dead == 5 THEN
     IF ftr_on AND KeyHit(KEY_SPACE) THEN Fire() FI
-    IF cap_home THEN RETURN FI
+    IF cap_home OR rs_alone THEN RETURN FI
     fr = F_FIGHTER
     IF cap_con OR ftr_y9 <= $E0 THEN fr = F_CAPTURED FI
     ShowChar(SP_FIGHTER, fr + ftr_code, ftr_ctrl & 2, ftr_ctrl & 1, fx + FX, MapY(ftr_y9))
@@ -3024,13 +3051,18 @@ PROC CapturedHome()
     FieldTextOff()
   FI
   IF cobj != cap_ob THEN
-    ; its boss shot on the way home: the rescue is not here yet, so the
-    ; red fighter is simply gone, and with it the player's
+    ; its boss shot on the way home: the fighter it carries is given back
+    ; the way a diving boss gives one back, and since the player has none
+    ; in play it comes down as the player's
     cap_home = 0
-    HideChar(SP_FIGHTER)
     FieldTextOff()
-    ftr_dead = 1
-    gt(3) = 2
+    HideChar(SP_FIGHTER)
+    IF RescueFrom(fx + 17, ftr_y9, 6, 0) THEN
+      rs_alone = 1
+    ELSE
+      ftr_dead = 1                   ; no sprites for it: it is lost after all
+      gt(3) = 2
+    FI
     RETURN
   FI
   IF fl_state(cap_k) == 9 AND fl_obj(cap_k) == cobj THEN
@@ -3384,6 +3416,7 @@ PROC Play()
   ftr_on = 1
   dual = 0
   rs_ph = 0
+  rs_alone = 0
   shots = 0
   hits = 0
   game_over = 0

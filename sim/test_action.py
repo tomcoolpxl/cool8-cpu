@@ -1950,6 +1950,28 @@ def test_galaga():
     print("    the rescue: the boss shot at frame %s, the pair flying at %s" % (rv.get("shot"), rv.get("dual")))
     del h
 
+    # the same boss shot a moment earlier, as it carries the fighter it has
+    # just taken home: the fighter is given back there too, and since the
+    # player has none in play it comes down as the player's, for no fighter
+    h = G.Game(tag="galaga8", render=False)
+    h.start()
+    h.pokew("fx", 104)
+    lives0 = None
+    for _ in range(6000):
+        h.spared_frame(catch=True)
+        if h.byte("cap_home") == 2:
+            lives0 = h.byte("lives")
+            break
+    hv = h.home_shot()
+    held = [i for i in range(4) if h.byte("sl_on", i)]
+    check(set(hv) == {"carried", "shot", "spin", "down", "back"} and h.byte("ftr_dead") == 0
+          and h.byte("dual") == 0 and h.byte("lives") == lives0 and not held,
+          "galaga: a boss shot carrying the fighter it has just taken gives it back as the player's",
+          "events %s, dead %d, dual %d, lives %s of %s, captured at rest %s"
+          % (hv, h.byte("ftr_dead"), h.byte("dual"), h.byte("lives"), lives0, held))
+    print("    shot on the way home: the fighter back at frame %s, in hand %s" % (hv.get("back"), h.byte("lives")))
+    del h
+
     # P holds everything and P again lets it go
     f0 = g.uword("stage_frames")
     g.tap([0x4D])
