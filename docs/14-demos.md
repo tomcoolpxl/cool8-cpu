@@ -1884,10 +1884,14 @@ boss's tractor beam, the sheet's own, grows a row at a time over the
 backdrop, holds, and takes a fighter under it up, spinning, turning red;
 FIGHTER CAPTURED; and the red fighter goes home with its boss into the
 place above it, dives with it, and is worth 500 there and 1,000 in the
-air. **Not there yet**: the rescue and the dual fighter (a boss shot on
-its way home with a captured fighter takes the fighter with it), the
-bonus bee's transformations (their creatures' patterns have no room in
-VRAM), the name entry, and a second player.
+air -- and **the rescue is the arcade's too** ([D117](01-decisions.md)):
+a boss shot while it dives with the fighter it took gives it back, and
+the fighter spins free, comes down beside the player's and flies with it
+as the dual fighter, firing a rocket from each ship until one of them is
+hit. **Not there yet**: a boss shot on its way home with a fighter it
+has just taken (that fighter is lost rather than freed), the bonus bee's
+transformations (their creatures' patterns have no room in VRAM), the
+name entry, and a second player.
 
 **The sound** is the arcade's effects and jingles, each rendered frame by
 frame from the driver's model and mixed in the driver's order -- tunes
@@ -1910,12 +1914,14 @@ inside its frame; challenging stage 11's creature, tally and payment;
 -- and stage 16's the same wherever the sprites allow; a crash, the
 explosion over the backdrop put back, and a fighter after READY; a
 capture -- the beam in its blues, the fighter taken, FIGHTER CAPTURED,
-the red fighter in its place, the bitmap exact once the beam is gone; P
+the red fighter in its place, the bitmap exact once the beam is gone --
+and the rescue after it: the boss shot as it dives with the fighter, the
+pair firing together, and one of them lost leaving the other; P
 pausing and going on; the last fighter lost and the results; then
 the path a person takes -- the real ROM booting the demos disc, `DRIVE
 11` and `SYS "GALAGA.BIN"`, the title up, space, and stage 1. `python
 sim/galaga.py play` (or `levels`, `attack`, `challenge n`, `death`,
-`results`, `capture`, `profile [stage frames]`) plays it and writes the frames as PNG;
+`results`, `capture`, `rescue`, `profile [stage frames]`) plays it and writes the frames as PNG;
 `flights`, `dives stage frames [x [every]]`, `bitmap`, `shoot`, `split`
 and `sound` are the comparisons the gate makes; `sizes` says where the
 program's bytes are.

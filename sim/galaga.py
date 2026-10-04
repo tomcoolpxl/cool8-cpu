@@ -163,11 +163,12 @@ class Game:
                 return k
         return None
 
-    def drop_on_fighter(self):
-        """A bomb put where the fighter is, on bomb 0 and sprite 31, for the
-        next frame's collision to find."""
+    def drop_on_fighter(self, off=17):
+        """A bomb put where a ship is -- the fighter, or `off` 33 for the
+        second of a pair -- on bomb 0 and sprite 31, for the next frame's
+        collision to find."""
         self.poke("bo_on", 1, 0)
-        self.poke("bo_x", self.word("fx") + 17, 0)
+        self.poke("bo_x", self.word("fx") + off, 0)
         self.pokew("bo_y", 0x129, 0)
         self.poke("bo_sp", 31, 0)
         self.poke("bo_own", self.byte("bo_own") | 1)
@@ -370,6 +371,53 @@ class Game:
                 if seen:
                     seen(key)
             if "after" in out:
+                break
+        return out
+
+    def shoot_flyer(self, k):
+        """A rocket put where flyer k is, for the next frame to find: the
+        way the gate shoots something the autopilot cannot reach."""
+        self.poke("sh_on", 1, 0)
+        self.poke("sh_x", self.byte("fl_x8", k), 0)
+        self.pokew("sh_y", self.uword("fl_y9", k) + 10, 0)
+
+    def boss_with_ship(self):
+        """A boss in the air whose captured fighter is in the air with it:
+        (its flyer, the fighter's), or None."""
+        n = self.c("NFLY")
+        st, obj = self.array("fl_state", n), self.array("fl_obj", n)
+        for k in range(n):
+            if st[k] and 0x30 <= obj[k] < 0x38:
+                for j in range(n):
+                    if st[j] and obj[j] == (obj[k] & 7):
+                        return k, j
+        return None
+
+    def rescue(self, frames=4000, seen=None):
+        """After a capture: the boss shot while it dives with the fighter it
+        took, and the fighter brought back beside the player's. {event:
+        stage frame} for dive, shot, spin, down and dual."""
+        out = {}
+        for f in range(frames):
+            self.spared_frame()
+            key, pair = None, self.boss_with_ship()
+            if pair and "dive" not in out:
+                key = "dive"
+            if pair and not self.byte("rs_ph") and not self.byte("dual") and f % 3 == 0:
+                self.shoot_flyer(pair[0])          # twice: a boss takes two
+                if "shot" not in out:
+                    key = "shot"
+            if self.byte("rs_ph") == 1 and "spin" not in out:
+                key = "spin"
+            elif self.byte("rs_ph") == 2 and "down" not in out:
+                key = "down"
+            elif self.byte("dual") and "dual" not in out:
+                key = "dual"
+            if key:
+                out[key] = self.uword("stage_frames")
+                if seen:
+                    seen(key)
+            if "dual" in out:
                 break
         return out
 
@@ -781,6 +829,16 @@ def main():
         ev = g.capture(seen=lambda k: print(k, g.uword("stage_frames"), g.png("gal_capture_" + k)))
         print(ev, "captured fighters at rest in slots", [i for i in range(4) if g.byte("sl_on", i)],
               "lives", g.byte("lives"))
+    elif what == "rescue":
+        # a capture, then its boss shot as it dives with the fighter it took
+        g.pokew("fx", 104)
+        g.capture()
+        g.until(lambda: g.byte("ftr_dead") == 0, 600)
+        ev = g.rescue(frames=3000, seen=lambda k: print(k, g.uword("stage_frames"), g.png("gal_rescue_" + k)))
+        print(ev, "dual", g.byte("dual"), "lives", g.byte("lives"), "fx", g.word("fx"))
+        for i in range(3):
+            g.spared_frame()
+        print(g.png("gal_rescue_pair"))
     elif what == "results":
         # the game given up to the last fighter: GAME OVER and the results
         g.poke("lives", 0)

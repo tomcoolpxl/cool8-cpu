@@ -7208,5 +7208,33 @@ harness can spare it too, which keeps the dives' frame-by-frame comparison
 of D115 to its reference's `fighter_dies=False`), and sees the beam out in
 its blues, the fighter taken, the text, the red fighter at rest above its
 boss, and no pixel of the beam left. PRG 53,412 bytes before, 55,768
-after. **Not yet**: the rescue and the dual fighter (f_2000); a boss shot
-on its way home with a fighter takes the fighter with it.
+after. **Not yet**: a boss shot on its way home with a fighter it has
+just taken (D117 brought the rest).
+
+## D117 -- GALAGA's rescue: f_2000, and the dual fighter on a flyer's sprites
+
+**The arcade's own sequence.** A boss shot while it dives with the
+fighter it captured hands that fighter back: f_2000 spins it with c_2188
+while anything else is still in the air (the spin ends only when the
+flying count and the counts after the boss are both out), then walks it
+to the middle and down to the fighter's row while the player's fighter
+slides left to make room, and joins the two. f_1B65 stands down for the
+whole of it, as the ROM does by its task 1D, so the sky empties for the
+ship to come back into; FA's continuous bombing stands down with it. The
+rescued-ship theme (sound 11) plays from the shot to the join.
+
+**The second ship is a flyer's four sprites.** D113 spent 24 of the 32 on
+six flyers and D115 lends the spare four to bombs; the second fighter
+takes a flyer slot the same way (`fl_bm`), so while there are two ships
+there are five flyers, and the slot comes back the moment one is lost.
+The pair fires a rocket from each ship, within the two the arcade allows;
+a hit on either takes that one only -- no fighter is lost, and the left
+one gone, the right one keeps its place -- and no capture is attempted
+while two are flying, as in the arcade.
+
+**Measured**: the gate captures a fighter on stage 1, waits for its boss
+to dive with it, shoots the boss, and sees the fighter spin free, come
+down and fly as a pair that fires two rockets sixteen pixels apart; then
+a bomb on the right ship leaves the left one flying with the same number
+of fighters in hand. PRG 55,591 bytes before, 56,618 after, of the 60,160
+the disc's origin leaves.

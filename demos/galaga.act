@@ -280,6 +280,7 @@ CONST S_EXTEND = $0A
 CONST S_BEAM = $05
 CONST S_TRACTOR = $06
 CONST S_CAPTURED = $09
+CONST S_RESCUE = $11
 
 BYTE ARRAY snd_on(NSND), snd_wait(NSND)
 CARD ARRAY snd_p(NSND)
@@ -1253,6 +1254,14 @@ CARD cap_t
 BYTE ftr_dead
 CARD ftr_y9
 BYTE ftr_code, ftr_ctrl
+; the rescue (f_2000) and the dual fighter: a boss shot while it dives
+; with the fighter it took gives it back -- spinning while anything else
+; flies, then over to the middle and down beside the player's, which
+; slides left to make room -- and the two fly as one until one is hit.
+; The second ship has a flyer slot's four sprites, kept as a bomb keeps
+; them.
+BYTE dual, rs_ph, rs_x, rs_code, rs_ctrl, rs_sp, rs_slot
+CARD rs_y9
 BYTE bomb_flags                      ; the mask a sortie is given, by the stage and the enemies left
 
 ; the launcher, f_2916, on the stage's waves loaded from the WAVES block
@@ -2083,7 +2092,9 @@ RETURN
 ; Sorties: f_1B65
 PROC Sorties()
   BYTE i, e, n
-  IF ftr_on == 0 THEN RETURN FI
+  ; f_1B65 stands down while the fighter is gone and while a rescued one
+  ; is coming back (its task 1D), so the sky empties for it
+  IF ftr_on == 0 OR rs_ph THEN RETURN FI
   FOR i = 0 TO 3 DO
     e = pool_o(i)
     IF e != 255 THEN
@@ -2204,7 +2215,7 @@ PROC Capture()
   FI
   cap_s2 -= 1
   IF cap_s2 THEN
-    IF cap_s1 == $40 AND ftr_dead == 0 THEN
+    IF cap_s1 == $40 AND ftr_dead == 0 AND dual == 0 THEN
       a = cap_x - fx - 17 + $1B
       IF a < $36 THEN Caught() FI
     FI
@@ -2312,7 +2323,7 @@ PROC FlyFrame()
   FI
   Capture()
   cont_bomb = 0
-  IF en_nbr < sp(7) THEN cont_bomb = ftr_on FI
+  IF en_nbr < sp(7) AND rs_ph == 0 THEN cont_bomb = ftr_on FI
   flying_nbr = flying
   flying = 0
   FOR k = 0 TO NFLY - 1 DO
@@ -2471,6 +2482,78 @@ PROC ShootSlot(BYTE i)
   Boom(A_EBOOM0, N_EBOOM, sl_x(i) + 8, sl_y(i) + 8)
 RETURN
 
+; RsSpin: c_2188 for the rescued fighter -- it turns until nothing else
+; flies and the counts after its boss are over
+FUNC BYTE RsSpin()
+  BYTE c, a
+  c = rs_ctrl ^ (rs_ctrl >> 1)
+  a = rs_code
+  IF a == 6 AND c == 0 AND gt(1) == 0 AND flying_nbr == 0 THEN RETURN (1) FI
+  DO
+    IF c & 1 THEN
+      IF a THEN
+        rs_code = a - 1
+        EXIT
+      FI
+    ELSEIF a != 6 THEN
+      rs_code = a + 1
+      EXIT
+    FI
+    IF c == 0 THEN c = 3 ELSE c -= 1 FI
+  OD
+  IF c & 2 THEN c = c ^ 1 FI
+  rs_ctrl = c
+RETURN (0)
+
+; Rescue(j): flyer j, the captured fighter, taken out of the flights and
+; given a slot's sprites of its own to come back in
+PROC Rescue(BYTE j)
+  BYTE k
+  IF dual OR rs_ph OR ftr_dead OR ftr_on == 0 THEN RETURN FI
+  rs_x = fl_x8(j)
+  rs_y9 = fl_y9(j)
+  rs_code = fl_code(j)
+  rs_ctrl = fl_ctrl(j)
+  FlyFree(j)
+  k = FreeFlyer()
+  IF k == 255 THEN RETURN FI
+  rs_slot = k
+  rs_sp = SP_FLY + (k << 2)
+  fl_bm(k) = 15                      ; the second ship's, until it is gone
+  rs_ph = 1
+  gt(1) = 2
+  PlaySound(S_RESCUE)
+RETURN
+
+; Rescued: f_2000 -- the fighter spinning where its boss was shot, then
+; over to the middle and down to its row while the player's fighter
+; slides left, and the two joined
+PROC Rescued()
+  IF rs_ph == 0 THEN RETURN FI
+  IF rs_ph == 1 THEN
+    IF RsSpin() THEN
+      rs_ph = 2
+      ftr_on = 0                     ; neither steered nor hit until they join
+    FI
+  ELSE
+    IF rs_x != $80 THEN
+      IF rs_x > $80 THEN rs_x -= 1 ELSE rs_x += 1 FI
+    ELSEIF rs_y9 != $129 THEN
+      rs_y9 += 1
+    FI
+    IF fx > $60 THEN fx -= 1 ELSEIF fx < $60 THEN fx += 1 FI
+    IF rs_y9 == $129 AND rs_x == $80 AND fx == $60 THEN
+      dual = 1
+      rs_ph = 0
+      ftr_on = 1
+      StopSound(S_RESCUE)
+    FI
+  FI
+  IF rs_ph THEN
+    ShowChar(rs_sp, F_CAPTURED + rs_code, rs_ctrl & 2, rs_ctrl & 1, rs_x - 17 + FX, MapY(rs_y9))
+  FI
+RETURN
+
 ; FlyAt(x, y9): hitd_det_rckt -- the flyer a rocket at the arcade's (x, y9)
 ; hits: five pixels either way across, and Y's halves three below to two above
 FUNC BYTE FlyAt(BYTE x, CARD y9)
@@ -2505,6 +2588,13 @@ PROC ShootFlyer(BYTE k)
   IF obj == cobj THEN
     cflag = 0
     cobj = 1
+  FI
+  ; a boss shot while its captured fighter dives with it: the fighter is
+  ; taken back, if there is a player's fighter for it to join
+  IF fl_char(k) == F_BOSS_HIT AND obj >= $30 AND obj < $38 THEN
+    FOR w = 0 TO NFLY - 1 DO
+      IF fl_state(w) AND fl_obj(w) == (obj & 7) THEN Rescue(w) FI
+    OD
   FI
   IF fl_char(k) == F_ZAKO THEN
     pts = 5
@@ -2561,17 +2651,22 @@ BYTE ARRAY sh_on(NSHOT), sh_x(NSHOT) ; the arcade's sprite X of the rocket -- th
 CARD ARRAY sh_y(NSHOT)               ; and its Y, six less a frame
 
 PROC Fire()
-  BYTE i
+  BYTE i, got
+  got = 0
   FOR i = 0 TO NSHOT - 1 DO
     IF sh_on(i) == 0 THEN
-      PlaySound(S_SHOT)
       shots += 1
       sh_on(i) = 1
-      sh_x(i) = fx + 17
       sh_y(i) = $129
-      RETURN
+      IF got THEN sh_x(i) = fx + 33 ELSE sh_x(i) = fx + 17 FI
+      got += 1
+      IF dual == 0 OR got == 2 THEN
+        PlaySound(S_SHOT)
+        RETURN
+      FI
     FI
   OD
+  IF got THEN PlaySound(S_SHOT) FI
 RETURN
 
 PROC Shots()
@@ -2632,18 +2727,30 @@ PROC Fighter()
     RETURN
   FI
   IF ftr_dead AND ftr_dead != 3 THEN RETURN FI
-  IF KeyHeld(KEY_LEFT) OR KeyHeld(KEY_Z) THEN fx -= 2 FI
-  IF KeyHeld(KEY_RIGHT) OR KeyHeld(KEY_X) THEN fx += 2 FI
+  IF ftr_on THEN
+    IF KeyHeld(KEY_LEFT) OR KeyHeld(KEY_Z) THEN fx -= 2 FI
+    IF KeyHeld(KEY_RIGHT) OR KeyHeld(KEY_X) THEN fx += 2 FI
+    IF KeyHit(KEY_SPACE) THEN Fire() FI
+  FI
   IF fx < 1 THEN fx = 1 FI
-  IF fx > 191 + 16 THEN fx = 191 + 16 FI
-  IF ftr_on AND KeyHit(KEY_SPACE) THEN Fire() FI
+  IF dual THEN
+    IF fx > 191 THEN fx = 191 FI
+  ELSEIF fx > 191 + 16 THEN
+    fx = 191 + 16
+  FI
   ShowChar(SP_FIGHTER, F_FIGHTER + 6, 0, 0, fx + FX, FIGHTER_Y)
+  IF dual THEN ShowChar(rs_sp, F_FIGHTER + 6, 0, 0, fx + 16 + FX, FIGHTER_Y) FI
 RETURN
 
 ; FighterHit: the fighter gone in its explosion, the noise of it; the
 ; waves stop, the divers go home, nothing more is dropped
 PROC FighterHit()
   IF ftr_dead THEN RETURN FI
+  IF rs_ph THEN
+    rs_ph = 0
+    fl_bm(rs_slot) = 0
+    HideChar(rs_sp)
+  FI
   ftr_dead = 1
   ftr_on = 0
   gt(3) = 4
@@ -2652,11 +2759,32 @@ PROC FighterHit()
   boom_snd = 90
 RETURN
 
-; Touch(x, y9): hitd_det_fghtr -- whether a sprite at the arcade's (x, y9)
-; meets the fighter: six pixels either way across, three halves up or down
-FUNC BYTE Touch(BYTE x, CARD y9)
+; ShipLost(right): the ship hit gone. While there are two, the other
+; flies on and no fighter is lost; the left one gone, the right one takes
+; its place.
+PROC ShipLost(BYTE right)
+  IF dual == 0 THEN
+    FighterHit()
+    RETURN
+  FI
+  dual = 0
+  fl_bm(rs_slot) = 0
+  HideChar(rs_sp)
+  IF right THEN
+    Boom(A_PBOOM0, N_PBOOM, fx + 24, FIGHTER_Y + 8)
+  ELSE
+    Boom(A_PBOOM0, N_PBOOM, fx + 8, FIGHTER_Y + 8)
+    fx += 16
+  FI
+  boom_snd = 90
+RETURN
+
+; Touch(x, y9, off): hitd_det_fghtr -- whether a sprite at the arcade's
+; (x, y9) meets a ship whose X is the fighter's plus `off`: six pixels
+; either way across, three halves up or down
+FUNC BYTE Touch(BYTE x, CARD y9, BYTE off)
   BYTE d
-  d = x - fx - 17 + 6
+  d = x - fx - off + 6
   IF d > 12 THEN RETURN (0) FI
   d = y9 >> 1
   d = d - $91
@@ -2673,8 +2801,11 @@ PROC Collide()
     IF fl_state(k) == 3 OR fl_state(k) == 7 OR fl_state(k) == 9 THEN
       obj = fl_obj(k)
       IF launching == 0 OR (obj & $38) == $38 THEN
-        IF Touch(fl_x8(k), fl_y9(k)) THEN
-          hit = 1
+        IF Touch(fl_x8(k), fl_y9(k), 17) THEN
+          IF hit == 0 THEN hit = 1 FI
+          ShootFlyer(k)
+        ELSEIF dual AND Touch(fl_x8(k), fl_y9(k), 33) THEN
+          IF hit == 0 THEN hit = 2 FI
           ShootFlyer(k)
         FI
       FI
@@ -2682,14 +2813,18 @@ PROC Collide()
   OD
   FOR k = 0 TO NBOMB - 1 DO
     IF bo_on(k) THEN
-      IF Touch(bo_x(k), bo_y(k)) THEN
+      IF Touch(bo_x(k), bo_y(k), 17) THEN
         BombOff(k)
-        hit = 1
+        IF hit == 0 THEN hit = 1 FI
+        EXIT
+      ELSEIF dual AND Touch(bo_x(k), bo_y(k), 33) THEN
+        BombOff(k)
+        IF hit == 0 THEN hit = 2 FI
         EXIT
       FI
     FI
   OD
-  IF hit THEN FighterHit() FI
+  IF hit THEN ShipLost(hit - 1) FI
 RETURN
 
 ; ------------------------------------------------------------ the screen
@@ -3154,6 +3289,8 @@ PROC Play()
   lives = 2
   ftr_dead = 0
   ftr_on = 1
+  dual = 0
+  rs_ph = 0
   shots = 0
   hits = 0
   game_over = 0
@@ -3180,6 +3317,7 @@ PROC Play()
     FlyFrame()
     CapturedHome()
     Pull()
+    Rescued()
     FmStep(frm & 3)
     Booms()
     StarsDraw()

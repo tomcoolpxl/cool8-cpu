@@ -1923,6 +1923,31 @@ def test_galaga():
           "events %s, %s beam pixels, captured in slots %s, %d pixels differ: %s" % (ev, blues, held, len(bad), bad[:4]))
     print("    the capture: beam out at frame %s, the fighter taken up at %s, home at %s"
           % (ev.get("beam"), ev.get("pull"), ev.get("home")))
+
+    # and the rescue: the boss shot as it dives with the fighter it took,
+    # the fighter spinning free while the sky empties, down beside the
+    # player's, and the two firing a rocket each; then a bomb on the right
+    # one, which leaves the left one flying and costs no fighter
+    h.until(lambda: h.byte("ftr_dead") == 0, 600)
+    lives0 = h.byte("lives")
+    rv = h.rescue(frames=3000)
+    h.poke("sh_on", 0, 0)
+    h.poke("sh_on", 0, 1)
+    h.m.kbd.feed([0x29])
+    h.spared_frame()
+    h.m.kbd.feed([0xF0, 0x29])
+    h.spared_frame()
+    pair = sorted(h.byte("sh_x", i) for i in range(2) if h.byte("sh_on", i))
+    rockets = len(pair) == 2 and pair[1] - pair[0] == 16
+    h.drop_on_fighter(33)
+    h.spared_frame()
+    h.spared_frame()
+    check(set(rv) == {"dive", "shot", "spin", "down", "dual"} and rockets
+          and h.byte("dual") == 0 and h.byte("lives") == lives0 and h.byte("ftr_dead") == 0,
+          "galaga: a boss shot diving with its captured fighter gives it back, the two fire together, and one lost leaves the other",
+          "events %s, rockets %s, dual %d, lives %d of %d, dead %d"
+          % (rv, pair, h.byte("dual"), h.byte("lives"), lives0, h.byte("ftr_dead")))
+    print("    the rescue: the boss shot at frame %s, the pair flying at %s" % (rv.get("shot"), rv.get("dual")))
     del h
 
     # P holds everything and P again lets it go
