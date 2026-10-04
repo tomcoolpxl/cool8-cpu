@@ -415,11 +415,12 @@ BOMB = (313, 140, 3, 8)                 # the enemy's shot: white, a red body
 # where a formation's enemy was, above it
 PANEL = [("LIFE", (290, 173, 13, 14)), ("B1", (307, 176, 7, 12)), ("B5", (317, 174, 7, 14)),
          ("B10", (328, 174, 13, 14)), ("B20", (345, 172, 15, 16)), ("B30", (363, 172, 15, 16)),
-         ("B50", (381, 172, 15, 16)),
-         # the score pop-ups
-         ("P150", (344, 122, 15, 7)), ("P400", (361, 122, 16, 7)), ("P800", (379, 122, 16, 7)),
-         ("P1000", (397, 122, 16, 7)), ("P1500", (415, 122, 16, 7)), ("P1600", (343, 140, 17, 7)),
-         ("P2000", (368, 140, 20, 7)), ("P3000", (402, 140, 20, 7))]
+         ("B50", (381, 172, 15, 16))]
+# the score pop-ups: one is shown at a time, so they live in the data file
+# and the one wanted is loaded into the game's own buffer (D121)
+POPS = [("P400", (361, 122, 16, 7)), ("P800", (379, 122, 16, 7)),
+        ("P1000", (397, 122, 16, 7)), ("P1500", (415, 122, 16, 7)), ("P1600", (343, 140, 17, 7)),
+        ("P2000", (368, 140, 20, 7)), ("P3000", (402, 140, 20, 7))]
 SHOT = (313, 122)                       # the fighter's: a blue head, a white eye, a red trail
 # the capture boss's tractor beam: the first of the sheet's three frames,
 # which differ only by the turn of its three blues -- the arcade cycles the
@@ -505,6 +506,16 @@ def bitmap_art(s):
         offs.append(len(blob))
         blob += draw_list(img)
     return arts, blob, offs
+
+
+def pops(s):
+    """The score pop-ups' lists, for the data file: the blob, each one's
+    offset and the longest."""
+    blob, offs = [], []
+    for name, box in POPS:
+        offs.append(len(blob))
+        blob += draw_list(box_image(s, *box))
+    return blob, offs + [len(blob)]
 
 
 # ---------------------------------------------------------------- flights
@@ -855,6 +866,7 @@ def build():
                    for nm, quads in frames]
         mo_blobs.append((name, mp.pats))
     arts, ablob, aoffs = bitmap_art(s)
+    poblob, pooffs = pops(s)
     imgs, fblob, foffs = formation(s)
     dat = Dat()
     blob = []
@@ -880,10 +892,11 @@ def build():
         moffs.append(len(mblob))
         mblob += stream
     dat.add("MUSIC", mblob)
+    dat.add("POPS", poblob)
     return dict(mus=mus, moffs=moffs + [len(mblob)], snd=sounds(), fl=fl, pats=pats, common=common, ncommon=ncommon,
                 specials=specials, p_swap=p_swap, n_swap=n_swap,
                 morphs=morphs, p_morph=p_morph, n_morph=n_morph, fimgs=imgs, fblob=fblob, foffs=foffs,
-                shot=shot[0], bomb=bomb[0], beam=beam(s), arts=arts, ablob=ablob, aoffs=aoffs,
+                shot=shot[0], bomb=bomb[0], beam=beam(s), arts=arts, pooffs=pooffs, ablob=ablob, aoffs=aoffs,
                 font=font(t), dat=dat, sheet=s)
 
 
@@ -1061,6 +1074,13 @@ def act(o):
     w("; from its box's top-left: art_off(k), k being")
     for k, (name, img) in enumerate(o["arts"]):
         w("CONST A_%s = %d" % (name, k))
+    w("; the score pop-ups, in the POPS block: each one's offset, the end after")
+    w("; the last, and the longest of them, which is the buffer the game keeps")
+    po = o["pooffs"]
+    for k, (name, _) in enumerate(POPS):
+        w("CONST A_%s = %d" % (name, k))
+    w("CONST PO_MAX = %d" % max(b - a for a, b in zip(po, po[1:])))
+    arr(w, "CARD ARRAY po_off(%d)" % len(po), po)
     w("CONST N_EBOOM = %d" % len(ENEMY_BOOM))
     w("CONST N_PBOOM = %d" % len(PLAYER_BOOM))
     arr(w, "CARD ARRAY art_off(%d)" % len(o["aoffs"]), o["aoffs"])

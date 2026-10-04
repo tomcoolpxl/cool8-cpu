@@ -546,8 +546,17 @@ RETURN
 
 ; ArtDraw(k, x, y, mode): bitmap art k with its box's top-left at the
 ; field's (x, y) -- mode 0 draws it, 2 puts back what was under it
+BYTE ARRAY po_buf(PO_MAX)            ; the score pop-up being shown, from the data file
+BYTE po_on                           ; 1 while the buffer is a pop-up's
+
+; ArtDraw(k, x, y, mode): bitmap art k, or with k 255 the pop-up in the
+; buffer, its box's top-left at the field's (x, y)
 PROC ArtDraw(BYTE k, BYTE x, BYTE y, BYTE mode)
-  dd_ptr = art_delta + art_off(k)
+  IF k == 255 THEN
+    dd_ptr = po_buf
+  ELSE
+    dd_ptr = art_delta + art_off(k)
+  FI
   dd_x = x
   dd_x = dd_x + FX - 1
   dd_fx = x - 1
@@ -2230,6 +2239,12 @@ PROC Launcher()
       nest_inh = 1
       dv_on = 1
       bb_on = 1
+      IF demo THEN
+        ; the attract has a minute to show itself: the first boss sortie
+        ; comes at once, and it is a capture
+        wingm = 1
+        dv_tm(0) = 1
+      FI
     FI
     RETURN
   FI
@@ -2347,12 +2362,14 @@ PROC Booms()
       bm_t(i) += 1
       IF bm_t(i) == bm_len(i) THEN
         bm_t(i) = 0
-        k = bm_art(i) + bm_f(i)
+        k = bm_art(i)
+        IF k != 255 THEN k = k + bm_f(i) FI
         ArtDraw(k, bm_x(i), bm_y(i), 2)
         FmRedraw(bm_x(i), bm_y(i))
         bm_f(i) += 1
         IF bm_f(i) == bm_n(i) THEN
           bm_on(i) = 0
+          IF k == 255 THEN po_on = 0 FI
           booms -= 1
         ELSE
           ArtDraw(k + 1, bm_x(i), bm_y(i), 0)
@@ -2363,9 +2380,15 @@ PROC Booms()
 RETURN
 
 ; Popup(art, cx, cy): a score shown where it was won, for a second
+; Popup(art, cx, cy): a score shown where it was won, for a second -- its
+; list loaded from the data file, one at a time
 PROC Popup(BYTE art, INT cx, INT cy)
+  BYTE i
+  IF po_on THEN RETURN FI            ; one is up: this one is not shown
+  Load(D_POPS + po_off(art), DH_POPS, po_buf, po_off(art + 1) - po_off(art))
+  po_on = 1
   boom_len = 60
-  Boom(art, 1, cx, cy)
+  Boom(255, 1, cx, cy)
 RETURN
 
 ; InBoom(x, y): whether an explosion's box holds that pixel
@@ -2537,6 +2560,24 @@ PROC Rescued()
   FI
 RETURN
 
+; SlotHit(x, y9): hitd_det_rckt for the characters at rest -- the arcade
+; tests every object by the same box whether it flies or not, so a rocket
+; through a boss's wing hits it, which the drawn pixels did not
+FUNC BYTE SlotHit(BYTE x, CARD y9)
+  BYTE i, d, ry
+  ry = y9 >> 1
+  FOR i = 0 TO NSLOT - 1 DO
+    IF sl_on(i) THEN
+      d = sl_ay(i) >> 1
+      d = d - ry + 3
+      IF d < 6 THEN
+        d = sl_ax(i) - x + 5
+        IF d < 11 THEN RETURN (i) FI
+      FI
+    FI
+  OD
+RETURN (255)
+
 ; FlyAt(x, y9): hitd_det_rckt -- the flyer a rocket at the arcade's (x, y9)
 ; hits: five pixels either way across, and Y's halves three below to two above
 FUNC BYTE FlyAt(BYTE x, CARD y9)
@@ -2686,16 +2727,13 @@ PROC Shots()
           SpriteHide(SP_SHOT + i)
         FI
         IF sh_on(i) THEN
-          FOR k = 0 TO 5 DO
-            IF y + k >= 0 THEN j = SlotAt(x, y + k) ELSE j = 255 FI
-            IF j != 255 THEN
-              hits += 1
-              ShootSlot(j)
-              sh_on(i) = 0
-              SpriteHide(SP_SHOT + i)
-              EXIT
-            FI
-          OD
+          j = SlotHit(sh_x(i), y9)
+          IF j != 255 THEN
+            hits += 1
+            ShootSlot(j)
+            sh_on(i) = 0
+            SpriteHide(SP_SHOT + i)
+          FI
         FI
         IF sh_on(i) THEN
           sx = x
@@ -2713,8 +2751,49 @@ BYTE game_over
 ; DemoAim: the attract's fighter -- under the lowest thing in the air, or
 ; under the lowest character still at rest, and firing as it goes
 PROC DemoAim()
-  BYTE k
+  BYTE k, want
   INT bx, by
+  ; a bomb nearly on it: step aside, whatever else it was doing
+  FOR k = 0 TO NBOMB - 1 DO
+    IF bo_on(k) THEN
+      IF bo_y(k) > $F0 THEN
+        bx = bo_x(k)
+        bx = bx - 17 - fx
+        IF bx > -10 AND bx < 10 THEN
+          IF bx > 0 THEN fx -= 2 ELSE fx += 2 FI
+          IF fx < 1 THEN fx = 1 FI
+          IF fx > 191 THEN fx = 191 FI
+          RETURN
+        FI
+      FI
+    FI
+  OD
+  ; under the beam while it holds, to be taken -- the attract shows the
+  ; capture and the pair that comes of it
+  IF cap_ph AND dual == 0 AND ftr_dead == 0 THEN
+    ; out of the way while the boss dives at its place, then under the
+    ; beam to be taken: the attract shows the capture and the pair
+    bx = cap_x
+    bx = bx - 17
+    IF cap_ph == 1 THEN
+      IF bx > 100 THEN bx = bx - 70 ELSE bx = bx + 70 FI
+    FI
+    IF bx > fx + 1 THEN fx += 2 ELSEIF bx < fx - 1 THEN fx -= 2 FI
+    RETURN
+  FI
+  ; a boss carrying a fighter of ours is worth more than anything else
+  want = 255
+  FOR k = 0 TO NFLY - 1 DO
+    IF fl_state(k) AND fl_obj(k) >= $30 AND fl_obj(k) < $38 THEN
+      IF FlyerOf(fl_obj(k) & 7) != 255 THEN want = k FI
+    FI
+  OD
+  IF want != 255 THEN
+    bx = fl_sx(want)
+    IF bx > fx + 1 THEN fx += 2 ELSEIF bx < fx - 1 THEN fx -= 2 FI
+    IF frm & 7 == 0 THEN Fire() FI
+    RETURN
+  FI
   by = -1
   bx = fx
   FOR k = 0 TO NFLY - 1 DO
@@ -3090,6 +3169,7 @@ PROC CapturedHome()
       cflag = 0
       ftr_dead = 1
       gt(3) = 2
+      IF demo THEN dv_tm(0) = 1 FI   ; the attract goes on to the rescue
       RETURN
     FI
     ftr_y9 -= 1
@@ -3449,13 +3529,26 @@ FUNC BYTE Play(BYTE dm)
   demo = dm
   shown = 0
   Clg(0)
+  ; nothing of the round before: no sprite, no explosion, no rocket, no bomb
+  FOR i = 0 TO 31 DO SpriteHide(i) OD
+  FOR i = 0 TO NBOOM - 1 DO bm_on(i) = 0 OD
+  FOR i = 0 TO NSHOT - 1 DO sh_on(i) = 0 OD
+  FOR i = 0 TO NBOMB - 1 DO bo_on(i) = 0 OD
+  FOR i = 0 TO NFLY - 1 DO fl_bm(i) = 0 OD
+  booms = 0
+  po_on = 0
+  boom_snd = 0
+  bo_own = 0
+  tx_y = 0
+  bb_hid = 0
   Hud()
   level = 0
   StarsInit()
   fx = 104
   stage = 1
   lives = 2
-  IF demo THEN lives = 0 FI
+                                     ; the attract keeps two as well: one
+                                     ; goes to the beam it shows
   ftr_dead = 0
   ftr_on = 1
   dual = 0
@@ -3480,7 +3573,7 @@ FUNC BYTE Play(BYTE dm)
         SoundsOff()
         RETURN (1)
       FI
-      IF ftr_dead OR shown > 3000 THEN EXIT FI
+      IF game_over OR shown > 3600 THEN EXIT FI
     FI
     IF KeyHit(KEY_P) THEN
       ; paused: the voices silenced, frames waited out until P again

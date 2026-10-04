@@ -1850,7 +1850,11 @@ pixel writes only the pixels that change, from lists the generator
 makes for every frame and every move. What flies is sprites: the
 fighter, two rockets, six flyers of four descriptors each, and the
 bombs. Explosions and score pop-ups are pictures drawn into the bitmap
-and put back. The field is the arcade's 224 columns in the middle of the 320,
+and put back; the score pop-ups are loaded from the data file as they are
+won, one at a time. A rocket hits by the arcade's own box -- five pixels
+either way -- whether what it hits is flying or still in the formation,
+so a shot through a boss's wing tells. The field is the arcade's 224
+columns in the middle of the 320,
 its 256 rows pressed into 240 below the formation's lowest reach.
 
 **The motion is the arcade's** ([D114](01-decisions.md)): a port of the
@@ -1877,8 +1881,10 @@ ENTER YOUR INITIALS does, under the arcade's tune for it. The stage's
 badges go up one at a time, each with the arcade's click. The attract
 turns between what the enemies are worth, the best five, and a round the
 machine plays itself -- its fighter flies under the lowest thing in the
-air and fires as it goes, it keeps no score and no name, and space takes
-it over for a game with fighters in hand. The title turns between what the enemies are
+air and fires as it goes, it steps aside from a bomb about to land, and
+it stands clear of a diving capture boss and then under its beam, so the
+round shows the capture and the pair that comes of it. It keeps no score
+and no name, and space takes it over for a game with fighters in hand. The title turns between what the enemies are
 worth and that table, six seconds each, as the arcade's attract does.
 
 **What differs, and why.** Six flyers where the arcade has twelve: a

@@ -938,20 +938,29 @@ def main():
         ev, worth = g.bonus_bee(seen=lambda k: print(k, g.uword("stage_frames"), g.png("gal_bonus_" + k)))
         print(ev, "worth", worth, "frames", g.uword("stage_frames"))
     elif what == "attract":
-        # the two pages, then the machine playing its own round, then space
+        # the two pages, then the round the machine plays itself: what it
+        # reaches, and whether space takes it over
         g = Game(tag="gal_attract2")
         g.m.run_frame(740)
-        print("after the pages: demo", g.byte("demo"), g.png("gal_attract0"))
-        g.m.run_frame(900)
-        fx0 = g.word("fx")
-        g.m.run_frame(120)
-        print("playing itself: demo %d, score %d, fighter moved %s, shots %d" % (
-            g.byte("demo"), g.uword("score10") * 10, g.word("fx") != fx0, g.uword("shots")),
-            g.png("gal_attract1"))
-        g.tap(SPACE)
-        t = g.until(lambda: g.byte("demo") == 0 and g.byte("lives") == 2, 600)
-        print("space taken: a game of its own after %s frames, lives %d, score %d" % (
-            t, g.byte("lives"), g.uword("score10")))
+        seen, shots = {}, 0
+        for f in range(3600):
+            g.m.run_frame(1)
+            if g.byte("cap_ph") and f % 10 == 0:
+                print("  f%d ph %d s1 %02X capx %d fx %d dead %d lives %d" % (
+                    f, g.byte("cap_ph"), g.byte("cap_s1"), g.byte("cap_x"), g.word("fx"),
+                    g.byte("ftr_dead"), g.byte("lives")))
+            if g.byte("cap_ph") == 2 and "beam" not in seen:
+                seen["beam"] = f
+                print(g.png("gal_at_beam"))
+            if g.byte("ftr_dead") == 5 and "caught" not in seen:
+                seen["caught"] = f
+                print(g.png("gal_at_caught"))
+            if g.byte("dual") and "dual" not in seen:
+                seen["dual"] = f
+                print(g.png("gal_at_dual"))
+            if g.byte("demo") == 0:
+                break
+        print("the round reached", seen, "score", g.uword("score10") * 10, "lives", g.byte("lives"))
     elif what == "results":
         # the game given up to the last fighter: GAME OVER and the results
         g.poke("lives", 0)

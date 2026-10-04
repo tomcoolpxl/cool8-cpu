@@ -1895,6 +1895,7 @@ def test_galaga():
     played = fired > 0 and h.word("fx") != fx0
     h.tap(G.SPACE)
     took = h.until(lambda: h.byte("demo") == 0 and h.byte("lives") == 2, 600)
+    h.m.run_frame(20)                                   # the game of its own, begun
     check(on and played and took is not None and h.uword("score10") == 0,
           "galaga: the attract plays a round of its own, and space takes it over",
           "demo %d, it played %s, taken over after %s frames, score %d"
