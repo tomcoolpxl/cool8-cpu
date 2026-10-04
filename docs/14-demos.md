@@ -1873,7 +1873,8 @@ arcade's results, as its screens' sheet lays them out: the rockets
 fired, the hits, and the hit-miss ratio to a tenth of a percent; and a
 score good enough for the best five is put in it with three initials the
 player picks, left and right turning a letter and space taking it, as
-ENTER YOUR INITIALS does. The title turns between what the enemies are
+ENTER YOUR INITIALS does, under the arcade's tune for it. The stage's
+badges go up one at a time, each with the arcade's click. The title turns between what the enemies are
 worth and that table, six seconds each, as the arcade's attract does.
 
 **What differs, and why.** Six flyers where the arcade has twelve: a
@@ -1891,7 +1892,8 @@ as the dual fighter, firing a rocket from each ship until one of them is
 hit; a boss shot while it carries a fighter it has just taken gives that
 one back the same way, and with no fighter in play it comes down as the
 player's. **The bonus bee transforms** ([D119](01-decisions.md)): with
-few enemies left one at rest is armed and goes as the level's own
+few enemies left one at rest is armed -- blinking, as the arcade's does
+-- and goes as the level's own
 creature -- the sheet's scorpion from stage 4, bosconian from 8, galaxian
 flagship from 12 -- splitting into three on its path, and the three
 together pay 1,000, 2,000 or 3,000. **Not there yet**: a second player.
@@ -1921,7 +1923,8 @@ the red fighter in its place, the bitmap exact once the beam is gone --
 and the rescue after it: the boss shot as it dives with the fighter, the
 pair firing together, one of them lost leaving the other, and a boss
 shot carrying a fighter home giving it back for no fighter; the bonus
-bee away as its level's creature, split, and paid for; a score
+bee blinking, away as its level's creature, split, and paid for; the
+badges clicking up; a score
 into the best five with its initials, and the title turning to them; P
 pausing and going on; the last fighter lost and the results; then
 the path a person takes -- the real ROM booting the demos disc, `DRIVE

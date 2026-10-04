@@ -282,6 +282,7 @@ CONST S_TRACTOR = $06
 CONST S_CAPTURED = $09
 CONST S_RESCUE = $11
 CONST S_BONUS = $12
+CONST S_NAME = $10                   ; the tune under ENTER YOUR INITIALS
 
 BYTE ARRAY snd_on(NSND), snd_wait(NSND)
 CARD ARRAY snd_p(NSND)
@@ -827,7 +828,8 @@ RETURN (0)
 PROC FmStep(BYTE part)
   BYTE i, tx, ty, fr, want
   FOR i = 0 TO NSLOT - 1 DO
-    IF sl_on(i) AND (sl_col(i) & 3) == part THEN
+    ; the armed bee, while it is not drawn, is not moved either
+    IF sl_on(i) AND (sl_col(i) & 3) == part AND (bb_hid == 0 OR i != bb_slot) THEN
       tx = col_x(sl_col(i))
       ty = row_y(sl_row(i))
       fr = sl_fr(i)
@@ -1100,6 +1102,7 @@ BYTE bomb_flags                      ; the mask a sortie is given, by the stage 
 ; the level's own creature and splits into three (the path's F2 tokens).
 ; Its frames are whichever of the three is streamed in for the level.
 BYTE bb_on, bb_obj, bb_tmr, bb_left, bb_fr, bb_art, bb_lim
+BYTE bb_slot, bb_hid                 ; the armed one's slot, and whether this moment it is not drawn
 CARD bb_path, bb_bonus
 
 ; the launcher, f_2916, on the stage's waves loaded from the WAVES block
@@ -1797,6 +1800,33 @@ BYTE ARRAY dv_tm(3), dv_rl(3), pool_o(4)
 BYTE ARRAY boss_sc(4)                ; each boss's worth shot flying, in tens: 40, 80 or 160 by its escorts
 BYTE ARRAY boss_b(4) = [$32 $36 $34 $30]
 
+; Blink: the armed bee shown and hidden every eighth frame, the arcade's
+; warning that this one is about to go
+PROC Blink()
+  BYTE slot
+  slot = bb_slot
+  IF bb_tmr == 0 OR slot == 255 THEN
+    bb_hid = 0
+    RETURN
+  FI
+  IF sl_on(slot) == 0 THEN
+    bb_hid = 0
+    RETURN
+  FI
+  IF bb_tmr & 8 THEN
+    IF bb_hid == 0 THEN
+      FmDraw(sl_fr(slot), 0, sl_x(slot), sl_y(slot), 1)
+      bb_hid = 1
+    FI
+  ELSEIF bb_hid THEN
+    sl_x(slot) = col_x(sl_col(slot))
+    sl_y(slot) = row_y(sl_row(slot))
+    sl_fr(slot) = sl_kind(slot)
+    FmDraw(sl_fr(slot), 0, sl_x(slot), sl_y(slot), 0)
+    bb_hid = 0
+  FI
+RETURN
+
 ; BonusBee: f_1A80 -- with few enemies left one at rest is armed, and
 ; after sixty-four frames it goes as the level's own creature, splitting
 ; into three on the way (Clone). The three together are worth the trio's
@@ -1810,6 +1840,7 @@ PROC BonusBee()
         IF RestAt(o) THEN
           bb_tmr = $C0
           bb_obj = o
+          bb_slot = obj_slot(o >> 1)
         FI
       FI
     OD
@@ -1826,6 +1857,7 @@ PROC BonusBee()
   FI
   bb_on = 0
   IF RestAt(bb_obj) == 0 THEN RETURN FI
+  bb_hid = 0                         ; whatever the blink left, it goes now
   PlaySound(S_BONUS)
   bb_left = 3                        ; itself and the two it splits into
   Dive(bb_obj, bb_path, (bb_obj & 2) << 6)
@@ -2228,6 +2260,7 @@ PROC FlyFrame()
   BYTE k
   frm += 1
   BonusBee()
+  Blink()
   Params()
   Launcher()
   IF breathing AND frm & 3 == 0 THEN
@@ -2846,8 +2879,10 @@ PROC Lives()
   OD
 RETURN
 
+; Panel: the fighters in hand and the stage's badges, which go up one at
+; a time with the arcade's click for each
 PROC Panel()
-  BYTE n, k, y
+  BYTE n, k, y, w
   CARD x
   Fill(272, 40, 48, 120)
   Lives()
@@ -2863,6 +2898,12 @@ PROC Panel()
       FI
       x = x - bdg_w(k) - 1
       PanelArt(bdg_art(k), x, y)
+      PlaySound(S_BADGE)
+      FOR w = 1 TO 8 DO
+        WaitVBlank()
+        KeyPoll()
+        SoundFrame()
+      OD
     OD
   OD
 RETURN
@@ -3080,6 +3121,8 @@ PROC StageStart()
   bb_on = 0
   bb_tmr = 0
   bb_obj = 1
+  bb_slot = 255
+  bb_hid = 0
   bb_left = 0
   i = (stage >> 2) % 3
   bb_path = fl_morph(i)
@@ -3292,6 +3335,7 @@ PROC NameEntry()
   x = r * 3
   FOR j = 0 TO 2 DO hi_nm(x + j) = 'A' OD
   Fill(FX, 0, FW, 240)
+  PlaySound(S_NAME)
   Text(FX + 16, 24, "ENTER YOUR INITIALS !", C_RED)
   HiTable(64)
   p = 0
@@ -3324,6 +3368,7 @@ PROC NameEntry()
     FI
   OD
   HiRow(r, 88 + r * 18, C_YELLOW)
+  StopSound(S_NAME)
   IF hi_sc(0) > hi10 THEN hi10 = hi_sc(0) FI
   FOR i = 1 TO 180 DO Frame1() OD
 RETURN

@@ -263,8 +263,9 @@ class Game:
         want = [[0] * fw for _ in range(240)]
         ns = self.c("NSLOT")
         on, fr, sx, sy = (self.array(n, ns) for n in ("sl_on", "sl_fr", "sl_x", "sl_y"))
+        hid = self.byte("bb_slot") if self.byte("bb_hid") else 255
         for i in range(ns):
-            if on[i]:
+            if on[i] and i != hid:
                 img = self._fimgs[fr[i]]
                 for y in range(16):
                     for x in range(16):
@@ -454,6 +455,8 @@ class Game:
         for f in range(frames):
             self.spared_frame()
             fr, key = self.byte("bb_fr"), None
+            if self.byte("bb_hid"):
+                out["blinked"] = self.uword("stage_frames")
             flying = [k for k in range(n) if self.byte("fl_state", k) and self.byte("fl_char", k) == fr]
             if self.byte("bb_tmr") and "armed" not in out:
                 key = "armed"

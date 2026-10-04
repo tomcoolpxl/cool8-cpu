@@ -1883,6 +1883,22 @@ def test_galaga():
     # fighter from the panel after READY once nothing flies. While waves
     # come in only their transients can ram it, so the launcher is stopped
     # first and the flyer is an attacker
+    # the stage's badges go up one at a time, each with the arcade's click
+    h = G.Game(tag="galaga10", render=False)
+    h.start()
+    h.poke("launching", 0)
+    clicks = 0
+    for _ in range(600):
+        h.m.run_frame(1)
+        if h.byte("snd_on", 0x15):
+            clicks += 1
+        if h.byte("stage") == 2 and h.uword("stage_frames") > 2:
+            break
+    check(h.byte("stage") == 2 and clicks > 0,
+          "galaga: the stage's badges go up with the arcade's click",
+          "stage %d, %d frames of the badge sound" % (h.byte("stage"), clicks))
+    del h
+
     # the capture: stage 1 played on with the fighter left in the middle,
     # spared bombs and rammers but not the beam -- the beam out below its
     # boss in the three blues, the fighter taken up it, FIGHTER CAPTURED,
@@ -1971,10 +1987,10 @@ def test_galaga():
         if h.byte("dv_on"):
             break
     bv, worth = h.bonus_bee()
-    check(set(bv) >= {"armed", "flying", "split", "paid"} and worth >= 1000 + 160
+    check(set(bv) >= {"armed", "blinked", "flying", "split", "paid"} and worth >= 1000 + 160
           and h.byte("bb_fr") == h.c("F_M_SCORPION"),
-          "galaga: the bonus bee goes as the level's own creature, splits, and pays the trio's bonus",
-          "events %s, worth %d, frames %s" % (bv, worth, h.c("F_M_SCORPION")))
+          "galaga: the bonus bee blinks, goes as the level's own creature, splits, and pays the trio's bonus",
+          "events %s, worth %d" % (bv, worth))
     print("    the bonus bee: away at frame %s, split at %s, worth %d" % (bv.get("flying"), bv.get("split"), worth))
     del h
 
@@ -2023,9 +2039,11 @@ def test_galaga():
     # score follows it, and the title turns to BEST 5
     score = g.uword("score10")
     g.until(lambda: g.uword("hi_sc") == score, 900)      # the entry screen, the score in the table
+    tune = 0
     for _ in range(3):
         g.tap(G.SPACE)
         g.m.run_frame(6)
+        tune += g.byte("snd_on", 0x10) > 0
     g.until(lambda: g.uword("hi10") == score, 400)       # the three taken, the table standing
     table = [(g.uword("hi_sc", i), "".join(chr(g.byte("hi_nm", i * 3 + j)) for j in range(3))) for i in range(5)]
     first = table[0] == (score, "AAA")
@@ -2035,9 +2053,9 @@ def test_galaga():
         best = sum(g.pixel(fx0 + x, 28 + y) == 2 for x in range(60, 160) for y in range(8))
         if best > 30:
             break
-    check(first and table[1][0] == 2000 and g.uword("hi10") == score and best > 30,
-          "galaga: a score good enough goes into the best five with its initials, and the title shows them",
-          "table %s, high score %d, %d red pixels in -- BEST 5 --" % (table[:2], g.uword("hi10"), best))
+    check(first and table[1][0] == 2000 and g.uword("hi10") == score and best > 30 and tune,
+          "galaga: a score good enough goes into the best five with its initials and its tune, and the title shows them",
+          "table %s, high score %d, %d red in -- BEST 5 --, tune %d" % (table[:2], g.uword("hi10"), best, tune))
     print("    the best five: %s" % (table[:2],))
     del g
 
