@@ -1883,6 +1883,25 @@ def test_galaga():
     # fighter from the panel after READY once nothing flies. While waves
     # come in only their transients can ram it, so the launcher is stopped
     # first and the flyer is an attacker
+    # the attract: after its two pages the machine plays a round of its own,
+    # which keeps nothing, and space takes it over for a game with fighters
+    h = G.Game(tag="galaga11", render=False)
+    h.m.run_frame(740)
+    on = h.byte("demo")
+    h.m.run_frame(900)
+    fx0 = h.word("fx")
+    h.m.run_frame(120)
+    fired = h.uword("shots")
+    played = fired > 0 and h.word("fx") != fx0
+    h.tap(G.SPACE)
+    took = h.until(lambda: h.byte("demo") == 0 and h.byte("lives") == 2, 600)
+    check(on and played and took is not None and h.uword("score10") == 0,
+          "galaga: the attract plays a round of its own, and space takes it over",
+          "demo %d, it played %s, taken over after %s frames, score %d"
+          % (on, played, took, h.uword("score10") * 10))
+    print("    the attract: its round fired %d shots before the player took it over" % fired)
+    del h
+
     # the stage's badges go up one at a time, each with the arcade's click
     h = G.Game(tag="galaga10", render=False)
     h.start()

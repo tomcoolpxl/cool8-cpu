@@ -937,6 +937,21 @@ def main():
                 break
         ev, worth = g.bonus_bee(seen=lambda k: print(k, g.uword("stage_frames"), g.png("gal_bonus_" + k)))
         print(ev, "worth", worth, "frames", g.uword("stage_frames"))
+    elif what == "attract":
+        # the two pages, then the machine playing its own round, then space
+        g = Game(tag="gal_attract2")
+        g.m.run_frame(740)
+        print("after the pages: demo", g.byte("demo"), g.png("gal_attract0"))
+        g.m.run_frame(900)
+        fx0 = g.word("fx")
+        g.m.run_frame(120)
+        print("playing itself: demo %d, score %d, fighter moved %s, shots %d" % (
+            g.byte("demo"), g.uword("score10") * 10, g.word("fx") != fx0, g.uword("shots")),
+            g.png("gal_attract1"))
+        g.tap(SPACE)
+        t = g.until(lambda: g.byte("demo") == 0 and g.byte("lives") == 2, 600)
+        print("space taken: a game of its own after %s frames, lives %d, score %d" % (
+            t, g.byte("lives"), g.uword("score10")))
     elif what == "results":
         # the game given up to the last fighter: GAME OVER and the results
         g.poke("lives", 0)

@@ -1874,7 +1874,11 @@ fired, the hits, and the hit-miss ratio to a tenth of a percent; and a
 score good enough for the best five is put in it with three initials the
 player picks, left and right turning a letter and space taking it, as
 ENTER YOUR INITIALS does, under the arcade's tune for it. The stage's
-badges go up one at a time, each with the arcade's click. The title turns between what the enemies are
+badges go up one at a time, each with the arcade's click. The attract
+turns between what the enemies are worth, the best five, and a round the
+machine plays itself -- its fighter flies under the lowest thing in the
+air and fires as it goes, it keeps no score and no name, and space takes
+it over for a game with fighters in hand. The title turns between what the enemies are
 worth and that table, six seconds each, as the arcade's attract does.
 
 **What differs, and why.** Six flyers where the arcade has twelve: a
@@ -1924,14 +1928,15 @@ and the rescue after it: the boss shot as it dives with the fighter, the
 pair firing together, one of them lost leaving the other, and a boss
 shot carrying a fighter home giving it back for no fighter; the bonus
 bee blinking, away as its level's creature, split, and paid for; the
-badges clicking up; a score
+badges clicking up; the attract playing its own round and giving it up
+to the player; a score
 into the best five with its initials, and the title turning to them; P
 pausing and going on; the last fighter lost and the results; then
 the path a person takes -- the real ROM booting the demos disc, `DRIVE
 11` and `SYS "GALAGA.BIN"`, the title up, space, and stage 1. `python
 sim/galaga.py play` (or `levels`, `attack`, `challenge n`, `death`,
 `results`, `capture`, `rescue`, `homeshot`, `names`, `bonus [stage]`,
-`profile [stage frames]`) plays it and writes the frames as PNG;
+`attract`, `profile [stage frames]`) plays it and writes the frames as PNG;
 `flights`, `dives stage frames [x [every]]`, `bitmap`, `shoot` and
 `sound` are the comparisons the gate makes; `sizes` says where the
 program's bytes are.

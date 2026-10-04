@@ -66,6 +66,7 @@ BYTE tx_y                            ; a text in the field the stars keep out of
 INT fx                               ; the fighter's top-left on the field
 CONST FIGHTER_Y = 224
 BYTE quit
+BYTE demo                            ; the attract's round, flown by the machine
 
 ; ------------------------------------------------------------ data file
 BYTE ARRAY dat_name = "GALAGA  DAT"
@@ -2709,6 +2710,37 @@ RETURN
 
 BYTE game_over
 
+; DemoAim: the attract's fighter -- under the lowest thing in the air, or
+; under the lowest character still at rest, and firing as it goes
+PROC DemoAim()
+  BYTE k
+  INT bx, by
+  by = -1
+  bx = fx
+  FOR k = 0 TO NFLY - 1 DO
+    IF fl_state(k) == 3 OR fl_state(k) == 7 OR fl_state(k) == 9 THEN
+      IF fl_sy(k) > by AND fl_sy(k) < 200 AND fl_sx(k) > -8 AND fl_sx(k) < 216 THEN
+        by = fl_sy(k)
+        bx = fl_sx(k)
+      FI
+    FI
+  OD
+  IF by < 0 THEN
+    FOR k = 0 TO NSLOT - 1 DO
+      IF sl_on(k) THEN
+        by = sl_y(k)
+        bx = sl_x(k)
+      FI
+    OD
+  FI
+  IF bx > fx + 1 THEN
+    fx += 2
+  ELSEIF bx < fx - 1 THEN
+    fx -= 2
+  FI
+  IF frm & 7 == 0 THEN Fire() FI
+RETURN
+
 PROC Fighter()
   BYTE fr
   IF ftr_dead == 5 THEN
@@ -2721,9 +2753,13 @@ PROC Fighter()
   FI
   IF ftr_dead AND ftr_dead != 3 THEN RETURN FI
   IF ftr_on THEN
-    IF KeyHeld(KEY_LEFT) OR KeyHeld(KEY_Z) THEN fx -= 2 FI
-    IF KeyHeld(KEY_RIGHT) OR KeyHeld(KEY_X) THEN fx += 2 FI
-    IF KeyHit(KEY_SPACE) THEN Fire() FI
+    IF demo THEN
+      DemoAim()
+    ELSE
+      IF KeyHeld(KEY_LEFT) OR KeyHeld(KEY_Z) THEN fx -= 2 FI
+      IF KeyHeld(KEY_RIGHT) OR KeyHeld(KEY_X) THEN fx += 2 FI
+      IF KeyHit(KEY_SPACE) THEN Fire() FI
+    FI
   FI
   IF fx < 1 THEN fx = 1 FI
   IF dual THEN
@@ -3197,7 +3233,7 @@ PROC StageIntro()
   Panel()
   StopSound(S_PULSE)
   MusicStop()
-  IF stage == 1 THEN
+  IF stage == 1 AND demo == 0 THEN
     ; a new game: the start theme under PLAYER 1, then the stage
     PlaySound(S_START)
     FieldText("PLAYER 1", 0, C_CYAN)
@@ -3404,8 +3440,14 @@ PROC Finale()
   NameEntry()
 RETURN
 
-PROC Play()
+; Play(dm): a game, or with dm the attract's round -- which flies itself,
+; keeps nothing, and ends with its first fighter or at its time. 1 if the
+; player pressed space to take over.
+FUNC BYTE Play(BYTE dm)
   BYTE i
+  CARD shown
+  demo = dm
+  shown = 0
   Clg(0)
   Hud()
   level = 0
@@ -3413,6 +3455,7 @@ PROC Play()
   fx = 104
   stage = 1
   lives = 2
+  IF demo THEN lives = 0 FI
   ftr_dead = 0
   ftr_on = 1
   dual = 0
@@ -3430,6 +3473,15 @@ PROC Play()
   DO
     Frame1()
     IF KeyHit(KEY_ESC) THEN EXIT FI
+    IF demo THEN
+      shown += 1
+      IF KeyHit(KEY_SPACE) THEN
+        demo = 0
+        SoundsOff()
+        RETURN (1)
+      FI
+      IF ftr_dead OR shown > 3000 THEN EXIT FI
+    FI
     IF KeyHit(KEY_P) THEN
       ; paused: the voices silenced, frames waited out until P again
       FOR i = 0 TO 7 DO Voice(i, 0, 0, 0) OD
@@ -3459,7 +3511,7 @@ PROC Play()
       PlaySound(S_EXTEND)
     FI
     IF game_over THEN
-      Finale()
+      IF demo == 0 THEN Finale() FI
       EXIT
     FI
     IF StageDone() AND ftr_dead == 0 THEN
@@ -3473,8 +3525,9 @@ PROC Play()
       StageStart()
     FI
   OD
+  demo = 0
   SoundsOff()
-RETURN
+RETURN (0)
 
 ; Title: the arcade's attract words and its score table, and the space bar
 ; to start
@@ -3507,8 +3560,10 @@ PROC TitlePage(BYTE n)
   Text(FX + 44, 220, "@ 1981 NAMCO LTD.", C_WHITE)
 RETURN
 
-PROC Title()
-  BYTE t, page
+; Title: the attract's two pages, six seconds each, and then its round --
+; 1 if the player pressed space to start one of its own
+FUNC BYTE Title()
+  BYTE page
   CARD n
   SpritesOff()
   SoundsOff()
@@ -3519,20 +3574,25 @@ PROC Title()
     WaitVBlank()
     KeyPoll()
     SoundFrame()
-    IF KeyHit(KEY_SPACE) THEN EXIT FI
+    IF KeyHit(KEY_SPACE) THEN
+      SpritesOn(15)
+      RETURN (1)
+    FI
     IF KeyHit(KEY_ESC) THEN
       quit = 1
-      EXIT
+      SpritesOn(15)
+      RETURN (0)
     FI
     n += 1
     IF n == 360 THEN
       n = 0
-      page = 1 - page
+      IF page THEN EXIT FI           ; both shown: the round goes next
+      page = 1
       TitlePage(page)
     FI
   OD
   SpritesOn(15)
-RETURN
+RETURN (0)
 
 PROC Main()
   BYTE i
@@ -3554,9 +3614,15 @@ PROC Main()
   SpritesOn(15)
   hi10 = hi_sc(0)
   DO
-    Title()
+    IF Title() THEN
+      IF Play(0) THEN FI
+    ELSEIF quit == 0 THEN
+      ; the attract's round, until it is over or the player takes it over
+      IF Play(1) THEN
+        IF Play(0) THEN FI
+      FI
+    FI
     IF quit THEN EXIT FI
-    Play()
   OD
   SpritesOff()
   Reset()
